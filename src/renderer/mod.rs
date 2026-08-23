@@ -86,6 +86,16 @@ pub use self::types::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ViewportId(pub(crate) usize);
 
+impl ViewportId {
+    /// The slot index this id refers to, matching
+    /// [`CameraFrame::viewport_index`](crate::CameraFrame). Useful when tagging a
+    /// frame the renderer assembled for you (e.g. via `ViewportInstance`) with the
+    /// viewport a readback like [`ViewportRenderer::exposure_state`] should target.
+    pub fn index(&self) -> usize {
+        self.0
+    }
+}
+
 use self::shadows::{compute_cascade_matrix, compute_cascade_splits};
 use self::types::{INSTANCING_THRESHOLD, InstancedBatch};
 use crate::resources::{

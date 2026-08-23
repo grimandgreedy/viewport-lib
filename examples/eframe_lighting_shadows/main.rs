@@ -11,21 +11,28 @@
 //! apply here; the "Display & Exposure" section drives them and reads back the
 //! live EV (metered on the GPU under auto-exposure).
 //!
+//! Structure mirrors `eframe_exposure`: a `ViewportInstance` renders into an
+//! app-owned offscreen texture that egui displays as an image, and events come
+//! through the `from_egui` adapter driving an `OrbitCameraController`. The
+//! offscreen texture is the sRGB variant of egui's format so the tone map's
+//! linear output gets the hardware linear->sRGB encode on write. The scene items
+//! are rebuilt per frame (per-tab geometry, live material toggles) and injected
+//! into the instance's assembled frame rather than held in its scene graph.
+//!
 //! Navigation:
 //!   Left drag / Middle drag   : orbit
 //!   Right drag                : pan
 //!   Scroll                    : zoom
 
-mod viewport_callback;
-
-use eframe::egui;
+use eframe::{egui, wgpu};
+use viewport_lib::input::adapters::from_egui;
 use viewport_lib::{
-    AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, ButtonState, Camera,
-    CameraFrame, Candela, DebugOutputMode, DebugQuantity, DebugVis, DisplaySettings,
-    EnvironmentSettings, ExposureMode, ExposureReadback, ExposureSettings, FrameData, LightKind,
-    LightSource, LightingSettings, Lumen, Lux, MatcapId, Material, MeshId, OrbitCameraController,
-    PipelineMode, SceneFrame, SceneRenderItem, ScrollUnits, ShadowDebugStats, ShadowFilter,
-    ToneMapping, ViewportContext, ViewportEvent, ViewportId, ViewportRenderer, primitives,
+    AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
+    DebugQuantity, DebugVis, DisplaySettings, EnvironmentSettings, ExposureMode, ExposureReadback,
+    ExposureSettings, LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material,
+    MeshId, Modifiers, OrbitCameraController, PipelineMode, SceneFrame, SceneRenderItem,
+    ShadowDebugStats, ShadowFilter, ToneMapping, ViewportContext, ViewportEvent, ViewportId,
+    ViewportInstance, primitives,
 };
 
 // Percy photo: pre-converted raw RGBA (2203 x 2009).
@@ -45,6 +52,37 @@ fn main() -> eframe::Result {
             viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 900.0]),
             depth_buffer: 24,
             stencil_buffer: 8,
+            // eframe creates its device with default limits (8 storage buffers
+            // per stage), but the auto-exposure compute path needs the higher
+            // limits the renderer recommends. Request them, or bring-up panics on
+            // backends that enforce the limit (Vulkan, DX12).
+            wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+                wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                    eframe::egui_wgpu::WgpuSetupCreateNew {
+                        device_descriptor: std::sync::Arc::new(|adapter| {
+                            let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                                wgpu::Limits::downlevel_webgl2_defaults()
+                            } else {
+                                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+                            };
+                            wgpu::DeviceDescriptor {
+                                label: Some("viewport-lib lighting device"),
+                                required_features:
+                                    viewport_lib::ViewportRenderer::recommended_device_features(
+                                        adapter,
+                                    ),
+                                required_limits: wgpu::Limits {
+                                    max_texture_dimension_2d: 8192,
+                                    ..base_limits
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
             ..Default::default()
         },
         Box::new(|cc| {
@@ -54,15 +92,17 @@ fn main() -> eframe::Result {
                 .expect("wgpu backend required");
             let device = &rs.device;
             let queue = &rs.queue;
-            let format = rs.target_format;
+            // The session draws into an app-owned offscreen texture built as the
+            // sRGB variant of egui's format (so the tone map's linear output is
+            // sRGB-encoded on write); build the session for that same format.
+            let format = rs.target_format.add_srgb_suffix();
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            let mut session = ViewportInstance::new(device, format);
 
             // Mint an explicit viewport id and tag every frame with it (see
-            // App::vp_id). The default single-viewport callback path uses slot 0
-            // implicitly; naming the slot lets `exposure_state` read back the EV
+            // App::vp_id). Naming the slot lets `exposure_state` read back the EV
             // for the same slot the frame renders into.
-            let vp_id = renderer.create_viewport(device);
+            let vp_id = session.renderer_mut().create_viewport(device);
 
             let (
                 m_ground,
@@ -79,7 +119,7 @@ fn main() -> eframe::Result {
                 tex_percy,
             );
             {
-                let res = renderer.resources_mut();
+                let res = session.resources_mut();
 
                 res.ensure_matcaps_initialized(device, queue);
 
@@ -133,18 +173,27 @@ fn main() -> eframe::Result {
             // at render time, so the same map reads from near-black up to a bright
             // daytime sky depending on the exposure regime under test.
             let env = equirect_gradient([0.55, 0.70, 1.0], [0.30, 0.32, 0.34], ENV_W, ENV_H);
-            renderer
+            session
+                .renderer_mut()
                 .upload_environment_map(device, queue, &env, ENV_W, ENV_H)
                 .expect("environment map");
 
-            let matcap_clay = renderer.resources().builtin_matcap_id(BuiltinMatcap::Clay);
-            let matcap_ceramic = renderer
+            let matcap_clay = session
+                .renderer_mut()
+                .resources()
+                .builtin_matcap_id(BuiltinMatcap::Clay);
+            let matcap_ceramic = session
+                .renderer_mut()
                 .resources()
                 .builtin_matcap_id(BuiltinMatcap::Ceramic);
 
-            rs.renderer.write().callback_resources.insert(renderer);
+            // Dark neutral background so the scene sits on the same plate as before.
+            session.viewport_frame_mut().background_colour =
+                Some([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0]);
+            session.camera_mut().distance = 18.0;
 
             Ok(Box::new(App::new(
+                session,
                 vp_id,
                 m_ground,
                 m_sphere,
@@ -176,15 +225,14 @@ enum Tab {
 }
 
 struct App {
-    // Viewport slot this frame renders into (tagged on every CameraFrame). Named
+    // Renderer + scene + camera + input, driven once per frame.
+    session: ViewportInstance,
+    orbit: OrbitCameraController,
+    // App-owned offscreen render target that egui displays as an image.
+    target: Option<Target>,
+    // Viewport slot this frame renders into (tagged on the assembled frame). Named
     // so exposure_state can read back the EV for the same slot.
     vp_id: ViewportId,
-
-    // Camera / input
-    camera: Camera,
-    controller: OrbitCameraController,
-    cursor_viewport: Option<glam::Vec2>,
-    cursor_prev: Option<glam::Vec2>,
 
     // Scene selection
     tab: Tab,
@@ -247,7 +295,6 @@ struct App {
     exposure_compensation: f32,
     tone_mapping: ToneMapping,
     // Live EV read back from the GPU (Some once the first HDR frame has run).
-    exposure_readback: std::sync::Arc<std::sync::Mutex<Option<ExposureReadback>>>,
     last_exposure: Option<ExposureReadback>,
 
     // Image-based environment (IBL + skybox).
@@ -288,8 +335,8 @@ struct App {
 
     // Pixel inspector (D7)
     pixel_inspector_active: bool,
-    pixel_read_req: std::sync::Arc<std::sync::Mutex<Option<(u32, u32)>>>,
-    pixel_read_res: std::sync::Arc<std::sync::Mutex<Option<[f32; 4]>>>,
+    // Pixel to read back after the next render (set on click).
+    pixel_read_req: Option<(u32, u32)>,
     last_picked_pos: Option<(u32, u32)>,
     last_picked_values: Option<[f32; 4]>,
 
@@ -300,15 +347,23 @@ struct App {
     // comparison, the same flip the headless PBR/Phong repros use.
     pbr_enabled: bool,
 
-    // Instancing status (updated each frame by the paint callback)
-    instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
-    // Shadow debug stats (updated each frame by the paint callback)
-    shadow_stats: std::sync::Arc<std::sync::Mutex<Option<ShadowDebugStats>>>,
+    // Diagnostics latched after each render.
+    instancing_status: (bool, usize),
+    shadow_stats: Option<ShadowDebugStats>,
+}
+
+/// App-owned offscreen render target displayed by egui as an image.
+struct Target {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    id: egui::TextureId,
+    size: [u32; 2],
 }
 
 impl App {
     #[allow(clippy::too_many_arguments)]
     fn new(
+        session: ViewportInstance,
         vp_id: ViewportId,
         m_ground: MeshId,
         m_sphere: MeshId,
@@ -326,14 +381,10 @@ impl App {
         matcap_ceramic: MatcapId,
     ) -> Self {
         Self {
+            session,
+            orbit: OrbitCameraController::viewport_primitives(),
+            target: None,
             vp_id,
-            camera: Camera {
-                distance: 18.0,
-                ..Camera::default()
-            },
-            controller: OrbitCameraController::viewport_primitives(),
-            cursor_viewport: None,
-            cursor_prev: None,
             tab: Tab::Basic,
             m_ground,
             m_sphere,
@@ -382,7 +433,6 @@ impl App {
             auto: AutoExposure::default(),
             exposure_compensation: 0.0,
             tone_mapping: ToneMapping::KhronosNeutral,
-            exposure_readback: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_exposure: None,
             env_enabled: false,
             env_intensity: 4_000.0,
@@ -411,14 +461,13 @@ impl App {
             atlas_viewer_corner: AtlasViewerCorner::BottomRight,
             atlas_viewer_scale: 0.3,
             pixel_inspector_active: false,
-            pixel_read_req: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            pixel_read_res: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            pixel_read_req: None,
             last_picked_pos: None,
             last_picked_values: None,
             show_platform: true,
             pbr_enabled: true,
-            instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
-            shadow_stats: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            instancing_status: (false, 0),
+            shadow_stats: None,
         }
     }
 
@@ -720,7 +769,12 @@ impl App {
 // ---------------------------------------------------------------------------
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let rs = frame
+            .wgpu_render_state()
+            .expect("wgpu backend required")
+            .clone();
+
         egui::SidePanel::left("lighting_panel")
             .min_width(250.0)
             .max_width(320.0)
@@ -741,77 +795,66 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.controller.begin_frame(ViewportContext {
+            // Offscreen target in physical pixels; (re)created when the viewport
+            // resizes. sRGB variant so the tone map's linear output is encoded on
+            // write and egui displays it correctly.
+            let ppp = ui.ctx().pixels_per_point();
+            let size = [
+                (rect.width() * ppp).round().max(1.0) as u32,
+                (rect.height() * ppp).round().max(1.0) as u32,
+            ];
+            if self.target.as_ref().map_or(true, |t| t.size != size) {
+                let texture = rs.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("lighting_offscreen"),
+                    size: wgpu::Extent3d {
+                        width: size[0],
+                        height: size[1],
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: rs.target_format.add_srgb_suffix(),
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let id = rs.renderer.write().register_native_texture(
+                    &rs.device,
+                    &view,
+                    wgpu::FilterMode::Linear,
+                );
+                self.target = Some(Target {
+                    _texture: texture,
+                    view,
+                    id,
+                    size,
+                });
+            }
+            let target = self.target.as_ref().unwrap();
+
+            // Feed input to the instance's own input pipeline via the egui adapter.
+            self.session.begin_frame(ViewportContext {
                 hovered: response.hovered(),
                 focused: response.has_focus(),
                 viewport_size: [rect.width(), rect.height()],
             });
-
+            self.session.set_pixels_per_point(ppp);
+            let origin = glam::Vec2::new(rect.left(), rect.top());
             ui.input(|i| {
-                self.controller.push_event(ViewportEvent::ModifiersChanged(
-                    viewport_lib::Modifiers {
+                self.session
+                    .handle_event(ViewportEvent::ModifiersChanged(Modifiers {
                         alt: i.modifiers.alt,
                         shift: i.modifiers.shift,
                         ctrl: i.modifiers.command,
-                    },
-                ));
-
-                let local_pos = i
-                    .pointer
-                    .interact_pos()
-                    .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
-                self.cursor_prev = self.cursor_viewport;
-                self.cursor_viewport = local_pos;
-                if let Some(pos) = local_pos {
-                    self.controller
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
-                }
-
+                    }));
                 for event in &i.events {
-                    match event {
-                        egui::Event::PointerButton {
-                            button, pressed, ..
-                        } => {
-                            let vp_button = match button {
-                                egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
-                                egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
-                                egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
-                                _ => continue,
-                            };
-                            self.controller.push_event(ViewportEvent::MouseButton {
-                                button: vp_button,
-                                state: if *pressed {
-                                    ButtonState::Pressed
-                                } else {
-                                    ButtonState::Released
-                                },
-                            });
-                        }
-                        egui::Event::MouseWheel { unit, delta, .. } => {
-                            let units = match unit {
-                                egui::MouseWheelUnit::Line => ScrollUnits::Lines,
-                                egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
-                                egui::MouseWheelUnit::Page => ScrollUnits::Pages,
-                            };
-                            self.controller.push_event(ViewportEvent::Wheel {
-                                delta: glam::Vec2::new(delta.x, delta.y),
-                                units,
-                            });
-                        }
-                        _ => {}
+                    if let Some(ev) = from_egui(event, origin) {
+                        self.session.handle_event(ev);
                     }
                 }
             });
-
-            let w = rect.width();
-            let h = rect.height();
-            self.controller.apply_to_camera(&mut self.camera);
-            self.camera.set_aspect_ratio(w, h);
-
-            let items = match self.tab {
-                Tab::Basic => self.build_basic_items(),
-                Tab::Materials => self.build_materials_items(),
-            };
 
             // Frame time for auto-exposure smoothing. Exposure lives outside the
             // scene, so a control change would not dirty anything: request a
@@ -822,71 +865,90 @@ impl eframe::App for App {
                 ctx.request_repaint();
             }
 
-            let ppp = ui.ctx().pixels_per_point();
-            let mut fd = FrameData::new(
-                CameraFrame::from_camera(&self.camera, [w, h])
-                    .with_pixels_per_point(ppp)
-                    .with_viewport_id(self.vp_id),
-                SceneFrame::from_surface_items(items),
+            // Persistent effect state on the instance (built from immutable self
+            // borrows first, then stamped in).
+            let lighting = self.build_lighting();
+            let display = self.build_display(dt);
+            let environment = self.build_environment();
+            {
+                let eff = self.session.effects_mut();
+                eff.lighting = lighting;
+                eff.display = display;
+                eff.environment = environment;
+                eff.debug.show_shadow_atlas = self.show_shadow_atlas;
+                eff.debug.atlas_viewer_corner = self.atlas_viewer_corner;
+                eff.debug.atlas_viewer_scale = self.atlas_viewer_scale;
+            }
+
+            // Build this tab's items, drive the camera, and inject the items into
+            // the assembled frame (the instance's own scene graph stays empty), and
+            // tag the viewport slot so exposure_state reads the right one.
+            let items = match self.tab {
+                Tab::Basic => self.build_basic_items(),
+                Tab::Materials => self.build_materials_items(),
+            };
+            let vp_index = self.vp_id.index();
+            self.session.update_orbit_with(&mut self.orbit, |fd| {
+                fd.scene = SceneFrame::from_surface_items(items);
+                fd.camera.viewport_index = vp_index;
+            });
+
+            // Pixel inspector: queue the clicked pixel (physical pixels) before the
+            // render so the readback below reflects this frame.
+            if self.pixel_inspector_active && self.debug_vis_active && response.clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let px = ((pos.x - rect.left()) * ppp) as u32;
+                    let py = ((pos.y - rect.top()) * ppp) as u32;
+                    self.last_picked_pos = Some((px, py));
+                    self.pixel_read_req = Some((px, py));
+                }
+            }
+
+            // Render into the offscreen target.
+            let cmd = self.session.render(&rs.device, &rs.queue, &target.view);
+            rs.queue.submit(std::iter::once(cmd));
+
+            // Latch diagnostics from this frame's render.
+            let (inst, batches, stats) = {
+                let r = self.session.renderer_mut();
+                (
+                    r.is_using_instanced_path(),
+                    r.instanced_batch_count(),
+                    r.shadow_debug_stats(),
+                )
+            };
+            self.instancing_status = (inst, batches);
+            self.shadow_stats = Some(stats);
+
+            // Metered EV readback (auto-exposure only; blocking device poll).
+            if self.wants_exposure_readback() {
+                if let Some(rb) = self
+                    .session
+                    .renderer_mut()
+                    .exposure_state(&rs.device, &rs.queue, self.vp_id)
+                {
+                    self.last_exposure = Some(rb);
+                }
+            }
+
+            // Pixel inspector readback for this frame's queued pixel.
+            if let Some((px, py)) = self.pixel_read_req.take() {
+                self.last_picked_values = self
+                    .session
+                    .renderer_mut()
+                    .read_debug_pixel(&rs.device, &rs.queue, px, py);
+            }
+
+            // Display the rendered texture.
+            ui.painter().image(
+                target.id,
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
             );
-            fd.effects.lighting = self.build_lighting();
-            fd.effects.display = self.build_display(dt);
-            fd.effects.environment = self.build_environment();
-            fd.effects.debug.show_shadow_atlas = self.show_shadow_atlas;
-            fd.effects.debug.atlas_viewer_corner = self.atlas_viewer_corner;
-            fd.effects.debug.atlas_viewer_scale = self.atlas_viewer_scale;
 
-            // Collect the exposure readback from the previous frame's callback.
-            if let Ok(mut rb) = self.exposure_readback.lock() {
-                if let Some(v) = rb.take() {
-                    self.last_exposure = Some(v);
-                }
-            }
-
-            // Pixel inspector: on left-click, submit the clicked pixel for readback.
-            // Convert from CSS pixels (egui) to physical pixels (what the shader writes).
-            if self.pixel_inspector_active && self.debug_vis_active {
-                if response.clicked() {
-                    if let Some(pos) = response.interact_pointer_pos() {
-                        let ppp = ui.ctx().pixels_per_point();
-                        let px = ((pos.x - rect.left()) * ppp) as u32;
-                        let py = ((pos.y - rect.top()) * ppp) as u32;
-                        self.last_picked_pos = Some((px, py));
-                        if let Ok(mut req) = self.pixel_read_req.lock() {
-                            *req = Some((px, py));
-                        }
-                    }
-                }
-            }
-
-            // Collect pixel readback result from previous frame.
-            if let Ok(mut res) = self.pixel_read_res.lock() {
-                if let Some(vals) = res.take() {
-                    self.last_picked_values = Some(vals);
-                }
-            }
-
-            ui.painter()
-                .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    viewport_callback::ViewportCallback {
-                        frame: fd,
-                        vp_id: self.vp_id,
-                        read_exposure: self.wants_exposure_readback(),
-                        instancing_status: self.instancing_status.clone(),
-                        pixel_read_req: self.pixel_read_req.clone(),
-                        pixel_read_res: self.pixel_read_res.clone(),
-                        shadow_stats: self.shadow_stats.clone(),
-                        exposure_readback: self.exposure_readback.clone(),
-                    },
-                ));
-
-            // Status bar: show shader path and cascade count (data is one frame behind).
-            let (is_instanced, batch_count) = self
-                .instancing_status
-                .lock()
-                .map(|g| *g)
-                .unwrap_or((false, 0));
+            // Status bar: shader path and cascade count.
+            let (is_instanced, batch_count) = self.instancing_status;
             let path_label = if is_instanced {
                 format!("Shader path: Instanced ({} batches)", batch_count)
             } else {
@@ -898,7 +960,7 @@ impl eframe::App for App {
                 egui::Align2::LEFT_BOTTOM,
                 &status_text,
                 egui::FontId::monospace(11.0),
-                egui::Color32::from_rgba_premultiplied(20, 20, 20, 200),
+                egui::Color32::from_rgba_premultiplied(230, 230, 230, 220),
             );
 
             if response.dragged() {
@@ -1341,7 +1403,7 @@ impl App {
         egui::CollapsingHeader::new("Frame Stats")
             .default_open(false)
             .show(ui, |ui| {
-                let stats = self.shadow_stats.lock().ok().and_then(|g| *g);
+                let stats = self.shadow_stats;
                 if let Some(s) = stats {
                     let path = if s.using_instanced_path {
                         format!("Instanced ({} batches)", s.instanced_batch_count)
@@ -1565,11 +1627,12 @@ impl App {
         // Side-on view of the sphere at (-4, 0, 0.6), low camera angle.
         // SplitScreen: left = normal, right = ShadowFactor.
         self.tab = Tab::Basic;
-        self.camera.center = glam::Vec3::new(-4.0, 0.0, 0.6);
-        self.camera.distance = 7.0;
+        self.session.camera_mut().center = glam::Vec3::new(-4.0, 0.0, 0.6);
+        self.session.camera_mut().distance = 7.0;
         // Looking from the Y+ side, slightly above horizontal.
-        self.camera.orientation = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
-            * glam::Quat::from_rotation_x(1.42);
+        self.session.camera_mut().orientation =
+            glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+                * glam::Quat::from_rotation_x(1.42);
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
         self.debug_vis_r = DebugQuantity::ShadowFactor;
@@ -1583,10 +1646,10 @@ impl App {
         // Steep top-down view of the rough sphere in the Materials tab.
         // SplitScreen: left = normal, right = ShadowFactor (acne appears as bright speckles).
         self.tab = Tab::Materials;
-        self.camera.center = glam::Vec3::new(4.5, 2.5, 0.7);
-        self.camera.distance = 4.0;
+        self.session.camera_mut().center = glam::Vec3::new(4.5, 2.5, 0.7);
+        self.session.camera_mut().distance = 4.0;
         // Looking down at steep angle.
-        self.camera.orientation =
+        self.session.camera_mut().orientation =
             glam::Quat::from_rotation_z(0.3) * glam::Quat::from_rotation_x(0.5);
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
@@ -1601,9 +1664,9 @@ impl App {
         // Pulled back to see the full scene from a moderate angle.
         // SplitScreen: left = normal, right = CascadeIndex (bands as distinct colours).
         self.tab = Tab::Basic;
-        self.camera.center = glam::Vec3::new(0.0, 0.0, 0.5);
-        self.camera.distance = 22.0;
-        self.camera.orientation =
+        self.session.camera_mut().center = glam::Vec3::new(0.0, 0.0, 0.5);
+        self.session.camera_mut().distance = 22.0;
+        self.session.camera_mut().orientation =
             glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
@@ -1618,9 +1681,9 @@ impl App {
         // Mid-distance orbit view. Orbit while watching AtlasUV on the right half.
         // Unstable UVs during orbit point to cascade matrix instability.
         self.tab = Tab::Basic;
-        self.camera.center = glam::Vec3::new(0.0, 0.0, 0.5);
-        self.camera.distance = 12.0;
-        self.camera.orientation =
+        self.session.camera_mut().center = glam::Vec3::new(0.0, 0.0, 0.5);
+        self.session.camera_mut().distance = 12.0;
+        self.session.camera_mut().orientation =
             glam::Quat::from_rotation_z(1.0) * glam::Quat::from_rotation_x(1.15);
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
@@ -1635,9 +1698,9 @@ impl App {
         // Looking at the torus from above at a low angle so the inner ring is visible.
         // SplitScreen: left = normal, right = ContactShadowFactor.
         self.tab = Tab::Basic;
-        self.camera.center = glam::Vec3::new(4.0, 0.0, 0.18);
-        self.camera.distance = 5.0;
-        self.camera.orientation =
+        self.session.camera_mut().center = glam::Vec3::new(4.0, 0.0, 0.18);
+        self.session.camera_mut().distance = 5.0;
+        self.session.camera_mut().orientation =
             glam::Quat::from_rotation_z(-0.4) * glam::Quat::from_rotation_x(1.3);
         self.debug_vis_active = true;
         self.debug_vis_splitscreen = true;
