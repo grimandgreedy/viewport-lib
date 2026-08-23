@@ -43,6 +43,7 @@ pub(crate) use crate::resources::overlay::highlight::ScreenRectOutlineBuffers;
 pub(crate) use crate::resources::overlay::highlight::SplatOutlineBuffers;
 pub(crate) use crate::resources::overlay::highlight::SplatOutlineMaskUniform;
 pub(crate) use crate::resources::overlay::highlight::SubHighlightGpuData;
+pub(crate) use crate::resources::overlay::overlay_shape::ClipShapeGpu;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShadowLayerGpu;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeGpuData;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShapeTexBatch;

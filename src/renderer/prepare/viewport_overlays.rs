@@ -26,6 +26,156 @@ fn upload_overlay_vbuf<T: bytemuck::Pod>(
     buffer
 }
 
+/// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the
+/// draw path's packing. `hw`/`hh` are the half-extents used to clamp corner radii.
+/// This is shared by the shape draw path and the clip-shape registry so the mask
+/// SDF is evaluated exactly as the shape would be drawn.
+fn encode_overlay_shape(
+    shape: &crate::renderer::types::OverlayShape,
+    hw: f32,
+    hh: f32,
+) -> (f32, [f32; 4]) {
+    use crate::renderer::types::{LineCap, OverlayShape, TriangleDirection};
+    match *shape {
+        OverlayShape::Rect { corner_radius } => {
+            let r = corner_radius.min(hw).min(hh).max(0.0);
+            (0.0, [r, r, r, r])
+        }
+        OverlayShape::RoundedRect { radii: r } => {
+            let clamped = [
+                r[1].min(hw).min(hh).max(0.0),
+                r[2].min(hw).min(hh).max(0.0),
+                r[3].min(hw).min(hh).max(0.0),
+                r[0].min(hw).min(hh).max(0.0),
+            ];
+            (0.0, clamped)
+        }
+        OverlayShape::Circle => (1.0, [0.0; 4]),
+        OverlayShape::Ellipse => (2.0, [0.0; 4]),
+        OverlayShape::Capsule => (3.0, [0.0; 4]),
+        OverlayShape::Ring { inner_radius_frac } => {
+            (4.0, [inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
+        }
+        OverlayShape::Arc {
+            inner_radius_frac,
+            start_angle,
+            end_angle,
+        } => (
+            5.0,
+            [inner_radius_frac.clamp(0.0, 1.0), start_angle, end_angle, 0.0],
+        ),
+        OverlayShape::Triangle { direction } => {
+            let dir_f = match direction {
+                TriangleDirection::Up => 0.0,
+                TriangleDirection::Down => 1.0,
+                TriangleDirection::Left => 2.0,
+                TriangleDirection::Right => 3.0,
+            };
+            (6.0, [dir_f, 0.0, 0.0, 0.0])
+        }
+        OverlayShape::Line { thickness, cap } => {
+            let cap_f = match cap {
+                LineCap::Round => 0.0,
+                LineCap::Square => 1.0,
+            };
+            (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
+        }
+        OverlayShape::Star {
+            points,
+            inner_radius_frac,
+        } => (
+            8.0,
+            [points.max(3) as f32, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0],
+        ),
+        OverlayShape::RegularPolygon { sides } => (9.0, [sides.max(3) as f32, 0.0, 0.0, 0.0]),
+        OverlayShape::Cross { arm_width_frac } => {
+            (10.0, [arm_width_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
+        }
+    }
+}
+
+/// Build the per-frame clip-shape registry from the overlay shapes that are clip
+/// masks (`clip_mask_id` set). Returns the GPU array (framebuffer-pixel geometry)
+/// and a map from `clip_mask_id` to its index in that array. A mask's own `clip_id`
+/// links it to a parent, so nested masks compose by intersection.
+fn build_clip_shapes(
+    shapes: &[crate::renderer::types::OverlayShapeItem],
+    ppp: f32,
+) -> (
+    Vec<crate::resources::ClipShapeGpu>,
+    std::collections::HashMap<u32, i32>,
+) {
+    // Collect masks in stable order, recording each id's index.
+    let mut index_of: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
+    let mut masks: Vec<&crate::renderer::types::OverlayShapeItem> = Vec::new();
+    for s in shapes {
+        if let Some(id) = s.clip_mask_id {
+            if let std::collections::hash_map::Entry::Vacant(e) = index_of.entry(id) {
+                e.insert(masks.len() as i32);
+                masks.push(s);
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(masks.len());
+    for s in &masks {
+        let hw = s.size[0] * 0.5;
+        let hh = s.size[1] * 0.5;
+        let (shape_type, radii_l) = encode_overlay_shape(&s.shape, hw, hh);
+        // Scale to framebuffer pixels. Length-type radii (rounded-rect corners at
+        // shape_type 0, line thickness at 7) scale by ppp; fractions and angles do not.
+        let mut radii = radii_l;
+        let st = shape_type as i32;
+        if st == 0 {
+            for r in radii.iter_mut() {
+                *r *= ppp;
+            }
+        } else if st == 7 {
+            radii[0] *= ppp;
+        }
+        let center = [(s.position[0] + hw) * ppp, (s.position[1] + hh) * ppp];
+        let half = [hw * ppp, hh * ppp];
+        let parent = s
+            .clip_id
+            .and_then(|pid| index_of.get(&pid).copied())
+            .unwrap_or(-1);
+        out.push(crate::resources::ClipShapeGpu {
+            center,
+            half_size: half,
+            radii,
+            params: [shape_type, s.rotation, parent as f32, 0.0],
+            pivot: [s.rotation_pivot[0] * ppp, s.rotation_pivot[1] * ppp],
+            _pad: [0.0, 0.0],
+        });
+    }
+    (out, index_of)
+}
+
+/// Create the clip-shape storage buffer for a frame, always non-empty (a single
+/// zero entry when there are no masks) so the pipeline layout is always satisfied.
+fn upload_clip_buffer(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    clips: &[crate::resources::ClipShapeGpu],
+) -> crate::gpu::Buffer {
+    let dummy = [crate::resources::ClipShapeGpu {
+        center: [0.0, 0.0],
+        half_size: [0.0, 0.0],
+        radii: [0.0; 4],
+        params: [0.0, 0.0, -1.0, 0.0],
+        pivot: [0.0, 0.0],
+        _pad: [0.0, 0.0],
+    }];
+    let data: &[crate::resources::ClipShapeGpu] = if clips.is_empty() { &dummy } else { clips };
+    let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+        label: Some("overlay_clip_buf"),
+        size: std::mem::size_of_val(data) as u64,
+        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buf, 0, bytemuck::cast_slice(data));
+    buf
+}
+
 impl ViewportRenderer {
     /// Build the transform-gizmo overlay items for this frame, if a gizmo is
     /// active. Returns `(shapes, polylines)` in the overlay coordinate space,
@@ -98,6 +248,42 @@ impl ViewportRenderer {
                 // equal z_order always draw rect (background) before label (text).
                 let mut batches: Vec<(i32, Vec<crate::resources::OverlayTextVertex>)> = Vec::new();
 
+                // Clip masks: an overlay shape with `clip_mask_id` set contributes a
+                // clipping bounding box (framebuffer pixels), keyed by id. Rects and
+                // labels with a matching `clip_id` are clipped to it, the same way the
+                // shape pipeline clips shapes. (Shape-accurate SDF clipping is applied
+                // in the shape pass; text/rects use the bounding box, exact for the
+                // rectangular masks scroll containers use.)
+                let mut clip_bboxes: std::collections::HashMap<u32, [f32; 4]> =
+                    std::collections::HashMap::new();
+                for shape in &frame.overlays.shapes {
+                    if let Some(id) = shape.clip_mask_id {
+                        let x0 = shape.position[0] * ppp;
+                        let y0 = shape.position[1] * ppp;
+                        let x1 = (shape.position[0] + shape.size[0]) * ppp;
+                        let y1 = (shape.position[1] + shape.size[1]) * ppp;
+                        clip_bboxes.insert(id, [x0, y0, x1, y1]);
+                    }
+                }
+                // The full SDF clip registry (shared with the shape pass), for
+                // shape-accurate and nested clipping of text and rects.
+                let (clip_shapes, clip_index_of) = build_clip_shapes(&frame.overlays.shapes, ppp);
+                let stamp_clip = |batch: &mut [crate::resources::OverlayTextVertex],
+                                  clip_id: Option<u32>| {
+                    if let Some(id) = clip_id {
+                        let cr = clip_bboxes.get(&id).copied();
+                        let ci = clip_index_of.get(&id).copied();
+                        for v in batch.iter_mut() {
+                            if let Some(cr) = cr {
+                                v.clip_rect = cr;
+                            }
+                            if let Some(ci) = ci {
+                                v.clip_index = ci as f32;
+                            }
+                        }
+                    }
+                };
+
                 // --- Rects (processed first so equal-z_order rects draw before labels) ---
                 for rect in &frame.overlays.rects {
                     if rect.opacity <= 0.0 {
@@ -141,6 +327,7 @@ impl ViewportRenderer {
                         vp_h,
                     );
 
+                    stamp_clip(&mut batch, rect.clip_id);
                     batches.push((rect.z_order, batch));
                 }
 
@@ -304,6 +491,7 @@ impl ViewportRenderer {
                         );
                     }
 
+                    stamp_clip(&mut batch, label.clip_id);
                     batches.push((label.z_order, batch));
                 }
 
@@ -318,6 +506,7 @@ impl ViewportRenderer {
                 if !verts.is_empty() {
                     let vertex_buf =
                         upload_overlay_vbuf(device, queue, "overlay_label_vbuf", &verts);
+                    let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -334,12 +523,17 @@ impl ViewportRenderer {
                                 binding: 1,
                                 resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: clip_buf.as_entire_binding(),
+                            },
                         ],
                     });
                     self.label_gpu_data = Some(crate::resources::LabelGpuData {
                         vertex_buf,
                         vertex_count: verts.len() as u32,
                         bind_group,
+                        _clip_buf: clip_buf,
                     });
                 }
             }
@@ -643,6 +837,7 @@ impl ViewportRenderer {
                 if !verts.is_empty() {
                     let vertex_buf =
                         upload_overlay_vbuf(device, queue, "overlay_scalar_bar_vbuf", &verts);
+                    let clip_buf = upload_clip_buffer(device, queue, &[]);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -659,12 +854,17 @@ impl ViewportRenderer {
                                 binding: 1,
                                 resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: clip_buf.as_entire_binding(),
+                            },
                         ],
                     });
                     self.scalar_bar_gpu_data = Some(crate::resources::LabelGpuData {
                         vertex_buf,
                         vertex_count: verts.len() as u32,
                         bind_group,
+                        _clip_buf: clip_buf,
                     });
                 }
             }
@@ -831,6 +1031,7 @@ impl ViewportRenderer {
                 if !verts.is_empty() {
                     let vertex_buf =
                         upload_overlay_vbuf(device, queue, "overlay_ruler_vbuf", &verts);
+                    let clip_buf = upload_clip_buffer(device, queue, &[]);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -847,12 +1048,17 @@ impl ViewportRenderer {
                                 binding: 1,
                                 resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: clip_buf.as_entire_binding(),
+                            },
                         ],
                     });
                     self.ruler_gpu_data = Some(crate::resources::LabelGpuData {
                         vertex_buf,
                         vertex_count: verts.len() as u32,
                         bind_group,
+                        _clip_buf: clip_buf,
                     });
                 }
             }
@@ -965,6 +1171,7 @@ impl ViewportRenderer {
 
                 if !verts.is_empty() {
                     let vertex_buf = upload_overlay_vbuf(device, queue, "loading_bar_vbuf", &verts);
+                    let clip_buf = upload_clip_buffer(device, queue, &[]);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -981,12 +1188,17 @@ impl ViewportRenderer {
                                 binding: 1,
                                 resource: crate::gpu::BindingResource::Sampler(sampler),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: clip_buf.as_entire_binding(),
+                            },
                         ],
                     });
                     self.loading_bar_gpu_data = Some(crate::resources::LabelGpuData {
                         vertex_buf,
                         vertex_count: verts.len() as u32,
                         bind_group,
+                        _clip_buf: clip_buf,
                     });
                 }
             }
@@ -1075,6 +1287,10 @@ impl ViewportRenderer {
                         clip_rects.insert(id, [x0, y0, x1, y1]);
                     }
                 }
+                // The SDF clip registry. Built from `frame.overlays.shapes` (not
+                // `sorted`) so the mask indices match exactly what the label pass
+                // assigned, since text and shapes reference the same masks by index.
+                let (clip_shapes, clip_index_of) = build_clip_shapes(&frame.overlays.shapes, ppp);
 
                 for shape_orig in &sorted {
                     // Mask-only shapes contribute a clip rectangle but are
@@ -1531,6 +1747,10 @@ impl ViewportRenderer {
                             .clip_id
                             .and_then(|id| clip_rects.get(&id).copied())
                             .unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                        let clip_index = shape
+                            .clip_id
+                            .and_then(|id| clip_index_of.get(&id).copied())
+                            .unwrap_or(-1) as f32;
                         // gradient_params is now vec4: [type, angle, stop_count, _pad]
                         let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
 
@@ -1614,7 +1834,7 @@ impl ViewportRenderer {
                                 shadow_index,
                                 rotation_pivot,
                                 clip_rect,
-                                _reserved: 0.0,
+                                clip_index,
                                 stop_colour_c: stop_colours[2],
                                 stop_colour_d: stop_colours[3],
                                 stop_positions,
@@ -1710,7 +1930,7 @@ impl ViewportRenderer {
                 // The solid pipeline layout always expects group 0, so we
                 // provide at least one (dummy) element even when no shape has
                 // shadows.
-                let (shadow_bind_group, shadow_buf) = if solid_vbuf.is_some() {
+                let (shadow_bind_group, shadow_buf, shape_clip_buf) = if solid_vbuf.is_some() {
                     if shadow_layers.is_empty() {
                         shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                             colour: [0.0; 4],
@@ -1725,19 +1945,26 @@ impl ViewportRenderer {
                         mapped_at_creation: false,
                     });
                     queue.write_buffer(&buf, 0, bytemuck::cast_slice(&shadow_layers));
+                    let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
                     let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
                         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("overlay_shape_shadow_bg"),
                             layout: bgl,
-                            entries: &[crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: buf.as_entire_binding(),
-                            }],
+                            entries: &[
+                                crate::gpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: clip_buf.as_entire_binding(),
+                                },
+                            ],
                         })
                     });
-                    (bg, Some(buf))
+                    (bg, Some(buf), Some(clip_buf))
                 } else {
-                    (None, None)
+                    (None, None, None)
                 };
 
                 let mut tex_batches = Vec::new();
@@ -1801,6 +2028,7 @@ impl ViewportRenderer {
                         vertex_count: solid_verts.len() as u32,
                         shadow_bind_group,
                         _shadow_buf: shadow_buf,
+                        _clip_buf: shape_clip_buf,
                         tex_batches,
                         blur_vertex_buf: blur_vbuf,
                         blur_vertex_count: blur_verts.len() as u32,
@@ -1809,5 +2037,50 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod clip_registry_tests {
+    use super::build_clip_shapes;
+    use crate::renderer::types::{OverlayShape, OverlayShapeItem};
+
+    #[test]
+    fn indexes_chains_and_scales_masks() {
+        // A rounded-rect parent mask (id 10) and a circle child mask (id 20)
+        // clipped by the parent, at 2x device scale.
+        let parent = OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 8.0 },
+            [100.0, 50.0],
+            [200.0, 100.0],
+        )
+        .with_clip_mask(10);
+        let child = OverlayShapeItem::new(OverlayShape::Circle, [110.0, 60.0], [80.0, 80.0])
+            .with_clip_mask(20)
+            .with_clip(10);
+        let (gpu, map) = build_clip_shapes(&[parent, child], 2.0);
+
+        assert_eq!(gpu.len(), 2);
+        assert_eq!(map[&10], 0);
+        assert_eq!(map[&20], 1);
+
+        // Parent: centre and half-size scaled by ppp, corner radius scaled, no parent.
+        assert_eq!(gpu[0].center, [400.0, 200.0]);
+        assert_eq!(gpu[0].half_size, [200.0, 100.0]);
+        assert_eq!(gpu[0].radii, [16.0, 16.0, 16.0, 16.0]);
+        assert_eq!(gpu[0].params[0], 0.0); // rect/rounded shape type
+        assert_eq!(gpu[0].params[2], -1.0); // no parent
+
+        // Child: circle shape type, parent index points at the parent (0).
+        assert_eq!(gpu[1].params[0], 1.0);
+        assert_eq!(gpu[1].params[2], 0.0);
+    }
+
+    #[test]
+    fn non_mask_shapes_are_ignored() {
+        let drawn = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0]);
+        let (gpu, map) = build_clip_shapes(&[drawn], 1.0);
+        assert!(gpu.is_empty());
+        assert!(map.is_empty());
     }
 }

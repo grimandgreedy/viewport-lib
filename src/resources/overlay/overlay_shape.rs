@@ -41,24 +41,40 @@ impl crate::resources::DeviceResources {
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
 
-        // Group 0: read-only storage buffer of stacked shadow layers.
+        // Group 0: read-only storage buffers, binding 0 = stacked shadow layers,
+        // binding 1 = clip-mask shapes.
         let shadow_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_shape_shadow_bgl"),
-            entries: &[crate::gpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(
-                            std::mem::size_of::<OverlayShadowLayerGpu>() as u64
-                        )
-                        .unwrap(),
-                    ),
+            entries: &[
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(
+                            std::num::NonZeroU64::new(
+                                std::mem::size_of::<OverlayShadowLayerGpu>() as u64,
+                            )
+                            .unwrap(),
+                        ),
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(
+                            std::num::NonZeroU64::new(std::mem::size_of::<ClipShapeGpu>() as u64)
+                                .unwrap(),
+                        ),
+                    },
+                    count: None,
+                },
+            ],
         });
 
         let layout = crate::resources::builders::pipeline_layout(
@@ -486,6 +502,29 @@ pub(crate) struct OverlayShadowLayerGpu {
     pub params: [f32; 4],
 }
 
+/// One clip-mask shape as uploaded to the clip storage buffer, shared by the shape
+/// and text pipelines. All geometry is in framebuffer pixels so the fragment shader
+/// can evaluate the mask's SDF directly against `clip_position.xy`. A vertex's
+/// `clip_index` selects its entry; `params.z` chains to a parent entry (or `-1`),
+/// so nested masks compose by intersection.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ClipShapeGpu {
+    /// Mask centre in framebuffer pixels.
+    pub center: [f32; 2],
+    /// Mask half-extents in framebuffer pixels.
+    pub half_size: [f32; 2],
+    /// Shape-specific radii, matching the draw encoding (length terms scaled to
+    /// framebuffer pixels).
+    pub radii: [f32; 4],
+    /// `[shape_type, rotation_radians, parent_index, invert]`. `parent_index` is
+    /// `-1.0` for no parent; `invert` is reserved (`0.0`).
+    pub params: [f32; 4],
+    /// Rotation pivot in framebuffer pixels from the centre.
+    pub pivot: [f32; 2],
+    pub _pad: [f32; 2],
+}
+
 /// Per-vertex data for SDF overlay shapes.
 ///
 /// Each shape is a bounding quad (6 vertices). The fragment shader uses
@@ -531,8 +570,9 @@ pub(crate) struct OverlayShapeVertex {
     /// Clip rectangle in framebuffer pixels (x0, y0, x1, y1). All-zero means
     /// no clipping. Fragments outside the rect are discarded.
     pub clip_rect: [f32; 4],
-    /// Reserved for future per-shape scalars. Currently unused (zero).
-    pub _reserved: f32,
+    /// Index into the clip-shape storage buffer, or `-1.0` for no clip. Selects
+    /// the mask (and its parent chain) that clips this shape by SDF.
+    pub clip_index: f32,
     /// Third gradient colour stop. Unused for 2-stop and solid fills.
     pub stop_colour_c: [f32; 4],
     /// Fourth gradient colour stop. Unused for 2-stop and solid fills.
@@ -628,7 +668,7 @@ impl OverlayShapeVertex {
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 13: _reserved f32
+                // location 13: clip_index f32
                 crate::gpu::VertexAttribute {
                     offset: 160,
                     shader_location: 13,
@@ -836,6 +876,8 @@ pub(crate) struct OverlayShapeGpuData {
     pub shadow_bind_group: Option<crate::gpu::BindGroup>,
     /// Backing storage buffer for `shadow_bind_group`. Kept alive alongside it.
     pub _shadow_buf: Option<crate::gpu::Buffer>,
+    /// Backing clip-shape storage buffer for `shadow_bind_group` (binding 1).
+    pub _clip_buf: Option<crate::gpu::Buffer>,
     /// One batch per unique texture, drawn after solid shapes.
     pub tex_batches: Vec<OverlayShapeTexBatch>,
     /// Vertex buffer for backdrop-blur shapes (frosted glass). Uses the same

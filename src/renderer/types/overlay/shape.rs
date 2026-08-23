@@ -675,7 +675,8 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Clip this shape to the bounding box of the mask shape with this id.
+    /// Clip this shape to the mask shape with this id. The mask's SDF (not just
+    /// its bounding box) is used, and masks may nest.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
         self.clip_id = Some(clip_id);
         self

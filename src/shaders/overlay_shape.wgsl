@@ -17,8 +17,8 @@ struct VertexInput {
     @location(9) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
     @location(10) shadow_index:   vec4<f32>,  // base_index, outer_ct, inner_ct, border_mode
     @location(11) rotation_pivot: vec4<f32>,  // rotation, pivot_x, pivot_y, pad
-    @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip rect (x0,y0,x1,y1); all zero = no clip
-    @location(13) reserved:       f32,        // reserved / unused
+    @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(13) clip_index:     f32,        // clip-shape index, or -1 for none
     @location(14) stop_colour_c:  vec4<f32>,  // 3rd colour stop (multi-stop gradients)
     @location(15) stop_colour_d:  vec4<f32>,  // 4th colour stop
 };
@@ -30,6 +30,20 @@ struct ShadowLayer {
 };
 
 @group(0) @binding(0) var<storage, read> shadow_layers: array<ShadowLayer>;
+
+// One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
+// parent_index, invert). A vertex's `clip_index` selects an entry; `parent_index`
+// (or -1) chains to an enclosing mask so nested clips intersect.
+struct ClipShape {
+    center:    vec2<f32>,
+    half_size: vec2<f32>,
+    radii:     vec4<f32>,
+    params:    vec4<f32>,
+    pivot:     vec2<f32>,
+    pad:       vec2<f32>,
+};
+
+@group(0) @binding(1) var<storage, read> clip_shapes: array<ClipShape>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -45,6 +59,7 @@ struct VertexOutput {
     @location(9) @interpolate(flat) shadow_index:   vec4<f32>,
     @location(10) @interpolate(flat) rotation_pivot: vec4<f32>,
     @location(11) @interpolate(flat) clip_rect: vec4<f32>,
+    @location(12) @interpolate(flat) clip_index: f32,
     @location(13) @interpolate(flat) stop_colour_c:  vec4<f32>,
     @location(14) @interpolate(flat) stop_colour_d:  vec4<f32>,
     @location(15) @interpolate(flat) stop_positions: vec4<f32>,
@@ -66,6 +81,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.shadow_index    = in.shadow_index;
     out.rotation_pivot  = in.rotation_pivot;
     out.clip_rect       = in.clip_rect;
+    out.clip_index      = in.clip_index;
     out.stop_colour_c   = in.stop_colour_c;
     out.stop_colour_d   = in.stop_colour_d;
     out.stop_positions  = in.stop_positions;
@@ -338,18 +354,44 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
     }
 }
 
+// True if the framebuffer point `fp` is outside the clip mask at `idx0` or any of
+// its ancestors (masks intersect down the parent chain). Each mask is evaluated by
+// its SDF in its own rotated frame. A short guard bounds the chain length.
+fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
+    var idx = i32(idx0);
+    var guard = 0;
+    loop {
+        if (idx < 0 || guard >= 8) {
+            break;
+        }
+        let c = clip_shapes[idx];
+        let rc = cos(-c.params.y);
+        let rs = sin(-c.params.y);
+        let pd = (fp - c.center) - c.pivot;
+        let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
+        if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
+            return true;
+        }
+        idx = i32(c.params.z);
+        guard = guard + 1;
+    }
+    return false;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Clip rectangle: discard fragments outside the mask's bounding box when
-    // a clip is set. `clip_rect` is in framebuffer pixels (top-left origin),
-    // which matches `clip_position.xy` in the fragment stage. An all-zero
-    // rect means no clipping.
+    // Clip: first a cheap bounding-box reject (exact for rectangular masks), then
+    // the mask's SDF and its parent chain for shape-accurate and nested clipping.
+    // `clip_rect`/`clip_position.xy` are in framebuffer pixels (top-left origin).
     let cr = in.clip_rect;
     if (cr.z > cr.x && cr.w > cr.y) {
         let fp = in.clip_position.xy;
         if (fp.x < cr.x || fp.x > cr.z || fp.y < cr.y || fp.y > cr.w) {
             discard;
         }
+    }
+    if (in.clip_index >= 0.0 && clip_outside(in.clip_position.xy, in.clip_index)) {
+        discard;
     }
     // Rotate local position by -rotation around the pivot so the SDF
     // evaluates in the shape's unrotated frame; the visible result is the

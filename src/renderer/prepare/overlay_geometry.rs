@@ -188,7 +188,8 @@ pub(super) fn emit_filled_polyline(
                 uv: [0.0, 0.0],
                 colour,
                 use_texture: 0.0,
-                _pad: 0.0,
+                clip_index: -1.0,
+        clip_rect: [0.0; 4],
             });
         }
     }
@@ -333,7 +334,8 @@ pub(super) fn tessellate_polyline(
             uv: [0.0, 0.0],
             colour,
             use_texture: 0.0,
-            _pad: 0.0,
+            clip_index: -1.0,
+        clip_rect: [0.0; 4],
         });
     };
     for w in ribs.windows(2) {
@@ -484,7 +486,8 @@ pub(super) fn emit_disc(
         uv: [0.0, 0.0],
         colour,
         use_texture: 0.0,
-        _pad: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
     };
     for i in 0..segs {
         let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
@@ -650,7 +653,8 @@ pub(super) fn emit_solid_quad(
         uv,
         colour,
         use_texture: tex,
-        _pad: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
     };
     verts.extend_from_slice(&[v(tl), v(bl), v(tr), v(tr), v(bl), v(br)]);
 }
@@ -678,7 +682,8 @@ pub(super) fn emit_textured_quad(
         uv,
         colour,
         use_texture: tex,
-        _pad: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
     };
     // UV layout: top-left = uv_min, bottom-right = uv_max.
     verts.extend_from_slice(&[
@@ -724,7 +729,8 @@ pub(super) fn emit_line_quad(
         uv,
         colour,
         use_texture: tex,
-        _pad: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
     };
     verts.extend_from_slice(&[v(p0), v(p1), v(p2), v(p2), v(p1), v(p3)]);
 }
@@ -921,7 +927,8 @@ pub(super) fn emit_rounded_quad(
         uv,
         colour,
         use_texture: tex,
-        _pad: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
     };
     for (cx, cy, start, end) in corners {
         let center = px_to_ndc(cx, cy, vp_w, vp_h);

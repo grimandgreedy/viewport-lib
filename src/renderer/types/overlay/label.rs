@@ -124,6 +124,13 @@ pub struct LabelItem {
     /// Reserved for depth-based occlusion.  Not implemented yet: when `true`
     /// the label is still rendered; behaviour will be defined in a follow-up.
     pub occlude: bool,
+
+    /// When set, this label is clipped to the mask shape whose `clip_mask_id`
+    /// matches this value: glyph and background fragments outside the mask are
+    /// discarded, so text scrolled inside a region is contained. The mask can be
+    /// any overlay shape (rect, rounded rect, circle, ...), and masks may nest.
+    /// `None` (the default) draws the label unclipped, as does a missing mask.
+    pub clip_id: Option<u32>,
 }
 
 impl Default for LabelItem {
@@ -149,6 +156,7 @@ impl Default for LabelItem {
             border_radius: 0.0,
             z_order: 0,
             occlude: false,
+            clip_id: None,
         }
     }
 }
@@ -278,6 +286,14 @@ impl LabelItem {
     /// Set the depth-occlusion flag (reserved; not yet implemented).
     pub fn with_occlude(mut self, occlude: bool) -> Self {
         self.occlude = occlude;
+        self
+    }
+
+    /// Clip the label to the mask shape with this id (registered via
+    /// [`OverlayShapeItem::with_clip_mask`]). Fragments outside the mask are
+    /// discarded, so text scrolled inside a region is contained.
+    pub fn with_clip(mut self, clip_id: u32) -> Self {
+        self.clip_id = Some(clip_id);
         self
     }
 }

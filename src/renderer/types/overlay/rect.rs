@@ -26,6 +26,12 @@ pub struct OverlayRectItem {
     pub border_width: f32,
     /// Draw order relative to other rects. Lower values render first (further back).
     pub z_order: i32,
+    /// When set, this rect is clipped to the mask shape whose `clip_mask_id`
+    /// matches this value: fragments outside the mask are discarded, so the rect
+    /// is contained within a scroll well or masked panel. The mask can be any
+    /// overlay shape, and masks may nest. `None` (the default) draws it
+    /// unclipped, as does a missing mask.
+    pub clip_id: Option<u32>,
 }
 
 impl Default for OverlayRectItem {
@@ -39,6 +45,7 @@ impl Default for OverlayRectItem {
             border_colour: [1.0, 1.0, 1.0, 1.0],
             border_width: 0.0,
             z_order: 0,
+            clip_id: None,
         }
     }
 }
@@ -78,6 +85,14 @@ impl OverlayRectItem {
     /// Set the draw order. Lower values render first (further back).
     pub fn with_z_order(mut self, z_order: i32) -> Self {
         self.z_order = z_order;
+        self
+    }
+
+    /// Clip the rect to the mask shape with this id (registered via
+    /// [`crate::OverlayShapeItem::with_clip_mask`]). Fragments outside the mask
+    /// are discarded.
+    pub fn with_clip(mut self, clip_id: u32) -> Self {
+        self.clip_id = Some(clip_id);
         self
     }
 }

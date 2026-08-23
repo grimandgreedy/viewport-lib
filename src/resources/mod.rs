@@ -99,7 +99,7 @@ pub(crate) use self::types::{
     GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh, GridUniform,
     GroundPlaneUniform, ImageSliceGpuData, InstanceAabb, InstanceData, LabelGpuData,
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
-    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
+    ClipShapeGpu, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
     OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, RawGeomOutlineBuffers,
     SHADOW_ATLAS_SIZE, ScreenRectOutlineBuffers, ShadowAtlasUniform, ShadowCullState,
