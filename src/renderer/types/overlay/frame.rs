@@ -31,3 +31,20 @@ pub struct OverlayFrame {
     /// rects and labels; share their z-order space.
     pub polylines: Vec<OverlayPolylineItem>,
 }
+
+impl OverlayFrame {
+    /// Whether any overlay item carries a non-zero `z_order`. When every item is
+    /// at the default `0`, the renderer keeps its fixed family draw order and
+    /// skips building the cross-family ordering list, so the common case pays
+    /// nothing for the feature.
+    pub(crate) fn uses_nonzero_z_order(&self) -> bool {
+        self.shapes.iter().any(|i| i.z_order != 0)
+            || self.rects.iter().any(|i| i.z_order != 0)
+            || self.labels.iter().any(|i| i.z_order != 0)
+            || self.scalar_bars.iter().any(|i| i.z_order != 0)
+            || self.rulers.iter().any(|i| i.z_order != 0)
+            || self.images.iter().any(|i| i.z_order != 0)
+            || self.loading_bars.iter().any(|i| i.z_order != 0)
+            || self.polylines.iter().any(|i| i.z_order != 0)
+    }
+}

@@ -519,14 +519,16 @@ impl ViewportRenderer {
                 for (z, v) in batches {
                     let start = verts.len() as u32;
                     verts.extend(v);
-                    OverlayDrawSegment::push_text(
-                        &mut self.overlay_draw_segments,
-                        OverlayTextFamily::Merged,
-                        family_rank::TEXT_MERGED,
-                        z,
-                        start,
-                        verts.len() as u32 - start,
-                    );
+                    if self.overlay_uses_zorder {
+                        OverlayDrawSegment::push_text(
+                            &mut self.overlay_draw_segments,
+                            OverlayTextFamily::Merged,
+                            family_rank::TEXT_MERGED,
+                            z,
+                            start,
+                            verts.len() as u32 - start,
+                        );
+                    }
                 }
 
                 if !verts.is_empty() {
@@ -860,14 +862,16 @@ impl ViewportRenderer {
                         }
                     }
 
-                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
-                        &mut self.overlay_draw_segments,
-                        crate::renderer::overlay_draw_order::OverlayTextFamily::ScalarBar,
-                        crate::renderer::overlay_draw_order::family_rank::SCALAR_BAR,
-                        bar.z_order,
-                        seg_start,
-                        verts.len() as u32 - seg_start,
-                    );
+                    if self.overlay_uses_zorder {
+                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
+                            &mut self.overlay_draw_segments,
+                            crate::renderer::overlay_draw_order::OverlayTextFamily::ScalarBar,
+                            crate::renderer::overlay_draw_order::family_rank::SCALAR_BAR,
+                            bar.z_order,
+                            seg_start,
+                            verts.len() as u32 - seg_start,
+                        );
+                    }
                 }
 
                 // Upload any newly rasterized glyphs (may overlap with label upload above).
@@ -1067,14 +1071,16 @@ impl ViewportRenderer {
                         );
                     }
 
-                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
-                        &mut self.overlay_draw_segments,
-                        crate::renderer::overlay_draw_order::OverlayTextFamily::Ruler,
-                        crate::renderer::overlay_draw_order::family_rank::RULER,
-                        ruler.z_order,
-                        seg_start,
-                        verts.len() as u32 - seg_start,
-                    );
+                    if self.overlay_uses_zorder {
+                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
+                            &mut self.overlay_draw_segments,
+                            crate::renderer::overlay_draw_order::OverlayTextFamily::Ruler,
+                            crate::renderer::overlay_draw_order::family_rank::RULER,
+                            ruler.z_order,
+                            seg_start,
+                            verts.len() as u32 - seg_start,
+                        );
+                    }
                 }
 
                 // Upload any newly rasterized glyphs.
@@ -1219,14 +1225,16 @@ impl ViewportRenderer {
                         );
                     }
 
-                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
-                        &mut self.overlay_draw_segments,
-                        crate::renderer::overlay_draw_order::OverlayTextFamily::LoadingBar,
-                        crate::renderer::overlay_draw_order::family_rank::LOADING_BAR,
-                        bar.z_order,
-                        seg_start,
-                        verts.len() as u32 - seg_start,
-                    );
+                    if self.overlay_uses_zorder {
+                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
+                            &mut self.overlay_draw_segments,
+                            crate::renderer::overlay_draw_order::OverlayTextFamily::LoadingBar,
+                            crate::renderer::overlay_draw_order::family_rank::LOADING_BAR,
+                            bar.z_order,
+                            seg_start,
+                            verts.len() as u32 - seg_start,
+                        );
+                    }
                 }
 
                 self.resources.content.glyph_atlas.upload_if_dirty(queue);
@@ -1909,12 +1917,14 @@ impl ViewportRenderer {
                                 stop_positions,
                             });
                         }
-                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
-                            &mut self.overlay_draw_segments,
-                            shape.z_order,
-                            solid_seg_start,
-                            solid_verts.len() as u32 - solid_seg_start,
-                        );
+                        if self.overlay_uses_zorder {
+                            crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
+                                &mut self.overlay_draw_segments,
+                                shape.z_order,
+                                solid_seg_start,
+                                solid_verts.len() as u32 - solid_seg_start,
+                            );
+                        }
                     }
                 }
 
@@ -2085,22 +2095,24 @@ impl ViewportRenderer {
                                 vertex_count: verts.len() as u32,
                                 bind_group,
                             });
-                            let z = tex_group_z
-                                .get(group_idx)
-                                .copied()
-                                .filter(|z| *z != i32::MAX)
-                                .unwrap_or(0);
-                            self.overlay_draw_segments.push(
-                                crate::renderer::overlay_draw_order::OverlayDrawSegment {
-                                    z_order: z,
-                                    family_rank:
-                                        crate::renderer::overlay_draw_order::family_rank::SHAPE,
-                                    source:
-                                        crate::renderer::overlay_draw_order::OverlayDrawSource::ShapeTex {
-                                            batch_index,
-                                        },
-                                },
-                            );
+                            if self.overlay_uses_zorder {
+                                let z = tex_group_z
+                                    .get(group_idx)
+                                    .copied()
+                                    .filter(|z| *z != i32::MAX)
+                                    .unwrap_or(0);
+                                self.overlay_draw_segments.push(
+                                    crate::renderer::overlay_draw_order::OverlayDrawSegment {
+                                        z_order: z,
+                                        family_rank:
+                                            crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                                        source:
+                                            crate::renderer::overlay_draw_order::OverlayDrawSource::ShapeTex {
+                                                batch_index,
+                                            },
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -2139,6 +2151,11 @@ impl ViewportRenderer {
     /// shared scene phase (`upload_images`), and the same non-empty filter is
     /// applied so `index` lines up with `overlay_image_gpu_data`.
     pub(super) fn finalize_overlay_draw_order(&mut self, frame: &FrameData) {
+        // When no overlay uses z_order, the family passes recorded nothing and
+        // the emit path keeps its fixed order; there is nothing to finalize.
+        if !self.overlay_uses_zorder {
+            return;
+        }
         use crate::renderer::overlay_draw_order::{
             OverlayDrawSegment, OverlayDrawSource, family_rank, sort_overlay_segments,
         };

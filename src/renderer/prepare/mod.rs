@@ -912,9 +912,12 @@ impl ViewportRenderer {
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 
-        // Overlay families each build a per-family vertex buffer and record
-        // their draw segments into `overlay_draw_segments`; `finalize_overlay_draw_order`
-        // then adds the image segments and sorts everything into paint order.
+        // Overlay families each build a per-family vertex buffer. When any item
+        // carries a non-zero `z_order`, they also record their draw segments into
+        // `overlay_draw_segments`, which `finalize_overlay_draw_order` sorts into
+        // a single cross-family paint order; otherwise the emit path keeps its
+        // fixed family order and the list stays empty.
+        self.overlay_uses_zorder = frame.overlays.uses_nonzero_z_order();
         self.overlay_draw_segments.clear();
         self.prepare_overlay_labels(device, queue, frame);
         self.prepare_scalar_bars(device, queue, frame);

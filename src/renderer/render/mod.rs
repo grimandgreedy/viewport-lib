@@ -30,13 +30,14 @@ pub(crate) fn emit_indirect_run(
     }
 }
 
-/// Emit the 2D overlay draw calls shared by every paint path: SDF shapes,
-/// rects, labels, scalar bars, rulers, loading bars, and overlay images, in
-/// back-to-front order. Each block is guarded by its own prepared GPU data, so
-/// a path with no data for a given overlay skips it. Run after all scene
-/// content so the overlays sit on top. The overlay pipelines are format-neutral
-/// (no separate LDR/HDR variant), so this is shared verbatim across paths.
-macro_rules! emit_overlay_2d {
+/// Emit the 2D overlay draw calls in the fixed family order used when no
+/// overlay carries a non-zero `z_order`: SDF shapes, rects, labels, scalar bars,
+/// rulers, loading bars, and overlay images, back to front. Each block is
+/// guarded by its own prepared GPU data, so a path with no data for a given
+/// overlay skips it. Run after all scene content so the overlays sit on top.
+/// The overlay pipelines are format-neutral (no separate LDR/HDR variant), so
+/// this is shared verbatim across paths.
+macro_rules! emit_overlay_2d_hardcoded {
     ($this:ident, $render_pass:ident) => {{
         // SDF overlay shapes (drawn before rects and labels).
         if let Some(ref sd) = $this.overlay_shape_gpu_data {
@@ -115,6 +116,117 @@ macro_rules! emit_overlay_2d {
                     $render_pass.draw(0..6, 0..1);
                 }
             }
+        }
+    }};
+}
+
+/// Emit the 2D overlay draw calls by walking `overlay_draw_segments`, the
+/// cross-family draw list sorted by `(z_order, family_rank)`. Used when any
+/// overlay carries a non-zero `z_order`, so a shape can draw above a label or an
+/// image can sit below other chrome. The pipeline is switched only when it
+/// changes between consecutive segments, so runs of the same pipeline (the usual
+/// case) stay batched.
+macro_rules! emit_overlay_2d_ordered {
+    ($this:ident, $render_pass:ident) => {{
+        use crate::renderer::overlay_draw_order::{OverlayDrawSource, OverlayTextFamily};
+        // Which pipeline is currently bound, so same-pipeline segments avoid a
+        // redundant set_pipeline.
+        #[derive(PartialEq)]
+        enum LastPipe {
+            None,
+            Shape,
+            ShapeTex,
+            Text,
+            Image,
+        }
+        let mut last_pipe = LastPipe::None;
+        for seg in &$this.overlay_draw_segments {
+            match seg.source {
+                OverlayDrawSource::Shape {
+                    vertex_start,
+                    vertex_count,
+                } => {
+                    if let Some(ref sd) = $this.overlay_shape_gpu_data {
+                        if let (Some(pipeline), Some(vbuf), Some(shadow_bg)) = (
+                            &$this.resources.overlay_shape.pipeline,
+                            &sd.vertex_buf,
+                            &sd.shadow_bind_group,
+                        ) {
+                            if last_pipe != LastPipe::Shape {
+                                $render_pass.set_pipeline(pipeline);
+                                last_pipe = LastPipe::Shape;
+                            }
+                            $render_pass.set_bind_group(0, shadow_bg, &[]);
+                            $render_pass.set_vertex_buffer(0, vbuf.slice(..));
+                            $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
+                        }
+                    }
+                }
+                OverlayDrawSource::ShapeTex { batch_index } => {
+                    if let Some(ref sd) = $this.overlay_shape_gpu_data {
+                        if let (Some(pipeline), Some(batch)) = (
+                            &$this.resources.overlay_shape.tex_pipeline,
+                            sd.tex_batches.get(batch_index as usize),
+                        ) {
+                            if last_pipe != LastPipe::ShapeTex {
+                                $render_pass.set_pipeline(pipeline);
+                                last_pipe = LastPipe::ShapeTex;
+                            }
+                            $render_pass.set_bind_group(0, &batch.bind_group, &[]);
+                            $render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
+                            $render_pass.draw(0..batch.vertex_count, 0..1);
+                        }
+                    }
+                }
+                OverlayDrawSource::Text {
+                    family,
+                    vertex_start,
+                    vertex_count,
+                } => {
+                    let data = match family {
+                        OverlayTextFamily::Merged => $this.label_gpu_data.as_ref(),
+                        OverlayTextFamily::ScalarBar => $this.scalar_bar_gpu_data.as_ref(),
+                        OverlayTextFamily::Ruler => $this.ruler_gpu_data.as_ref(),
+                        OverlayTextFamily::LoadingBar => $this.loading_bar_gpu_data.as_ref(),
+                    };
+                    if let (Some(pipeline), Some(td)) =
+                        (&$this.resources.overlay_text.pipeline, data)
+                    {
+                        if last_pipe != LastPipe::Text {
+                            $render_pass.set_pipeline(pipeline);
+                            last_pipe = LastPipe::Text;
+                        }
+                        $render_pass.set_bind_group(0, &td.bind_group, &[]);
+                        $render_pass.set_vertex_buffer(0, td.vertex_buf.slice(..));
+                        $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
+                    }
+                }
+                OverlayDrawSource::Image { index } => {
+                    if let (Some(pipeline), Some(gpu)) = (
+                        &$this.resources.screen_image.pipeline,
+                        $this.overlay_image_gpu_data.get(index as usize),
+                    ) {
+                        if last_pipe != LastPipe::Image {
+                            $render_pass.set_pipeline(pipeline);
+                            last_pipe = LastPipe::Image;
+                        }
+                        $render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                        $render_pass.draw(0..6, 0..1);
+                    }
+                }
+            }
+        }
+    }};
+}
+
+/// Emit the 2D overlay draw calls. Dispatches to the fixed-order fast path when
+/// no overlay uses `z_order`, or the sorted segment walk when one does.
+macro_rules! emit_overlay_2d {
+    ($this:ident, $render_pass:ident) => {{
+        if $this.overlay_uses_zorder {
+            emit_overlay_2d_ordered!($this, $render_pass);
+        } else {
+            emit_overlay_2d_hardcoded!($this, $render_pass);
         }
     }};
 }

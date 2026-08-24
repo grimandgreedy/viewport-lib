@@ -444,6 +444,10 @@ pub struct ViewportRenderer {
     /// emit path walks them in sorted order so `z_order` composes across overlay
     /// families. Rebuilt each frame, allocation reused.
     overlay_draw_segments: Vec<overlay_draw_order::OverlayDrawSegment>,
+    /// Set when any overlay item this frame carries a non-zero `z_order`. When
+    /// false, the segment list is left empty and the emit path uses its fixed
+    /// family order, so scenes that never touch `z_order` pay nothing.
+    overlay_uses_zorder: bool,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -921,6 +925,7 @@ impl ViewportRenderer {
             overlay_rect_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_draw_segments: Vec::new(),
+            overlay_uses_zorder: false,
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),
