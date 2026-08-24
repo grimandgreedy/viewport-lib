@@ -551,6 +551,28 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             return;
         };
 
+        // A typed character becomes a Character event, alongside the Key event the match
+        // below still produces. winit has already resolved the keyboard layout, shift
+        // state, and dead keys into `event.text`, so this is the committed text; control
+        // keys (backspace, enter, arrows) carry no text and flow as keys. Route it exactly
+        // like every other translated event: without an input handler, feed the session
+        // directly (its numeric-input buffer keeps only digits, `.`, and `-`); with one,
+        // buffer it so the handler decides what the viewport sees each frame.
+        if let WindowEvent::KeyboardInput { event: key_event, .. } = &event {
+            if key_event.state == ::winit::event::ElementState::Pressed {
+                if let Some(text) = &key_event.text {
+                    for c in text.chars().filter(|c| !c.is_control()) {
+                        let ev = ViewportEvent::Character(c);
+                        if self.input.is_none() {
+                            state.session.handle_event(ev.clone());
+                        }
+                        self.events.push(ev);
+                    }
+                    state.window.request_redraw();
+                }
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
 
