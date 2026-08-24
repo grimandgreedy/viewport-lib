@@ -37,6 +37,9 @@ pub struct RulerItem {
     pub label_format: Option<String>,
     /// Draw small perpendicular tick marks at each endpoint. Default: `true`.
     pub end_caps: bool,
+    /// Draw order relative to other overlay items. Lower values render first
+    /// (further back).
+    pub z_order: i32,
 }
 
 impl Default for RulerItem {
@@ -51,6 +54,7 @@ impl Default for RulerItem {
             label_colour: [1.0, 1.0, 1.0, 1.0],
             label_format: None,
             end_caps: true,
+            z_order: 0,
         }
     }
 }
@@ -107,6 +111,13 @@ impl RulerItem {
     /// Set whether to draw perpendicular tick marks at each endpoint.
     pub fn with_end_caps(mut self, end_caps: bool) -> Self {
         self.end_caps = end_caps;
+        self
+    }
+
+    /// Set the draw order relative to other overlay items. Lower values render
+    /// first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
         self
     }
 }

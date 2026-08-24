@@ -95,6 +95,10 @@ pub struct ScalarBarItem {
     ///
     /// `None` (default) falls back to `font_size`.
     pub title_font_size: Option<f32>,
+
+    /// Draw order relative to other overlay items. Lower values render first
+    /// (further back).
+    pub z_order: i32,
 }
 
 impl Default for ScalarBarItem {
@@ -116,6 +120,7 @@ impl Default for ScalarBarItem {
             background_colour: [0.0, 0.0, 0.0, 0.63],
             ticks_reversed: false,
             title_font_size: None,
+            z_order: 0,
         }
     }
 }
@@ -213,6 +218,13 @@ impl ScalarBarItem {
     /// Set the font size used for the title text, overriding `font_size`.
     pub fn with_title_font_size(mut self, title_font_size: f32) -> Self {
         self.title_font_size = Some(title_font_size);
+        self
+    }
+
+    /// Set the draw order relative to other overlay items. Lower values render
+    /// first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
         self
     }
 }

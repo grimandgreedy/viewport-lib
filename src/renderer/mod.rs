@@ -27,6 +27,7 @@ pub use picking::{
     PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo,
 };
 mod capture;
+mod overlay_draw_order;
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -438,6 +439,11 @@ pub struct ViewportRenderer {
     overlay_rect_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
     overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
+    /// Per-frame ordered overlay draw list. The overlay prepare passes record one
+    /// segment per contiguous draw, tagged with `z_order` and family rank; the
+    /// emit path walks them in sorted order so `z_order` composes across overlay
+    /// families. Rebuilt each frame, allocation reused.
+    overlay_draw_segments: Vec<overlay_draw_order::OverlayDrawSegment>,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -914,6 +920,7 @@ impl ViewportRenderer {
             loading_bar_gpu_data: None,
             overlay_rect_gpu_data: None,
             overlay_shape_gpu_data: None,
+            overlay_draw_segments: Vec::new(),
             backdrop_blur_state: None,
             viewport_slots: Vec::new(),
             compute_filter_results: Vec::new(),

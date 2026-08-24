@@ -912,11 +912,16 @@ impl ViewportRenderer {
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 
+        // Overlay families each build a per-family vertex buffer and record
+        // their draw segments into `overlay_draw_segments`; `finalize_overlay_draw_order`
+        // then adds the image segments and sorts everything into paint order.
+        self.overlay_draw_segments.clear();
         self.prepare_overlay_labels(device, queue, frame);
         self.prepare_scalar_bars(device, queue, frame);
         self.prepare_rulers(device, queue, frame);
         self.prepare_loading_bars(device, queue, frame);
         self.prepare_overlay_shapes(device, queue, frame);
+        self.finalize_overlay_draw_order(frame);
         self.prepare_splat_sort(device, queue, frame);
         self.prepare_splat_wireframe(device, queue, frame);
         self.prepare_sprite_wireframe(device, queue, frame);

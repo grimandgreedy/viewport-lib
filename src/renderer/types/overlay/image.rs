@@ -24,6 +24,9 @@ pub struct OverlayImageItem {
     pub scale: f32,
     /// Overall opacity multiplier applied on top of per-pixel alpha. Default: `1.0`.
     pub alpha: f32,
+    /// Draw order relative to other overlay items. Lower values render first
+    /// (further back).
+    pub z_order: i32,
 }
 
 impl Default for OverlayImageItem {
@@ -35,6 +38,7 @@ impl Default for OverlayImageItem {
             anchor: ImageAnchor::TopLeft,
             scale: 1.0,
             alpha: 1.0,
+            z_order: 0,
         }
     }
 }
@@ -67,6 +71,13 @@ impl OverlayImageItem {
     /// Set the overall opacity multiplier applied on top of per-pixel alpha.
     pub fn with_alpha(mut self, alpha: f32) -> Self {
         self.alpha = alpha;
+        self
+    }
+
+    /// Set the draw order relative to other overlay items. Lower values render
+    /// first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
         self
     }
 }

@@ -47,6 +47,9 @@ pub struct LoadingBarItem {
     pub corner_radius: f32,
     /// Font for the label text. `None` uses the built-in default font.
     pub font: Option<crate::resources::overlay::font::FontHandle>,
+    /// Draw order relative to other overlay items. Lower values render first
+    /// (further back).
+    pub z_order: i32,
 }
 
 impl Default for LoadingBarItem {
@@ -64,6 +67,7 @@ impl Default for LoadingBarItem {
             font_size: 13.0,
             corner_radius: 4.0,
             font: None,
+            z_order: 0,
         }
     }
 }
@@ -143,6 +147,13 @@ impl LoadingBarItem {
     /// is used.
     pub fn with_font(mut self, font: crate::resources::overlay::font::FontHandle) -> Self {
         self.font = Some(font);
+        self
+    }
+
+    /// Set the draw order relative to other overlay items. Lower values render
+    /// first (further back).
+    pub fn with_z_order(mut self, z_order: i32) -> Self {
+        self.z_order = z_order;
         self
     }
 }

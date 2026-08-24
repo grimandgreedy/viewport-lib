@@ -62,7 +62,12 @@ fn encode_overlay_shape(
             end_angle,
         } => (
             5.0,
-            [inner_radius_frac.clamp(0.0, 1.0), start_angle, end_angle, 0.0],
+            [
+                inner_radius_frac.clamp(0.0, 1.0),
+                start_angle,
+                end_angle,
+                0.0,
+            ],
         ),
         OverlayShape::Triangle { direction } => {
             let dir_f = match direction {
@@ -85,7 +90,12 @@ fn encode_overlay_shape(
             inner_radius_frac,
         } => (
             8.0,
-            [points.max(3) as f32, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0],
+            [
+                points.max(3) as f32,
+                inner_radius_frac.clamp(0.0, 1.0),
+                0.0,
+                0.0,
+            ],
         ),
         OverlayShape::RegularPolygon { sides } => (9.0, [sides.max(3) as f32, 0.0, 0.0, 0.0]),
         OverlayShape::Cross { arm_width_frac } => {
@@ -500,8 +510,24 @@ impl ViewportRenderer {
 
                 // Stable sort preserves rect-before-label order for equal z_order values.
                 batches.sort_by_key(|(z, _)| *z);
-                let verts: Vec<crate::resources::OverlayTextVertex> =
-                    batches.into_iter().flat_map(|(_, v)| v).collect();
+                // Flatten into one buffer, recording a draw segment per distinct
+                // z_order run so this batch can interleave with other families.
+                use crate::renderer::overlay_draw_order::{
+                    OverlayDrawSegment, OverlayTextFamily, family_rank,
+                };
+                let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                for (z, v) in batches {
+                    let start = verts.len() as u32;
+                    verts.extend(v);
+                    OverlayDrawSegment::push_text(
+                        &mut self.overlay_draw_segments,
+                        OverlayTextFamily::Merged,
+                        family_rank::TEXT_MERGED,
+                        z,
+                        start,
+                        verts.len() as u32 - start,
+                    );
+                }
 
                 if !verts.is_empty() {
                     let vertex_buf =
@@ -568,6 +594,10 @@ impl ViewportRenderer {
                     else {
                         continue;
                     };
+
+                    // Vertex range this bar contributes, recorded as a draw
+                    // segment at the loop tail (no further `continue` below).
+                    let seg_start = verts.len() as u32;
 
                     let is_vertical = matches!(
                         bar.orientation,
@@ -829,6 +859,15 @@ impl ViewportRenderer {
                             );
                         }
                     }
+
+                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
+                        &mut self.overlay_draw_segments,
+                        crate::renderer::overlay_draw_order::OverlayTextFamily::ScalarBar,
+                        crate::renderer::overlay_draw_order::family_rank::SCALAR_BAR,
+                        bar.z_order,
+                        seg_start,
+                        verts.len() as u32 - seg_start,
+                    );
                 }
 
                 // Upload any newly rasterized glyphs (may overlap with label upload above).
@@ -893,6 +932,10 @@ impl ViewportRenderer {
                 let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
                 for ruler in &frame.overlays.rulers {
+                    // Vertex range this ruler contributes; recorded as a segment
+                    // at the loop tail. Rulers that cull below emit nothing, so
+                    // the zero-length range is dropped by `push_text`.
+                    let seg_start = verts.len() as u32;
                     // Project both endpoints to NDC (returns None only if behind camera).
                     let start_ndc = project_to_ndc(ruler.start, view, proj);
                     let end_ndc = project_to_ndc(ruler.end, view, proj);
@@ -1023,6 +1066,15 @@ impl ViewportRenderer {
                             vp_h,
                         );
                     }
+
+                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
+                        &mut self.overlay_draw_segments,
+                        crate::renderer::overlay_draw_order::OverlayTextFamily::Ruler,
+                        crate::renderer::overlay_draw_order::family_rank::RULER,
+                        ruler.z_order,
+                        seg_start,
+                        verts.len() as u32 - seg_start,
+                    );
                 }
 
                 // Upload any newly rasterized glyphs.
@@ -1084,6 +1136,7 @@ impl ViewportRenderer {
                 let mut verts: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
                 for bar in &frame.overlays.loading_bars {
+                    let seg_start = verts.len() as u32;
                     // Bar top-left corner based on anchor.
                     let bar_x = vp_w * 0.5 - bar.width_px * 0.5;
                     let bar_y = match bar.anchor {
@@ -1165,6 +1218,15 @@ impl ViewportRenderer {
                             vp_h,
                         );
                     }
+
+                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_text(
+                        &mut self.overlay_draw_segments,
+                        crate::renderer::overlay_draw_order::OverlayTextFamily::LoadingBar,
+                        crate::renderer::overlay_draw_order::family_rank::LOADING_BAR,
+                        bar.z_order,
+                        seg_start,
+                        verts.len() as u32 - seg_start,
+                    );
                 }
 
                 self.resources.content.glyph_atlas.upload_if_dirty(queue);
@@ -1265,6 +1327,10 @@ impl ViewportRenderer {
                 // One vertex list per unique texture ID, in order of first appearance.
                 let mut tex_groups: Vec<(u64, Vec<crate::resources::OverlayShapeTexVertex>)> =
                     Vec::new();
+                // Lowest z_order contributing to each tex group, parallel to
+                // `tex_groups`. A textured batch draws as one unit, so it orders
+                // against other families at its frontmost (lowest-z) shape.
+                let mut tex_group_z: Vec<i32> = Vec::new();
                 // Blur backdrop vertices (share the tex vertex layout with screen UVs).
                 let mut blur_verts: Vec<crate::resources::OverlayShapeTexVertex> = Vec::new();
                 let mut max_blur_radius: f32 = 0.0;
@@ -1629,8 +1695,10 @@ impl ViewportRenderer {
                             .position(|(id, _)| *id == tid)
                             .unwrap_or_else(|| {
                                 tex_groups.push((tid, Vec::new()));
+                                tex_group_z.push(i32::MAX);
                                 tex_groups.len() - 1
                             });
+                        tex_group_z[group_idx] = tex_group_z[group_idx].min(shape.z_order);
                         let group_verts = &mut tex_groups[group_idx].1;
 
                         // UV maps local_pos to [0,1] over the shape content area.
@@ -1819,6 +1887,7 @@ impl ViewportRenderer {
                             shape.rotation_pivot[1],
                             0.0,
                         ];
+                        let solid_seg_start = solid_verts.len() as u32;
                         for (px, py, lx, ly) in corners_px {
                             solid_verts.push(crate::resources::OverlayShapeVertex {
                                 position: px_to_ndc(px, py, vp_w, vp_h),
@@ -1840,6 +1909,12 @@ impl ViewportRenderer {
                                 stop_positions,
                             });
                         }
+                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape(
+                            &mut self.overlay_draw_segments,
+                            shape.z_order,
+                            solid_seg_start,
+                            solid_verts.len() as u32 - solid_seg_start,
+                        );
                     }
                 }
 
@@ -1862,8 +1937,10 @@ impl ViewportRenderer {
                         .position(|(id, _)| *id == tid)
                         .unwrap_or_else(|| {
                             tex_groups.push((tid, Vec::new()));
+                            tex_group_z.push(i32::MAX);
                             tex_groups.len() - 1
                         });
+                    tex_group_z[group_idx] = tex_group_z[group_idx].min(poly.z_order);
                     let group_verts = &mut tex_groups[group_idx].1;
                     let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
                     let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
@@ -1973,7 +2050,7 @@ impl ViewportRenderer {
                         self.resources.overlay_shape.tex_bgl.as_ref(),
                         self.resources.overlay_shape.tex_sampler.as_ref(),
                     ) {
-                        for (tid, verts) in &tex_groups {
+                        for (group_idx, (tid, verts)) in tex_groups.iter().enumerate() {
                             if verts.is_empty() {
                                 continue;
                             }
@@ -2002,11 +2079,28 @@ impl ViewportRenderer {
                                 });
                             let vertex_buf =
                                 upload_overlay_vbuf(device, queue, "overlay_shape_tex_vbuf", verts);
+                            let batch_index = tex_batches.len() as u32;
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {
                                 vertex_buf,
                                 vertex_count: verts.len() as u32,
                                 bind_group,
                             });
+                            let z = tex_group_z
+                                .get(group_idx)
+                                .copied()
+                                .filter(|z| *z != i32::MAX)
+                                .unwrap_or(0);
+                            self.overlay_draw_segments.push(
+                                crate::renderer::overlay_draw_order::OverlayDrawSegment {
+                                    z_order: z,
+                                    family_rank:
+                                        crate::renderer::overlay_draw_order::family_rank::SHAPE,
+                                    source:
+                                        crate::renderer::overlay_draw_order::OverlayDrawSource::ShapeTex {
+                                            batch_index,
+                                        },
+                                },
+                            );
                         }
                     }
                 }
@@ -2037,6 +2131,30 @@ impl ViewportRenderer {
                 }
             }
         }
+    }
+
+    /// Append the overlay-image draw segments, then sort the whole overlay draw
+    /// list into paint order. The family passes have already recorded their own
+    /// segments; images are added here because their GPU data is uploaded in the
+    /// shared scene phase (`upload_images`), and the same non-empty filter is
+    /// applied so `index` lines up with `overlay_image_gpu_data`.
+    pub(super) fn finalize_overlay_draw_order(&mut self, frame: &FrameData) {
+        use crate::renderer::overlay_draw_order::{
+            OverlayDrawSegment, OverlayDrawSource, family_rank, sort_overlay_segments,
+        };
+        let mut gpu_index = 0u32;
+        for item in &frame.overlays.images {
+            if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
+                continue;
+            }
+            self.overlay_draw_segments.push(OverlayDrawSegment {
+                z_order: item.z_order,
+                family_rank: family_rank::IMAGE,
+                source: OverlayDrawSource::Image { index: gpu_index },
+            });
+            gpu_index += 1;
+        }
+        sort_overlay_segments(&mut self.overlay_draw_segments);
     }
 }
 
