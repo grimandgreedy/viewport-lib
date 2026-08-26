@@ -241,6 +241,7 @@ impl ViewportRenderer {
         self.overlay_rect_gpu_data = None;
         let (_, gizmo_polylines) = self.gizmo_overlay_items(frame);
         let has_overlay = !frame.overlays.labels.is_empty()
+            || !frame.overlays.glyph_runs.is_empty()
             || !frame.overlays.rects.is_empty()
             || !frame.overlays.polylines.is_empty()
             || !gizmo_polylines.is_empty();
