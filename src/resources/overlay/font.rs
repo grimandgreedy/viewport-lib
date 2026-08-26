@@ -406,6 +406,71 @@ impl GlyphAtlas {
         }
     }
 
+    /// Lay out a run of pre-positioned glyphs and return positioned quads.
+    ///
+    /// Unlike [`layout_text`], the caller supplies each glyph's id and pen
+    /// position, so no shaping, kerning, or pen advance happens here: this only
+    /// rasterizes each glyph and places its bitmap quad. It is the back-end for
+    /// [`GlyphRunItem`], where a shaping engine upstream has already produced the
+    /// glyph ids and positions.
+    ///
+    /// `glyphs` yields `(glyph_id, x, y, payload)` where `x` and `y` are the pen
+    /// position in logical pixels relative to the run origin, and `payload` is any
+    /// per-glyph value the caller wants paired with the emitted quad (a tint
+    /// colour, for instance). Glyphs are rasterized at the physical size
+    /// (`font_size * ppp`) like [`layout_text`], and the returned quad positions
+    /// and sizes are converted back to logical pixels, so the run stays crisp on
+    /// HiDPI. Zero-area glyphs (whitespace and the like) are skipped, matching
+    /// [`layout_text`]; the payload is threaded through the skip so it stays
+    /// aligned with the quad it belongs to.
+    ///
+    /// [`layout_text`]: Self::layout_text
+    /// [`GlyphRunItem`]: crate::renderer::types::GlyphRunItem
+    pub fn layout_glyph_run<I, P>(
+        &mut self,
+        glyphs: I,
+        font_size: f32,
+        font: Option<FontHandle>,
+        ppp: f32,
+        device: &crate::gpu::Device,
+    ) -> Vec<(GlyphQuad, P)>
+    where
+        I: IntoIterator<Item = (u16, f32, f32, P)>,
+    {
+        let font_index = font.map_or(0, |h| h.0);
+        let px = font_size * ppp;
+        let size_tenths = (px * 10.0).round() as u32;
+        let inv = 1.0 / ppp;
+
+        let mut quads = Vec::new();
+        for (glyph_id, x, y, payload) in glyphs {
+            // Skip glyphs with no visible bitmap (whitespace), as `layout_text`
+            // does, so zero-area entries never reach the packer.
+            let m = self.fonts[font_index].metrics_indexed(glyph_id, px);
+            if m.width == 0 || m.height == 0 {
+                continue;
+            }
+
+            let entry = self.ensure_glyph(device, font_index, glyph_id, size_tenths, px);
+            let atlas_size = self.size as f32;
+
+            // Pen position arrives in logical pixels; the glyph's bitmap bearing
+            // and size come from the physical rasterization, so scale those by
+            // `inv` to land in the same logical space.
+            let quad = GlyphQuad {
+                pos: [x + entry.offset_x * inv, y + entry.offset_y * inv],
+                size: [entry.width as f32 * inv, entry.height as f32 * inv],
+                uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
+                uv_max: [
+                    (entry.x + entry.width) as f32 / atlas_size,
+                    (entry.y + entry.height) as f32 / atlas_size,
+                ],
+            };
+            quads.push((quad, payload));
+        }
+        quads
+    }
+
     /// Return the font ascent in pixels for the given font index and size.
     ///
     /// The ascent is the distance from the baseline to the top of the tallest

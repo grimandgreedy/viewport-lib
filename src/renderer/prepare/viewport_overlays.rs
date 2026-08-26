@@ -485,25 +485,60 @@ impl ViewportRenderer {
                     }
 
                     let text_colour = apply_opacity(label.colour, opacity);
-                    for gq in &layout.quads {
-                        let gx = text_x + gq.pos[0];
-                        let gy = text_y + ascent + gq.pos[1];
-                        emit_textured_quad(
-                            &mut batch,
-                            gx,
-                            gy,
-                            gx + gq.size[0],
-                            gy + gq.size[1],
-                            gq.uv_min,
-                            gq.uv_max,
-                            text_colour,
-                            vp_w,
-                            vp_h,
-                        );
-                    }
+                    // The label origin is the top-left of the text box; add the
+                    // ascent to reach the first baseline the quads are relative to.
+                    emit_glyph_quads(
+                        &mut batch,
+                        &layout.quads,
+                        text_x,
+                        text_y + ascent,
+                        text_colour,
+                        vp_w,
+                        vp_h,
+                    );
 
                     stamp_clip(&mut batch, label.clip_id);
                     batches.push((label.z_order, batch));
+                }
+
+                // --- Glyph runs (pre-positioned glyphs, drawn as given) ---
+                for run in &frame.overlays.glyph_runs {
+                    if run.glyphs.is_empty() || run.opacity <= 0.0 {
+                        continue;
+                    }
+
+                    let opacity = run.opacity.clamp(0.0, 1.0);
+                    // Each glyph carries its tint through layout so per-glyph
+                    // colours stay aligned with the quads after zero-area skips.
+                    // Glyphs without a per-glyph entry fall back to the run colour.
+                    let quads = self.resources.content.glyph_atlas.layout_glyph_run(
+                        run.glyphs.iter().enumerate().map(|(i, g)| {
+                            let colour = run.colours.get(i).copied().unwrap_or(run.colour);
+                            (g.glyph_id, g.x, g.y, apply_opacity(colour, opacity))
+                        }),
+                        run.font_size,
+                        run.font,
+                        ppp,
+                        device,
+                    );
+                    if quads.is_empty() {
+                        continue;
+                    }
+
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    // Positions are already relative to the run origin, so the run
+                    // origin is the only offset added; no ascent, unlike labels.
+                    emit_glyph_quads_colored(
+                        &mut batch,
+                        &quads,
+                        run.origin[0],
+                        run.origin[1],
+                        vp_w,
+                        vp_h,
+                    );
+
+                    stamp_clip(&mut batch, run.clip_id);
+                    batches.push((run.z_order, batch));
                 }
 
                 // Upload atlas if new glyphs were rasterized.

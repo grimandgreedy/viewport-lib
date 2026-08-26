@@ -1,9 +1,10 @@
 //! Overlays and annotations: the 2D layer viewport-lib draws over the 3D scene
 //! after post-processing. World-anchored labels and a ruler track scene points;
-//! a scalar bar acts as a colour legend; and a gallery of `OverlayShapeItem`s
-//! and `OverlayPolylineItem`s exercises SDF shapes, fills, gradients, shadows,
-//! border modes, animations, texture masking, 9-slice, clip masks, backdrop
-//! blur, and stroke patterns.
+//! a scalar bar acts as a colour legend; a `GlyphRunItem` draws pre-positioned,
+//! per-glyph-coloured glyphs (the low-level text path); and a gallery of
+//! `OverlayShapeItem`s and `OverlayPolylineItem`s exercises SDF shapes, fills,
+//! gradients, shadows, border modes, animations, texture masking, 9-slice, clip
+//! masks, backdrop blur, and stroke patterns.
 //!
 //! Everything overlay-side is rebuilt each frame and pushed into
 //! `session.frame_data_mut().overlays` after `ctx.drive_camera()`, because
@@ -14,11 +15,11 @@ use std::f32::consts::{PI, TAU};
 use eframe::egui;
 use glam::{Mat4, Vec3};
 use viewport_lib::{
-    AnimTrack, BorderMode, BuiltinColourmap, ColourmapId, GradientStop, LabelAnchor, LabelItem,
-    LineCap, Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PolylineCap, RepeatMode,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, StrokePattern,
-    TextureTransform, TileMode, TriangleDirection, primitives,
+    AnimTrack, BorderMode, BuiltinColourmap, ColourmapId, GlyphRunItem, GradientStop, LabelAnchor,
+    LabelItem, LineCap, Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing,
+    OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
+    PolylineCap, PositionedGlyph, RepeatMode, RulerItem, ScalarBarAnchor, ScalarBarItem,
+    ScalarBarOrientation, StrokePattern, TextureTransform, TileMode, TriangleDirection, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -57,6 +58,7 @@ pub struct OverlaysShowcase {
     bg_colour: [f32; 4],
     show_ruler: bool,
     show_labels: bool,
+    show_glyph_run: bool,
     show_shapes: bool,
     show_tex_shapes: bool,
     corner_radius: f32,
@@ -80,6 +82,7 @@ impl OverlaysShowcase {
             bg_colour: [0.0, 0.0, 0.0, 0.63],
             show_ruler: true,
             show_labels: true,
+            show_glyph_run: true,
             show_shapes: true,
             show_tex_shapes: true,
             corner_radius: 8.0,
@@ -156,6 +159,9 @@ impl Showcase for OverlaysShowcase {
         if self.show_labels {
             self.build_labels(&mut fd.overlays.labels);
         }
+        if self.show_glyph_run {
+            self.build_glyph_run(&mut fd.overlays.glyph_runs);
+        }
         if self.show_ruler {
             fd.overlays.rulers.push(self.build_ruler());
         }
@@ -167,7 +173,8 @@ impl Showcase for OverlaysShowcase {
 
     fn description(&self) -> &str {
         "The 2D overlay layer: labels and a ruler anchored to the 3D scene, a \
-         scalar-bar legend, and a gallery of overlay shapes and polylines."
+         scalar-bar legend, a pre-positioned glyph run, and a gallery of overlay \
+         shapes and polylines."
     }
 
     fn controls(&mut self, ui: &mut egui::Ui) {
@@ -235,6 +242,7 @@ impl Showcase for OverlaysShowcase {
         ui.separator();
         ui.heading("Annotations");
         ui.checkbox(&mut self.show_labels, "World labels");
+        ui.checkbox(&mut self.show_glyph_run, "Glyph run");
         ui.checkbox(&mut self.show_ruler, "Ruler");
 
         ui.separator();
@@ -283,6 +291,32 @@ impl OverlaysShowcase {
                     .with_anchor_align(LabelAnchor::Left),
             );
         }
+    }
+
+    /// A `GlyphRunItem`: glyphs placed and coloured one by one, which is what a
+    /// shaping engine would feed. `LabelItem` takes a string and lays it out;
+    /// this takes the glyphs already positioned, so here they ride an animated
+    /// wave with a per-glyph rainbow tint. The ids are raw font glyph indices
+    /// (no character lookup): the point is the caller-owned layout, not the text.
+    fn build_glyph_run(&self, out: &mut Vec<GlyphRunItem>) {
+        let count = 24usize;
+        let mut glyphs = Vec::with_capacity(count);
+        let mut colours = Vec::with_capacity(count);
+        for i in 0..count {
+            let x = i as f32 * 24.0;
+            let y = (i as f32 * 0.5 + self.time * 2.0).sin() * 12.0;
+            // Bias into the letter/digit range of the built-in font; a few ids
+            // may be blank and are simply skipped.
+            glyphs.push(PositionedGlyph::new(20 + i as u16, x, y));
+            let [r, g, b] = hsv_to_rgb(i as f32 / count as f32, 0.85, 1.0);
+            colours.push([r, g, b, 1.0]);
+        }
+        out.push(
+            GlyphRunItem::new(glyphs)
+                .with_origin([40.0, 80.0])
+                .with_font_size(30.0)
+                .with_colours(colours),
+        );
     }
 
     fn build_ruler(&self) -> RulerItem {

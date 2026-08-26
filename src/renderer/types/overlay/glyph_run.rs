@@ -37,8 +37,9 @@ impl PositionedGlyph {
 /// glyph ids for a font and submits them here, keeping the shaper itself out of
 /// viewport-lib.
 ///
-/// One run carries one font. A line that spans several fonts (script fallback)
-/// is submitted as several runs. Positions are relative to `origin`, so moving a
+/// One run carries one font. A line that spans several fonts (script fallback,
+/// or mixing a text font with an icon font) is submitted as several runs sharing
+/// a baseline, one per font. Positions are relative to `origin`, so moving a
 /// whole run is a change to `origin` alone.
 ///
 /// [`LabelItem`]: crate::renderer::types::LabelItem
@@ -59,8 +60,15 @@ pub struct GlyphRunItem {
     /// Positioned glyphs, in draw order.
     pub glyphs: Vec<PositionedGlyph>,
 
-    /// RGBA tint in linear float, applied to every glyph in the run.
+    /// RGBA tint in linear float, applied to every glyph in the run that does
+    /// not have its own entry in `colours`.
     pub colour: [f32; 4],
+
+    /// Optional per-glyph tint, parallel to `glyphs`. When non-empty, glyph `i`
+    /// uses `colours[i]`; glyphs past the end of this list (or all glyphs when it
+    /// is empty) fall back to `colour`. Use it for runs where glyphs differ in
+    /// colour, such as syntax highlighting.
+    pub colours: Vec<[f32; 4]>,
 
     /// Overall opacity multiplier applied to the run. Range 0.0 (invisible) to
     /// 1.0 (fully opaque).
@@ -86,6 +94,7 @@ impl Default for GlyphRunItem {
             origin: [0.0, 0.0],
             glyphs: Vec::new(),
             colour: [1.0, 1.0, 1.0, 1.0],
+            colours: Vec::new(),
             opacity: 1.0,
             z_order: 0,
             clip_id: None,
@@ -128,9 +137,17 @@ impl GlyphRunItem {
         self
     }
 
-    /// Set the run tint colour.
+    /// Set the run tint colour, used for any glyph without a per-glyph entry in
+    /// `colours`.
     pub fn with_colour(mut self, colour: [f32; 4]) -> Self {
         self.colour = colour;
+        self
+    }
+
+    /// Set per-glyph tint colours, parallel to the glyphs. Glyphs past the end of
+    /// this list fall back to the run `colour`.
+    pub fn with_colours(mut self, colours: impl Into<Vec<[f32; 4]>>) -> Self {
+        self.colours = colours.into();
         self
     }
 
@@ -168,6 +185,7 @@ mod tests {
         assert_eq!(run.font_size, 14.0);
         assert_eq!(run.origin, [0.0, 0.0]);
         assert!(run.glyphs.is_empty());
+        assert!(run.colours.is_empty());
         assert_eq!(run.opacity, 1.0);
         assert_eq!(run.z_order, 0);
         assert!(run.clip_id.is_none());
@@ -180,6 +198,7 @@ mod tests {
             .with_font_size(20.0)
             .with_origin([10.0, 12.0])
             .with_colour([1.0, 0.0, 0.0, 1.0])
+            .with_colours(vec![[0.0, 1.0, 0.0, 1.0]])
             .with_opacity(0.5)
             .with_z_order(3)
             .with_clip(7);
@@ -188,6 +207,7 @@ mod tests {
         assert_eq!(run.font_size, 20.0);
         assert_eq!(run.origin, [10.0, 12.0]);
         assert_eq!(run.colour, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(run.colours, vec![[0.0, 1.0, 0.0, 1.0]]);
         assert_eq!(run.opacity, 0.5);
         assert_eq!(run.z_order, 3);
         assert_eq!(run.clip_id, Some(7));
