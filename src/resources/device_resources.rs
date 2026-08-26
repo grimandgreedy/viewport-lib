@@ -523,8 +523,14 @@ pub struct ContentResources {
         crate::resources::handle::SlotStore<GpuProjectedTetMesh, crate::resources::ProjectedTetId>,
     /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
     pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
-    /// Persistent textures uploaded via `upload_overlay_texture`.
-    pub(crate) overlay_textures: crate::resources::handle::Registry<OverlayShapeTextureEntry>,
+    /// Textures for overlay shape fills: one-shot uploads (`upload_overlay_texture`)
+    /// and reusable streaming textures (`create_streaming_overlay_texture`). Slotted
+    /// with generational ids so a freed slot cannot alias a later upload, and the
+    /// per-entry byte charge tracks resident overlay-texture memory.
+    pub(crate) overlay_textures: crate::resources::handle::SlotStore<
+        OverlayShapeTextureEntry,
+        crate::renderer::OverlayTextureId,
+    >,
     /// Matcap textures (256x256 RGBA), indexed by `MatcapId::index`.
     pub(crate) matcap_textures: Vec<crate::gpu::Texture>,
     /// Texture views for each uploaded matcap.

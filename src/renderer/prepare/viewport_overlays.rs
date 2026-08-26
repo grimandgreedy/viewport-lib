@@ -1333,8 +1333,10 @@ impl ViewportRenderer {
                 // (outer layers first, then inner) via its `shadow_index`.
                 let mut shadow_layers: Vec<crate::resources::OverlayShadowLayerGpu> = Vec::new();
                 // One vertex list per unique texture ID, in order of first appearance.
-                let mut tex_groups: Vec<(u64, Vec<crate::resources::OverlayShapeTexVertex>)> =
-                    Vec::new();
+                let mut tex_groups: Vec<(
+                    crate::renderer::types::OverlayTextureId,
+                    Vec<crate::resources::OverlayShapeTexVertex>,
+                )> = Vec::new();
                 // Lowest z_order contributing to each tex group, parallel to
                 // `tex_groups`. A textured batch draws as one unit, so it orders
                 // against other families at its frontmost (lowest-z) shape.
@@ -1696,13 +1698,13 @@ impl ViewportRenderer {
                         (cx - ex, cy + ey, -ex, ey),
                     ];
 
-                    if let Some(crate::renderer::types::OverlayTextureId(tid)) = shape.texture {
+                    if let Some(tex_id) = shape.texture {
                         // Find or create a group for this texture ID.
                         let group_idx = tex_groups
                             .iter()
-                            .position(|(id, _)| *id == tid)
+                            .position(|(id, _)| *id == tex_id)
                             .unwrap_or_else(|| {
-                                tex_groups.push((tid, Vec::new()));
+                                tex_groups.push((tex_id, Vec::new()));
                                 tex_group_z.push(i32::MAX);
                                 tex_groups.len() - 1
                             });
@@ -1723,8 +1725,8 @@ impl ViewportRenderer {
                                     .resources
                                     .content
                                     .overlay_textures
-                                    .get(tid as usize)
-                                    .map(|t| t._texture.size())
+                                    .get(tex_id)
+                                    .map(|t| t.texture.size())
                                     .map(|s| (s.width as f32, s.height as f32))
                                     .unwrap_or((1.0, 1.0));
                                 let tw = tex_size.0.max(1.0);
@@ -1929,7 +1931,7 @@ impl ViewportRenderer {
                 }
 
                 for poly in &frame.overlays.polylines {
-                    let Some(crate::renderer::types::OverlayTextureId(tid)) = poly.texture else {
+                    let Some(tex_id) = poly.texture else {
                         continue;
                     };
                     if !poly.closed || poly.opacity <= 0.0 || poly.points.len() < 3 {
@@ -1944,9 +1946,9 @@ impl ViewportRenderer {
                     }
                     let group_idx = tex_groups
                         .iter()
-                        .position(|(id, _)| *id == tid)
+                        .position(|(id, _)| *id == tex_id)
                         .unwrap_or_else(|| {
-                            tex_groups.push((tid, Vec::new()));
+                            tex_groups.push((tex_id, Vec::new()));
                             tex_group_z.push(i32::MAX);
                             tex_groups.len() - 1
                         });
@@ -2060,12 +2062,11 @@ impl ViewportRenderer {
                         self.resources.overlay_shape.tex_bgl.as_ref(),
                         self.resources.overlay_shape.tex_sampler.as_ref(),
                     ) {
-                        for (group_idx, (tid, verts)) in tex_groups.iter().enumerate() {
+                        for (group_idx, (tex_id, verts)) in tex_groups.iter().enumerate() {
                             if verts.is_empty() {
                                 continue;
                             }
-                            let tidx = *tid as usize;
-                            let Some(entry) = self.resources.content.overlay_textures.get(tidx)
+                            let Some(entry) = self.resources.content.overlay_textures.get(*tex_id)
                             else {
                                 continue;
                             };

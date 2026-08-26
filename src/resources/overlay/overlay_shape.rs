@@ -54,7 +54,7 @@ impl crate::resources::DeviceResources {
                         has_dynamic_offset: false,
                         min_binding_size: Some(
                             std::num::NonZeroU64::new(
-                                std::mem::size_of::<OverlayShadowLayerGpu>() as u64,
+                                std::mem::size_of::<OverlayShadowLayerGpu>() as u64
                             )
                             .unwrap(),
                         ),
@@ -219,11 +219,15 @@ impl crate::resources::DeviceResources {
         self.overlay_shape.tex_pipeline = Some(pipeline);
     }
 
-    /// Upload RGBA8 pixel data as a persistent texture for overlay shape fills.
+    /// Upload RGBA8 pixel data as a texture for overlay shape fills.
     ///
     /// Returns an `OverlayTextureId` that can be stored in
-    /// `OverlayShapeItem::texture`. The texture persists for the lifetime of
-    /// this `DeviceResources`.
+    /// `OverlayShapeItem::texture`. The texture stays resident until you release
+    /// it with [`free_overlay_texture`](Self::free_overlay_texture). For a source
+    /// that changes every frame, prefer
+    /// [`create_streaming_overlay_texture`](Self::create_streaming_overlay_texture)
+    /// plus [`update_overlay_texture`](Self::update_overlay_texture), which reuse
+    /// one GPU texture instead of allocating a new one per frame.
     ///
     /// `rgba_data` must contain exactly `width * height * 4` bytes in
     /// row-major, top-to-bottom order. The data is treated as sRGB-encoded
@@ -242,50 +246,93 @@ impl crate::resources::DeviceResources {
             "upload_overlay_texture: rgba_data length does not match width * height * 4"
         );
 
-        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("overlay_shape_tex"),
-            size: crate::gpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let entry =
+            build_overlay_texture_entry(device, Some(queue), width, height, Some(rgba_data));
+        self.content
+            .overlay_textures
+            .insert(entry, overlay_texture_bytes(width, height))
+    }
 
-        queue.write_texture(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d::ZERO,
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            rgba_data,
-            crate::gpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            crate::gpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+    /// Allocate a reusable overlay texture and return a stable
+    /// `OverlayTextureId`.
+    ///
+    /// The texture starts undefined; feed it pixels with
+    /// [`update_overlay_texture`](Self::update_overlay_texture) before pointing an
+    /// `OverlayShapeItem` at it, and release it with
+    /// [`free_overlay_texture`](Self::free_overlay_texture) when the source stops.
+    /// Unlike [`upload_overlay_texture`](Self::upload_overlay_texture), updating
+    /// this handle reuses the same GPU texture rather than stranding one per
+    /// frame, so it is the right choice for a live source (decoded video, a
+    /// capture feed, a per-frame heatmap). The format is `Rgba8UnormSrgb`.
+    pub fn create_streaming_overlay_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        width: u32,
+        height: u32,
+    ) -> OverlayTextureId {
+        let entry = build_overlay_texture_entry(device, None, width, height, None);
+        self.content
+            .overlay_textures
+            .insert(entry, overlay_texture_bytes(width, height))
+    }
+
+    /// Replace the contents of an overlay texture in place.
+    ///
+    /// When `width` / `height` match the current allocation this writes the
+    /// pixels into the existing GPU texture (no new allocation). When they
+    /// differ the texture and its view are reallocated in the same slot, so `id`
+    /// stays valid. Works on any live overlay texture, whether it came from
+    /// [`create_streaming_overlay_texture`](Self::create_streaming_overlay_texture)
+    /// or [`upload_overlay_texture`](Self::upload_overlay_texture).
+    ///
+    /// Returns `false` (and does nothing) if `id` does not resolve to a live
+    /// texture, for example because it was already freed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rgba_data.len() != width * height * 4`.
+    pub fn update_overlay_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: OverlayTextureId,
+        width: u32,
+        height: u32,
+        rgba_data: &[u8],
+    ) -> bool {
+        assert_eq!(
+            rgba_data.len(),
+            (width * height * 4) as usize,
+            "update_overlay_texture: rgba_data length does not match width * height * 4"
         );
 
-        let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let id = self
-            .content
-            .overlay_textures
-            .push(OverlayShapeTextureEntry {
-                _texture: texture,
-                view,
-            });
-        OverlayTextureId(id as u64)
+        let Some(entry) = self.content.overlay_textures.get_mut(id) else {
+            return false;
+        };
+
+        let size = entry.texture.size();
+        if size.width != width || size.height != height {
+            *entry =
+                build_overlay_texture_entry(device, Some(queue), width, height, Some(rgba_data));
+            self.content
+                .overlay_textures
+                .set_bytes(id, overlay_texture_bytes(width, height));
+            return true;
+        }
+
+        write_overlay_texture(queue, &entry.texture, width, height, rgba_data);
+        true
+    }
+
+    /// Release an overlay texture, freeing its GPU memory and its slot.
+    ///
+    /// After this the `id` resolves to nothing, so an `OverlayShapeItem` (or
+    /// `OverlayPolylineItem`) still pointing at it is skipped for that frame
+    /// rather than drawn: clear or repoint its `texture` before the next frame.
+    /// Returns `true` if a texture was freed, `false` if `id` was already
+    /// invalid.
+    pub fn free_overlay_texture(&mut self, id: OverlayTextureId) -> bool {
+        self.content.overlay_textures.remove(id).is_some()
     }
 
     /// Start an asynchronous overlay texture upload.
@@ -328,53 +375,21 @@ impl crate::resources::DeviceResources {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
                 progress.set(0.1);
-                let texture = device_for_worker.create_texture(&crate::gpu::TextureDescriptor {
-                    label: Some("overlay_shape_tex"),
-                    size: crate::gpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: crate::gpu::TextureDimension::D2,
-                    format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
-                    usage: crate::gpu::TextureUsages::TEXTURE_BINDING
-                        | crate::gpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                queue_for_worker.write_texture(
-                    crate::gpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: crate::gpu::Origin3d::ZERO,
-                        aspect: crate::gpu::TextureAspect::All,
-                    },
-                    &rgba_data,
-                    crate::gpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(width * 4),
-                        rows_per_image: Some(height),
-                    },
-                    crate::gpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
+                let entry = build_overlay_texture_entry(
+                    &device_for_worker,
+                    Some(&queue_for_worker),
+                    width,
+                    height,
+                    Some(&rgba_data),
                 );
-                let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut crate::resources::DeviceResources| {
-                        let id =
-                            resources
-                                .content
-                                .overlay_textures
-                                .push(OverlayShapeTextureEntry {
-                                    _texture: texture,
-                                    view,
-                                });
-                        slot_for_apply.set(OverlayTextureId(id as u64));
+                        let id = resources
+                            .content
+                            .overlay_textures
+                            .insert(entry, overlay_texture_bytes(width, height));
+                        slot_for_apply.set(id);
                     }),
                 ))
             })
@@ -857,12 +872,83 @@ pub(crate) struct OverlayShapeTexBatch {
     pub bind_group: crate::gpu::BindGroup,
 }
 
-/// Persistent texture entry for an overlay shape texture fill.
+/// Texture entry for an overlay shape texture fill.
 ///
-/// Stored in `DeviceResources::overlay_textures`.
+/// Stored in `DeviceResources::overlay_textures`. The `view` is what the tex
+/// bind group samples; it is rebuilt whenever `texture` is reallocated for a
+/// size change.
 pub(crate) struct OverlayShapeTextureEntry {
-    pub _texture: crate::gpu::Texture,
+    pub texture: crate::gpu::Texture,
     pub view: crate::gpu::TextureView,
+}
+
+/// Resident-byte charge for an `RGBA8` overlay texture of the given size.
+fn overlay_texture_bytes(width: u32, height: u32) -> u64 {
+    (width as u64) * (height as u64) * 4
+}
+
+/// Write `rgba_data` (row-major, top-to-bottom, `width * height * 4` bytes) into
+/// the whole of `texture`.
+fn write_overlay_texture(
+    queue: &crate::gpu::Queue,
+    texture: &crate::gpu::Texture,
+    width: u32,
+    height: u32,
+    rgba_data: &[u8],
+) {
+    queue.write_texture(
+        crate::gpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: crate::gpu::Origin3d::ZERO,
+            aspect: crate::gpu::TextureAspect::All,
+        },
+        rgba_data,
+        crate::gpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(height),
+        },
+        crate::gpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// Create an `Rgba8UnormSrgb` overlay texture and its default view, optionally
+/// writing initial pixels. Pass `queue` and `rgba_data` together to upload
+/// contents; pass both `None` to leave the texture undefined (a streaming
+/// texture filled later by `update_overlay_texture`).
+fn build_overlay_texture_entry(
+    device: &crate::gpu::Device,
+    queue: Option<&crate::gpu::Queue>,
+    width: u32,
+    height: u32,
+    rgba_data: Option<&[u8]>,
+) -> OverlayShapeTextureEntry {
+    let texture = device.create_texture(&crate::gpu::TextureDescriptor {
+        label: Some("overlay_shape_tex"),
+        size: crate::gpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    if let (Some(queue), Some(rgba_data)) = (queue, rgba_data) {
+        write_overlay_texture(queue, &texture, width, height, rgba_data);
+    }
+
+    let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+    OverlayShapeTextureEntry { texture, view }
 }
 
 /// Per-frame GPU data for batched SDF overlay shape rendering.

@@ -136,51 +136,6 @@ macro_rules! registry_handle {
 
 pub(crate) use registry_handle;
 
-/// Append-only store keyed by a plain index.
-///
-/// Backs the grow-only content classes named by [`registry_handle!`] handles
-/// (volume textures, projected-tet meshes, overlay textures): slots are never
-/// freed or reused, so an index stays valid for the session. Compared to a raw
-/// `Vec`, this centralises the push-returns-index bookkeeping and routes reads
-/// through [`get`](Registry::get), which bounds-checks instead of panicking on
-/// an out-of-range index.
-pub(crate) struct Registry<T> {
-    items: Vec<T>,
-}
-
-impl<T> Registry<T> {
-    /// Append a value and return the index it was stored at.
-    pub(crate) fn push(&mut self, value: T) -> usize {
-        let index = self.items.len();
-        self.items.push(value);
-        index
-    }
-
-    /// Borrow the value at `index`, or `None` if it is out of range.
-    pub(crate) fn get(&self, index: usize) -> Option<&T> {
-        self.items.get(index)
-    }
-
-    /// Mutably borrow the value at `index`, or `None` if it is out of range.
-    #[allow(dead_code)]
-    pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut T> {
-        self.items.get_mut(index)
-    }
-
-    /// Number of stored values. Also the index the next [`push`](Registry::push)
-    /// will return.
-    #[allow(dead_code)]
-    pub(crate) fn len(&self) -> usize {
-        self.items.len()
-    }
-}
-
-impl<T> Default for Registry<T> {
-    fn default() -> Self {
-        Self { items: Vec::new() }
-    }
-}
-
 /// One slot in a [`SlotStore`]: the value when occupied, the slot's current
 /// generation, and the GPU byte size charged for it.
 struct Slot<T> {

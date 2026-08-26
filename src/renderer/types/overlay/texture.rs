@@ -1,12 +1,45 @@
-/// Handle to a texture uploaded via `DeviceResources::upload_overlay_texture`.
+/// Handle to an overlay shape texture.
 ///
-/// Pass this to `OverlayShapeItem::texture` to use the image as fill. The
-/// handle remains valid for the lifetime of the `DeviceResources` it
-/// came from; using it after the resources are dropped is a logic error.
+/// Pass this to `OverlayShapeItem::texture` (or `OverlayPolylineItem::texture`)
+/// to use the image as fill. Obtain one from `DeviceResources::upload_overlay_texture`
+/// (a one-shot upload) or `create_streaming_overlay_texture` (a reusable texture
+/// you feed with `update_overlay_texture` each frame). Release it with
+/// `free_overlay_texture`.
 ///
-/// An append-only registry handle: overlay textures are kept for the session.
+/// Wraps a packed slot index (low 32 bits) and generation (high 32 bits). A
+/// handle whose texture was freed (its slot reused by a later upload) carries a
+/// stale generation and resolves to `None` on lookup, so it cannot alias
+/// whatever now occupies the slot. For a texture that is never freed the
+/// generation is 0, so the handle's raw value equals its dense slot index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OverlayTextureId(pub(crate) u64);
+
+impl OverlayTextureId {
+    /// A handle that refers to no texture. Store lookups always return `None`
+    /// for it. Use it as the default / placeholder value.
+    pub const INVALID: OverlayTextureId = OverlayTextureId(u64::MAX);
+
+    /// The raw slot index this handle points at.
+    pub fn index(&self) -> usize {
+        (self.0 as u32) as usize
+    }
+}
+
+impl crate::resources::handle::ContentHandle for OverlayTextureId {
+    const INVALID: Self = OverlayTextureId(u64::MAX);
+
+    fn index(&self) -> usize {
+        (self.0 as u32) as usize
+    }
+
+    fn generation(&self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    fn from_parts(index: u32, generation: u32) -> Self {
+        OverlayTextureId(((generation as u64) << 32) | index as u64)
+    }
+}
 
 /// Nine-patch / 9-slice texture sampling parameters.
 ///
