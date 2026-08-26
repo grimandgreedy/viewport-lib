@@ -5,7 +5,7 @@
 //! wiring that every hand-written winit example repeats lives here once.
 
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use ::winit::application::ApplicationHandler;
 use ::winit::event::WindowEvent;

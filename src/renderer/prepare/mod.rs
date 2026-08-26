@@ -244,7 +244,7 @@ impl ViewportRenderer {
 
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
-        let lighting_start = std::time::Instant::now();
+        let lighting_start = web_time::Instant::now();
         let lighting_frame = Self::prepare_lighting(
             resources,
             &mut self.shadow,
@@ -283,7 +283,7 @@ impl ViewportRenderer {
             );
         }
 
-        let per_object_start = std::time::Instant::now();
+        let per_object_start = web_time::Instant::now();
         // Build material-plugin pipeline sets the frame references before
         // draw time (paint has no mutable access), capped per frame so a
         // scene that suddenly references many cold plugins pays a bounded
@@ -347,7 +347,7 @@ impl ViewportRenderer {
         );
         let uniforms_ms = per_object_start.elapsed().as_secs_f32() * 1000.0;
 
-        let instanced_start = std::time::Instant::now();
+        let instanced_start = web_time::Instant::now();
         let (batches_reuploaded, batches_skipped) = if self.instancing.use_instancing {
             Self::prepare_instanced(
                 resources,
@@ -364,7 +364,7 @@ impl ViewportRenderer {
         };
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
-        let geometry_start = std::time::Instant::now();
+        let geometry_start = web_time::Instant::now();
         Self::upload_geometry_glyphs(
             resources,
             &mut self.point_cloud_gpu_data,
@@ -825,7 +825,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        let shadow_start = std::time::Instant::now();
+        let shadow_start = web_time::Instant::now();
         Self::prepare_shadow_pass(
             resources,
             &mut self.instancing,
@@ -982,10 +982,10 @@ impl ViewportRenderer {
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) -> crate::renderer::stats::FrameStats {
-        let prepare_start = std::time::Instant::now();
+        let prepare_start = web_time::Instant::now();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
 
-        let plugin_start = std::time::Instant::now();
+        let plugin_start = web_time::Instant::now();
 
         // Dispatch item-type plugin prepare work first so any GPU outputs
         // the plugin produces are visible to the rest of `prepare`.
@@ -1329,7 +1329,7 @@ impl ViewportRenderer {
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
 
-        let viewport_start = std::time::Instant::now();
+        let viewport_start = web_time::Instant::now();
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, sink);
         self.prepare_breakdown.viewport_ms = viewport_start.elapsed().as_secs_f32() * 1000.0;
 

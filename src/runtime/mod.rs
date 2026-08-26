@@ -109,7 +109,7 @@ fn run_range(
                 pick_hit: frame.pick_hit,
                 resources,
             };
-            let t = std::time::Instant::now();
+            let t = web_time::Instant::now();
             plugin.step(&mut ctx);
             *timings.entry(plugin.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
@@ -1742,7 +1742,7 @@ impl ViewportRuntime {
             std::collections::HashMap::new();
         let mut out = Vec::new();
         for p in self.gpu_plugins.iter_mut() {
-            let t = std::time::Instant::now();
+            let t = web_time::Instant::now();
             out.extend(p.pre_prepare(device, queue, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
@@ -1778,7 +1778,7 @@ impl ViewportRuntime {
             std::collections::HashMap::new();
         let mut out = Vec::new();
         for p in self.gpu_plugins.iter_mut() {
-            let t = std::time::Instant::now();
+            let t = web_time::Instant::now();
             out.extend(p.post_paint(device, queue, targets, ctx));
             *timings.entry(p.type_name()).or_insert(0.0) += t.elapsed().as_secs_f32() * 1000.0;
         }
@@ -1960,7 +1960,7 @@ impl ViewportRuntime {
                 pick_hit: frame.pick_hit,
                 resources: &mut self.resources,
             };
-            let t = std::time::Instant::now();
+            let t = web_time::Instant::now();
             plugin.submit(&ctx);
             *step_timings.entry(plugin.type_name()).or_insert(0.0) +=
                 t.elapsed().as_secs_f32() * 1000.0;
@@ -2080,7 +2080,7 @@ impl ViewportRuntime {
                 pick_hit: frame.pick_hit,
                 resources: &mut self.resources,
             };
-            let t = std::time::Instant::now();
+            let t = web_time::Instant::now();
             plugin.collect(&mut ctx);
             *step_timings.entry(plugin.type_name()).or_insert(0.0) +=
                 t.elapsed().as_secs_f32() * 1000.0;

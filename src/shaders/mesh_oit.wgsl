@@ -411,6 +411,15 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     out.alpha = 1.0;
     out.front_facing = select(0u, 1u, is_front);
 
+    // Screen-space derivatives of the interpolated inputs, taken here where
+    // control flow is still uniform. The shading branches below key off
+    // per-object storage (non-uniform), where implicit derivatives are rejected
+    // by strict WGSL validators; these feed explicit-gradient sampling.
+    let d_uv_dx = dpdx(in.uv);
+    let d_uv_dy = dpdy(in.uv);
+    let d_wp_dx = dpdx(in.world_pos);
+    let d_wp_dy = dpdy(in.world_pos);
+
     // Section view clipping.
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
@@ -424,11 +433,15 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // (offset 0,0 scale 1,1) passes the authored UV through unchanged.
     let mat_uv = in.uv * object.uv_transform.zw + object.uv_transform.xy;
     out.mat_uv = mat_uv;
+    // Transformed-UV gradient: the transform is a per-object uniform, so
+    // d(mat_uv) = d(in.uv) * scale, exact and valid in any control flow.
+    let muv_ddx = d_uv_dx * object.uv_transform.zw;
+    let muv_ddy = d_uv_dy * object.uv_transform.zw;
 
     // Sample texture if one is assigned.
     var tex_colour = vec4<f32>(1.0);
     if object.has_texture == 1u {
-        tex_colour = textureSample(obj_texture, obj_sampler, mat_uv);
+        tex_colour = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy);
     }
     let obj_colour = vec4<f32>(
         object.colour.rgb * in.colour.rgb * tex_colour.rgb,
@@ -506,13 +519,13 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // over the normal-map path.
     var N: vec3<f32>;
     if object.use_flat != 0u {
-        let dpx = dpdx(in.world_pos);
-        let dpy = dpdy(in.world_pos);
+        let dpx = d_wp_dx;
+        let dpy = d_wp_dy;
         var Nf = normalize(cross(dpx, dpy));
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if object.has_normal_map != 0u {
-        let nm_sample = textureSample(normal_map, obj_sampler, mat_uv).rgb;
+        let nm_sample = textureSampleGrad(normal_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).rgb;
         var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
         ts_unpacked.x = ts_unpacked.x * object.normal_strength;
         ts_unpacked.y = ts_unpacked.y * object.normal_strength;
@@ -562,7 +575,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // before it drives shading; identity `(0, 1)` is a no-op.
     var ao_factor = 1.0;
     if object.has_ao_map != 0u {
-        let raw_ao = textureSample(ao_map, obj_sampler, mat_uv).r;
+        let raw_ao = textureSampleGrad(ao_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).r;
         ao_factor = mix(object.ao_range.x, object.ao_range.y, raw_ao);
     }
 
@@ -574,7 +587,14 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 
 // Lighting for the transparent path. Transparent surfaces skip shadow sampling,
 // so last_shadow_sample stays at its unshadowed default.
-fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
+fn compute_lit(
+    surface: Surface,
+    in: VertexOut,
+    saa_kernel: f32,
+    refl_dr: f32,
+    uv_ddx: vec2<f32>,
+    uv_ddy: vec2<f32>,
+) -> LitResult {
     var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
     var N = surface.normal;
@@ -600,13 +620,13 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
             // glTF ORM texture: G=roughness factor, B=metallic factor. Per-material
             // `metallic_range` / `roughness_range` remap the raw samples before the
             // scalar factor; identity `(0, 1)` is a no-op.
-            let mr = textureSample(metallic_roughness_tex, obj_sampler, surface.mat_uv);
+            let mr = textureSampleGrad(metallic_roughness_tex, obj_sampler, surface.mat_uv, uv_ddx, uv_ddy);
             let m_remapped = mix(object.metallic_range.x, object.metallic_range.y, mr.b);
             let r_remapped = mix(object.roughness_range.x, object.roughness_range.y, mr.g);
             metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
             roughness = max(r_remapped * roughness, 0.04);
         }
-        roughness = specular_aa_roughness(N, roughness);
+        roughness = specular_aa_roughness_kernel(roughness, saa_kernel);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
@@ -642,18 +662,16 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
         if lights_uniform.ibl_enabled != 0u {
             var ibl: IblContrib;
             if lights_uniform.env_zone_count != 0u {
-                // Per-fragment environment selection (uniform-gated branch, so
-                // the reflection derivative is valid here).
-                let refl_z = reflect(-V, N);
-                let dr_z = max(length(dpdx(refl_z)), length(dpdy(refl_z)));
+                // Per-fragment environment selection. `refl_dr` is the reflection
+                // footprint computed in uniform control flow by the caller.
                 ibl = ibl_ambient_zoned(N, V, base_colour, metallic, roughness, F0,
                                         ao_factor, lights_uniform.ibl_intensity,
-                                        lights_uniform.ibl_rotation, dr_z, in.world_pos,
+                                        lights_uniform.ibl_rotation, refl_dr, in.world_pos,
                                         lights_uniform.env_zone_count);
             } else {
-                ibl = ibl_ambient(N, V, base_colour, metallic, roughness, F0,
-                                  ao_factor, lights_uniform.ibl_intensity,
-                                  lights_uniform.ibl_rotation);
+                ibl = ibl_ambient_grad(N, V, base_colour, metallic, roughness, F0,
+                                       ao_factor, lights_uniform.ibl_intensity,
+                                       lights_uniform.ibl_rotation, refl_dr);
             }
             ambient = ibl.diffuse + ibl.specular;
             dbg_ibl_diff_lum = dot(ibl.diffuse, lum_weights);
@@ -757,11 +775,24 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     object = objects[in.obj_idx];
     let surface = compute_surface(in, is_front);
+
+    // Derivative terms for the lighting stage, taken here while control flow is
+    // still uniform (before the resolved early return and compute_lit's
+    // object-dependent branches). Exact: uses the resolved normal and UV.
+    let d_n_dx = dpdx(surface.normal);
+    let d_n_dy = dpdy(surface.normal);
+    let saa_kernel = min(0.5 * (dot(d_n_dx, d_n_dx) + dot(d_n_dy, d_n_dy)), 0.18);
+    let V_dr = normalize(camera.eye_pos - in.world_pos);
+    let R_dr = reflect(-V_dr, surface.normal);
+    let refl_dr = max(length(dpdx(R_dr)), length(dpdy(R_dr)));
+    let uv_ddx = dpdx(surface.mat_uv);
+    let uv_ddy = dpdy(surface.mat_uv);
+
     if surface.resolved {
         return surface.out_oit;
     }
 
-    let lit = compute_lit(surface, in);
+    let lit = compute_lit(surface, in, saa_kernel, refl_dr, uv_ddx, uv_ddy);
 
     // Re-bind the locals the debug-vis overlay reads before the include.
     let N = surface.normal;
@@ -779,7 +810,7 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     var emissive = object.emissive;
     if object.has_emissive_tex != 0u {
-        emissive = emissive * textureSample(emissive_tex, obj_sampler, surface.mat_uv).rgb;
+        emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, surface.mat_uv, uv_ddx, uv_ddy).rgb;
     }
     final_rgb += emissive;
     var dbg_emissive_lum = dot(emissive, lum_weights);

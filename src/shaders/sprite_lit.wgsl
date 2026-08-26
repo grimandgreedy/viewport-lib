@@ -320,7 +320,7 @@ fn sample_shadow_factor(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3
         let d = POISSON_DISK[i];
         let rd = vec2<f32>(d.x * cos_r - d.y * sin_r, d.x * sin_r + d.y * cos_r);
         let sample_uv = clamp(atlas_uv + rd * pcf_radius, rect.xy, rect.zw);
-        shadow = shadow + textureSampleCompare(shadow_map, shadow_samp, sample_uv, biased_depth);
+        shadow = shadow + textureSampleCompareLevel(shadow_map, shadow_samp, sample_uv, biased_depth);
     }
     return shadow / 16.0;
 }

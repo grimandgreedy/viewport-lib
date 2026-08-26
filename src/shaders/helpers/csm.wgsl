@@ -178,7 +178,7 @@ fn sample_shadow_csm(
     // gives 2x2 bilinear weighting). Skips the rotation noise and the
     // receiver-plane gradient entirely.
     if shadow_atlas.shadow_filter == 2u {
-        let s = textureSampleCompare(shadow_map, shadow_sampler, atlas_uv, biased_depth);
+        let s = textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, biased_depth);
         return ShadowSample(s, cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
 
@@ -252,7 +252,7 @@ fn sample_shadow_csm(
             let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
             let tap_depth = biased_depth
                 + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
-            shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, tap_depth);
+            shadow += textureSampleCompareLevel(shadow_map, shadow_sampler, clamped_uv, tap_depth);
         }
         return ShadowSample(shadow / f32(filter_taps), cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
     }
@@ -271,7 +271,7 @@ fn sample_shadow_csm(
         let clamped_uv = clamp(sample_uv, rect.xy, rect.zw);
         let tap_depth = biased_depth
             + clamp(dot(depth_grad, clamped_uv - atlas_uv), -0.005, 0.005);
-        shadow += textureSampleCompare(shadow_map, shadow_sampler, clamped_uv, tap_depth);
+        shadow += textureSampleCompareLevel(shadow_map, shadow_sampler, clamped_uv, tap_depth);
     }
     return ShadowSample(shadow / f32(taps), cascade_idx, atlas_uv, tile_uv, biased_depth, surface_depth, normal_bias);
 }

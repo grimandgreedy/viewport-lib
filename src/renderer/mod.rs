@@ -505,10 +505,10 @@ pub struct ViewportRenderer {
     current_render_scale: f32,
     /// Instant the renderer was constructed. Used as the t=0 reference for
     /// per-frame animated effects (e.g. `ScatterVolume::noise` time scrolling).
-    start_instant: std::time::Instant,
+    start_instant: web_time::Instant,
     /// Instant recorded at the start of the most recent `prepare()` call.
     /// Used to compute `total_frame_ms` on the following frame.
-    last_prepare_instant: Option<std::time::Instant>,
+    last_prepare_instant: Option<web_time::Instant>,
     /// Frame counter incremented each `prepare()` call. Used for picking throttle in Playback mode.
     frame_counter: u64,
     /// Current LOD level per item, keyed by pick id, carried across frames so
@@ -939,7 +939,7 @@ impl ViewportRenderer {
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
             upload_budget: None,
             current_render_scale: 1.0,
-            start_instant: std::time::Instant::now(),
+            start_instant: web_time::Instant::now(),
             last_prepare_instant: None,
             frame_counter: 0,
             lod_levels: std::collections::HashMap::new(),

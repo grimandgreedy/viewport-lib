@@ -162,7 +162,18 @@ pub fn vram_budget(device: &crate::gpu::Device) -> Option<VramBudget> {
     {
         vram_budget_metal(device)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    // The web has no native device handle to query, so there is no VRAM budget
+    // to report; callers size against `ResidentBytes` as they do on any backend
+    // that returns `None`.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = device;
+        None
+    }
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(any(target_os = "macos", target_os = "ios"))
+    ))]
     {
         vram_budget_vulkan(device)
     }
@@ -192,7 +203,10 @@ fn vram_budget_metal(_device: &crate::gpu::Device) -> Option<VramBudget> {
     None
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(target_os = "macos", target_os = "ios"))
+))]
 fn vram_budget_vulkan(device: &crate::gpu::Device) -> Option<VramBudget> {
     // Safety: we read the physical device's memory-heap sizes through the
     // instance and drop the hal guard immediately; nothing is destroyed.

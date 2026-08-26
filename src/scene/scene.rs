@@ -1121,7 +1121,7 @@ impl Scene {
                 self.flush_spatial_dirty(&mesh_aabb_fn);
             }
 
-            let t0 = std::time::Instant::now();
+            let t0 = web_time::Instant::now();
             let mut candidate_ids = Vec::new();
             self.spatial
                 .collect_visible(frustum, &mut candidate_ids, &mut stats);
@@ -1175,7 +1175,7 @@ impl Scene {
             };
         } else {
             // -- Flat walk --
-            let t0 = std::time::Instant::now();
+            let t0 = web_time::Instant::now();
 
             for node in self.nodes.values() {
                 if !node.visible {

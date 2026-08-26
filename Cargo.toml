@@ -33,6 +33,9 @@ fontdue = "0.9"
 thiserror = "2.0"
 tracing = { version = "0.1", features = ["log"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
+# Clock for timing/stats. A drop-in for `std::time` that re-exports it on native
+# and uses `performance.now()` on wasm, where `std::time::Instant::now()` panics.
+web-time = "1"
 
 # --- Example-only dependencies (all optional, enabled by `example-*` features) ---
 # Cargo compiles every non-optional dev-dependency for ANY example/test build,
@@ -70,8 +73,16 @@ egui = { version = "0.33", optional = true }
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 metal = "0.32"
 
-[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+# Vulkan handles for the VRAM budget query on native non-Apple targets. Excluded
+# on wasm, which has no native device handle (see `resources::memory`).
+[target.'cfg(all(not(target_arch = "wasm32"), not(any(target_os = "macos", target_os = "ios"))))'.dependencies]
 ash = "0.38"
+
+# On wasm the only usable wgpu backend is WebGPU. This unions the `webgpu`
+# feature into the same optional `wgpu` dep the `wgpu27` feature activates; the
+# native `metal`/`vulkan` features compile to nothing on this target.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "27.0", features = ["webgpu"], optional = true }
 
 [features]
 default = ["serde", "wgpu27"]
@@ -131,7 +142,28 @@ pollster = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The lightmap-bake showcase runs the full offline lightmapper: this crate's
 # unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Example-only.
+# Desktop-only: xatlas is C++ and does not cross-compile to wasm, so keep it off
+# that target where it would otherwise block building any example.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 viewport-lib-lightbake = { path = "../viewport-lib-lightbake" }
+
+# wasm-only glue for the `winit-web` example: async task spawning, the canvas in
+# the DOM, a browser-safe clock, and panic/log forwarding to the console. Only
+# pulled in for the wasm32 target, so native builds are unaffected.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-time = "1"
+console_error_panic_hook = "0.1"
+console_log = "1"
+log = "0.4"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "Node",
+] }
 
 
 
@@ -255,6 +287,14 @@ required-features = ["wgpu27"]
 [[example]]
 name = "winit-hdr"
 path = "examples/winit_hdr/main.rs"
+required-features = ["wgpu27"]
+
+# Runs natively (block_on + run_app) and on wasm32 (async device + spawn_app).
+# The web build needs `--target wasm32-unknown-unknown` and the wasm-only
+# dev-dependencies below; see the header of the example for the build steps.
+[[example]]
+name = "winit-web"
+path = "examples/winit_web/main.rs"
 required-features = ["wgpu27"]
 
 

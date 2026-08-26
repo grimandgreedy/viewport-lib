@@ -319,6 +319,15 @@ fn compute_surface(in: VertexOut) -> Surface {
     out.alpha = 1.0;
     out.front_facing = 1u;
 
+    // Screen-space derivatives of the interpolated inputs, taken here where
+    // control flow is still uniform. The shading branches below key off
+    // per-instance storage (non-uniform), where implicit derivatives are
+    // rejected by strict WGSL validators; these feed explicit-gradient sampling.
+    let d_uv_dx = dpdx(in.uv);
+    let d_uv_dy = dpdy(in.uv);
+    let d_wp_dx = dpdx(in.world_pos);
+    let d_wp_dy = dpdy(in.world_pos);
+
     for (var i = 0u; i < clip_planes.count; i++) {
         let plane = clip_planes.planes[i];
         if dot(in.world_pos, plane.xyz) + plane.w < 0.0 { discard; }
@@ -327,9 +336,11 @@ fn compute_surface(in: VertexOut) -> Surface {
 
     let mat_uv = in.uv * inst.uv_transform.zw + inst.uv_transform.xy;
     out.mat_uv = mat_uv;
+    let muv_ddx = d_uv_dx * inst.uv_transform.zw;
+    let muv_ddy = d_uv_dy * inst.uv_transform.zw;
 
     var tex_colour = vec4<f32>(1.0);
-    if inst.has_texture == 1u { tex_colour = textureSample(obj_texture, obj_sampler, mat_uv); }
+    if inst.has_texture == 1u { tex_colour = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy); }
     let obj_colour = vec4<f32>(
         inst.colour.rgb * in.colour.rgb * tex_colour.rgb,
         inst.colour.a   * in.colour.a   * tex_colour.a,
@@ -349,13 +360,13 @@ fn compute_surface(in: VertexOut) -> Surface {
 
     var N: vec3<f32>;
     if inst.use_flat != 0u {
-        let dpx = dpdx(in.world_pos);
-        let dpy = dpdy(in.world_pos);
+        let dpx = d_wp_dx;
+        let dpy = d_wp_dy;
         var Nf = normalize(cross(dpx, dpy));
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if inst.has_normal_map != 0u {
-        let nm_sample = textureSample(normal_map, obj_sampler, mat_uv).rgb;
+        let nm_sample = textureSampleGrad(normal_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).rgb;
         var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
         ts_unpacked.x = ts_unpacked.x * inst.normal_strength;
         ts_unpacked.y = ts_unpacked.y * inst.normal_strength;
@@ -372,7 +383,7 @@ fn compute_surface(in: VertexOut) -> Surface {
 
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u {
-        let raw_ao = textureSample(ao_map, obj_sampler, mat_uv).r;
+        let raw_ao = textureSampleGrad(ao_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).r;
         ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
     }
 
@@ -383,7 +394,7 @@ fn compute_surface(in: VertexOut) -> Surface {
 }
 
 // Lighting for the instanced transparent path. Skips shadow sampling.
-fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
+fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -> LitResult {
     let inst = instances[in.instance_idx];
     var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
@@ -391,13 +402,10 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 
     let V = normalize(camera.eye_pos - in.world_pos);
 
-    // Screen-space derivatives for geometric specular AA and the IBL
-    // reflection footprint, computed here in uniform control flow. The PBR
-    // block below is gated on per-instance data, so evaluating derivatives
-    // inside it would violate WGSL uniformity.
-    let saa_kernel = min(0.5 * (dot(dpdx(N), dpdx(N)) + dot(dpdy(N), dpdy(N))), 0.18);
-    let refl = reflect(-V, N);
-    let refl_dr = max(length(dpdx(refl)), length(dpdy(refl)));
+    // `saa_kernel` (geometric specular AA) and `refl_dr` (IBL reflection
+    // footprint) are supplied by the caller, computed in uniform control flow.
+    // The PBR block below is gated on per-instance data, so evaluating the
+    // underlying derivatives here would violate WGSL uniformity.
 
     let tint = vec4<f32>(1.0);
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
@@ -524,11 +532,22 @@ fn compute_lit(surface: Surface, in: VertexOut) -> LitResult {
 @fragment
 fn fs_oit_main(in: VertexOut) -> OitOut {
     let surface = compute_surface(in);
+
+    // Derivative terms for the lighting stage, taken here while control flow is
+    // still uniform (before the resolved early return and compute_lit's
+    // per-instance branches). Exact: uses the resolved shading normal.
+    let d_n_dx = dpdx(surface.normal);
+    let d_n_dy = dpdy(surface.normal);
+    let saa_kernel = min(0.5 * (dot(d_n_dx, d_n_dx) + dot(d_n_dy, d_n_dy)), 0.18);
+    let V_dr = normalize(camera.eye_pos - in.world_pos);
+    let R_dr = reflect(-V_dr, surface.normal);
+    let refl_dr = max(length(dpdx(R_dr)), length(dpdy(R_dr)));
+
     if surface.resolved {
         return surface.out_oit;
     }
 
-    let lit = compute_lit(surface, in);
+    let lit = compute_lit(surface, in, saa_kernel, refl_dr);
 
     // Re-bind the locals the debug-vis overlay reads before the include.
     let N = surface.normal;

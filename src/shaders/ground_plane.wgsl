@@ -199,7 +199,7 @@ fn fs_main(in: VertexOutput) -> FragOut {
             for (var dx = -1; dx <= 1; dx++) {
                 let offset = vec2<f32>(f32(dx), f32(dy)) * texel_size;
                 let clamped = clamp(shadow_uv + offset, rect.xy, rect.zw);
-                shadow_sum += textureSampleCompare(
+                shadow_sum += textureSampleCompareLevel(
                     shadow_tex, shadow_sampler,
                     clamped,
                     shadow_depth,

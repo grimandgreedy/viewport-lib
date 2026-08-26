@@ -358,7 +358,7 @@ fn sample_sun_shadow(world_pos: vec3<f32>) -> f32 {
         mix(rect.y, rect.w, tile_uv.y),
     );
     let depth = ndc.z - lights_uniform.shadow_bias;
-    return textureSampleCompare(shadow_map, shadow_sampler, atlas_uv, depth);
+    return textureSampleCompareLevel(shadow_map, shadow_sampler, atlas_uv, depth);
 }
 
 // ---------------------------------------------------------------------------

@@ -794,7 +794,7 @@ impl ViewportRenderer {
         vp_idx: usize,
         frame: &FrameData,
     ) -> crate::gpu::CommandBuffer {
-        let paint_start = std::time::Instant::now();
+        let paint_start = web_time::Instant::now();
         // Reset the per-frame main-pass draw counters; the instanced draw loops
         // bump them through `&self` during encode and they are latched into
         // `FrameStats` after paint.

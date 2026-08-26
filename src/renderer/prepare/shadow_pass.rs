@@ -38,7 +38,7 @@ impl ViewportRenderer {
         // timing in shipping builds, use GPU timestamp queries instead.
         let shadow_instrument =
             tracing::enabled!(target: "viewport_lib::shadow", tracing::Level::DEBUG);
-        let shadow_start = std::time::Instant::now();
+        let shadow_start = web_time::Instant::now();
 
         // Shadow depth pass : CSM: render each cascade into its atlas tile.
         // Skip the pass entirely when over budget and shadow reduction is allowed.

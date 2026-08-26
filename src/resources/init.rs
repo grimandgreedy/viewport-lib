@@ -53,10 +53,10 @@ impl DeviceResources {
         // Vulkan, where pipeline creation compiles shaders synchronously). These
         // marks attribute the per-phase cost. Filter with
         // `RUST_LOG=viewport_lib::init=info`.
-        let init_start = std::time::Instant::now();
+        let init_start = web_time::Instant::now();
         let mut init_ckpt = init_start;
         let mut mark = |section: &str| {
-            let now = std::time::Instant::now();
+            let now = web_time::Instant::now();
             tracing::info!(
                 target: "viewport_lib::init",
                 section,

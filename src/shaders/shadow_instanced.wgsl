@@ -105,8 +105,13 @@ fn vs_cutout_cull(
 @fragment
 fn fs_cutout(in: CutoutOut) {
     let inst = instances[in.inst_idx];
+    // UV gradients taken here in uniform control flow; the alpha-cutout sample
+    // below sits inside a per-instance branch (non-uniform), where an implicit
+    // derivative is rejected by strict WGSL validators.
+    let uv_ddx = dpdx(in.uv);
+    let uv_ddy = dpdy(in.uv);
     if inst.alpha_flag == 1u && inst.has_texture == 1u {
-        let a = textureSample(obj_texture, obj_sampler, in.uv).a;
+        let a = textureSampleGrad(obj_texture, obj_sampler, in.uv, uv_ddx, uv_ddy).a;
         if a < inst.alpha_cutoff { discard; }
     }
 }
