@@ -792,19 +792,29 @@ impl ViewportRenderer {
     /// the device lacks are disabled rather than fatal.
     ///
     /// Pass the result as `required_limits` in the `DeviceDescriptor`. It starts
-    /// from [`Limits::default`](crate::gpu::Limits::default) and raises only the
-    /// storage-buffer count viewport-lib needs, clamped to what the adapter
-    /// actually supports. Consumers that already request `adapter.limits()` (the
-    /// device's full capabilities) do not need this; consumers uploading meshes
-    /// larger than the default 256 MiB `max_buffer_size` must raise that limit
-    /// separately.
+    /// from [`Limits::default`](crate::gpu::Limits::default) and raises the
+    /// storage-buffer count viewport-lib needs (clamped to what the adapter
+    /// supports), plus `max_storage_buffer_binding_size` and `max_buffer_size` to
+    /// the adapter maximum. The size raises matter for per-vertex deformers: a
+    /// large mesh with many morph targets produces a deform-slot storage buffer
+    /// past the default 128 MiB binding cap, which the default limits cannot bind.
+    /// Consumers that already request `adapter.limits()` (the device's full
+    /// capabilities) do not need this. On a device whose maximum is genuinely the
+    /// default (some mobile tiers, the web), the size raises are a no-op and an
+    /// oversized buffer still cannot be bound.
     pub fn recommended_device_limits(adapter: &crate::gpu::Adapter) -> crate::gpu::Limits {
-        let adapter_max = adapter.limits().max_storage_buffers_per_shader_stage;
+        let adapter_limits = adapter.limits();
         let mut limits = crate::gpu::Limits::default();
         limits.max_storage_buffers_per_shader_stage = limits
             .max_storage_buffers_per_shader_stage
             .max(Self::REQUIRED_STORAGE_BUFFERS_PER_STAGE)
-            .min(adapter_max);
+            .min(adapter_limits.max_storage_buffers_per_shader_stage);
+        // Assign the adapter's own maximum (never more than it reports, so the
+        // request always succeeds). A deform-slot buffer for a big morph mesh can
+        // exceed the 128 MiB binding / 256 MiB buffer defaults, which would make
+        // the deform bind group invalid; the base draw path stays under both.
+        limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
+        limits.max_buffer_size = adapter_limits.max_buffer_size;
         limits
     }
 
