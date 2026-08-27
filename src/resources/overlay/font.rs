@@ -50,6 +50,9 @@ struct GlyphEntry {
     /// Offset from the pen position to the top-left of the bitmap.
     offset_x: f32,
     offset_y: f32,
+    /// `true` for a color glyph (the atlas cell holds real RGBA); `false` for a
+    /// coverage glyph (the cell holds `[255, 255, 255, coverage]`).
+    color: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +70,9 @@ pub(crate) struct GlyphQuad {
     pub uv_min: [f32; 2],
     /// UV bottom-right in the atlas (0..1).
     pub uv_max: [f32; 2],
+    /// `true` when the atlas cell holds a color bitmap (drawn as-is), `false` for
+    /// a coverage cell (tinted by the run colour).
+    pub color: bool,
 }
 
 /// Metrics for an overlay text run, matching how a [`LabelItem`] with the same
@@ -111,6 +117,14 @@ pub(crate) struct GlyphAtlas {
     /// Parsed fontdue fonts.  Index 0 is always the built-in default.
     fonts: Vec<fontdue::Font>,
 
+    /// Raw font bytes, parallel to `fonts`, kept so a `ttf_parser::Face` can be
+    /// built on demand to read color bitmap strikes that fontdue does not.
+    font_bytes: Vec<Vec<u8>>,
+
+    /// Whether each font has a readable color bitmap table, computed once at
+    /// upload. When `false`, glyphs skip the color path entirely.
+    font_has_color: Vec<bool>,
+
     /// Cached rasterized glyphs.
     entries: HashMap<GlyphKey, GlyphEntry>,
 
@@ -154,6 +168,8 @@ impl GlyphAtlas {
 
         Self {
             fonts: vec![default_font],
+            font_bytes: vec![DEFAULT_FONT_BYTES.to_vec()],
+            font_has_color: vec![super::color_glyph::has_color_bitmaps(DEFAULT_FONT_BYTES)],
             entries: HashMap::new(),
             pixels,
             size,
@@ -173,6 +189,9 @@ impl GlyphAtlas {
             .map_err(|e| FontError::ParseFailed(e.to_string()))?;
         let index = self.fonts.len();
         self.fonts.push(font);
+        self.font_has_color
+            .push(super::color_glyph::has_color_bitmaps(ttf_bytes));
+        self.font_bytes.push(ttf_bytes.to_vec());
         Ok(FontHandle(index))
     }
 
@@ -235,20 +254,23 @@ impl GlyphAtlas {
             // Get metrics for advance, even for whitespace.
             let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
 
-            // Only emit a quad for glyphs with visible bitmap area.
-            if m.width > 0 && m.height > 0 {
+            // Emit a quad for glyphs with a visible outline, or any glyph in a
+            // color font (emoji have no outline, so fontdue reports zero area).
+            if (m.width > 0 && m.height > 0) || self.font_has_color[font_index] {
                 let entry = self.ensure_glyph(device, font_index, glyph_index, size_tenths, px);
-                let atlas_size = self.size as f32;
-
-                quads.push(GlyphQuad {
-                    pos: [pen_x + entry.offset_x, pen_y + entry.offset_y],
-                    size: [entry.width as f32, entry.height as f32],
-                    uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
-                    uv_max: [
-                        (entry.x + entry.width) as f32 / atlas_size,
-                        (entry.y + entry.height) as f32 / atlas_size,
-                    ],
-                });
+                if entry.width > 0 {
+                    let atlas_size = self.size as f32;
+                    quads.push(GlyphQuad {
+                        pos: [pen_x + entry.offset_x, pen_y + entry.offset_y],
+                        size: [entry.width as f32, entry.height as f32],
+                        uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
+                        uv_max: [
+                            (entry.x + entry.width) as f32 / atlas_size,
+                            (entry.y + entry.height) as f32 / atlas_size,
+                        ],
+                        color: entry.color,
+                    });
+                }
             }
 
             pen_x += m.advance_width;
@@ -339,19 +361,22 @@ impl GlyphAtlas {
                     }
                     prev_glyph = Some(glyph_index);
                     let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
-                    if m.width > 0 && m.height > 0 {
+                    if (m.width > 0 && m.height > 0) || self.font_has_color[font_index] {
                         let entry =
                             self.ensure_glyph(device, font_index, glyph_index, size_tenths, px);
-                        let atlas_size = self.size as f32;
-                        word_quads.push(GlyphQuad {
-                            pos: [pen_x + entry.offset_x, entry.offset_y],
-                            size: [entry.width as f32, entry.height as f32],
-                            uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
-                            uv_max: [
-                                (entry.x + entry.width) as f32 / atlas_size,
-                                (entry.y + entry.height) as f32 / atlas_size,
-                            ],
-                        });
+                        if entry.width > 0 {
+                            let atlas_size = self.size as f32;
+                            word_quads.push(GlyphQuad {
+                                pos: [pen_x + entry.offset_x, entry.offset_y],
+                                size: [entry.width as f32, entry.height as f32],
+                                uv_min: [entry.x as f32 / atlas_size, entry.y as f32 / atlas_size],
+                                uv_max: [
+                                    (entry.x + entry.width) as f32 / atlas_size,
+                                    (entry.y + entry.height) as f32 / atlas_size,
+                                ],
+                                color: entry.color,
+                            });
+                        }
                     }
                     pen_x += m.advance_width;
                 }
@@ -445,13 +470,18 @@ impl GlyphAtlas {
         let mut quads = Vec::new();
         for (glyph_id, x, y, payload) in glyphs {
             // Skip glyphs with no visible bitmap (whitespace), as `layout_text`
-            // does, so zero-area entries never reach the packer.
+            // does, so zero-area entries never reach the packer. Color-font glyphs
+            // go through even when fontdue reports zero area (emoji have no
+            // outline).
             let m = self.fonts[font_index].metrics_indexed(glyph_id, px);
-            if m.width == 0 || m.height == 0 {
+            if (m.width == 0 || m.height == 0) && !self.font_has_color[font_index] {
                 continue;
             }
 
             let entry = self.ensure_glyph(device, font_index, glyph_id, size_tenths, px);
+            if entry.width == 0 {
+                continue;
+            }
             let atlas_size = self.size as f32;
 
             // Pen position arrives in logical pixels; the glyph's bitmap bearing
@@ -465,6 +495,7 @@ impl GlyphAtlas {
                     (entry.x + entry.width) as f32 / atlas_size,
                     (entry.y + entry.height) as f32 / atlas_size,
                 ],
+                color: entry.color,
             };
             quads.push((quad, payload));
         }
@@ -597,10 +628,32 @@ impl GlyphAtlas {
             return entry;
         }
 
-        // Rasterize.
+        // Color bitmap glyphs (emoji) first, for fonts that carry a strike table.
+        // fontdue would rasterize these to nothing, so this is the only path that
+        // draws them.
+        if self.font_has_color[font_index] {
+            if let Some(color) =
+                super::color_glyph::rasterize(&self.font_bytes[font_index], glyph_index, px)
+            {
+                return self.pack_rgba(
+                    device,
+                    key,
+                    &color.rgba,
+                    color.width,
+                    color.height,
+                    color.offset_x,
+                    color.offset_y,
+                    true,
+                );
+            }
+        }
+
+        // Coverage rasterization (fontdue): store `[255, 255, 255, coverage]`.
         let (metrics, bitmap) = self.fonts[font_index].rasterize_indexed(glyph_index, px);
         let w = metrics.width as u32;
         let h = metrics.height as u32;
+        let offset_x = metrics.xmin as f32;
+        let offset_y = -(metrics.ymin as f32 + h as f32);
 
         if w == 0 || h == 0 {
             // Whitespace glyph: insert a zero-area entry.
@@ -609,35 +662,51 @@ impl GlyphAtlas {
                 y: 0,
                 width: 0,
                 height: 0,
-                offset_x: metrics.xmin as f32,
-                offset_y: -(metrics.ymin as f32 + h as f32),
+                offset_x,
+                offset_y,
+                color: false,
             };
             self.entries.insert(key, entry);
             return entry;
         }
 
-        // Pack into the atlas (simple row packer with 1px padding).
+        let cell: Vec<[u8; 4]> = bitmap.iter().map(|&a| [255, 255, 255, a]).collect();
+        self.pack_rgba(device, key, &cell, w, h, offset_x, offset_y, false)
+    }
+
+    /// Pack a `w * h` RGBA cell into the atlas, growing if needed, and record the
+    /// entry. Shared by the coverage and color glyph paths.
+    #[allow(clippy::too_many_arguments)]
+    fn pack_rgba(
+        &mut self,
+        device: &crate::gpu::Device,
+        key: GlyphKey,
+        cell: &[[u8; 4]],
+        w: u32,
+        h: u32,
+        offset_x: f32,
+        offset_y: f32,
+        color: bool,
+    ) -> GlyphEntry {
+        // Simple row packer with 1px padding.
         let pad = 1;
         if self.cursor_x + w + pad > self.size {
-            // Move to next row.
             self.cursor_y += self.row_height + pad;
             self.cursor_x = 0;
             self.row_height = 0;
         }
         if self.cursor_y + h + pad > self.size {
-            // Atlas is full : grow.
             self.grow(device);
         }
 
         let x = self.cursor_x;
         let y = self.cursor_y;
 
-        // Blit coverage into the RGBA pixel buffer.
         for row in 0..h {
             for col in 0..w {
                 let src = (row * w + col) as usize;
                 let dst = ((y + row) * self.size + (x + col)) as usize;
-                self.pixels[dst] = [255, 255, 255, bitmap[src]];
+                self.pixels[dst] = cell[src];
             }
         }
         self.dirty = true;
@@ -650,8 +719,9 @@ impl GlyphAtlas {
             y,
             width: w,
             height: h,
-            offset_x: metrics.xmin as f32,
-            offset_y: -(metrics.ymin as f32 + h as f32),
+            offset_x,
+            offset_y,
+            color,
         };
         self.entries.insert(key, entry);
         entry
@@ -701,7 +771,11 @@ impl GlyphAtlas {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            // sRGB so colour glyph bytes (sRGB-encoded PNG) sample as linear for
+            // the shader, matching the linear-float tint contract. sRGB decodes RGB
+            // only, not alpha, so the coverage path (which reads `.a` and supplies
+            // its own tint) is unaffected.
+            format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
             usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

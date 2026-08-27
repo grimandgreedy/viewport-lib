@@ -859,6 +859,7 @@ impl ViewportRenderer {
                                 gq.uv_min,
                                 gq.uv_max,
                                 bar.label_colour,
+                                if gq.color { 2.0 } else { 1.0 },
                                 vp_w,
                                 vp_h,
                             );
@@ -892,6 +893,7 @@ impl ViewportRenderer {
                                 gq.uv_min,
                                 gq.uv_max,
                                 bar.label_colour,
+                                if gq.color { 2.0 } else { 1.0 },
                                 vp_w,
                                 vp_h,
                             );
@@ -1102,6 +1104,7 @@ impl ViewportRenderer {
                             gq.uv_min,
                             gq.uv_max,
                             ruler.label_colour,
+                            if gq.color { 2.0 } else { 1.0 },
                             vp_w,
                             vp_h,
                         );
@@ -1226,6 +1229,7 @@ impl ViewportRenderer {
                                 gq.uv_min,
                                 gq.uv_max,
                                 bar.label_colour,
+                                if gq.color { 2.0 } else { 1.0 },
                                 vp_w,
                                 vp_h,
                             );

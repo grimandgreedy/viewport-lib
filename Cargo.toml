@@ -30,6 +30,11 @@ bitflags = "2"
 rayon = "1"
 half = "2"
 fontdue = "0.9"
+# Color glyph (emoji) rasterization for the overlay atlas: fontdue is coverage
+# only, so `ttf-parser` reads the embedded bitmap strikes (sbix / CBDT) and `png`
+# decodes them. Core overlay text, not an optional format, so both are plain deps.
+ttf-parser = "0.25"
+png = "0.18"
 thiserror = "2.0"
 tracing = { version = "0.1", features = ["log"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
@@ -139,6 +144,9 @@ example-io = ["dep:viewport-lib-io"]
 naga = { version = "27", features = ["termcolor"] }
 winit = "0.30"
 pollster = "0.4"
+# Used by the headless color-glyph test to look up an emoji glyph id. Same crate
+# as the normal dependency; listed here so the integration test can name it.
+ttf-parser = "0.25"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The lightmap-bake showcase runs the full offline lightmapper: this crate's
 # unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Example-only.
