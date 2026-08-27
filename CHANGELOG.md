@@ -5,7 +5,8 @@
 Photometric lighting units land this cycle (directional in lux, point/spot in
 candela, emissive/IBL in nits, plus a physical-camera exposure model). Alongside
 them the per-frame effects configuration is regrouped by concern and the default
-lighting posture returns to a faithful "colour is data" baseline.
+lighting posture returns to a faithful "colour is data" baseline. The renderer also
+reaches a new platform this cycle: it runs in the browser on WebGPU.
 
 ### Features
 - **Submesh material ranges** - one mesh can draw with several materials.
@@ -47,6 +48,27 @@ lighting posture returns to a faithful "colour is data" baseline.
   rebinding per draw and the per-item uniform writes go away. Scenes with many
   distinct-material two-sided/scalar/matcap/override items (the unbatchable
   path) encode markedly faster. Output is unchanged.
+- **Web (WebGPU) rendering** - the renderer runs in the browser on `wasm32` over
+  WebGPU. The full pipeline works: lit meshes (instanced and not), shadows, and the
+  HDR path with bloom, tone mapping, SSAO, FXAA, DOF, and contact shadows, plus
+  overlays and transparency. `examples/winit_web` is a hand-written winit loop
+  adapted for the web (the adapter/device are awaited, the surface is a `<canvas>`,
+  the loop starts with `spawn_app`, timing uses `web_time::Instant`); the same file
+  still compiles and runs natively. Target WebGPU, not WebGL2: the lit mesh path
+  binds storage buffers in the fragment stage and the HDR pipeline uses compute,
+  neither of which WebGL2 has. On the WebGPU baseline (8 storage buffers per stage)
+  GPU deformers, the compute path tracer, hardware ray query, and GPU-driven culling
+  turn themselves off rather than failing. The mesh, shadow, and post-process shaders
+  were reworked to satisfy strict WGSL uniformity (browsers reject implicit
+  `textureSample` / `dpdx` / `textureSampleCompare` in non-uniform control flow);
+  the rework is behaviour-preserving on every platform. `scripts/build_web.sh` builds
+  and bundles the example.
+- **Streaming overlay textures** - overlay images can be backed by a texture you
+  update and free over its lifetime instead of re-uploading it each frame.
+  `create_streaming_overlay_texture` allocates one and returns an `OverlayTextureId`,
+  `update_overlay_texture` writes new pixels into it, and `free_overlay_texture`
+  releases it. This suits overlay content that changes over time (a decoded video
+  frame, a live plot, a procedurally updated panel) without per-frame allocation.
 
 ### Breaking changes
 - **`DeviceResources::update_gizmo_mesh` and `update_gizmo_uniform` are gone.**
