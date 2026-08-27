@@ -294,10 +294,19 @@ impl OverlaysShowcase {
     }
 
     fn build_shapes(&self, out: &mut Vec<OverlayShapeItem>) {
+        self.row_shape_kinds(out);
+        self.row_gradients(out);
+        self.row_shadows(out);
+        self.row_border_anim(out);
+        self.row_extra_shapes(out);
+        self.row_textures(out);
+        self.push_fig8_dot(out);
+    }
+
+    fn row_shape_kinds(&self, out: &mut Vec<OverlayShapeItem>) {
         let cr = self.corner_radius;
         let bw = self.border_width;
         let gap = 16.0;
-
         // Row 1: SDF shape kinds.
         let mut x = 20.0;
         let y = 150.0;
@@ -386,7 +395,11 @@ impl OverlaysShowcase {
                     .with_backdrop_blur(self.backdrop_blur),
             );
         }
+    }
 
+    fn row_gradients(&self, out: &mut Vec<OverlayShapeItem>) {
+        let cr = self.corner_radius;
+        let bw = self.border_width;
         // Row 2: fills and gradients.
         let mut x = 20.0;
         let y = 260.0;
@@ -454,7 +467,11 @@ impl OverlaysShowcase {
                 })
                 .with_border([0.9, 0.9, 0.9, 0.8], bw),
         );
+    }
 
+    fn row_shadows(&self, out: &mut Vec<OverlayShapeItem>) {
+        let cr = self.corner_radius;
+        let bw = self.border_width;
         // Row 3: shadows, glow, inset.
         let mut x = 20.0;
         let y = 360.0;
@@ -494,7 +511,11 @@ impl OverlaysShowcase {
             .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
             .with_shadow_inset(true),
         );
+    }
 
+    fn row_border_anim(&self, out: &mut Vec<OverlayShapeItem>) {
+        let cr = self.corner_radius;
+        let bw = self.border_width;
         // Row 4: border modes and animations.
         let mut x = 20.0;
         let y = 460.0;
@@ -560,7 +581,10 @@ impl OverlaysShowcase {
                 ..Default::default()
             }),
         );
+    }
 
+    fn row_extra_shapes(&self, out: &mut Vec<OverlayShapeItem>) {
+        let bw = self.border_width;
         // Row 5: extra shape kinds, some rotating (manual clock).
         let t = self.time;
         let mut x = 20.0;
@@ -646,7 +670,12 @@ impl OverlaysShowcase {
             .with_border([1.0, 0.8, 0.3, 0.9], bw)
             .with_clip(7),
         );
+    }
 
+    fn row_textures(&self, out: &mut Vec<OverlayShapeItem>) {
+        let cr = self.corner_radius;
+        let bw = self.border_width;
+        let t = self.time;
         // Row 6: texture-masked shapes and 9-slice A/B.
         if self.show_tex_shapes {
             let mut x = 20.0;
@@ -731,7 +760,10 @@ impl OverlaysShowcase {
                 );
             }
         }
+    }
 
+    fn push_fig8_dot(&self, out: &mut Vec<OverlayShapeItem>) {
+        let bw = self.border_width;
         // The dot tracing the figure-eight drawn in build_polylines.
         let phase = (self.time * 0.22).fract();
         let p = infinity_bezier_point(phase, FIG8_CX, FIG8_CY);
