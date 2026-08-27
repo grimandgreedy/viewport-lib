@@ -189,7 +189,7 @@ pub(super) fn emit_filled_polyline(
                 colour,
                 use_texture: 0.0,
                 clip_index: -1.0,
-        clip_rect: [0.0; 4],
+                clip_rect: [0.0; 4],
             });
         }
     }
@@ -335,7 +335,7 @@ pub(super) fn tessellate_polyline(
             colour,
             use_texture: 0.0,
             clip_index: -1.0,
-        clip_rect: [0.0; 4],
+            clip_rect: [0.0; 4],
         });
     };
     for w in ribs.windows(2) {
@@ -660,6 +660,7 @@ pub(super) fn emit_solid_quad(
 }
 
 /// Emit a textured quad (6 vertices) for a glyph in screen pixel coordinates.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_textured_quad(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     x0: f32,
@@ -669,6 +670,7 @@ pub(super) fn emit_textured_quad(
     uv_min: [f32; 2],
     uv_max: [f32; 2],
     colour: [f32; 4],
+    tex: f32,
     vp_w: f32,
     vp_h: f32,
 ) {
@@ -676,7 +678,6 @@ pub(super) fn emit_textured_quad(
     let tr = px_to_ndc(x1, y0, vp_w, vp_h);
     let bl = px_to_ndc(x0, y1, vp_w, vp_h);
     let br = px_to_ndc(x1, y1, vp_w, vp_h);
-    let tex = 1.0;
     let v = |pos: [f32; 2], uv: [f32; 2]| crate::resources::OverlayTextVertex {
         position: pos,
         uv,
@@ -694,6 +695,76 @@ pub(super) fn emit_textured_quad(
         v(bl, [uv_min[0], uv_max[1]]),
         v(br, uv_max),
     ]);
+}
+
+/// Emit one textured quad per glyph in a laid-out run.
+///
+/// Shared by the label and glyph-run overlay paths: both produce a slice of
+/// [`GlyphQuad`]s (positions and atlas UVs in logical pixels) and place them at
+/// `(origin_x, origin_y)` with a single tint `colour`.
+pub(super) fn emit_glyph_quads(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    quads: &[crate::resources::overlay::font::GlyphQuad],
+    origin_x: f32,
+    origin_y: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    for gq in quads {
+        let gx = origin_x + gq.pos[0];
+        let gy = origin_y + gq.pos[1];
+        emit_textured_quad(
+            verts,
+            gx,
+            gy,
+            gx + gq.size[0],
+            gy + gq.size[1],
+            gq.uv_min,
+            gq.uv_max,
+            colour,
+            glyph_tex_mode(gq.color),
+            vp_w,
+            vp_h,
+        );
+    }
+}
+
+/// The vertex `use_texture` mode for a glyph: `2.0` samples the atlas as full
+/// colour (emoji), `1.0` tints the atlas coverage by the run colour (text).
+fn glyph_tex_mode(color: bool) -> f32 {
+    if color { 2.0 } else { 1.0 }
+}
+
+/// Emit one textured quad per glyph, each with its own tint colour.
+///
+/// The glyph-run path uses this so a single run can carry per-glyph colours. Each
+/// entry pairs a laid-out [`GlyphQuad`] with the colour to draw it in.
+pub(super) fn emit_glyph_quads_colored(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    quads: &[(crate::resources::overlay::font::GlyphQuad, [f32; 4])],
+    origin_x: f32,
+    origin_y: f32,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    for (gq, colour) in quads {
+        let gx = origin_x + gq.pos[0];
+        let gy = origin_y + gq.pos[1];
+        emit_textured_quad(
+            verts,
+            gx,
+            gy,
+            gx + gq.size[0],
+            gy + gq.size[1],
+            gq.uv_min,
+            gq.uv_max,
+            *colour,
+            glyph_tex_mode(gq.color),
+            vp_w,
+            vp_h,
+        );
+    }
 }
 
 /// Emit a thin screen-space line as a quad (6 vertices).

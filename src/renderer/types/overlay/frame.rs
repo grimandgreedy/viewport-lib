@@ -19,6 +19,11 @@ pub struct OverlayFrame {
     pub rects: Vec<OverlayRectItem>,
     /// Text labels anchored to world-space or screen-space positions.
     pub labels: Vec<LabelItem>,
+    /// Pre-positioned glyph runs. The low-level text path: the caller supplies
+    /// glyph ids and positions (typically from a shaping engine) and the
+    /// renderer only rasterizes and draws them. `labels` is the string-in,
+    /// laid-out-here path; this is the glyphs-in, drawn-as-given path.
+    pub glyph_runs: Vec<GlyphRunItem>,
     /// Colour-legend (scalar bar) overlays.
     pub scalar_bars: Vec<ScalarBarItem>,
     /// Two-point distance measurement overlays.
@@ -41,6 +46,7 @@ impl OverlayFrame {
         self.shapes.iter().any(|i| i.z_order != 0)
             || self.rects.iter().any(|i| i.z_order != 0)
             || self.labels.iter().any(|i| i.z_order != 0)
+            || self.glyph_runs.iter().any(|i| i.z_order != 0)
             || self.scalar_bars.iter().any(|i| i.z_order != 0)
             || self.rulers.iter().any(|i| i.z_order != 0)
             || self.images.iter().any(|i| i.z_order != 0)

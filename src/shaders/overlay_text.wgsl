@@ -294,7 +294,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    if (in.use_texture > 0.5) {
+    if (in.use_texture > 1.5) {
+        // Colour glyph (emoji): draw the atlas RGBA as-is. The run colour only
+        // carries opacity through its alpha; the tint RGB is ignored.
+        let c = textureSample(glyph_atlas, atlas_sampler, in.uv);
+        return vec4<f32>(c.rgb, c.a * in.colour.a);
+    } else if (in.use_texture > 0.5) {
+        // Coverage glyph: tint the atlas alpha by the run colour.
         let atlas_a = textureSample(glyph_atlas, atlas_sampler, in.uv).a;
         return vec4<f32>(in.colour.rgb, in.colour.a * atlas_a);
     } else {

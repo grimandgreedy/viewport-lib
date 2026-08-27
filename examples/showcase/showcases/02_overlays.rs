@@ -1,9 +1,10 @@
 //! Overlays and annotations: the 2D layer viewport-lib draws over the 3D scene
 //! after post-processing. World-anchored labels and a ruler track scene points;
-//! a scalar bar acts as a colour legend; and a gallery of `OverlayShapeItem`s
-//! and `OverlayPolylineItem`s exercises SDF shapes, fills, gradients, shadows,
-//! border modes, animations, texture masking, 9-slice, clip masks, backdrop
-//! blur, and stroke patterns.
+//! a scalar bar acts as a colour legend; a `GlyphRunItem` draws pre-positioned,
+//! per-glyph-coloured glyphs (the low-level text path); and a gallery of
+//! `OverlayShapeItem`s and `OverlayPolylineItem`s exercises SDF shapes, fills,
+//! gradients, shadows, border modes, animations, texture masking, 9-slice, clip
+//! masks, backdrop blur, and stroke patterns.
 //!
 //! Everything overlay-side is rebuilt each frame and pushed into
 //! `session.frame_data_mut().overlays` after `ctx.drive_camera()`, because
@@ -14,11 +15,12 @@ use std::f32::consts::{PI, TAU};
 use eframe::egui;
 use glam::{Mat4, Vec3};
 use viewport_lib::{
-    AnimTrack, BorderMode, BuiltinColourmap, ColourmapId, GradientStop, LabelAnchor, LabelItem,
-    LineCap, Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PolylineCap, RepeatMode,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, StrokePattern,
-    TextureTransform, TileMode, TriangleDirection, primitives,
+    AnimTrack, BorderMode, BuiltinColourmap, ColourmapId, FontHandle, GlyphRunItem, GradientStop,
+    LabelAnchor, LabelItem, LineCap, Material, NineSlice, OverlayAnimation, OverlayAnimations,
+    OverlayEasing, OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayTextureId, PolylineCap, PositionedGlyph, RepeatMode, RulerItem, ScalarBarAnchor,
+    ScalarBarItem, ScalarBarOrientation, StrokePattern, TextureTransform, TileMode,
+    TriangleDirection, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -57,6 +59,12 @@ pub struct OverlaysShowcase {
     bg_colour: [f32; 4],
     show_ruler: bool,
     show_labels: bool,
+    show_glyph_run: bool,
+    show_emoji: bool,
+    /// Handle to a system color-emoji font, if one was found at setup.
+    emoji_font: Option<FontHandle>,
+    /// Glyph ids of the emoji to draw, resolved from the emoji font's cmap.
+    emoji_glyphs: Vec<u16>,
     show_shapes: bool,
     show_tex_shapes: bool,
     corner_radius: f32,
@@ -80,6 +88,10 @@ impl OverlaysShowcase {
             bg_colour: [0.0, 0.0, 0.0, 0.63],
             show_ruler: true,
             show_labels: true,
+            show_glyph_run: true,
+            show_emoji: true,
+            emoji_font: None,
+            emoji_glyphs: Vec::new(),
             show_shapes: true,
             show_tex_shapes: true,
             corner_radius: 8.0,
@@ -139,6 +151,8 @@ impl Showcase for OverlaysShowcase {
             CARLGAUSS_H,
             CARLGAUSS_RGBA,
         ));
+
+        self.load_emoji_font(ctx);
     }
 
     fn update(&mut self, ctx: &mut ShowcaseCtx) {
@@ -156,6 +170,12 @@ impl Showcase for OverlaysShowcase {
         if self.show_labels {
             self.build_labels(&mut fd.overlays.labels);
         }
+        if self.show_glyph_run {
+            self.build_glyph_run(&mut fd.overlays.glyph_runs);
+        }
+        if self.show_emoji {
+            self.build_emoji_run(&mut fd.overlays.glyph_runs);
+        }
         if self.show_ruler {
             fd.overlays.rulers.push(self.build_ruler());
         }
@@ -167,7 +187,9 @@ impl Showcase for OverlaysShowcase {
 
     fn description(&self) -> &str {
         "The 2D overlay layer: labels and a ruler anchored to the 3D scene, a \
-         scalar-bar legend, and a gallery of overlay shapes and polylines."
+         scalar-bar legend, a pre-positioned glyph run, a colour-emoji row (when a \
+         system emoji font is present), and a gallery of overlay shapes and \
+         polylines."
     }
 
     fn controls(&mut self, ui: &mut egui::Ui) {
@@ -235,6 +257,14 @@ impl Showcase for OverlaysShowcase {
         ui.separator();
         ui.heading("Annotations");
         ui.checkbox(&mut self.show_labels, "World labels");
+        ui.checkbox(&mut self.show_glyph_run, "Glyph run");
+        ui.add_enabled(
+            self.emoji_font.is_some(),
+            egui::Checkbox::new(&mut self.show_emoji, "Colour emoji"),
+        );
+        if self.emoji_font.is_none() {
+            ui.label(egui::RichText::new("No system colour-emoji font found.").weak());
+        }
         ui.checkbox(&mut self.show_ruler, "Ruler");
 
         ui.separator();
@@ -283,6 +313,94 @@ impl OverlaysShowcase {
                     .with_anchor_align(LabelAnchor::Left),
             );
         }
+    }
+
+    /// A `GlyphRunItem`: glyphs placed and coloured one by one, which is what a
+    /// shaping engine would feed. `LabelItem` takes a string and lays it out;
+    /// this takes the glyphs already positioned, so here they ride an animated
+    /// wave with a per-glyph rainbow tint. The ids are raw font glyph indices
+    /// (no character lookup): the point is the caller-owned layout, not the text.
+    fn build_glyph_run(&self, out: &mut Vec<GlyphRunItem>) {
+        let count = 24usize;
+        let mut glyphs = Vec::with_capacity(count);
+        let mut colours = Vec::with_capacity(count);
+        for i in 0..count {
+            let x = i as f32 * 24.0;
+            let y = (i as f32 * 0.5 + self.time * 2.0).sin() * 12.0;
+            // Bias into the letter/digit range of the built-in font; a few ids
+            // may be blank and are simply skipped.
+            glyphs.push(PositionedGlyph::new(20 + i as u16, x, y));
+            let [r, g, b] = hsv_to_rgb(i as f32 / count as f32, 0.85, 1.0);
+            colours.push([r, g, b, 1.0]);
+        }
+        out.push(
+            GlyphRunItem::new(glyphs)
+                // Just above the emoji row at the bottom.
+                .with_origin([40.0, 870.0])
+                .with_font_size(30.0)
+                .with_colours(colours),
+        );
+    }
+
+    /// Load a system color-emoji font, if one is present, and resolve a handful of
+    /// emoji to glyph ids. The overlay atlas draws these from the font's bitmap
+    /// strikes (sbix / CBDT), so they come out in full colour rather than as
+    /// monochrome coverage. Absent a font, the emoji row simply does not appear.
+    fn load_emoji_font(&mut self, ctx: &mut SetupCtx) {
+        const CANDIDATES: &[&str] = &[
+            "/System/Library/Fonts/Apple Color Emoji.ttc",
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+        ];
+        let Some(bytes) = CANDIDATES.iter().find_map(|p| std::fs::read(p).ok()) else {
+            return;
+        };
+        let Ok(handle) = ctx.session.resources_mut().upload_font(&bytes) else {
+            return;
+        };
+        // Resolve characters to glyph ids from the same bytes the atlas rasterizes.
+        let Ok(face) = ttf_parser::Face::parse(&bytes, 0) else {
+            return;
+        };
+        let wanted = ['😀', '😍', '👍', '🎉', '🚀', '🌍', '🔥', '⭐', '🍕', '🎨'];
+        let glyphs: Vec<u16> = wanted
+            .iter()
+            .filter_map(|&c| face.glyph_index(c).map(|g| g.0))
+            .collect();
+        if glyphs.is_empty() {
+            return;
+        }
+        self.emoji_font = Some(handle);
+        self.emoji_glyphs = glyphs;
+    }
+
+    /// A `GlyphRunItem` of color emoji, laid out in a row with a gentle bob. The
+    /// run carries no colour: color glyphs draw their own bitmap and take only the
+    /// run opacity, so the tint is ignored.
+    fn build_emoji_run(&self, out: &mut Vec<GlyphRunItem>) {
+        let Some(font) = self.emoji_font else {
+            return;
+        };
+        let size = 44.0;
+        let spacing = size * 1.15;
+        let glyphs: Vec<PositionedGlyph> = self
+            .emoji_glyphs
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let x = i as f32 * spacing;
+                let y = (i as f32 * 0.6 + self.time * 2.0).sin() * 6.0;
+                PositionedGlyph::new(id, x, y)
+            })
+            .collect();
+        out.push(
+            GlyphRunItem::new(glyphs)
+                .with_font(font)
+                // A new bottom row, below the shape and polyline rows.
+                .with_origin([40.0, 930.0])
+                .with_font_size(size),
+        );
     }
 
     fn build_ruler(&self) -> RulerItem {

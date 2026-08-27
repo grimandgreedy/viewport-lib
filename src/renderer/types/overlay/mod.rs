@@ -1,6 +1,7 @@
 mod animation;
 mod fill;
 mod frame;
+mod glyph_run;
 mod image;
 mod label;
 mod loading_bar;
@@ -14,6 +15,7 @@ mod texture;
 pub use self::animation::*;
 pub use self::fill::*;
 pub use self::frame::*;
+pub use self::glyph_run::*;
 pub use self::image::*;
 pub use self::label::*;
 pub use self::loading_bar::*;
