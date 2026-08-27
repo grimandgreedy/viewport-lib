@@ -18,7 +18,10 @@ fn adapter() -> Option<wgpu::Adapter> {
     .ok()
 }
 
-fn device_with_limits(adapter: &wgpu::Adapter, limits: wgpu::Limits) -> (wgpu::Device, wgpu::Queue) {
+fn device_with_limits(
+    adapter: &wgpu::Adapter,
+    limits: wgpu::Limits,
+) -> (wgpu::Device, wgpu::Queue) {
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("storage-limit-test"),
         required_limits: limits,

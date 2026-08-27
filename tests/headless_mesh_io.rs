@@ -9,7 +9,6 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-
 #[test]
 fn upload_mesh_data_valid() {
     let Some((device, _queue)) = headless_device() else {
@@ -230,4 +229,3 @@ fn render_offscreen_produces_rgba_pixels() {
     let has_nonzero = pixels.iter().any(|&b| b != 0);
     assert!(has_nonzero, "offscreen render produced all-zero image");
 }
-

@@ -2831,4 +2831,3 @@ fn cpu_pick_invalidates_cache_after_replace_mesh_data() {
         second.world_pos
     );
 }
-
