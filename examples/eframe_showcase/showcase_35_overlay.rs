@@ -23,6 +23,11 @@ pub(crate) struct OvlState {
     pub cloud_positions: Vec<[f32; 3]>,
     pub cloud_scalars: Vec<f32>,
     pub cloud_built: bool,
+    pub show_emoji: bool,
+    /// Handle to a system color-emoji font, if one was found on entry.
+    pub emoji_font: Option<FontHandle>,
+    /// Glyph ids of the emoji to draw, from the emoji font's cmap.
+    pub emoji_glyphs: Vec<u16>,
 }
 
 impl Default for OvlState {
@@ -48,6 +53,9 @@ impl Default for OvlState {
             cloud_positions: Vec::new(),
             cloud_scalars: Vec::new(),
             cloud_built: false,
+            show_emoji: true,
+            emoji_font: None,
+            emoji_glyphs: Vec::new(),
         }
     }
 }
@@ -57,10 +65,95 @@ impl Default for OvlState {
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BorderMode, BuiltinColourmap, ColourmapId, LabelAnchor, LabelItem, LineCap, OverlayAnimation,
-    OverlayFill, OverlayShape, OverlayShapeItem, RulerItem, ScalarBarAnchor, ScalarBarItem,
-    ScalarBarOrientation, TriangleDirection,
+    BorderMode, BuiltinColourmap, ColourmapId, FontHandle, GlyphRunItem, LabelAnchor, LabelItem,
+    LineCap, OverlayAnimation, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph,
+    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, TriangleDirection,
 };
+
+/// System color-emoji fonts to try, in order. First one found is used.
+pub(crate) const EMOJI_FONT_PATHS: &[&str] = &[
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+];
+
+/// Resolve a handful of emoji to glyph ids in `font_bytes`, dropping any the font
+/// does not cover. Empty if the bytes do not parse.
+pub(crate) fn emoji_glyph_ids(font_bytes: &[u8]) -> Vec<u16> {
+    let Ok(face) = ttf_parser::Face::parse(font_bytes, 0) else {
+        return Vec::new();
+    };
+    ['😀', '😍', '👍', '🎉', '🚀', '🌍', '🔥', '⭐', '🍕', '🎨']
+        .iter()
+        .filter_map(|&c| face.glyph_index(c).map(|g| g.0))
+        .collect()
+}
+
+/// A row of color emoji drawn as a `GlyphRunItem`, anchored to the bottom-left of
+/// the viewport. Empty when disabled or no emoji font was loaded. The run carries
+/// no colour: color glyphs draw their own bitmap and take only run opacity.
+pub(crate) fn build_emoji_run(app: &App) -> Vec<GlyphRunItem> {
+    let Some(font) = app.ovl_state.emoji_font else {
+        return Vec::new();
+    };
+    if !app.ovl_state.show_emoji || app.ovl_state.emoji_glyphs.is_empty() {
+        return Vec::new();
+    }
+    let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+    let size = 44.0;
+    let spacing = size * 1.15;
+    let glyphs: Vec<PositionedGlyph> = app
+        .ovl_state
+        .emoji_glyphs
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| {
+            let x = i as f32 * spacing;
+            let y = (i as f32 * 0.6 + t * 2.0).sin() * 6.0;
+            PositionedGlyph::new(id, x, y)
+        })
+        .collect();
+    vec![
+        GlyphRunItem::new(glyphs)
+            .with_font(font)
+            // A fixed row below the dancing-As glyph run.
+            .with_origin([40.0, 240.0])
+            .with_font_size(size),
+    ]
+}
+
+/// A row of animated, rainbow-tinted glyphs (the "dancing As") from the built-in
+/// font, drawn just above the emoji row. Needs no uploaded font, so it always
+/// shows. Positions are caller-owned, which is the point of a `GlyphRunItem`.
+pub(crate) fn build_glyph_run(app: &App) -> Vec<GlyphRunItem> {
+    let t = app.ovl_state.start_time.elapsed().as_secs_f32();
+    let count = 24usize;
+    let mut glyphs = Vec::with_capacity(count);
+    let mut colours = Vec::with_capacity(count);
+    for i in 0..count {
+        let x = i as f32 * 24.0;
+        let y = (i as f32 * 0.5 + t * 2.0).sin() * 12.0;
+        glyphs.push(PositionedGlyph::new(20 + i as u16, x, y));
+        colours.push(hue_rgba(i as f32 / count as f32));
+    }
+    vec![
+        GlyphRunItem::new(glyphs)
+            // A fixed row below the shape gallery, above the emoji row.
+            .with_origin([40.0, 170.0])
+            .with_font_size(30.0)
+            .with_colours(colours),
+    ]
+}
+
+/// A saturated rainbow colour for hue `h` in 0..1 (HSV with S = V = 1).
+fn hue_rgba(h: f32) -> [f32; 4] {
+    let f = |n: f32| {
+        let k = (n + h * 6.0) % 6.0;
+        1.0 - k.min(4.0 - k).clamp(0.0, 1.0)
+    };
+    [f(5.0), f(3.0), f(1.0), 1.0]
+}
 
 const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
     (BuiltinColourmap::Viridis, "Viridis"),
@@ -348,6 +441,13 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.checkbox(&mut app.ovl_state.show_ruler, "Show ruler");
     ui.checkbox(&mut app.ovl_state.show_labels, "Show callout labels");
+    ui.add_enabled(
+        app.ovl_state.emoji_font.is_some(),
+        egui::Checkbox::new(&mut app.ovl_state.show_emoji, "Show colour emoji"),
+    );
+    if app.ovl_state.emoji_font.is_none() {
+        ui.label(egui::RichText::new("No system colour-emoji font found.").weak());
+    }
     ui.checkbox(&mut app.ovl_state.show_shapes, "Show SDF shapes");
     if app.ovl_state.show_shapes {
         ui.add(

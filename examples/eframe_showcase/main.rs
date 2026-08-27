@@ -2236,6 +2236,19 @@ impl App {
                         .resources_mut()
                         .upload_overlay_texture(&rs.device, &rs.queue, nw, nh, &ndata),
                 );
+                // Optional color-emoji font for the glyph-run row.
+                if let Some(bytes) = showcase_35_overlay::EMOJI_FONT_PATHS
+                    .iter()
+                    .find_map(|p| std::fs::read(p).ok())
+                {
+                    if let Ok(handle) = renderer.resources_mut().upload_font(&bytes) {
+                        let ids = showcase_35_overlay::emoji_glyph_ids(&bytes);
+                        if !ids.is_empty() {
+                            self.ovl_state.emoji_font = Some(handle);
+                            self.ovl_state.emoji_glyphs = ids;
+                        }
+                    }
+                }
                 self.camera = Camera {
                     center: glam::Vec3::new(0.0, 1.57, 0.0),
                     distance: 9.0,
@@ -3861,6 +3874,10 @@ impl App {
             let (shapes, labels, bar, ruler, polylines) =
                 showcase_35_overlay::build_overlay_frame(self);
             fd.overlays.polylines = polylines;
+            // The dancing-As glyph run as a row above the emoji row.
+            let mut runs = showcase_35_overlay::build_glyph_run(self);
+            runs.extend(showcase_35_overlay::build_emoji_run(self));
+            fd.overlays.glyph_runs = runs;
             // Enable HDR callback path so the renderer owns the encoder and can
             // run backdrop blur passes.
             if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
