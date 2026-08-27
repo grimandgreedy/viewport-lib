@@ -78,7 +78,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var i = 0u; i < params.steps; i++) {
         pos += fwd;
         if pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0 { break; }
-        let v = textureSample(lic_vector_tex, lin_samp, pos);
+        let v = textureSampleLevel(lic_vector_tex, lin_samp, pos, 0.0);
         if v.a < 0.5 { break; }
         sum += sample_noise(pos);
         count++;
@@ -94,7 +94,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var i = 0u; i < params.steps; i++) {
         pos += bwd;
         if pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0 { break; }
-        let v = textureSample(lic_vector_tex, lin_samp, pos);
+        let v = textureSampleLevel(lic_vector_tex, lin_samp, pos, 0.0);
         if v.a < 0.5 { break; }
         sum += sample_noise(pos);
         count++;

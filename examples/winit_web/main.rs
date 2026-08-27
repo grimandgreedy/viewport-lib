@@ -43,10 +43,10 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowAttributes, WindowId};
 
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 const CANVAS_W: u32 = 1280;
 const CANVAS_H: u32 = 720;
@@ -102,9 +102,11 @@ impl ApplicationHandler<State> for App {
         #[cfg(target_arch = "wasm32")]
         {
             use winit::platform::web::WindowExtWebSys;
+            // Do not set the canvas width/height here: winit's resize observer
+            // owns the backing store, deriving it from the CSS size (fixed to the
+            // viewport in index.html) times the device pixel ratio. Setting it by
+            // hand fights that and drives an unbounded resize feedback loop.
             let canvas = window.canvas().expect("winit created a canvas");
-            canvas.set_width(CANVAS_W);
-            canvas.set_height(CANVAS_H);
             let doc = web_sys::window()
                 .and_then(|w| w.document())
                 .expect("a document");
@@ -189,10 +191,13 @@ impl ApplicationHandler<State> for App {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let (d, units) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => (glam::Vec2::new(x, y), ScrollUnits::Lines),
-                    MouseScrollDelta::PixelDelta(px) => {
-                        (glam::Vec2::new(px.x as f32, px.y as f32), ScrollUnits::Pixels)
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        (glam::Vec2::new(x, y), ScrollUnits::Lines)
                     }
+                    MouseScrollDelta::PixelDelta(px) => (
+                        glam::Vec2::new(px.x as f32, px.y as f32),
+                        ScrollUnits::Pixels,
+                    ),
                 };
                 state
                     .controller
@@ -245,10 +250,11 @@ impl ApplicationHandler<State> for App {
 
                 // The full HDR pipeline: prepare, shadow pass, HDR scene,
                 // post-process, tone map, blit to the surface view.
-                let cmd = state
-                    .renderer
-                    .owned()
-                    .render(&state.device, &state.queue, &view, &frame_data);
+                let cmd =
+                    state
+                        .renderer
+                        .owned()
+                        .render(&state.device, &state.queue, &view, &frame_data);
                 state.queue.submit(std::iter::once(cmd));
                 frame.present();
 
@@ -282,10 +288,15 @@ async fn build_state(window: Arc<Window>) -> State {
         .expect("adapter (is WebGPU available in this browser?)");
 
     let required_features = ViewportRenderer::recommended_device_features(&adapter);
+    // WebGPU's default max_texture_dimension_2d is 8192, but the renderer's HDR
+    // and post-process targets can exceed the surface size (supersampling), so
+    // raise it to whatever the adapter supports to leave headroom on HiDPI.
+    let mut required_limits = ViewportRenderer::recommended_device_limits(&adapter);
+    required_limits.max_texture_dimension_2d = adapter.limits().max_texture_dimension_2d;
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             required_features,
-            required_limits: ViewportRenderer::recommended_device_limits(&adapter),
+            required_limits,
             ..Default::default()
         })
         .await
@@ -318,7 +329,9 @@ async fn build_state(window: Arc<Window>) -> State {
     let m_sphere = res
         .upload_mesh_data(&device, &primitives::sphere(0.6, 24, 12))
         .unwrap();
-    let m_cube = res.upload_mesh_data(&device, &primitives::cube(1.0)).unwrap();
+    let m_cube = res
+        .upload_mesh_data(&device, &primitives::cube(1.0))
+        .unwrap();
     let m_torus = res
         .upload_mesh_data(&device, &primitives::torus(0.5, 0.18, 32, 16))
         .unwrap();

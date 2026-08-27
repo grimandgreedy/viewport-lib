@@ -56,6 +56,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Load raw depth and bail on background pixels.
     let depth = textureLoad(depth_tex, pixel, 0);
+
+    // View position and its screen-space derivatives, taken here in uniform
+    // control flow: the background and billboard early-returns below are
+    // non-uniform, and dpdx/dpdy are not allowed past them. Background pixels
+    // discard the result.
+    let pos_v = view_pos_from_depth(in.uv, depth);
+    let pos_dx = dpdx(pos_v);
+    let pos_dy = dpdy(pos_v);
+
     if depth >= 0.9999 {
         return vec4<f32>(1.0);
     }
@@ -119,19 +128,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Standard hemisphere SSAO for mesh geometry.
 
-    // Reconstruct the current pixel's view-space position.
-    let pos_v = view_pos_from_depth(in.uv, depth);
-
-    // Reconstruct view-space normal from position derivatives.
-    let pos_dx = dpdx(pos_v);
-    let pos_dy = dpdy(pos_v);
+    // Reconstruct view-space normal from the position derivatives computed up
+    // top in uniform control flow.
     // Swap order: cross(pos_dx, pos_dy) points into the surface in wgpu screen-space
     // (screen Y increases downward, so dpdy points in -view-Y). Swapping gives +Z (toward camera).
     let normal = normalize(cross(pos_dy, pos_dx));
 
     // Random rotation tangent from a tiled 4x4 noise texture.
     let noise_uv = in.uv * (dim / 4.0);
-    let rnd_xy   = textureSample(noise_tex, noise_samp, noise_uv).xy * 2.0 - 1.0;
+    let rnd_xy   = textureSampleLevel(noise_tex, noise_samp, noise_uv, 0.0).xy * 2.0 - 1.0;
     let rnd      = vec3<f32>(rnd_xy, 0.0);
     let tangent  = normalize(rnd - normal * dot(rnd, normal));
     let bitan    = cross(normal, tangent);

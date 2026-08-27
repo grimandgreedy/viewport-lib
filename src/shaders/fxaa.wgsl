@@ -63,11 +63,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(c, 1.0);
     }
 
-    // Diagonal neighbors for 3x3 sub-pixel blend.
-    let nw = textureSample(input_texture, input_sampler, in.uv + vec2<f32>(-texel.x,  texel.y)).rgb;
-    let ne = textureSample(input_texture, input_sampler, in.uv + vec2<f32>( texel.x,  texel.y)).rgb;
-    let sw = textureSample(input_texture, input_sampler, in.uv + vec2<f32>(-texel.x, -texel.y)).rgb;
-    let se = textureSample(input_texture, input_sampler, in.uv + vec2<f32>( texel.x, -texel.y)).rgb;
+    // Diagonal neighbors for 3x3 sub-pixel blend. Sampled after the non-edge
+    // early-return above (non-uniform control flow), so take them at an explicit
+    // LOD instead of relying on implicit derivatives.
+    let nw = textureSampleLevel(input_texture, input_sampler, in.uv + vec2<f32>(-texel.x,  texel.y), 0.0).rgb;
+    let ne = textureSampleLevel(input_texture, input_sampler, in.uv + vec2<f32>( texel.x,  texel.y), 0.0).rgb;
+    let sw = textureSampleLevel(input_texture, input_sampler, in.uv + vec2<f32>(-texel.x, -texel.y), 0.0).rgb;
+    let se = textureSampleLevel(input_texture, input_sampler, in.uv + vec2<f32>( texel.x, -texel.y), 0.0).rgb;
 
     let l_nw = luminance(nw);
     let l_ne = luminance(ne);
@@ -99,6 +101,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let sample_uv = in.uv + step_uv * blend;
-    let blended = textureSample(input_texture, input_sampler, sample_uv).rgb;
+    let blended = textureSampleLevel(input_texture, input_sampler, sample_uv, 0.0).rgb;
     return vec4<f32>(mix(c, blended, blend), 1.0);
 }

@@ -82,13 +82,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             fg_dims - vec2<u32>(1u),
         );
         if textureLoad(foreground_depth, fg_coord, 0) < 1.0 {
-            return textureSample(hdr_texture, hdr_sampler, in.uv);
+            return textureSampleLevel(hdr_texture, hdr_sampler, in.uv, 0.0);
         }
     }
 
     // Background or sky: copy HDR directly without blurring.
     if depth >= 0.9999 {
-        return textureSample(hdr_texture, hdr_sampler, in.uv);
+        return textureSampleLevel(hdr_texture, hdr_sampler, in.uv, 0.0);
     }
 
     let z_eye = linearize_depth(depth);
@@ -103,7 +103,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // No blur inside the focal range.
     if coc_pixels < 0.5 {
-        return textureSample(hdr_texture, hdr_sampler, in.uv);
+        return textureSampleLevel(hdr_texture, hdr_sampler, in.uv, 0.0);
     }
 
     // Gather HDR colour with a Vogel disc kernel of radius coc_pixels.
@@ -118,7 +118,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var i: u32 = 0u; i < num_samples; i = i + 1u) {
         let offset = vogel_disc(i, num_samples, rotation) * coc_pixels;
         let sample_uv = in.uv + vec2<f32>(offset.x * inv_w, offset.y * inv_h);
-        colour_sum = colour_sum + textureSample(hdr_texture, hdr_sampler, sample_uv).rgb;
+        colour_sum = colour_sum + textureSampleLevel(hdr_texture, hdr_sampler, sample_uv, 0.0).rgb;
     }
     let colour = colour_sum / f32(num_samples);
     return vec4<f32>(colour, 1.0);

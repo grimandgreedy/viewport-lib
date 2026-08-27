@@ -45,13 +45,17 @@ fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let frag_depth = textureSample(depth_texture, depth_sampler, in.uv);
 
+    // Reconstruct view position and its screen-space normal before the sky
+    // early-out: the derivatives must be taken in uniform control flow, and the
+    // depth-based return below is non-uniform. Sky fragments discard the result.
+    let view_pos = view_pos_from_depth(in.uv, frag_depth);
+    var view_normal = normalize(cross(dpdx(view_pos), dpdy(view_pos)));
+
     // Skip sky fragments (depth ~ 1.0).
     if frag_depth >= 0.9999 {
         return vec4<f32>(1.0);
     }
 
-    let view_pos = view_pos_from_depth(in.uv, frag_depth);
-    var view_normal = normalize(cross(dpdx(view_pos), dpdy(view_pos)));
     let view_to_camera = normalize(-view_pos);
     if dot(view_normal, view_to_camera) < 0.0 {
         view_normal = -view_normal;
@@ -93,7 +97,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
 
-        let sample_depth = textureSample(depth_texture, depth_sampler, sample_uv);
+        let sample_depth = textureSampleLevel(depth_texture, depth_sampler, sample_uv, 0);
         let sample_view_pos = view_pos_from_depth(sample_uv, sample_depth);
 
         // Self-shadow guard: the occluder must be meaningfully closer to the

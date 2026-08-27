@@ -144,13 +144,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if !is_background && !covered {
         // Multiply by AO before tone mapping.
         if params.ssao_enabled != 0u {
-            let ao = textureSample(ao_texture, hdr_sampler, in.uv).r;
+            let ao = textureSampleLevel(ao_texture, hdr_sampler, in.uv, 0.0).r;
             colour = colour * ao;
         }
 
         // Multiply by contact shadow factor before tone mapping.
         if params.contact_shadows_enabled != 0u {
-            let cs = textureSample(cs_texture, hdr_sampler, in.uv).r;
+            let cs = textureSampleLevel(cs_texture, hdr_sampler, in.uv, 0.0).r;
             colour = colour * cs;
         }
     }
@@ -194,7 +194,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no change).
     // A surface effect, so it only applies where geometry was shaded.
     if !is_background && !covered && params.lic_enabled != 0u {
-        let lic_val = textureSample(lic_texture, hdr_sampler, in.uv).r;
+        let lic_val = textureSampleLevel(lic_texture, hdr_sampler, in.uv, 0.0).r;
         let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
         colour = colour * max(0.0, lic_factor);
     }
