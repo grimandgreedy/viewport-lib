@@ -336,7 +336,7 @@ impl OverlaysShowcase {
         out.push(
             GlyphRunItem::new(glyphs)
                 // Just above the emoji row at the bottom.
-                .with_origin([40.0, 840.0])
+                .with_origin([40.0, 870.0])
                 .with_font_size(30.0)
                 .with_colours(colours),
         );
@@ -398,7 +398,7 @@ impl OverlaysShowcase {
             GlyphRunItem::new(glyphs)
                 .with_font(font)
                 // A new bottom row, below the shape and polyline rows.
-                .with_origin([40.0, 900.0])
+                .with_origin([40.0, 930.0])
                 .with_font_size(size),
         );
     }
