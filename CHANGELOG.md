@@ -47,6 +47,24 @@ lighting posture returns to a faithful "colour is data" baseline.
   rebinding per draw and the per-item uniform writes go away. Scenes with many
   distinct-material two-sided/scalar/matcap/override items (the unbatchable
   path) encode markedly faster. Output is unchanged.
+- **Pre-positioned glyph runs** - `GlyphRunItem` draws a run of glyphs the caller
+  has already laid out, the low-level counterpart to `LabelItem`. Where a
+  `LabelItem` takes a `String` and lays it out internally (one glyph per
+  codepoint, left to right), a `GlyphRunItem` takes `PositionedGlyph { glyph_id,
+  x, y }` entries and only rasterizes and draws them, so an external shaping /
+  bidi engine can shape text into positioned glyph ids and submit them through
+  `FrameData::overlays.glyph_runs` without pulling the shaper into viewport-lib.
+  One run carries one font; a line spanning several fonts is submitted as several
+  runs sharing a baseline (moving a whole run is a change to `origin` alone). Runs
+  support a run tint or per-glyph `colours`, opacity, a clip mask, and a `z_order`
+  shared with labels and shapes.
+- **Colour emoji in overlays** - overlay text drawn from a colour-emoji font now
+  renders in colour. The `sbix` and `CBDT` bitmap strikes that Apple Color Emoji
+  and Noto Color Emoji ship are decoded and drawn through the overlay glyph atlas
+  as straight RGBA, so emoji show up anywhere overlay text does (labels, scalar
+  bars, and glyph runs). Outline glyphs still rasterize through fontdue as before;
+  a glyph with no colour bitmap falls back to coverage. `png` and `ttf-parser` are
+  now core dependencies for the decode.
 
 ### Breaking changes
 - **`DeviceResources::update_gizmo_mesh` and `update_gizmo_uniform` are gone.**
