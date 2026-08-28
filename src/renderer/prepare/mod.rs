@@ -8,6 +8,8 @@ mod lighting;
 mod math;
 mod mesh_material;
 mod overlay_geometry;
+#[cfg(feature = "vector")]
+mod overlay_vector;
 mod per_object;
 mod projection;
 mod scene_uploads;

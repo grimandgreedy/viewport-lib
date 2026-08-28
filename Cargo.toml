@@ -29,6 +29,9 @@ parry3d = "0.26"
 bitflags = "2"
 rayon = "1"
 half = "2"
+# Curve flattening + fill-rule tessellation for `OverlayShape::Vector`. Optional,
+# gated behind the `vector` feature, so the default build does not pull it in.
+lyon = { version = "1", optional = true }
 fontdue = "0.9"
 # Color glyph (emoji) rasterization for the overlay atlas: fontdue is coverage
 # only, so `ttf-parser` reads the embedded bitmap strikes (sbix / CBDT) and `png`
@@ -101,6 +104,11 @@ wgpu29 = ["dep:wgpu29"]
 # Offscreen path tracer (src/raytrace/). Off by default, so the default build
 # is unchanged for non-users. Compute only, no hardware ray query; reuses the
 # shared helpers/brdf.wgsl.
+# Arbitrary vector shapes in the overlay layer (`OverlayShape::Vector`). Adds the
+# curve-flattening + fill-rule tessellator. The `SubPath` / `PathSegment` /
+# `FillRule` types and the variant exist without it; only the triangle fill is
+# gated, so a `Vector` shape submitted without this feature draws nothing.
+vector = ["dep:lyon"]
 raytrace = []
 # Lightmap bake primitives (src/bake/). Off by default. Currently the texel
 # G-buffer pass: rasterise a mesh into UV1/atlas space to get per-texel world

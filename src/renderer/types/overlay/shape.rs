@@ -6,7 +6,8 @@ use crate::renderer::types::*;
 /// on the GPU. The bounding quad is defined by `OverlayShapeItem::position`
 /// and `size`; the shape variant controls which SDF is used and how the
 /// extra `radii` parameters are interpreted.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum OverlayShape {
     /// Axis-aligned rectangle with a uniform corner radius.
     Rect {
@@ -81,6 +82,19 @@ pub enum OverlayShape {
         /// bounding box. `1.0` fills the entire bounding box; `0.3` gives
         /// thin arms. Clamped to 0.0..1.0.
         arm_width_frac: f32,
+    },
+    /// Arbitrary vector shape: one or more subpaths with curves and a fill
+    /// rule. Unlike the analytic variants above, this has no closed-form SDF,
+    /// so it is flattened and tessellated to triangles rather than evaluated
+    /// per fragment. It is the general filled region the analytic variants are
+    /// special cases of. Distinct from a math vector: "vector" here means
+    /// vector art (paths). Subpath coordinates are path-local logical pixels,
+    /// placed at the item's `position`.
+    Vector {
+        /// The contours that make up the shape.
+        subpaths: Vec<SubPath>,
+        /// How the subpaths combine into filled area.
+        fill_rule: FillRule,
     },
 }
 
@@ -599,6 +613,32 @@ impl OverlayShapeItem {
             .with_texture(texture)
     }
 
+    /// Build an arbitrary vector shape from `subpaths` combined under
+    /// `fill_rule`. Subpath coordinates are path-local logical pixels, placed
+    /// at `position` (top-left); `size` is the bounding box gradient and
+    /// texture fills map across. Set the fill and other fields with the
+    /// `with_*` methods.
+    ///
+    /// Use this for shapes that are not one of the analytic variants: multiple
+    /// contours, holes, curves, or SVG / icon art. Reach for the analytic
+    /// variants (`Rect`, `Circle`, `Ring`, and so on) for simple, animated, or
+    /// effect-heavy chrome, which they draw more cheaply and crisply.
+    pub fn vector(
+        subpaths: Vec<SubPath>,
+        fill_rule: FillRule,
+        position: [f32; 2],
+        size: [f32; 2],
+    ) -> Self {
+        Self::new(
+            OverlayShape::Vector {
+                subpaths,
+                fill_rule,
+            },
+            position,
+            size,
+        )
+    }
+
     /// Set the fill style (solid colour or gradient).
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
         self.fill = fill;
@@ -772,7 +812,7 @@ impl OverlayShapeItem {
         let p = [c * rx - s * ry + piv[0], s * rx + c * ry + piv[1]];
         let hs = [hw, hh];
 
-        match self.shape {
+        match &self.shape {
             OverlayShape::Rect { corner_radius } => {
                 let r = corner_radius.min(hw).min(hh).max(0.0);
                 sd_rounded_box(p, hs, [r, r, r, r])
@@ -801,8 +841,8 @@ impl OverlayShapeItem {
                 p,
                 hw.min(hh),
                 inner_radius_frac.clamp(0.0, 1.0),
-                start_angle,
-                end_angle,
+                *start_angle,
+                *end_angle,
             ),
             OverlayShape::Triangle { direction } => {
                 let (tp, ths) = match direction {
@@ -814,21 +854,37 @@ impl OverlayShapeItem {
                 sd_triangle(tp, ths)
             }
             OverlayShape::Line { thickness, cap } => {
-                sd_line(p, hs, thickness * 0.5, cap == LineCap::Square)
+                sd_line(p, hs, thickness * 0.5, *cap == LineCap::Square)
             }
             OverlayShape::Star {
                 points,
                 inner_radius_frac,
             } => {
                 let r = hw.min(hh);
-                sd_star(p, r, points as f32, inner_radius_frac.clamp(0.0, 1.0))
+                sd_star(p, r, *points as f32, inner_radius_frac.clamp(0.0, 1.0))
             }
             OverlayShape::RegularPolygon { sides } => {
                 let r = hw.min(hh);
-                sd_ngon(p, r, sides.max(3) as f32)
+                sd_ngon(p, r, (*sides).max(3) as f32)
             }
             OverlayShape::Cross { arm_width_frac } => {
                 sd_cross(p, hs, arm_width_frac.clamp(0.0, 1.0))
+            }
+            OverlayShape::Vector {
+                subpaths,
+                fill_rule,
+            } => {
+                // No closed-form SDF. Return a sign-only pseudo-distance from a
+                // point-in-path test: negative inside, positive outside.
+                // `contains` only reads the sign; the magnitude is not a true
+                // distance. `p` is in the centred, unrotated frame, so shift it
+                // back into path-local space (origin at the item's top-left).
+                let q = [p[0] + hw, p[1] + hh];
+                if path_contains(subpaths, *fill_rule, q) {
+                    -1.0
+                } else {
+                    1.0
+                }
             }
         }
     }

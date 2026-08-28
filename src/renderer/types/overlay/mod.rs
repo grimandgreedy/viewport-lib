@@ -6,6 +6,7 @@ mod label;
 mod polyline;
 mod shape;
 mod texture;
+mod vector;
 
 pub use self::animation::*;
 pub use self::fill::*;
@@ -15,3 +16,4 @@ pub use self::label::*;
 pub use self::polyline::*;
 pub use self::shape::*;
 pub use self::texture::*;
+pub use self::vector::*;

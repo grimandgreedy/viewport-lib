@@ -36,7 +36,7 @@ fn encode_overlay_shape(
     hh: f32,
 ) -> (f32, [f32; 4]) {
     use crate::renderer::types::{LineCap, OverlayShape, TriangleDirection};
-    match *shape {
+    match shape {
         OverlayShape::Rect { corner_radius } => {
             let r = corner_radius.min(hw).min(hh).max(0.0);
             (0.0, [r, r, r, r])
@@ -64,8 +64,8 @@ fn encode_overlay_shape(
             5.0,
             [
                 inner_radius_frac.clamp(0.0, 1.0),
-                start_angle,
-                end_angle,
+                *start_angle,
+                *end_angle,
                 0.0,
             ],
         ),
@@ -91,16 +91,20 @@ fn encode_overlay_shape(
         } => (
             8.0,
             [
-                points.max(3) as f32,
+                (*points).max(3) as f32,
                 inner_radius_frac.clamp(0.0, 1.0),
                 0.0,
                 0.0,
             ],
         ),
-        OverlayShape::RegularPolygon { sides } => (9.0, [sides.max(3) as f32, 0.0, 0.0, 0.0]),
+        OverlayShape::RegularPolygon { sides } => (9.0, [(*sides).max(3) as f32, 0.0, 0.0, 0.0]),
         OverlayShape::Cross { arm_width_frac } => {
             (10.0, [arm_width_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
         }
+        // A vector shape has no analytic SDF; it is not drawn through this
+        // encoder. Callers skip Vector shapes before reaching here. Used as a
+        // clip mask it degrades to its bounding box.
+        OverlayShape::Vector { .. } => (0.0, [0.0; 4]),
     }
 }
 
@@ -642,6 +646,16 @@ impl ViewportRenderer {
                     if shape_orig.clip_mask_id.is_some() {
                         continue;
                     }
+                    // Vector shapes have no analytic SDF; the solid/textured
+                    // paths below cannot draw them. They are tessellated to a
+                    // triangle fill on a separate path (not yet wired), so skip
+                    // them here rather than encoding them as a rect quad.
+                    if matches!(
+                        &shape_orig.shape,
+                        crate::renderer::types::OverlayShape::Vector { .. }
+                    ) {
+                        continue;
+                    }
                     // Clone so per-frame animation overrides are local and
                     // the input frame data stays untouched.
                     let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
@@ -751,7 +765,7 @@ impl ViewportRenderer {
 
                     // Extra quad expansion for shapes whose stroke extends
                     // beyond the item's position/size bounding box.
-                    let extra_expand = match shape.shape {
+                    let extra_expand = match &shape.shape {
                         crate::renderer::types::OverlayShape::Line { thickness, .. } => {
                             thickness * 0.5
                         }
@@ -794,7 +808,7 @@ impl ViewportRenderer {
                     let ey = ry + shadow_pad + 1.0;
 
                     // Encode shape type and radii.
-                    let (shape_type, radii) = match shape.shape {
+                    let (shape_type, radii) = match &shape.shape {
                         crate::renderer::types::OverlayShape::Rect { corner_radius } => {
                             let r = corner_radius.min(hw).min(hh).max(0.0);
                             (0.0, [r, r, r, r])
@@ -824,8 +838,8 @@ impl ViewportRenderer {
                             5.0,
                             [
                                 inner_radius_frac.clamp(0.0, 1.0),
-                                start_angle,
-                                end_angle,
+                                *start_angle,
+                                *end_angle,
                                 0.0,
                             ],
                         ),
@@ -849,16 +863,19 @@ impl ViewportRenderer {
                             points,
                             inner_radius_frac,
                         } => {
-                            let n = points.max(3) as f32;
+                            let n = (*points).max(3) as f32;
                             (8.0, [n, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0])
                         }
                         crate::renderer::types::OverlayShape::RegularPolygon { sides } => {
-                            let n = sides.max(3) as f32;
+                            let n = (*sides).max(3) as f32;
                             (9.0, [n, 0.0, 0.0, 0.0])
                         }
                         crate::renderer::types::OverlayShape::Cross { arm_width_frac } => {
                             (10.0, [arm_width_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
                         }
+                        // Skipped earlier in the loop; this keeps the match
+                        // exhaustive without drawing the vector shape as a rect.
+                        crate::renderer::types::OverlayShape::Vector { .. } => (0.0, [0.0; 4]),
                     };
 
                     // Resolve the fill into four colour stops + positions +
