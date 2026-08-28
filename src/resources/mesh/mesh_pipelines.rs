@@ -3,6 +3,7 @@
 //! `postprocess.rs`) and from the deformer registry's pipeline rebuild
 //! path, so a registered deformer can swap in a freshly composed
 //! `ShaderModule` without duplicating pipeline descriptors.
+use crate::resources::VertexBufferLayoutExt;
 
 use crate::resources::types::Vertex;
 

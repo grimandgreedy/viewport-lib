@@ -711,9 +711,9 @@ impl ViewportRenderer {
                 (0, 0.0, 0.0, 0)
             };
 
-        let debug_vis_mode = lighting.debug_vis.pack_mode();
-        let debug_vis_scale = if lighting.debug_vis.active {
-            lighting.debug_vis.scale.max(0.001)
+        let debug_vis_mode = frame.effects.debug.debug_vis.pack_mode();
+        let debug_vis_scale = if frame.effects.debug.debug_vis.active {
+            frame.effects.debug.debug_vis.scale.max(0.001)
         } else {
             1.0
         };
@@ -735,8 +735,8 @@ impl ViewportRenderer {
             ibl_intensity,
             ibl_rotation,
             show_skybox,
-            debug_vis_split_x: if lighting.debug_vis.active {
-                lighting.debug_vis.split_x.clamp(0.0, 1.0)
+            debug_vis_split_x: if frame.effects.debug.debug_vis.active {
+                frame.effects.debug.debug_vis.split_x.clamp(0.0, 1.0)
             } else {
                 0.5
             },
@@ -833,7 +833,7 @@ impl ViewportRenderer {
             // lookup-table indirection at that scale. A consumer-set debug
             // override also forces the fallback path so the two can be A/B'd
             // for correctness checks.
-            let use_clusters = !frame.viewport.force_cluster_fallback
+            let use_clusters = !frame.effects.debug.force_cluster_fallback
                 && active_count > crate::resources::gpu::clustered::SMALL_N_THRESHOLD;
             let fallback_flag = if use_clusters { 0.0 } else { 1.0 };
             let grid_uniform = ClusterGridUniform {
@@ -929,7 +929,7 @@ impl ViewportRenderer {
 
             // Optional host readback for the debug stats panel. Synchronous;
             // off by default.
-            if frame.viewport.cluster_stats_request {
+            if frame.effects.debug.cluster_stats_request {
                 let stats =
                     resources
                         .clustered

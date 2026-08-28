@@ -385,8 +385,6 @@ pub struct LightingSettings {
     pub hemisphere_intensity: f32,
     /// Shadow-map configuration (cascades, atlas, filtering, bias, ...).
     pub shadows: ShadowSettings,
-    /// Debug visualization configuration. Off by default (zero overhead when inactive).
-    pub debug_vis: crate::renderer::types::debug::DebugVis,
 }
 
 impl Default for LightingSettings {
@@ -397,7 +395,6 @@ impl Default for LightingSettings {
             ground_colour: [0.5, 0.55, 0.6],
             hemisphere_intensity: 1.5,
             shadows: ShadowSettings::default(),
-            debug_vis: crate::renderer::types::debug::DebugVis::default(),
         }
     }
 }

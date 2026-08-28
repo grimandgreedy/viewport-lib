@@ -157,7 +157,7 @@ impl ViewportRenderer {
         // and viewport_width in ClipPlanesUniform (the buffer stride) is now physical too.
         {
             let vp_idx = frame.camera.viewport_index;
-            let debug_active = frame.effects.lighting.debug_vis.active;
+            let debug_active = frame.effects.debug.debug_vis.active;
             let ppp = frame.camera.pixels_per_point;
             let vw = (frame.camera.viewport_size[0] * ppp).max(1.0) as u32;
             let vh = (frame.camera.viewport_size[1] * ppp).max(1.0) as u32;

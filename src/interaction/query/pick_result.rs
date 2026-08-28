@@ -1,7 +1,7 @@
 //! Result types shared by the CPU and GPU pick backends: [`PickHit`],
 //! [`GpuPickHit`], and [`PickRectResult`].
 
-use super::sub_object::SubObjectRef;
+use crate::interaction::select::sub_object::SubObjectRef;
 
 // ---------------------------------------------------------------------------
 // PickHit : rich hit result
@@ -182,7 +182,7 @@ impl GpuPickHit {
 pub struct PickRectResult {
     /// IDs of whole items that have geometry inside the pick rect.
     ///
-    /// Populated when [`super::PickMask::OBJECT`] is set.
+    /// Populated when [`PickMask::OBJECT`](crate::renderer::picking::PickMask::OBJECT) is set.
     pub objects: Vec<u64>,
     /// Sub-elements inside the pick rect as `(item_id, sub_object)` pairs.
     ///

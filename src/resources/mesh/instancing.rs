@@ -1,3 +1,4 @@
+use crate::resources::VertexBufferLayoutExt;
 use crate::resources::*;
 
 /// Instanced-draw pipelines, the shared per-instance storage buffer, and the

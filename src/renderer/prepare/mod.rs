@@ -145,8 +145,8 @@ impl ViewportRenderer {
     ///
     /// Call once per frame before any `prepare_viewport_internal` calls.
     ///
-    /// Reads `scene_fx` for lighting, IBL, and compute filters.  Also reads
-    /// `frame.camera` for shadow cascade computation.
+    /// Reads `scene_fx` for lighting and IBL, `frame.scene` for compute filter
+    /// items, and `frame.camera` for shadow cascade computation.
     pub(super) fn prepare_scene_internal(
         &mut self,
         device: &crate::gpu::Device,
@@ -190,10 +190,12 @@ impl ViewportRenderer {
 
         // GPU compute filtering.
         // Dispatch before the render pass. Completely skipped when list is empty (zero overhead).
-        if !scene_fx.compute_filter_items.is_empty() {
-            self.compute_filter_results =
-                self.resources
-                    .run_compute_filters(device, queue, scene_fx.compute_filter_items);
+        if !frame.scene.compute_filter_items.is_empty() {
+            self.compute_filter_results = self.resources.run_compute_filters(
+                device,
+                queue,
+                &frame.scene.compute_filter_items,
+            );
         } else {
             self.compute_filter_results.clear();
         }

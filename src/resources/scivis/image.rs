@@ -1,5 +1,6 @@
 use super::*;
 use crate::resources::Vertex;
+use crate::resources::VertexBufferLayoutExt;
 
 impl DeviceResources {
     // -------------------------------------------------------------------------

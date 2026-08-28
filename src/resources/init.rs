@@ -1,5 +1,6 @@
 use super::*;
 use crate::gpu::util::DeviceExt;
+use crate::resources::VertexBufferLayoutExt;
 
 impl DeviceResources {
     /// Create all GPU resources for the viewport.

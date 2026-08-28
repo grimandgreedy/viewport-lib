@@ -18,6 +18,7 @@
 //!
 //! Draw support matches the GPU particle mesh route: HDR path only, opaque,
 //! no shadows, no picking, no culling.
+use crate::resources::VertexBufferLayoutExt;
 
 use crate::gpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};

@@ -110,7 +110,7 @@ pub enum DebugOutputMode {
 
 /// Debug visualization configuration for the shadow and lighting pipeline.
 ///
-/// Attach to [`LightingSettings::debug_vis`] to activate per-fragment channel output.
+/// Attach to [`EffectsDebug::debug_vis`](crate::EffectsFrame) to activate per-fragment channel output.
 /// When `active` is false the overhead is zero: the lit pipelines compile
 /// without the debug code entirely (its per-fragment storage write would
 /// disable hardware early depth rejection and slow dense scenes by an order

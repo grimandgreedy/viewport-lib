@@ -80,6 +80,9 @@ pub use self::scivis::curve_store::{
     GlyphSetId, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,
     TensorGlyphSetId, TubeId,
 };
+// Gaussian splat upload vocabulary. Owned here (not in `renderer`) so nothing in
+// `resources` reaches up to `renderer` for these types.
+pub use self::scivis::gaussian_splat::{GaussianSplatData, GaussianSplatId, ShDegree};
 pub(crate) use self::scivis::curve_store::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
@@ -94,12 +97,12 @@ pub use self::types::ViewportGpuResources;
 // though their current consumers reference them through their domain modules.
 #[allow(unused_imports)]
 pub(crate) use self::types::{
-    AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ContactShadowUniform,
-    CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
-    GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh, GridUniform,
-    GroundPlaneUniform, ImageSliceGpuData, InstanceAabb, InstanceData, LabelGpuData,
+    AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
+    ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,
+    FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh,
+    GridUniform, GroundPlaneUniform, ImageSliceGpuData, InstanceAabb, InstanceData, LabelGpuData,
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
-    ClipShapeGpu, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
+    OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
     OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, RawGeomOutlineBuffers,
     SHADOW_ATLAS_SIZE, ScreenRectOutlineBuffers, ShadowAtlasUniform, ShadowCullState,
@@ -119,7 +122,7 @@ pub use self::types::{
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
     OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData, SingleLightUniform,
-    Vertex, VolumeGpuData,
+    Vertex, VertexBufferLayoutExt, VolumeGpuData,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;

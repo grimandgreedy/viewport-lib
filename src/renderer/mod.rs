@@ -28,6 +28,11 @@ pub use picking::{
 };
 mod capture;
 mod overlay_draw_order;
+mod readback;
+pub use readback::ExposureReadback;
+// Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
+// public `renderer::GaussianSplat*` path and its doc links stay stable.
+pub use crate::resources::{GaussianSplatData, GaussianSplatId, ShDegree};
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -50,24 +55,24 @@ pub use self::types::{
     CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis,
     DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings, DofSettings,
-    EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode, ExposureReadback,
-    ExposureSettings, ExternalInstancesItem, FillRule, FilterMode, ForceField, ForegroundPass,
-    ForegroundProjection, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem,
-    GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType, GpuImplicitItem, GpuMarchingCubesJob,
-    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, ImageSliceItem,
-    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
-    LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
-    Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor, OverlayAnimation, OverlayAnimations, OverlayEasing,
-    OverlayFill, OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathSegment, PathTrack, PickId,
-    PipelineMode, PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap,
-    PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
-    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer,
-    ShadowSettings, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
-    SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
-    StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
+    EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode, ExposureSettings,
+    ExternalInstancesItem, FillRule, FilterMode, ForceField, ForegroundPass, ForegroundProjection,
+    FrameData, GaussianSplatItem, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType,
+    GpuImplicitItem, GpuMarchingCubesJob, GpuParticleSystemItem, GradientStop, GroundPlane,
+    GroundPlaneMode, ImageSliceItem, IndirectLightSource, InteractionFrame, LabelAnchor,
+    LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture,
+    LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor,
+    OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE,
+    ParticleMeshAlign, PathSegment, PathTrack, PickId, PipelineMode, PointCloudItem,
+    PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
+    RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame,
+    SceneRenderItem, ScreenImageItem, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis,
+    SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
+    StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
     TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
     TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
     VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
@@ -684,7 +689,7 @@ pub struct ViewportRenderer {
     /// Surfaced through the cluster debug overlay when enabled.
     pub(crate) last_frustum_culled_lights: u32,
     /// Most recent cluster build readback. Populated when a frame's
-    /// `ViewportFrame::cluster_stats_request` was true.
+    /// `EffectsDebug::cluster_stats_request` was true.
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
 }
 
@@ -1015,7 +1020,7 @@ impl ViewportRenderer {
     }
 
     /// Diagnostics from the cluster build pass on the most recent frame that
-    /// requested them (`ViewportFrame::cluster_stats_request`). Returns
+    /// requested them (`EffectsDebug::cluster_stats_request`). Returns
     /// `None` until a request has been served.
     pub fn cluster_stats(&self) -> Option<crate::resources::gpu::clustered::ClusterStats> {
         self.last_cluster_stats
@@ -1035,7 +1040,7 @@ impl ViewportRenderer {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         id: ViewportId,
-    ) -> Option<crate::renderer::types::ExposureReadback> {
+    ) -> Option<ExposureReadback> {
         let slot = self.viewport_slots.get(id.0)?;
         let hdr = slot.hdr.as_ref()?;
         let size = std::mem::size_of::<crate::resources::gpu::exposure::ExposureState>() as u64;
@@ -1061,7 +1066,7 @@ impl ViewportRenderer {
             let data = slice.get_mapped_range();
             let st: &crate::resources::gpu::exposure::ExposureState =
                 &bytemuck::cast_slice(&data)[0];
-            crate::renderer::types::ExposureReadback {
+            ExposureReadback {
                 exposure: st.exposure,
                 current_ev: st.current_ev,
                 target_ev: st.target_ev,
@@ -2798,8 +2803,9 @@ impl ViewportRenderer {
     /// view : as the shadow framing reference.
     ///
     /// `scene_effects` carries the scene-global effects: lighting, environment
-    /// map, and compute filters.  Obtain it by constructing [`SceneEffects`]
-    /// directly or via [`EffectsFrame::split`].
+    /// map, and scatter settings.  Obtain it by constructing [`SceneEffects`]
+    /// directly or via [`EffectsFrame::split`]. Compute filter items are read
+    /// from `frame.scene.compute_filter_items`.
     pub(crate) fn prepare_scene(
         &mut self,
         device: &crate::gpu::Device,

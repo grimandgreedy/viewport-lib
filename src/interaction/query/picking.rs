@@ -992,8 +992,9 @@ fn ray_tri_mt_ds(
 // Triangular face indices for each cell type used in ray picking.
 // (These cover the outer boundary surface of each cell.)
 
-// Tet: 4 triangular faces.
-const VM_TET_FACES: [[usize; 3]; 4] = [[1, 2, 3], [0, 3, 2], [0, 1, 3], [0, 2, 1]];
+// Tet: 4 triangular faces. Canonical table lives on the volume-mesh geometry
+// module; aliased here so ray picking and boundary extraction share one winding.
+use crate::resources::volume::volume_mesh::TET_FACES as VM_TET_FACES;
 
 // Hex: 6 quad faces, each split into 2 triangles (12 total).
 const VM_HEX_TRIS: [[usize; 3]; 12] = [

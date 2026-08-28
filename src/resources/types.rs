@@ -225,9 +225,20 @@ pub struct Vertex {
     pub tangent: [f32; 4],
 }
 
-impl Vertex {
+/// Supplies the wgpu vertex buffer layout for a vertex type.
+///
+/// Kept off [`Vertex`] itself as an extension trait so the vertex data type
+/// carries no `wgpu` type: the layout is a property of how the GPU consumes the
+/// struct, not of the struct's data. Bring it into scope to call
+/// `Vertex::buffer_layout()`.
+pub trait VertexBufferLayoutExt {
+    /// wgpu vertex buffer layout for this vertex type.
+    fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static>;
+}
+
+impl VertexBufferLayoutExt for Vertex {
     /// wgpu vertex buffer layout matching shader locations 0, 1, 2, 3, 4.
-    pub fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
+    fn buffer_layout() -> crate::gpu::VertexBufferLayout<'static> {
         crate::gpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as crate::gpu::BufferAddress,
             step_mode: crate::gpu::VertexStepMode::Vertex,

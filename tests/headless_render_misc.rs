@@ -39,11 +39,11 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
     // On: rebuilds with the debug block present.
-    frame.effects.lighting.debug_vis.active = true;
+    frame.effects.debug.debug_vis.active = true;
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
     // Off again: rebuilds stripped.
-    frame.effects.lighting.debug_vis.active = false;
+    frame.effects.debug.debug_vis.active = false;
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 }
 

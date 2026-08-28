@@ -291,6 +291,12 @@ pub struct SceneFrame {
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
     /// GPU marching cubes jobs to dispatch this frame.
     pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
+    /// GPU compute filter items dispatched before the render pass.
+    ///
+    /// Each item references a pre-uploaded mesh and a compute kernel that
+    /// rewrites its index buffer (culling, LOD selection). Empty by default;
+    /// an empty list adds no dispatch and no allocations.
+    pub compute_filter_items: Vec<ComputeFilterItem>,
     /// Unstructured volume meshes submitted this frame.
     ///
     /// Each [`VolumeMeshItem`] renders either as a boundary surface (default,
@@ -382,6 +388,7 @@ impl Default for SceneFrame {
             screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
             gpu_mc_jobs: Vec::new(),
+            compute_filter_items: Vec::new(),
             volume_meshes: Vec::new(),
             tube_items: Vec::new(),
             tube_refs: Vec::new(),
@@ -539,18 +546,6 @@ pub struct ViewportFrame {
     pub grid_colour: Option<[f32; 3]>,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
-    /// Force every lit pipeline to take the straight-iteration light loop
-    /// even when the active light count is above the cluster-build threshold.
-    /// Set this and the clustered path renders pixels identical to the path
-    /// the renderer would take with one or two lights, which lets a consumer
-    /// A/B against the clustered path to spot bugs. Default: false.
-    pub force_cluster_fallback: bool,
-    /// Trigger a host-visible readback of the cluster cell array at the end
-    /// of `prepare_scene`. The result is exposed via
-    /// `ViewportRenderer::cluster_stats`. The readback blocks the calling
-    /// thread on a device poll, so leave this off unless a debug panel is
-    /// actively displaying the numbers. Default: false.
-    pub cluster_stats_request: bool,
 }
 
 impl Default for ViewportFrame {
@@ -564,8 +559,6 @@ impl Default for ViewportFrame {
             grid_z: 0.0,
             grid_colour: None,
             show_axes_indicator: true,
-            force_cluster_fallback: false,
-            cluster_stats_request: false,
         }
     }
 }
@@ -873,7 +866,7 @@ pub struct ForegroundProjection {
 
 /// Global rendering effects and modifiers for one frame.
 ///
-/// Groups lighting, clipping, post-processing, compute filtering, and clip
+/// Groups lighting, clipping, post-processing, and clip
 /// volumes : effects that apply globally across the scene rather than to
 /// individual objects.
 #[non_exhaustive]
@@ -894,8 +887,6 @@ pub struct EffectsFrame {
     /// The pass itself is driven by `SceneFrame::foreground_items`; this only
     /// carries pass-wide settings.
     pub foreground: Option<ForegroundPass>,
-    /// GPU compute filter items dispatched before the render pass.
-    pub compute_filter_items: Vec<ComputeFilterItem>,
     /// Optional environment settings for IBL and skybox. Default: None.
     pub environment: Option<EnvironmentSettings>,
     /// Ground plane configuration. Default: mode = None (not drawn, zero overhead).
@@ -913,7 +904,6 @@ impl Default for EffectsFrame {
             display: DisplaySettings::default(),
             post_process: PostProcessSettings::default(),
             foreground: None,
-            compute_filter_items: Vec::new(),
             environment: None,
             ground_plane: GroundPlane::default(),
             debug: EffectsDebug::default(),
@@ -943,10 +933,14 @@ impl Default for ClipSettings {
     }
 }
 
-/// Debug overlays for one frame. Grouped on [`EffectsFrame::debug`] to keep debug
-/// knobs out of the production effect fields.
+/// Debug overlays and diagnostics for one frame. Grouped on
+/// [`EffectsFrame::debug`] to keep debug knobs out of the production effect,
+/// lighting, and viewport fields.
+///
+/// Not `Copy`: it carries the [`DebugVis`](crate::renderer::types::debug::DebugVis)
+/// channel-visualization config, which is a plain (non-`Copy`) struct.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EffectsDebug {
     /// Show the shadow depth atlas as a corner overlay. Default: false.
@@ -955,6 +949,20 @@ pub struct EffectsDebug {
     pub atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner,
     /// Atlas viewer size as a fraction of viewport width. Default: 0.3.
     pub atlas_viewer_scale: f32,
+    /// Per-fragment channel visualization (debug view of shadow factor, normals,
+    /// and other quantities). Inactive by default; see
+    /// [`DebugVis`](crate::renderer::types::debug::DebugVis).
+    pub debug_vis: crate::renderer::types::debug::DebugVis,
+    /// Force every lit pipeline onto the straight-iteration light loop even when
+    /// the active light count is above the cluster-build threshold, so a consumer
+    /// can A/B the clustered path against it to spot bugs. Default: false.
+    pub force_cluster_fallback: bool,
+    /// Trigger a host-visible readback of the cluster cell array at the end of
+    /// `prepare_scene`, exposed via
+    /// [`ViewportRenderer::cluster_stats`](crate::renderer::ViewportRenderer::cluster_stats).
+    /// The readback blocks the calling thread on a device poll, so leave this off
+    /// unless a debug panel is actively displaying the numbers. Default: false.
+    pub cluster_stats_request: bool,
 }
 
 impl Default for EffectsDebug {
@@ -963,15 +971,19 @@ impl Default for EffectsDebug {
             show_shadow_atlas: false,
             atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner::BottomRight,
             atlas_viewer_scale: 0.3,
+            debug_vis: crate::renderer::types::debug::DebugVis::default(),
+            force_cluster_fallback: false,
+            cluster_stats_request: false,
         }
     }
 }
 
 /// Scene-global effects for one frame, consumed by [`ViewportRenderer::prepare_scene`].
 ///
-/// Groups the lighting, environment, and compute-filter configuration that applies
+/// Groups the lighting, environment, and scatter configuration that applies
 /// to the whole scene (not per-viewport). Construct directly or obtain via
-/// [`EffectsFrame::split`].
+/// [`EffectsFrame::split`]. Compute filter items travel with the scene content
+/// on [`SceneFrame::compute_filter_items`].
 ///
 /// # Multi-viewport usage
 /// Call [`ViewportRenderer::prepare_scene`] once per frame with this struct.
@@ -984,8 +996,6 @@ pub struct SceneEffects<'a> {
     pub environment: &'a Option<EnvironmentSettings>,
     /// Participating-media quality settings (scene-global).
     pub scatter: &'a ScatterSettings,
-    /// GPU compute filter items dispatched before the render pass.
-    pub compute_filter_items: &'a [ComputeFilterItem],
 }
 
 /// Per-viewport effects for one frame, consumed by [`ViewportRenderer::prepare_viewport`].
@@ -1083,7 +1093,6 @@ impl EffectsFrame {
                 lighting: &self.lighting,
                 environment: &self.environment,
                 scatter: &self.scatter,
-                compute_filter_items: &self.compute_filter_items,
             },
             ViewportEffects {
                 clip: &self.clip,

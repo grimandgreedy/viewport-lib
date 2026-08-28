@@ -1,4 +1,5 @@
 use super::*;
+use crate::resources::VertexBufferLayoutExt;
 
 /// Streamtube (connected tube mesh) pipelines and layout. Lazily built; the
 /// uploaded streamtube/tube data lives in separate flat stores.

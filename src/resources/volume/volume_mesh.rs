@@ -94,7 +94,11 @@ pub struct VolumeMeshData {
 // We just need a consistent convention so the sorted-key boundary detection
 // works (both cells that share an interior face must produce the same key).
 
-const TET_FACES: [[usize; 3]; 4] = [
+/// Canonical tetrahedron triangular-face table (one triangle opposite each
+/// vertex). This is the single home for the tet face winding; the CPU picker
+/// (`crate::interaction::query::picking`) references it rather than keeping its
+/// own copy.
+pub(crate) const TET_FACES: [[usize; 3]; 4] = [
     [1, 2, 3], // opposite v0
     [0, 3, 2], // opposite v1
     [0, 1, 3], // opposite v2

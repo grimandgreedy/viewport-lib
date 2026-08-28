@@ -406,7 +406,7 @@ impl DeviceResources {
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         if !desc.format.is_compressed() {
             return Err(crate::error::ViewportError::UnsupportedTextureFormat {
-                format: desc.format,
+                format: format!("{:?}", desc.format),
             });
         }
         // wgpu requires block-compressed textures to be created with
@@ -427,7 +427,7 @@ impl DeviceResources {
         }
         if !supports_texture_format(device, desc.format) {
             return Err(crate::error::ViewportError::UnsupportedTextureFormat {
-                format: desc.format,
+                format: format!("{:?}", desc.format),
             });
         }
         if desc.mip_levels.is_empty() {

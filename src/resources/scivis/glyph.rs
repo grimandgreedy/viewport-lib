@@ -1,4 +1,5 @@
 use super::*;
+use crate::resources::VertexBufferLayoutExt;
 
 /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
 /// All lazily built; the uploaded glyph sets live in a separate flat store.

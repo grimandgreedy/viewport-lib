@@ -185,11 +185,12 @@ pub enum ViewportError {
     /// a hardware reason, the caller should fall back to `upload_texture` /
     /// `upload_normal_map` or ship a variant the device supports.
     #[error(
-        "unsupported texture format {format:?}: device lacks its required feature, or the format is not block-compressed"
+        "unsupported texture format {format}: device lacks its required feature, or the format is not block-compressed"
     )]
     UnsupportedTextureFormat {
-        /// The format that was rejected.
-        format: crate::gpu::TextureFormat,
+        /// The rejected format, as its wgpu debug name. Carried as a plain string
+        /// so this error type stays free of any `wgpu` type.
+        format: String,
     },
 
     /// A compressed-texture upload had base dimensions that are not a multiple

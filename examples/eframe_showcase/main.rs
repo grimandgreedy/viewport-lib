@@ -3579,9 +3579,9 @@ impl App {
             fd.viewport.grid_z = self.gp_state.height;
         }
         fd.viewport.show_axes_indicator = true;
-        fd.viewport.force_cluster_fallback =
+        fd.effects.debug.force_cluster_fallback =
             self.mode == ShowcaseMode::SceneLights && self.sl_state.force_cluster_fallback;
-        fd.viewport.cluster_stats_request =
+        fd.effects.debug.cluster_stats_request =
             self.mode == ShowcaseMode::SceneLights && self.sl_state.show_cluster_stats;
         fd.viewport.background_colour = bg_colour;
 

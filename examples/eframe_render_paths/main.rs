@@ -771,7 +771,7 @@ impl eframe::App for App {
                 SceneFrame::from_surface_items(items),
             );
             fd.effects.lighting = self.build_lighting();
-            fd.effects.compute_filter_items = filters;
+            fd.scene.compute_filter_items = filters;
             // HDR path (post-process + OIT transparency) vs LDR inline path.
             fd.effects.display.mode = if self.hdr {
                 viewport_lib::PipelineMode::Hdr

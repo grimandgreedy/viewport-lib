@@ -6,6 +6,7 @@
 //! app that never picks a given kind pays nothing for it. All of these methods
 //! are continuations of the `DeviceResources` impl that lives in
 //! `device_resources.rs`.
+use crate::resources::VertexBufferLayoutExt;
 
 use crate::resources::types::*;
 

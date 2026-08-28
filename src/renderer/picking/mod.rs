@@ -8,16 +8,18 @@ pub(crate) use gpu::PendingPick;
 pub mod pick_mask;
 mod point;
 mod rect;
-/// Typed sub-object reference and sub-object selection set.
-pub mod sub_object;
-mod types;
 
+// The sub-object vocabulary and pick-result types now live under
+// `interaction::select` / `interaction::query`; re-exported here so the
+// `renderer::picking::{...}` paths (and the `renderer::picking::sub_object`
+// module path) stay stable for consumers.
+pub use crate::interaction::query::pick_result::{GpuPickHit, PickHit, PickRectResult, SnapHit};
+pub use crate::interaction::select::sub_object;
 pub use pick_mask::PickMask;
 pub use sub_object::{
     CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
     VolumeSelectionInfo,
 };
-pub use types::{GpuPickHit, PickHit, PickRectResult, SnapHit};
 
 impl ViewportRenderer {
     /// Copy this frame's pickable items into the CPU pick caches so `pick()` and

@@ -17,6 +17,7 @@
 //! position for dead slots so they cost nothing in the rasteriser. Compaction
 //! would require a prefix sum each frame and is not worth the cost at the
 //! particle counts the API targets (1k - 200k).
+use crate::resources::VertexBufferLayoutExt;
 
 use crate::gpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};

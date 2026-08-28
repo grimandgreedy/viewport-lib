@@ -1,5 +1,69 @@
 use super::*;
-use crate::renderer::ShDegree;
+
+/// SH degree stored with a Gaussian splat set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ShDegree {
+    /// 3 floats per splat (base RGB only).
+    #[default]
+    Zero,
+    /// 12 floats per splat.
+    One,
+    /// 48 floats per splat.
+    Three,
+}
+
+impl ShDegree {
+    /// Number of SH coefficients per splat for this degree.
+    pub fn coeff_count(self) -> usize {
+        match self {
+            ShDegree::Zero => 3,
+            ShDegree::One => 12,
+            ShDegree::Three => 48,
+        }
+    }
+}
+
+crate::resources::handle::slot_handle! {
+    /// Handle to an uploaded Gaussian splat set.
+    ///
+    /// Carries the slot index plus the generation the slot had when the handle
+    /// was issued. A handle whose splat set was removed (its slot freed and
+    /// reused by a later upload) resolves to no set on lookup, so it cannot
+    /// alias whatever now occupies the slot.
+    pub struct GaussianSplatId;
+}
+
+/// Upload data for a Gaussian splat set. Submitted once via
+/// `resources_mut().upload_gaussian_splat(data)`.
+pub struct GaussianSplatData {
+    /// Object-space center positions, one [f32;3] per splat.
+    pub positions: Vec<[f32; 3]>,
+    /// Scale (positive floats, world-space metres) per splat, one [f32;3].
+    pub scales: Vec<[f32; 3]>,
+    /// Unit quaternion rotation per splat [x, y, z, w].
+    pub rotations: Vec<[f32; 4]>,
+    /// Opacity per splat in [0, 1].
+    pub opacities: Vec<f32>,
+    /// SH coefficients. Length must equal `positions.len() * sh_degree.coeff_count()`.
+    /// For ShDegree::Zero these are [r, g, b] base colours per splat.
+    pub sh_coefficients: Vec<f32>,
+    /// SH degree for this splat set.
+    pub sh_degree: ShDegree,
+}
+
+impl Default for GaussianSplatData {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            scales: Vec::new(),
+            rotations: Vec::new(),
+            opacities: Vec::new(),
+            sh_coefficients: Vec::new(),
+            sh_degree: ShDegree::Zero,
+        }
+    }
+}
 
 /// Gaussian splat render pipeline, the radix-sort compute passes, their bind
 /// group layouts, and the slotted store of uploaded splat sets. All lazily
@@ -46,9 +110,7 @@ impl Default for GaussianSplatResources {
 
 /// Check that a splat set is non-empty and its per-attribute vectors agree in
 /// length. Shared by the sync, async, and replace upload paths.
-fn validate_gaussian_splat_data(
-    data: &crate::renderer::GaussianSplatData,
-) -> crate::error::ViewportResult<()> {
+fn validate_gaussian_splat_data(data: &GaussianSplatData) -> crate::error::ViewportResult<()> {
     if data.positions.is_empty() {
         return Err(crate::error::ViewportError::InvalidGaussianSplatData {
             reason: "empty splat list",
@@ -71,7 +133,7 @@ fn validate_gaussian_splat_data(
 fn build_gaussian_splat_set(
     device: &crate::gpu::Device,
     queue: &crate::gpu::Queue,
-    data: &crate::renderer::GaussianSplatData,
+    data: &GaussianSplatData,
 ) -> GaussianSplatGpuSet {
     let count = data.positions.len() as u32;
 
@@ -522,8 +584,8 @@ impl DeviceResources {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        data: &crate::renderer::GaussianSplatData,
-    ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
+        data: &GaussianSplatData,
+    ) -> crate::error::ViewportResult<GaussianSplatId> {
         validate_gaussian_splat_data(data)?;
         // Build the splat pipelines now so a load-time upload also pays the
         // pipeline compile, not the first frame that draws the splat.
@@ -533,7 +595,7 @@ impl DeviceResources {
     }
 
     /// Replace the contents of an uploaded Gaussian splat set in place, keeping
-    /// the same [`GaussianSplatId`](crate::renderer::GaussianSplatId).
+    /// the same [`GaussianSplatId`](GaussianSplatId).
     ///
     /// Items holding the handle pick up the new splats on the next frame with no
     /// reassignment. The generation check is the in-flight guard: a stale handle
@@ -552,8 +614,8 @@ impl DeviceResources {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        id: crate::renderer::GaussianSplatId,
-        data: &crate::renderer::GaussianSplatData,
+        id: GaussianSplatId,
+        data: &GaussianSplatData,
     ) -> crate::error::ViewportResult<()> {
         validate_gaussian_splat_data(data)?;
         let gpu_set = build_gaussian_splat_set(device, queue, data);
@@ -568,7 +630,7 @@ impl DeviceResources {
     }
 
     /// Remove an uploaded Gaussian splat set by handle.
-    pub fn free_gaussian_splat(&mut self, id: crate::renderer::GaussianSplatId) {
+    pub fn free_gaussian_splat(&mut self, id: GaussianSplatId) {
         self.content.gaussian_splat_store.remove(id);
     }
 
@@ -589,11 +651,11 @@ impl DeviceResources {
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        data: crate::renderer::GaussianSplatData,
+        data: GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
         validate_gaussian_splat_data(&data)?;
 
-        let slot = crate::resources::ResultSlot::<crate::renderer::GaussianSplatId>::new();
+        let slot = crate::resources::ResultSlot::<GaussianSplatId>::new();
         let slot_for_apply = slot.clone();
         let device_for_worker = device.clone();
         let queue_for_worker = queue.clone();
@@ -623,12 +685,12 @@ impl DeviceResources {
         Ok(id)
     }
 
-    /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
+    /// Take the [`GaussianSplatId`](GaussianSplatId) produced by a
     /// completed [`begin_upload_gaussian_splat`](Self::begin_upload_gaussian_splat) job.
     pub fn upload_result_gaussian_splat(
         &mut self,
         id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
+    ) -> crate::error::ViewportResult<GaussianSplatId> {
         let mut map = self
             .job_results
             .gaussian_splat
@@ -1062,8 +1124,8 @@ impl DeviceResources {
 #[cfg(test)]
 mod async_tests {
     use crate::DeviceResources;
-    use crate::renderer::GaussianSplatData;
     use crate::resources::UploadStatus;
+    use GaussianSplatData;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
@@ -1238,7 +1300,7 @@ pub(crate) struct GaussianSplatGpuSet {
     /// SH coefficients as f32, count = splat_count * sh_degree.coeff_count().
     pub sh_buf: crate::gpu::Buffer,
     /// SH degree for this set.
-    pub sh_degree: crate::renderer::ShDegree,
+    pub sh_degree: ShDegree,
     /// Number of splats.
     pub count: u32,
     /// Per-viewport sort buffers; index = viewport_index. Grown lazily.
@@ -1289,8 +1351,7 @@ pub(crate) struct GaussianSplatDrawData {
 /// rather than aliasing the set now in its slot. An entry's byte charge is its
 /// [`GaussianSplatGpuSet::gpu_bytes`].
 pub(crate) struct GaussianSplatStore {
-    store:
-        crate::resources::handle::SlotStore<GaussianSplatGpuSet, crate::renderer::GaussianSplatId>,
+    store: crate::resources::handle::SlotStore<GaussianSplatGpuSet, GaussianSplatId>,
 }
 
 impl GaussianSplatStore {
@@ -1300,7 +1361,7 @@ impl GaussianSplatStore {
         }
     }
 
-    pub fn insert(&mut self, set: GaussianSplatGpuSet) -> crate::renderer::GaussianSplatId {
+    pub fn insert(&mut self, set: GaussianSplatGpuSet) -> GaussianSplatId {
         let bytes = set.gpu_bytes();
         self.store.insert(set, bytes)
     }
@@ -1308,11 +1369,7 @@ impl GaussianSplatStore {
     /// Swap the set in `id`'s slot for `set`, keeping the slot generation so the
     /// handle stays valid. Returns `true` on success, `false` for a stale handle
     /// or an empty slot.
-    pub fn replace(
-        &mut self,
-        id: crate::renderer::GaussianSplatId,
-        set: GaussianSplatGpuSet,
-    ) -> bool {
+    pub fn replace(&mut self, id: GaussianSplatId, set: GaussianSplatGpuSet) -> bool {
         let bytes = set.gpu_bytes();
         self.store.replace(id, set, bytes).is_some()
     }
@@ -1324,7 +1381,7 @@ impl GaussianSplatStore {
 
     /// Look up a set by handle, validating the generation. Returns `None` for a
     /// stale handle, an empty slot, or an out-of-range index.
-    pub fn get(&self, id: crate::renderer::GaussianSplatId) -> Option<&GaussianSplatGpuSet> {
+    pub fn get(&self, id: GaussianSplatId) -> Option<&GaussianSplatGpuSet> {
         self.store.get(id)
     }
 
@@ -1349,7 +1406,7 @@ impl GaussianSplatStore {
     /// Remove a set by handle, bumping the slot generation and freeing the slot.
     /// Returns `true` if a set was removed, `false` for a stale handle or an
     /// already-empty slot.
-    pub fn remove(&mut self, id: crate::renderer::GaussianSplatId) -> bool {
+    pub fn remove(&mut self, id: GaussianSplatId) -> bool {
         self.store.remove(id).is_some()
     }
 }

@@ -542,25 +542,28 @@ impl App {
             _t.hemisphere_intensity = self.hemisphere_intensity;
             _t.sky_colour = self.sky_colour;
             _t.ground_colour = self.ground_colour;
-            _t.debug_vis = {
-                let mut dv = DebugVis::default();
-                dv.active = self.debug_vis_active;
-                dv.mode = if self.debug_vis_splitscreen {
-                    DebugOutputMode::SplitScreen
-                } else if self.debug_vis_mode_replace {
-                    DebugOutputMode::Replace
-                } else {
-                    DebugOutputMode::TintOverlay
-                };
-                dv.split_x = self.debug_vis_split_x;
-                dv.channel_r = self.debug_vis_r;
-                dv.channel_g = self.debug_vis_g;
-                dv.channel_b = self.debug_vis_b;
-                dv.scale = self.debug_vis_scale;
-                dv
-            };
             _t
         }
+    }
+
+    /// Channel-visualization config from the panel. Attached to
+    /// `EffectsFrame::debug.debug_vis`.
+    fn build_debug_vis(&self) -> DebugVis {
+        let mut dv = DebugVis::default();
+        dv.active = self.debug_vis_active;
+        dv.mode = if self.debug_vis_splitscreen {
+            DebugOutputMode::SplitScreen
+        } else if self.debug_vis_mode_replace {
+            DebugOutputMode::Replace
+        } else {
+            DebugOutputMode::TintOverlay
+        };
+        dv.split_x = self.debug_vis_split_x;
+        dv.channel_r = self.debug_vis_r;
+        dv.channel_g = self.debug_vis_g;
+        dv.channel_b = self.debug_vis_b;
+        dv.scale = self.debug_vis_scale;
+        dv
     }
 
     /// Exposure settings from the panel. `dt` feeds auto-exposure smoothing.
@@ -870,6 +873,7 @@ impl eframe::App for App {
             let lighting = self.build_lighting();
             let display = self.build_display(dt);
             let environment = self.build_environment();
+            let debug_vis = self.build_debug_vis();
             {
                 let eff = self.session.effects_mut();
                 eff.lighting = lighting;
@@ -878,6 +882,7 @@ impl eframe::App for App {
                 eff.debug.show_shadow_atlas = self.show_shadow_atlas;
                 eff.debug.atlas_viewer_corner = self.atlas_viewer_corner;
                 eff.debug.atlas_viewer_scale = self.atlas_viewer_scale;
+                eff.debug.debug_vis = debug_vis;
             }
 
             // Build this tab's items, drive the camera, and inject the items into
