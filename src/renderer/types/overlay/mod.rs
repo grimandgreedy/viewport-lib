@@ -1,3 +1,4 @@
+mod anchor;
 mod animation;
 mod fill;
 mod frame;
@@ -8,6 +9,7 @@ mod shape;
 mod texture;
 mod vector;
 
+pub use self::anchor::*;
 pub use self::animation::*;
 pub use self::fill::*;
 pub use self::frame::*;

@@ -139,7 +139,7 @@ fn main() {
         overlays.labels.push(
             LabelItem::new("click to quit")
                 .with_screen_anchor(quit_center)
-                .with_anchor_align(LabelAnchor::Middle)
+                .with_align_x(LabelAnchor::Middle)
                 .with_font_size(22.0),
         );
 

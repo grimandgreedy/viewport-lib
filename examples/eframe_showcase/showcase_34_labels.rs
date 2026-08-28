@@ -212,7 +212,7 @@ impl App {
                     .with_background(true)
                     .with_background_colour([0.1, 0.1, 0.2, 0.0])
                     .with_border_radius(4.0)
-                    .with_anchor_align(LabelAnchor::Middle)
+                    .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
 
@@ -225,7 +225,7 @@ impl App {
                     .with_background(true)
                     .with_background_colour([0.0, 0.0, 0.0, 0.65])
                     .with_border_radius(3.0)
-                    .with_anchor_align(LabelAnchor::Middle)
+                    .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
         }
@@ -253,7 +253,7 @@ impl App {
 
         // -- Row 1: Anchor alignment --
         let mut y = 50.0;
-        out.push(heading(y, "anchor_align:"));
+        out.push(heading(y, "align_x:"));
         y += 16.0;
         for (i, (align, name)) in [
             (LabelAnchor::Left, "Left"),
@@ -270,7 +270,7 @@ impl App {
                     .with_font_size(12.0)
                     .with_background(true)
                     .with_background_colour(demo_bg)
-                    .with_anchor_align(*align)
+                    .with_align_x(*align)
                     .with_z_order(100),
             );
         }
@@ -294,7 +294,7 @@ impl App {
 
         // -- Row 3: Offset --
         y += 34.0;
-        out.push(heading(y, "offset:"));
+        out.push(heading(y, "anchor_offset:"));
         y += 16.0;
         for (i, (off, desc)) in [
             ([0.0f32, 0.0], "[0,0]"),
@@ -312,7 +312,7 @@ impl App {
                     .with_font_size(11.0)
                     .with_background(true)
                     .with_background_colour(demo_bg)
-                    .with_offset(*off)
+                    .with_anchor_offset(*off)
                     .with_z_order(100),
             );
         }
@@ -444,9 +444,9 @@ pub(crate) fn controls_labels(app: &mut App, ui: &mut eframe::egui::Ui) {
 
     ui.separator();
     ui.label("Feature rows (left side):");
-    ui.label("  anchor_align: Left/Middle/Right");
+    ui.label("  align_x: Left/Middle/Right");
     ui.label("  opacity: 100% -> 25%");
-    ui.label("  offset: pixel nudge from anchor");
+    ui.label("  anchor_offset: pixel nudge from anchor");
     ui.label("  max_width: word wrapping");
     ui.label("  border_radius: rounded corners");
     ui.label("  padding: 0 -> 16px");

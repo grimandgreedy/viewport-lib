@@ -505,22 +505,22 @@ impl ViewportRenderer {
                         .glyph_atlas
                         .font_ascent(font_index, label.font_size);
 
-                    let align_offset = match label.anchor_align {
-                        crate::renderer::types::LabelAnchor::Left => label.anchor_padding,
-                        crate::renderer::types::LabelAnchor::Middle => -layout.total_width * 0.5,
-                        crate::renderer::types::LabelAnchor::Right => {
+                    let align_offset = match label.align_x {
+                        crate::renderer::types::AnchorX::Left => label.anchor_padding,
+                        crate::renderer::types::AnchorX::Middle => -layout.total_width * 0.5,
+                        crate::renderer::types::AnchorX::Right => {
                             -layout.total_width - label.anchor_padding
                         }
                     };
 
-                    let align_offset_y = match label.anchor_align_y {
-                        crate::renderer::types::LabelAnchorY::Top => 0.0,
-                        crate::renderer::types::LabelAnchorY::Middle => -layout.height * 0.5,
-                        crate::renderer::types::LabelAnchorY::Bottom => -layout.height,
+                    let align_offset_y = match label.align_y {
+                        crate::renderer::types::AnchorY::Top => 0.0,
+                        crate::renderer::types::AnchorY::Middle => -layout.height * 0.5,
+                        crate::renderer::types::AnchorY::Bottom => -layout.height,
                     };
 
-                    let text_x = anchor_px[0] + align_offset + label.offset[0];
-                    let text_y = anchor_px[1] + align_offset_y + label.offset[1];
+                    let text_x = anchor_px[0] + align_offset + label.anchor_offset[0];
+                    let text_y = anchor_px[1] + align_offset_y + label.anchor_offset[1];
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 

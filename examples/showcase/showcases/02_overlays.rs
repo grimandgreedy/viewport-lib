@@ -215,7 +215,7 @@ impl OverlaysShowcase {
                     .with_background_colour([0.0, 0.0, 0.0, 0.5])
                     .with_border_radius(4.0)
                     .with_padding(4.0)
-                    .with_anchor_align(LabelAnchor::Left),
+                    .with_align_x(LabelAnchor::Left),
             );
         }
     }

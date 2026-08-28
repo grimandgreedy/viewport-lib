@@ -1,28 +1,4 @@
-/// Horizontal alignment of a label relative to its anchor point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum LabelAnchor {
-    /// Left edge of the text sits at the anchor; text extends right (default).
-    #[default]
-    Left,
-    /// Text centered horizontally on the anchor.
-    Middle,
-    /// Right edge of the text sits at the anchor; text extends left.
-    Right,
-}
-
-/// Vertical alignment of a label relative to its anchor point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum LabelAnchorY {
-    /// Top edge of the text sits at the anchor.
-    Top,
-    /// Text centered vertically on the anchor (default).
-    #[default]
-    Middle,
-    /// Bottom edge of the text sits at the anchor.
-    Bottom,
-}
+use super::anchor::{AnchorX, AnchorY};
 
 /// A text label rendered as a screen-space overlay.
 ///
@@ -86,12 +62,12 @@ pub struct LabelItem {
     pub leader_colour: [f32; 4],
 
     /// Horizontal alignment of the label text relative to its anchor.
-    pub anchor_align: LabelAnchor,
+    pub align_x: AnchorX,
 
     /// Vertical alignment of the label text relative to its anchor. Default:
     /// `Middle`, which centers the text on the anchor. Use `Top` to place the
     /// top edge of the text at the anchor when laying out screen-space UI.
-    pub anchor_align_y: LabelAnchorY,
+    pub align_y: AnchorY,
 
     /// Gap in logical pixels between the anchor and the near edge of the text,
     /// applied in the anchor-facing direction: `Left` text is pushed this far
@@ -100,10 +76,10 @@ pub struct LabelItem {
     /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
     pub anchor_padding: f32,
 
-    /// Pixel offset applied after anchor resolution and alignment.
-    /// Useful for nudging a label away from its anchor without moving the
-    /// leader line endpoint.  Default: `[0.0, 0.0]`.
-    pub offset: [f32; 2],
+    /// Pixel offset from the anchor, applied after anchor resolution and
+    /// alignment. Useful for nudging a label away from its anchor without moving
+    /// the leader line endpoint.  Default: `[0.0, 0.0]`.
+    pub anchor_offset: [f32; 2],
 
     /// Overall opacity multiplier applied to text, background, and leader
     /// line colours.  Range 0.0 (invisible) to 1.0 (fully opaque).
@@ -147,10 +123,10 @@ impl Default for LabelItem {
             padding: 3.0,
             leader_line: false,
             leader_colour: [1.0, 1.0, 1.0, 0.6],
-            anchor_align: LabelAnchor::Left,
-            anchor_align_y: LabelAnchorY::Middle,
+            align_x: AnchorX::Left,
+            align_y: AnchorY::Middle,
             anchor_padding: 6.0,
-            offset: [0.0, 0.0],
+            anchor_offset: [0.0, 0.0],
             opacity: 1.0,
             max_width: None,
             border_radius: 0.0,
@@ -233,15 +209,15 @@ impl LabelItem {
     }
 
     /// Set the horizontal alignment of the text relative to its anchor.
-    pub fn with_anchor_align(mut self, anchor_align: LabelAnchor) -> Self {
-        self.anchor_align = anchor_align;
+    pub fn with_align_x(mut self, align_x: AnchorX) -> Self {
+        self.align_x = align_x;
         self
     }
 
     /// Set the vertical alignment of the text relative to its anchor. Defaults
     /// to `Middle`; pass `Top` to place the top edge of the text at the anchor.
-    pub fn with_anchor_align_y(mut self, anchor_align_y: LabelAnchorY) -> Self {
-        self.anchor_align_y = anchor_align_y;
+    pub fn with_align_y(mut self, align_y: AnchorY) -> Self {
+        self.align_y = align_y;
         self
     }
 
@@ -252,9 +228,10 @@ impl LabelItem {
         self
     }
 
-    /// Set the pixel offset applied after anchor resolution and alignment.
-    pub fn with_offset(mut self, offset: [f32; 2]) -> Self {
-        self.offset = offset;
+    /// Set the pixel offset from the anchor, applied after anchor resolution and
+    /// alignment.
+    pub fn with_anchor_offset(mut self, anchor_offset: [f32; 2]) -> Self {
+        self.anchor_offset = anchor_offset;
         self
     }
 
