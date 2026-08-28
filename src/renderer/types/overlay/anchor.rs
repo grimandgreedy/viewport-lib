@@ -40,6 +40,66 @@ pub type LabelAnchor = AnchorX;
 /// `LabelAnchorY` keep working.
 pub type LabelAnchorY = AnchorY;
 
+/// Where an overlay item hangs from: exactly one origin, resolved to a screen
+/// pixel each frame. The item's `position` is then a screen-pixel nudge from
+/// that origin and `align_x` / `align_y` place the item's box onto it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum OverlayAnchor {
+    /// A point on the viewport rect, re-resolved on resize. `Viewport { x:
+    /// Left, y: Top }` is the top-left corner, so with a zero `position` and
+    /// `Left` / `Top` alignment it reproduces absolute screen-space placement.
+    Viewport {
+        /// Horizontal position on the viewport rect.
+        x: AnchorX,
+        /// Vertical position on the viewport rect.
+        y: AnchorY,
+    },
+    /// A 3D world position, projected to screen each frame. The item is skipped
+    /// for the frame when the point is behind the camera or off-screen.
+    World([f32; 3]),
+}
+
+impl Default for OverlayAnchor {
+    fn default() -> Self {
+        OverlayAnchor::Viewport {
+            x: AnchorX::Left,
+            y: AnchorY::Top,
+        }
+    }
+}
+
+/// Resolve an [`OverlayAnchor`] to its origin pixel (top-left origin) on a
+/// `viewport` of logical pixels. `Viewport` origins map to the matching point on
+/// the viewport rect; `World` origins project through `view` / `proj` and return
+/// `None` when behind the camera or outside the frustum, which skips the item
+/// for the frame.
+pub(crate) fn resolve_anchor_origin(
+    anchor: &OverlayAnchor,
+    viewport: [f32; 2],
+    view: &glam::Mat4,
+    proj: &glam::Mat4,
+) -> Option<[f32; 2]> {
+    match anchor {
+        OverlayAnchor::Viewport { x, y } => Some([x.coord(viewport[0]), y.coord(viewport[1])]),
+        OverlayAnchor::World(w) => {
+            let clip = *proj * *view * glam::Vec3::from(*w).extend(1.0);
+            if clip.w <= 0.0 {
+                return None;
+            }
+            let ndc_x = clip.x / clip.w;
+            let ndc_y = clip.y / clip.w;
+            if !(-1.0..=1.0).contains(&ndc_x) || !(-1.0..=1.0).contains(&ndc_y) {
+                return None;
+            }
+            Some([
+                (ndc_x * 0.5 + 0.5) * viewport[0],
+                (1.0 - (ndc_y * 0.5 + 0.5)) * viewport[1],
+            ])
+        }
+    }
+}
+
 impl AnchorX {
     /// Horizontal coordinate of this alignment on a rect of the given `width`:
     /// `Left` = 0, `Middle` = `width / 2`, `Right` = `width`.

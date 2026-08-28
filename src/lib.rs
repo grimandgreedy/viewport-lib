@@ -262,7 +262,7 @@ pub use renderer::{
     IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
     LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
     Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
-    OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
+    OverlayAnchor, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, OwnedPath,
     ParticleMeshAlign, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit, PickId,
     PickMask, PickPoll, PickRectResult, PipelineMode, PointCloudItem, PointCloudRefItem,

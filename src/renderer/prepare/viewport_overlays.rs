@@ -212,25 +212,34 @@ fn emit_vector_shape(
 fn build_clip_shapes(
     shapes: &[crate::renderer::types::OverlayShapeItem],
     ppp: f32,
+    viewport: [f32; 2],
+    view: &glam::Mat4,
+    proj: &glam::Mat4,
 ) -> (
     Vec<crate::resources::ClipShapeGpu>,
     std::collections::HashMap<u32, i32>,
     Vec<[f32; 4]>,
 ) {
-    // Collect masks in stable order, recording each id's index.
+    // Collect masks in stable order, recording each id's index. Each mask
+    // resolves its anchor to an effective top-left, the same way the draw loop
+    // does, so corner- and world-anchored masks clip where they draw. A mask
+    // whose world anchor is culled is dropped: items referencing it fall through
+    // to no clipping, matching how an absent mask id behaves.
     let mut index_of: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
-    let mut masks: Vec<&crate::renderer::types::OverlayShapeItem> = Vec::new();
+    let mut masks: Vec<(&crate::renderer::types::OverlayShapeItem, [f32; 2])> = Vec::new();
     for s in shapes {
         if let Some(id) = s.clip_mask_id {
             if let std::collections::hash_map::Entry::Vacant(e) = index_of.entry(id) {
-                e.insert(masks.len() as i32);
-                masks.push(s);
+                if let Some(tl) = s.resolve_top_left(viewport, view, proj) {
+                    e.insert(masks.len() as i32);
+                    masks.push((s, tl));
+                }
             }
         }
     }
     let mut out = Vec::with_capacity(masks.len());
     let mut bboxes = Vec::with_capacity(masks.len());
-    for s in &masks {
+    for (s, tl) in &masks {
         let hw = s.size[0] * 0.5;
         let hh = s.size[1] * 0.5;
         let (shape_type, radii_l) = encode_overlay_shape(&s.shape, hw, hh);
@@ -245,7 +254,7 @@ fn build_clip_shapes(
         } else if st == 7 {
             radii[0] *= ppp;
         }
-        let center = [(s.position[0] + hw) * ppp, (s.position[1] + hh) * ppp];
+        let center = [(tl[0] + hw) * ppp, (tl[1] + hh) * ppp];
         let half = [hw * ppp, hh * ppp];
         let parent = s
             .clip_id
@@ -260,10 +269,10 @@ fn build_clip_shapes(
             _pad: [0.0, 0.0],
         });
         bboxes.push([
-            s.position[0] * ppp,
-            s.position[1] * ppp,
-            (s.position[0] + s.size[0]) * ppp,
-            (s.position[1] + s.size[1]) * ppp,
+            tl[0] * ppp,
+            tl[1] * ppp,
+            (tl[0] + s.size[0]) * ppp,
+            (tl[1] + s.size[1]) * ppp,
         ]);
     }
     (out, index_of, bboxes)
@@ -382,7 +391,7 @@ impl ViewportRenderer {
                 // same registry, so a clipped item's `clip_rect` and `clip_index` always
                 // describe the same mask.
                 let (clip_shapes, clip_index_of, clip_bboxes) =
-                    build_clip_shapes(&frame.overlays.shapes, ppp);
+                    build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
                 let stamp_clip = |batch: &mut [crate::resources::OverlayTextVertex],
                                   clip_id: Option<u32>| {
                     if let Some(id) = clip_id {
@@ -452,9 +461,18 @@ impl ViewportRenderer {
                     if shape.clip_mask_id.is_some() || shape.opacity <= 0.0 {
                         continue;
                     }
+                    // Resolve the anchor to an absolute top-left so anchored
+                    // vector shapes tessellate where they draw; a culled world
+                    // anchor skips the shape. Vector shapes take no animation
+                    // tracks, so the raw item resolves directly.
+                    let Some(tl) = shape.resolve_top_left([vp_w, vp_h], view, proj) else {
+                        continue;
+                    };
+                    let mut owned = shape.clone();
+                    owned.position = tl;
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                    emit_vector_shape(&mut batch, shape, subpaths, *fill_rule, vp_w, vp_h);
-                    stamp_clip(&mut batch, shape.clip_id);
+                    emit_vector_shape(&mut batch, &owned, subpaths, *fill_rule, vp_w, vp_h);
+                    stamp_clip(&mut batch, owned.clip_id);
                     if !batch.is_empty() {
                         batches.push((shape.z_order, batch));
                     }
@@ -762,8 +780,10 @@ impl ViewportRenderer {
                 // the same masks by index. The bbox is looked up by that same index, so
                 // `clip_rect` and `clip_index` always describe the same mask.
                 let ppp = frame.camera.pixels_per_point;
+                let view = &frame.camera.render_camera.view;
+                let proj = &frame.camera.render_camera.projection;
                 let (clip_shapes, clip_index_of, clip_bboxes) =
-                    build_clip_shapes(&frame.overlays.shapes, ppp);
+                    build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
 
                 for shape_orig in &sorted {
                     // Mask-only shapes contribute a clip rectangle but are
@@ -835,6 +855,18 @@ impl ViewportRenderer {
                     if let Some(track) = owned.animations.rotation_path.clone() {
                         owned.rotation = track.sample(overlay_time);
                     }
+                    // Resolve the anchor origin + animated position + alignment
+                    // to an absolute top-left, then draw the shape as if it were
+                    // positioned there. A culled world anchor skips the shape for
+                    // this frame. Everything below (fill, texture, clip, shadow,
+                    // rotation pivot) reads `position`, so this one resolution
+                    // covers all of them. The `animations.position` track has
+                    // already been applied above, so it drives the nudge that is
+                    // layered on the resolved origin here.
+                    let Some(resolved_tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
+                        continue;
+                    };
+                    owned.position = resolved_tl;
                     let shape = &owned;
                     // Resolve animation to final opacity.
                     let resolved_opacity = match shape.animation {
@@ -1591,7 +1623,13 @@ mod clip_registry_tests {
         let child = OverlayShapeItem::new(OverlayShape::Circle, [110.0, 60.0], [80.0, 80.0])
             .with_clip_mask(20)
             .with_clip(10);
-        let (gpu, map, bboxes) = build_clip_shapes(&[parent, child], 2.0);
+        let (gpu, map, bboxes) = build_clip_shapes(
+            &[parent, child],
+            2.0,
+            [1000.0, 1000.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        );
 
         assert_eq!(gpu.len(), 2);
         assert_eq!(map[&10], 0);
@@ -1632,7 +1670,13 @@ mod clip_registry_tests {
             [50.0, 50.0],
         )
         .with_clip_mask(5);
-        let (gpu, map, bboxes) = build_clip_shapes(&[first, second], 1.0);
+        let (gpu, map, bboxes) = build_clip_shapes(
+            &[first, second],
+            1.0,
+            [1000.0, 1000.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        );
 
         assert_eq!(gpu.len(), 1);
         assert_eq!(map[&5], 0);
@@ -1643,7 +1687,13 @@ mod clip_registry_tests {
     #[test]
     fn non_mask_shapes_are_ignored() {
         let drawn = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0]);
-        let (gpu, map, bboxes) = build_clip_shapes(&[drawn], 1.0);
+        let (gpu, map, bboxes) = build_clip_shapes(
+            &[drawn],
+            1.0,
+            [1000.0, 1000.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        );
         assert!(gpu.is_empty());
         assert!(map.is_empty());
         assert!(bboxes.is_empty());

@@ -203,8 +203,26 @@ impl Default for OverlayShape {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct OverlayShapeItem {
-    /// Top-left position in logical pixels from the viewport top-left.
+    /// Where the shape hangs from: a viewport corner (default top-left) or a
+    /// projected world point. `position` is a screen-pixel nudge from this
+    /// origin and `align_x` / `align_y` place the bounding box onto it. The
+    /// default `Viewport { Left, Top }` resolves to `[0, 0]`, so with the
+    /// default alignment `position` is the absolute top-left, unchanged from
+    /// before this field existed.
+    pub anchor: OverlayAnchor,
+    /// Placement in logical pixels relative to the resolved `anchor` origin.
+    /// With the default `anchor` and alignment this is the absolute top-left
+    /// from the viewport top-left. This is the channel the `animations.position`
+    /// track drives, so animating it orbits the shape around its anchor.
     pub position: [f32; 2],
+    /// How the bounding box sits horizontally on `anchor` + `position`: `Left`
+    /// (default) puts the left edge there, `Middle` centres, `Right` the right
+    /// edge.
+    pub align_x: AnchorX,
+    /// How the bounding box sits vertically on `anchor` + `position`: `Top`
+    /// (default) puts the top edge there, `Middle` centres, `Bottom` the bottom
+    /// edge.
+    pub align_y: AnchorY,
     /// Width and height in logical pixels.
     pub size: [f32; 2],
     /// Which SDF shape to render.
@@ -333,7 +351,10 @@ pub struct OverlayShapeItem {
 impl Default for OverlayShapeItem {
     fn default() -> Self {
         Self {
+            anchor: OverlayAnchor::default(),
             position: [0.0, 0.0],
+            align_x: AnchorX::Left,
+            align_y: AnchorY::Top,
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
             fill: OverlayFill::default(),
@@ -794,6 +815,47 @@ impl OverlayShapeItem {
         self
     }
 
+    /// Set the origin the shape hangs from (a viewport corner or a world point).
+    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
+        self.anchor = anchor;
+        self
+    }
+
+    /// Pin the shape to a 3D world position, projected to screen each frame.
+    /// Sugar for `with_anchor(OverlayAnchor::World(pos))`.
+    pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
+        self.anchor = OverlayAnchor::World(pos);
+        self
+    }
+
+    /// Set how the bounding box aligns onto the resolved anchor origin.
+    pub fn with_align(mut self, align_x: AnchorX, align_y: AnchorY) -> Self {
+        self.align_x = align_x;
+        self.align_y = align_y;
+        self
+    }
+
+    /// Resolve the effective top-left pixel of the bounding box for a frame:
+    /// the `anchor` origin, plus `position`, shifted by `align_x` / `align_y`
+    /// for the current `size`. Returns `None` when a `World` anchor projects
+    /// behind the camera or off-screen (the shape is skipped that frame).
+    ///
+    /// The default `Viewport { Left, Top }` anchor with `Left` / `Top`
+    /// alignment resolves to `position` and needs no camera, so plain
+    /// screen-space shapes resolve with any `view` / `proj`.
+    pub fn resolve_top_left(
+        &self,
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+    ) -> Option<[f32; 2]> {
+        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        Some([
+            origin[0] + self.position[0] + self.align_x.align_shift(self.size[0]),
+            origin[1] + self.position[1] + self.align_y.align_shift(self.size[1]),
+        ])
+    }
+
     /// Signed distance from a screen-space point to the shape boundary.
     ///
     /// The point is in logical pixels from the top-left of the viewport (the
@@ -802,6 +864,12 @@ impl OverlayShapeItem {
     ///
     /// This evaluates the same SDF used by the GPU shader, so the boundary
     /// matches what is rendered on screen (ignoring sub-pixel AA).
+    ///
+    /// `position` is treated as the box's absolute top-left. For a shape with a
+    /// non-default `anchor` (a viewport corner or a world point), first resolve
+    /// the frame's top-left with [`Self::resolve_top_left`] and hit-test a copy
+    /// whose `position` is that value, so the test frame matches where the shape
+    /// draws.
     pub fn distance(&self, point: [f32; 2]) -> f32 {
         let hw = self.size[0] * 0.5;
         let hh = self.size[1] * 0.5;
@@ -1373,6 +1441,104 @@ mod tests {
         // With a large pivot offset the shape rotates away from the centre.
         s.rotation_pivot = [200.0, 0.0];
         assert!(!s.contains([40.0, 20.0]));
+    }
+
+    #[test]
+    fn default_anchor_resolves_to_position() {
+        // Default Viewport { Left, Top } + Left/Top align: the resolved top-left
+        // equals `position`, with no camera needed, on any viewport size.
+        let s = OverlayShapeItem::new(OverlayShape::Circle, [40.0, 70.0], [30.0, 30.0]);
+        let tl = s
+            .resolve_top_left([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
+            .unwrap();
+        assert_eq!(tl, [40.0, 70.0]);
+    }
+
+    #[test]
+    fn viewport_corner_pins_across_sizes() {
+        // A bottom-right-anchored, bottom-right-aligned box keeps its bottom-right
+        // corner on the viewport's bottom-right corner regardless of size.
+        let s = OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 0.0 },
+            [0.0, 0.0],
+            [50.0, 20.0],
+        )
+        .with_anchor(OverlayAnchor::Viewport {
+            x: AnchorX::Right,
+            y: AnchorY::Bottom,
+        })
+        .with_align(AnchorX::Right, AnchorY::Bottom);
+        let id = glam::Mat4::IDENTITY;
+        let a = s.resolve_top_left([800.0, 600.0], &id, &id).unwrap();
+        assert_eq!(a, [750.0, 580.0]);
+        let b = s.resolve_top_left([1024.0, 768.0], &id, &id).unwrap();
+        assert_eq!(b, [974.0, 748.0]);
+    }
+
+    #[test]
+    fn centre_anchor_centres_box() {
+        // Middle/Middle origin with Middle/Middle align centres the box on the
+        // viewport centre, so the drawn box and a hit-test on it agree.
+        let s = OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 0.0 },
+            [0.0, 0.0],
+            [80.0, 60.0],
+        )
+        .with_anchor(OverlayAnchor::Viewport {
+            x: AnchorX::Middle,
+            y: AnchorY::Middle,
+        })
+        .with_align(AnchorX::Middle, AnchorY::Middle);
+        let id = glam::Mat4::IDENTITY;
+        let tl = s.resolve_top_left([800.0, 600.0], &id, &id).unwrap();
+        assert_eq!(tl, [360.0, 270.0]); // 400-40, 300-30
+        // The centre of the resolved box is the viewport centre.
+        let mut drawn = s.clone();
+        drawn.position = tl;
+        assert!(drawn.contains([400.0, 300.0]));
+    }
+
+    #[test]
+    fn position_nudges_from_origin() {
+        // `position` layers on top of the resolved origin, so it nudges an
+        // anchored box away from the corner (the animatable channel does the same).
+        let s = OverlayShapeItem::new(OverlayShape::Circle, [12.0, -8.0], [20.0, 20.0])
+            .with_anchor(OverlayAnchor::Viewport {
+                x: AnchorX::Right,
+                y: AnchorY::Top,
+            })
+            .with_align(AnchorX::Right, AnchorY::Top);
+        let id = glam::Mat4::IDENTITY;
+        let tl = s.resolve_top_left([500.0, 500.0], &id, &id).unwrap();
+        // origin x = 500, align Right shifts by -20, position adds [12, -8].
+        assert_eq!(tl, [500.0 - 20.0 + 12.0, 0.0 - 8.0]);
+    }
+
+    #[test]
+    fn world_anchor_culls_when_offscreen() {
+        // A world point behind the camera resolves to None (shape skipped),
+        // while an on-screen point resolves to a pixel inside the viewport.
+        let s = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0])
+            .with_world_anchor([0.0, 0.0, 0.0]);
+        let proj = glam::Mat4::perspective_rh(1.0, 1.0, 0.1, 100.0);
+        // Camera at +z=5 looking toward the origin (down -z), Z-up.
+        let view = glam::Mat4::look_at_rh(
+            glam::vec3(0.0, 0.0, 5.0),
+            glam::vec3(0.0, 0.0, 0.0),
+            glam::vec3(0.0, 1.0, 0.0),
+        );
+        let on = s.resolve_top_left([400.0, 400.0], &view, &proj);
+        assert!(on.is_some());
+        let p = on.unwrap();
+        assert!((p[0] - 200.0).abs() < 1.0 && (p[1] - 200.0).abs() < 1.0);
+
+        // Move the camera so the point is behind it (looking away): culled.
+        let behind = glam::Mat4::look_at_rh(
+            glam::vec3(0.0, 0.0, 5.0),
+            glam::vec3(0.0, 0.0, 10.0),
+            glam::vec3(0.0, 1.0, 0.0),
+        );
+        assert!(s.resolve_top_left([400.0, 400.0], &behind, &proj).is_none());
     }
 
     #[test]

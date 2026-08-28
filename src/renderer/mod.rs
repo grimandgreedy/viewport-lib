@@ -58,16 +58,16 @@ pub use self::types::{
     IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
     LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
     Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OVERLAY_MAX_SHADOW_LAYERS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
-    POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathSegment, PathTrack, PickId, PipelineMode,
-    PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
-    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
-    RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame,
-    SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings,
-    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
+    OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor, OverlayAnimation, OverlayAnimations, OverlayEasing,
+    OverlayFill, OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathSegment, PathTrack, PickId,
+    PipelineMode, PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap,
+    PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
+    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer,
+    ShadowSettings, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
+    SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
+    StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
     TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
     TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
     VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
@@ -76,7 +76,7 @@ pub use self::types::{
 
 // Crate-internal anchor resolution helpers (viewport corner placement), used by
 // the screen-image prepare/upload and picking paths outside `renderer::types`.
-pub(crate) use self::types::{viewport_anchored_ndc, viewport_anchored_top_left};
+pub(crate) use self::types::viewport_anchored_ndc;
 
 /// An opaque handle to a per-viewport GPU state slot.
 ///
