@@ -90,6 +90,21 @@ pub enum OverlayShape {
     /// special cases of. Distinct from a math vector: "vector" here means
     /// vector art (paths). Subpath coordinates are path-local logical pixels,
     /// placed at the item's `position`.
+    ///
+    /// A vector shape honours the coverage- and box-relative fields of
+    /// [`OverlayShapeItem`]: `fill` (solid and gradients), `opacity`,
+    /// `z_order`, the AABB clip (`clip_id`), `rotation` / `rotation_pivot`, and
+    /// `border_colour` / `border_width` (drawn as an outline stroke of the
+    /// contours, not an SDF band). `position` places the path origin and
+    /// `size` sets the rotation centre; the fill and gradient bounds come from
+    /// the path's own extent, not `size`.
+    ///
+    /// Fields that depend on the distance field or the bounding quad have no
+    /// effect on a vector shape and are ignored: `shadows` / `inner_shadows` /
+    /// the legacy `shadow_*` (no distance field to fall off), `backdrop_blur`
+    /// and its filters, `texture` / `nine_slice` / `texture_transform` (the
+    /// fill still draws). Drawing a vector shape needs the `vector` cargo
+    /// feature; without it the fill is skipped.
     Vector {
         /// The contours that make up the shape.
         subpaths: Vec<SubPath>,

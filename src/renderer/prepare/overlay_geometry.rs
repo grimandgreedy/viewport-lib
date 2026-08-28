@@ -195,6 +195,40 @@ pub(super) fn emit_filled_polyline(
     }
 }
 
+/// Emit a pre-tessellated triangle list as a colour fill, for an
+/// [`OverlayShape::Vector`](crate::renderer::types::OverlayShape). `positions`
+/// are screen-space logical pixels (already transformed for the shape's
+/// position and rotation); `indices` reference them in triples. The fill is
+/// sampled across the triangle list's bounding box, matching how a filled
+/// polyline resolves gradients.
+#[cfg_attr(not(feature = "vector"), allow(dead_code))]
+pub(super) fn emit_vector_fill(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    positions: &[[f32; 2]],
+    indices: &[u32],
+    fill: &crate::renderer::types::OverlayFill,
+    opacity: f32,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let Some((min, max)) = polyline_bounds(positions) else {
+        return;
+    };
+    for &idx in indices {
+        let p = positions[idx as usize];
+        let mut colour = sample_overlay_fill(fill, p, min, max);
+        colour[3] *= opacity;
+        verts.push(crate::resources::OverlayTextVertex {
+            position: px_to_ndc(p[0], p[1], vp_w, vp_h),
+            uv: [0.0, 0.0],
+            colour,
+            use_texture: 0.0,
+            clip_index: -1.0,
+            clip_rect: [0.0; 4],
+        });
+    }
+}
+
 /// Tessellate a polyline into a triangle list of `OverlayTextVertex`s.
 ///
 /// At each interior point the stroke is extruded along the bisector of the

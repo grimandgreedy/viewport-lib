@@ -10,13 +10,24 @@
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PathSegment {
     /// Straight line to `to`.
-    Line { to: [f32; 2] },
+    Line {
+        /// End point.
+        to: [f32; 2],
+    },
     /// Quadratic Bezier through control point `ctrl` to `to`.
-    Quad { ctrl: [f32; 2], to: [f32; 2] },
+    Quad {
+        /// Control point.
+        ctrl: [f32; 2],
+        /// End point.
+        to: [f32; 2],
+    },
     /// Cubic Bezier through control points `ctrl1`, `ctrl2` to `to`.
     Cubic {
+        /// First control point.
         ctrl1: [f32; 2],
+        /// Second control point.
         ctrl2: [f32; 2],
+        /// End point.
         to: [f32; 2],
     },
 }
@@ -155,6 +166,14 @@ fn flatten_subpath(sp: &SubPath) -> Vec<[f32; 2]> {
         }
     }
     pts
+}
+
+/// Flatten every subpath to a polyline of points, subdividing curves at a
+/// fixed step count. Used for stroking a vector shape's outline and for the
+/// point-in-path test; the GPU fill uses a tolerance-driven tessellator.
+#[cfg_attr(not(feature = "vector"), allow(dead_code))]
+pub(crate) fn flatten_contours(subpaths: &[SubPath]) -> Vec<Vec<[f32; 2]>> {
+    subpaths.iter().map(flatten_subpath).collect()
 }
 
 /// Point-in-path test for a set of subpaths under a fill rule. `pt` is in the

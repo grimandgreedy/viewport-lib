@@ -108,6 +108,107 @@ fn encode_overlay_shape(
     }
 }
 
+/// Curve-flattening tolerance for vector-shape fills, in logical pixels.
+#[cfg(feature = "vector")]
+const VECTOR_FILL_TOLERANCE: f32 = 0.2;
+
+/// Mitre limit for a vector shape's outline stroke (it has no per-item value,
+/// unlike `OverlayPolylineItem`).
+#[cfg(feature = "vector")]
+const VECTOR_BORDER_MITRE_LIMIT: f32 = 4.0;
+
+/// Map a vector shape's path-local points into screen-space logical pixels,
+/// applying the item's position and rotation about its centre plus pivot. This
+/// is the inverse of the frame `OverlayShapeItem::distance` evaluates in, so
+/// the drawn shape and the hit-test agree.
+#[cfg(feature = "vector")]
+fn transform_vector_positions(
+    local: &[[f32; 2]],
+    shape: &crate::renderer::types::OverlayShapeItem,
+) -> Vec<[f32; 2]> {
+    let hw = shape.size[0] * 0.5;
+    let hh = shape.size[1] * 0.5;
+    let cx = shape.position[0] + hw;
+    let cy = shape.position[1] + hh;
+    let piv = shape.rotation_pivot;
+    let c = shape.rotation.cos();
+    let s = shape.rotation.sin();
+    local
+        .iter()
+        .map(|lp| {
+            // Path-local -> centred (the unrotated `p` frame in `distance`).
+            let cpx = lp[0] - hw;
+            let cpy = lp[1] - hh;
+            if shape.rotation == 0.0 {
+                return [cx + cpx, cy + cpy];
+            }
+            let ax = cpx - piv[0];
+            let ay = cpy - piv[1];
+            let rx = c * ax - s * ay + piv[0];
+            let ry = s * ax + c * ay + piv[1];
+            [cx + rx, cy + ry]
+        })
+        .collect()
+}
+
+/// Tessellate and emit a vector shape's fill, plus its outline border when set,
+/// as `OverlayTextVertex`s into `batch`. Without the `vector` feature there is
+/// no tessellator, so a vector shape draws nothing (the types and constructor
+/// still exist).
+fn emit_vector_shape(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    fill_rule: crate::renderer::types::FillRule,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    #[cfg(feature = "vector")]
+    {
+        let mesh = super::overlay_vector::tessellate(subpaths, fill_rule, VECTOR_FILL_TOLERANCE);
+        if !mesh.indices.is_empty() {
+            let positions = transform_vector_positions(&mesh.positions, shape);
+            emit_vector_fill(
+                batch,
+                &positions,
+                &mesh.indices,
+                &shape.fill,
+                shape.opacity,
+                vp_w,
+                vp_h,
+            );
+        }
+
+        // Border: a vector outline stroke, not an SDF band. Stroke each
+        // flattened contour through the same tessellator polylines use.
+        if shape.border_width > 0.0 && shape.border_colour[3] > 0.0 {
+            let mut colour = shape.border_colour;
+            colour[3] *= shape.opacity;
+            for contour in crate::renderer::types::flatten_contours(subpaths) {
+                if contour.len() < 2 {
+                    continue;
+                }
+                let pts = transform_vector_positions(&contour, shape);
+                batch.extend(tessellate_polyline(
+                    &pts,
+                    shape.border_width,
+                    true,
+                    crate::renderer::types::LineJoin::Mitre,
+                    VECTOR_BORDER_MITRE_LIMIT,
+                    crate::renderer::types::PolylineCap::Butt,
+                    colour,
+                    vp_w,
+                    vp_h,
+                ));
+            }
+        }
+    }
+    #[cfg(not(feature = "vector"))]
+    {
+        let _ = (batch, shape, subpaths, fill_rule, vp_w, vp_h);
+    }
+}
+
 /// Build the per-frame clip-shape registry from the overlay shapes that are clip
 /// masks (`clip_mask_id` set). Returns the GPU array (framebuffer-pixel geometry),
 /// a map from `clip_mask_id` to its index in that array, and the axis-aligned
@@ -259,10 +360,17 @@ impl ViewportRenderer {
         // console text at i32::MAX but above HUD labels at 0).
         self.label_gpu_data = None;
         let (_, gizmo_polylines) = self.gizmo_overlay_items(frame);
+        let has_vector_shape = frame.overlays.shapes.iter().any(|s| {
+            matches!(
+                &s.shape,
+                crate::renderer::types::OverlayShape::Vector { .. }
+            )
+        });
         let has_overlay = !frame.overlays.labels.is_empty()
             || !frame.overlays.glyph_runs.is_empty()
             || !frame.overlays.polylines.is_empty()
-            || !gizmo_polylines.is_empty();
+            || !gizmo_polylines.is_empty()
+            || has_vector_shape;
         if has_overlay {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
@@ -332,6 +440,35 @@ impl ViewportRenderer {
                     }
                     if !batch.is_empty() {
                         batches.push((poly.z_order, batch));
+                    }
+                }
+
+                // --- Vector shapes (tessellated fills + outline strokes) ---
+                // A vector shape has no SDF, so it draws here through the same
+                // triangle-fill pipeline as filled polylines rather than the
+                // SDF shape pass. Fill, gradient, opacity, clip, and the border
+                // outline carry over; SDF-derived effects (soft shadows, the
+                // distance-band border) do not apply.
+                for shape in &frame.overlays.shapes {
+                    let crate::renderer::types::OverlayShape::Vector {
+                        subpaths,
+                        fill_rule,
+                    } = &shape.shape
+                    else {
+                        continue;
+                    };
+                    // Mask-only shapes contribute a clip rect, not a draw; skip
+                    // fully transparent ones. A `texture` set on a vector shape
+                    // is ignored (documented on the variant): the fill still
+                    // draws.
+                    if shape.clip_mask_id.is_some() || shape.opacity <= 0.0 {
+                        continue;
+                    }
+                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    emit_vector_shape(&mut batch, shape, subpaths, *fill_rule, vp_w, vp_h);
+                    stamp_clip(&mut batch, shape.clip_id);
+                    if !batch.is_empty() {
+                        batches.push((shape.z_order, batch));
                     }
                 }
 
