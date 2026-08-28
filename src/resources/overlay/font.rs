@@ -1,8 +1,8 @@
 //! Font atlas and single-line text layout for overlay rendering.
 //!
-//! This module is the text back-end for [`LabelItem`], [`ScalarBarItem`], and
-//! [`RulerItem`].  It uses [`fontdue`] for glyph rasterization and packs glyphs
-//! into a single GPU texture atlas on demand.
+//! This module is the text back-end for [`LabelItem`] and [`GlyphRunItem`].  It
+//! uses [`fontdue`] for glyph rasterization and packs glyphs into a single GPU
+//! texture atlas on demand.
 //!
 //! Public surface: [`FontHandle`] (opaque font identifier) and
 //! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
@@ -809,9 +809,9 @@ pub enum FontError {
 impl crate::resources::DeviceResources {
     /// Upload a user-supplied TTF font for use with overlay items.
     ///
-    /// Returns an opaque [`FontHandle`] that can be passed to [`LabelItem`],
-    /// [`ScalarBarItem`], or [`RulerItem`] via their `font` field.  Pass
-    /// `None` on those items to use the built-in default font instead.
+    /// Returns an opaque [`FontHandle`] that can be passed to [`LabelItem`] or
+    /// [`GlyphRunItem`] via their `font` field.  Pass `None` on those items to
+    /// use the built-in default font instead.
     ///
     /// The font bytes must be a valid TrueType (`.ttf`) file.
     pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {
@@ -844,8 +844,6 @@ impl crate::resources::DeviceResources {
     /// if uploaded. A downstream text shaper can register these exact bytes so its
     /// glyph ids match what the overlay atlas rasterizes them to.
     pub fn font_bytes(&self, font: Option<FontHandle>) -> Option<&[u8]> {
-        self.content
-            .glyph_atlas
-            .font_bytes(font.map_or(0, |h| h.0))
+        self.content.glyph_atlas.font_bytes(font.map_or(0, |h| h.0))
     }
 }

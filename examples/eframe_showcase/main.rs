@@ -12,8 +12,6 @@ use viewport_lib::{
     scene::Scene,
 };
 
-use viewport_lib::{LoadingBarAnchor, LoadingBarItem};
-
 mod geometry;
 mod gizmo_helpers;
 mod multi_viewport_callback;
@@ -3866,13 +3864,9 @@ impl App {
         if self.mode == ShowcaseMode::Annotation && self.ann_state.built {
             fd.overlays.labels = self.ann_state.labels.clone();
         }
-        if self.mode == ShowcaseMode::ScalarFields && self.scalar_state.built {
-            fd.overlays.scalar_bars = vec![self.scalar_bar_item()];
-        }
         if self.mode == ShowcaseMode::Overlay {
             fd.overlays.time = self.ovl_state.start_time.elapsed().as_secs_f64();
-            let (shapes, labels, bar, ruler, polylines) =
-                showcase_35_overlay::build_overlay_frame(self);
+            let (shapes, labels, polylines) = showcase_35_overlay::build_overlay_frame(self);
             fd.overlays.polylines = polylines;
             // The dancing-As glyph run as a row above the emoji row.
             let mut runs = showcase_35_overlay::build_glyph_run(self);
@@ -3885,10 +3879,6 @@ impl App {
             }
             fd.overlays.shapes = shapes;
             fd.overlays.labels = labels;
-            fd.overlays.scalar_bars = vec![bar];
-            if let Some(r) = ruler {
-                fd.overlays.rulers = vec![r];
-            }
             if self.ovl_state.cloud_built {
                 let mut pc = PointCloudItem::default();
                 pc.positions = self.ovl_state.cloud_positions.clone();
@@ -3910,22 +3900,6 @@ impl App {
             fd.overlays
                 .labels
                 .extend(self.build_label_screen_overlays(w, h));
-        }
-
-        // Loading bar while the async perf scene build is in flight.
-        if self.mode == ShowcaseMode::Performance {
-            if let Some(ref progress) = self.perf_state.build_progress {
-                let n = progress.load(std::sync::atomic::Ordering::Relaxed);
-                let label = format!(
-                    "Building scene\u{2026} {} / 125 000",
-                    showcase_23_performance::format_count(n),
-                );
-                fd.overlays.loading_bars.push(
-                    LoadingBarItem::new(n as f32 / 125_000.0)
-                        .with_label(label)
-                        .with_anchor(LoadingBarAnchor::BottomCenter),
-                );
-            }
         }
 
         // Update stats and apply GPU culling toggle (Performance mode).

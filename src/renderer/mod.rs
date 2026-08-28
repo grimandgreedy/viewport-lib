@@ -56,22 +56,21 @@ pub use self::types::{
     GlyphSetRefItem, GlyphType, GpuImplicitItem, GpuMarchingCubesJob, GpuParticleSystemItem,
     GradientStop, GroundPlane, GroundPlaneMode, ImageAnchor, ImageSliceItem, IndirectLightSource,
     InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
-    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, LoadingBarAnchor,
-    LoadingBarItem, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnimation, OverlayAnimations,
-    OverlayEasing, OverlayFill, OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack, PickId, PipelineMode,
-    PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
+    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
+    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
+    OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
+    POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack, PickId, PipelineMode, PointCloudItem,
+    PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
     PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
-    RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
-    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
-    ShDegree, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
-    SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
-    SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern,
-    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
-    ViewportFrame, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
-    aabb_wireframe_polyline, sphere_wireframe_polyline,
+    RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame,
+    SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings,
+    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
+    StreamtubeRefItem, StrokePattern, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
+    TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem,
+    TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame, VolumeItem, VolumeMeshItem,
+    VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -427,12 +426,6 @@ pub struct ViewportRenderer {
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
-    /// Per-frame scalar bar GPU data, rebuilt in prepare(), consumed in paint().
-    scalar_bar_gpu_data: Option<crate::resources::LabelGpuData>,
-    /// Per-frame ruler GPU data, rebuilt in prepare(), consumed in paint().
-    ruler_gpu_data: Option<crate::resources::LabelGpuData>,
-    /// Per-frame loading bar GPU data, rebuilt in prepare(), consumed in paint().
-    loading_bar_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
     overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
     /// Per-frame ordered overlay draw list. The overlay prepare passes record one
@@ -924,9 +917,6 @@ impl ViewportRenderer {
             mc_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),
             label_gpu_data: None,
-            scalar_bar_gpu_data: None,
-            ruler_gpu_data: None,
-            loading_bar_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,

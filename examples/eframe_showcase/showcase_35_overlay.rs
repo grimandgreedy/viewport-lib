@@ -5,12 +5,6 @@
 pub(crate) struct OvlState {
     pub start_time: std::time::Instant,
     pub colourmap: viewport_lib::BuiltinColourmap,
-    pub bar_orientation: viewport_lib::ScalarBarOrientation,
-    pub bar_anchor: viewport_lib::ScalarBarAnchor,
-    pub tick_count: u32,
-    pub bar_size: f32,
-    pub bg_colour: [f32; 4],
-    pub show_ruler: bool,
     pub show_labels: bool,
     pub show_shapes: bool,
     pub shape_corner_radius: f32,
@@ -35,12 +29,6 @@ impl Default for OvlState {
         Self {
             start_time: std::time::Instant::now(),
             colourmap: viewport_lib::BuiltinColourmap::Viridis,
-            bar_orientation: viewport_lib::ScalarBarOrientation::Vertical,
-            bar_anchor: viewport_lib::ScalarBarAnchor::BottomRight,
-            tick_count: 5,
-            bar_size: 200.0,
-            bg_colour: [0.0, 0.0, 0.0, 0.63],
-            show_ruler: true,
             show_labels: true,
             show_shapes: true,
             shape_corner_radius: 8.0,
@@ -60,14 +48,14 @@ impl Default for OvlState {
     }
 }
 
-// Showcase 35: Overlay Composition : ScalarBarItem + RulerItem + LabelItem together.
+// Showcase 35: Overlay Composition : LabelItem and overlay shapes together.
 
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    BorderMode, BuiltinColourmap, ColourmapId, FontHandle, GlyphRunItem, LabelAnchor, LabelItem,
-    LineCap, OverlayAnimation, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph,
-    RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, TriangleDirection,
+    BorderMode, BuiltinColourmap, FontHandle, GlyphRunItem, LabelAnchor, LabelItem, LineCap,
+    OverlayAnimation, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph,
+    TriangleDirection,
 };
 
 /// System color-emoji fonts to try, in order. First one found is used.
@@ -376,70 +364,6 @@ pub(crate) fn controls_overlay(app: &mut App, ui: &mut egui::Ui) {
         });
 
     ui.separator();
-    ui.label("Bar orientation:");
-    if ui
-        .radio(
-            app.ovl_state.bar_orientation == ScalarBarOrientation::Vertical,
-            "Vertical",
-        )
-        .clicked()
-    {
-        app.ovl_state.bar_orientation = ScalarBarOrientation::Vertical;
-    }
-    if ui
-        .radio(
-            app.ovl_state.bar_orientation == ScalarBarOrientation::Horizontal,
-            "Horizontal",
-        )
-        .clicked()
-    {
-        app.ovl_state.bar_orientation = ScalarBarOrientation::Horizontal;
-    }
-
-    ui.separator();
-    ui.label("Bar anchor:");
-    for (label, anchor) in [
-        ("Top-Left", ScalarBarAnchor::TopLeft),
-        ("Top-Right", ScalarBarAnchor::TopRight),
-        ("Bottom-Left", ScalarBarAnchor::BottomLeft),
-        ("Bottom-Right", ScalarBarAnchor::BottomRight),
-    ] {
-        if ui
-            .radio(app.ovl_state.bar_anchor == anchor, label)
-            .clicked()
-        {
-            app.ovl_state.bar_anchor = anchor;
-        }
-    }
-
-    ui.separator();
-    ui.label("Bar size (px):");
-    ui.add(egui::Slider::new(&mut app.ovl_state.bar_size, 80.0..=400.0).suffix(" px"));
-
-    ui.separator();
-    ui.label("Tick count:");
-    ui.add(egui::Slider::new(&mut app.ovl_state.tick_count, 2..=10));
-
-    ui.separator();
-    ui.label("Background colour:");
-    let mut rgb = [
-        app.ovl_state.bg_colour[0],
-        app.ovl_state.bg_colour[1],
-        app.ovl_state.bg_colour[2],
-    ];
-    if ui.color_edit_button_rgb(&mut rgb).changed() {
-        app.ovl_state.bg_colour[0] = rgb[0];
-        app.ovl_state.bg_colour[1] = rgb[1];
-        app.ovl_state.bg_colour[2] = rgb[2];
-    }
-    ui.label("Background opacity:");
-    ui.add(egui::Slider::new(
-        &mut app.ovl_state.bg_colour[3],
-        0.0..=1.0,
-    ));
-
-    ui.separator();
-    ui.checkbox(&mut app.ovl_state.show_ruler, "Show ruler");
     ui.checkbox(&mut app.ovl_state.show_labels, "Show callout labels");
     ui.add_enabled(
         app.ovl_state.emoji_font.is_some(),
@@ -509,20 +433,8 @@ pub(crate) fn build_overlay_frame(
 ) -> (
     Vec<OverlayShapeItem>,
     Vec<LabelItem>,
-    ScalarBarItem,
-    Option<RulerItem>,
     Vec<viewport_lib::OverlayPolylineItem>,
 ) {
-    let colourmap_id = ColourmapId(app.ovl_state.colourmap as usize);
-
-    let bar = ScalarBarItem::new(colourmap_id, -1.5, 1.5)
-        .with_title("Height (m)")
-        .with_anchor(app.ovl_state.bar_anchor)
-        .with_orientation(app.ovl_state.bar_orientation)
-        .with_tick_count(app.ovl_state.tick_count)
-        .with_bar_length(app.ovl_state.bar_size)
-        .with_background_colour(app.ovl_state.bg_colour);
-
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
         for (text, pos, colour) in [
@@ -548,18 +460,6 @@ pub(crate) fn build_overlay_frame(
             );
         }
     }
-
-    let ruler = if app.ovl_state.show_ruler {
-        Some(
-            RulerItem::new([1.57, 0.0, 0.0], [-1.57, 3.14, 0.0])
-                .with_colour([1.0, 0.85, 0.2, 1.0])
-                .with_label_colour([1.0, 0.85, 0.2, 1.0])
-                .with_label_format("{:.2} m")
-                .with_end_caps(true),
-        )
-    } else {
-        None
-    };
 
     // SDF overlay shapes: a row of five shapes, vertically centred on a
     // common midline with equal spacing between them.
@@ -590,7 +490,7 @@ pub(crate) fn build_overlay_frame(
         row_backdrop(app, &mut shapes, solid_right);
     }
 
-    (shapes, labels, bar, ruler, polylines)
+    (shapes, labels, polylines)
 }
 
 /// Vertical stacking cursor for the overlay showcase rows. `row(h)` reserves a

@@ -4733,12 +4733,8 @@ impl ViewportRenderer {
         let vp_idx = ctx.vp_idx;
         let w = ctx.w;
         let h = ctx.h;
-        // Overlay shapes, labels, scalar bars, and rulers (HDR path): drawn last.
-        let has_overlay = self.overlay_shape_gpu_data.is_some()
-            || self.label_gpu_data.is_some()
-            || self.scalar_bar_gpu_data.is_some()
-            || self.ruler_gpu_data.is_some()
-            || self.loading_bar_gpu_data.is_some();
+        // Overlay shapes and the merged text batch (HDR path): drawn last.
+        let has_overlay = self.overlay_shape_gpu_data.is_some() || self.label_gpu_data.is_some();
 
         // HDR backdrop blur: the tonemapped scene is on an intermediate so we
         // can sample it for the blur. When blur is needed we redirect the

@@ -136,11 +136,11 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ## 12. Scalar Fields  (`showcase_12_scalar_fields.rs`, 374 lines)
 
-**Demos:** Three objects each carrying a different per-vertex scalar attribute (sphere/height, wave grid/sine wave, box/distance-with-NaN). Pick the active object, the colourmap, the scalar range (auto or manual), NaN colouring, and the scalar bar's anchor/orientation.
+**Demos:** Three objects each carrying a different per-vertex scalar attribute (sphere/height, wave grid/sine wave, box/distance-with-NaN). Pick the active object, the colourmap, the scalar range (auto or manual), and NaN colouring.
 
-**Uses:** `AttributeData`, `BuiltinColourmap`, `MeshData`, `ScalarBarItem`, `ScalarBarAnchor`, `ScalarBarOrientation`, `ColourmapId`.
+**Uses:** `AttributeData`, `BuiltinColourmap`, `MeshData`, `ColourmapId`.
 
-**Sidebar:** 3 object radios; 5 colourmap radios; Auto Range checkbox + min/max DragValue; NaN checkbox; 4 anchor radios + 2 orientation radios.
+**Sidebar:** 3 object radios; 5 colourmap radios; Auto Range checkbox + min/max DragValue; NaN checkbox.
 
 **Drift:** Minor — scalar-bar placement / colourmap not in header.
 
@@ -412,13 +412,11 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ## 35. Overlay Composition  (`showcase_35_overlay.rs`, 1510 lines)
 
-**Demos:** Single sinusoidal point-cloud surface as backdrop for a comprehensive overlay-primitive gallery: `ScalarBarItem`, optional 3D-space `RulerItem`, three world-anchored callout `LabelItem`s, and ~50 `OverlayShapeItem`s laid out in rows — SDF shapes (rect / rounded / circle / ellipse / capsule / ring / arc / triangle / line / star / regular polygon / cross), texture-masked shapes, gradient fills (linear, multi-stop, radial, conical), drop shadow / glow / inset shadow, border modes + animation row (Pulse, FadeIn, rotating gradients, PathTrack figure-eight with traced polyline), clip-mask demo, 9-slice button comparison, backdrop-blur circle.
+**Demos:** Single sinusoidal point-cloud surface as backdrop for a comprehensive overlay-primitive gallery: three world-anchored callout `LabelItem`s and ~50 `OverlayShapeItem`s laid out in rows — SDF shapes (rect / rounded / circle / ellipse / capsule / ring / arc / triangle / line / star / regular polygon / cross), texture-masked shapes, gradient fills (linear, multi-stop, radial, conical), drop shadow / glow / inset shadow, border modes + animation row (Pulse, FadeIn, rotating gradients, PathTrack figure-eight with traced polyline), clip-mask demo, 9-slice button comparison, backdrop-blur circle.
 
-**Uses:** `ScalarBarItem`, `RulerItem`, `LabelItem`, `OverlayShapeItem`, `OverlayShape::*`, `OverlayFill::*`, `BorderMode`, `OverlayAnimation`, `OverlayAnimations`, `PathTrack`, `OverlayPolylineItem`, `OverlayTextureId`, `TextureTransform`, `NineSlice`, `BuiltinColourmap`.
+**Uses:** `LabelItem`, `OverlayShapeItem`, `OverlayShape::*`, `OverlayFill::*`, `BorderMode`, `OverlayAnimation`, `OverlayAnimations`, `PathTrack`, `OverlayPolylineItem`, `OverlayTextureId`, `TextureTransform`, `NineSlice`.
 
-**Sidebar:** Colourmap combo; bar orientation + anchor + size + tick controls; background colour + opacity; toggles for ruler / callouts / SDF shapes / texture-masked shapes; corner radius / border width / backdrop-blur sliders.
-
-**Drift:** No `//!` header block; a single internal comment under-sells the actual scope by an order of magnitude.
+**Sidebar:** Background colour + opacity; toggles for callouts / SDF shapes / texture-masked shapes; corner radius / border width / backdrop-blur sliders.
 
 ---
 

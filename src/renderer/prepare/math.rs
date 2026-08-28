@@ -74,37 +74,3 @@ pub(super) fn jacobi_eig_3x3(a: &[[f32; 3]; 3]) -> ([[f32; 3]; 3], [f32; 3]) {
         [m[0][0], m[1][1], m[2][2]],
     )
 }
-
-/// Format a distance value using a caller-supplied format pattern.
-///
-/// The pattern may contain one `{...}` placeholder with an optional precision
-/// specifier, e.g. `"{:.3}"` or `"{:.2} m"`.  Anything outside the braces is
-/// treated as a literal prefix / suffix.  Unrecognised patterns fall back to
-/// three decimal places.
-pub(super) fn format_ruler_distance(distance: f32, fmt: Option<&str>) -> String {
-    let pattern = fmt.unwrap_or("{:.3}");
-    // Find the first `{...}` block.
-    if let Some(open) = pattern.find('{') {
-        if let Some(close_rel) = pattern[open..].find('}') {
-            let close = open + close_rel;
-            let spec = &pattern[open + 1..close]; // e.g. ":.3" or ""
-            let prefix = &pattern[..open];
-            let suffix = &pattern[close + 1..];
-            let formatted = if let Some(prec_str) = spec.strip_prefix(":.") {
-                // Strip trailing 'f' for patterns like "{:.3f}".
-                let prec_str = prec_str.trim_end_matches('f');
-                if let Ok(prec) = prec_str.parse::<usize>() {
-                    format!("{distance:.prec$}")
-                } else {
-                    format!("{distance:.3}")
-                }
-            } else if spec.is_empty() || spec == ":" {
-                format!("{distance}")
-            } else {
-                format!("{distance:.3}")
-            };
-            return format!("{prefix}{formatted}{suffix}");
-        }
-    }
-    format!("{distance:.3}")
-}

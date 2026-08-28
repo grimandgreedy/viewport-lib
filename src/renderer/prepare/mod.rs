@@ -919,9 +919,6 @@ impl ViewportRenderer {
         self.overlay_uses_zorder = frame.overlays.uses_nonzero_z_order();
         self.overlay_draw_segments.clear();
         self.prepare_overlay_labels(device, queue, frame);
-        self.prepare_scalar_bars(device, queue, frame);
-        self.prepare_rulers(device, queue, frame);
-        self.prepare_loading_bars(device, queue, frame);
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);
         self.prepare_splat_sort(device, queue, frame);

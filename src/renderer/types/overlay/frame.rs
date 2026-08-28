@@ -1,7 +1,7 @@
 use crate::renderer::types::*;
 
-/// Semantic overlays rendered after post-processing: labels, scalar bars,
-/// rulers, and loading bars.
+/// Screen-space overlays rendered after post-processing: shapes, labels, glyph
+/// runs, and polylines.
 ///
 /// This frame section is the right place for any visual element that belongs
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
@@ -22,12 +22,6 @@ pub struct OverlayFrame {
     /// renderer only rasterizes and draws them. `labels` is the string-in,
     /// laid-out-here path; this is the glyphs-in, drawn-as-given path.
     pub glyph_runs: Vec<GlyphRunItem>,
-    /// Colour-legend (scalar bar) overlays.
-    pub scalar_bars: Vec<ScalarBarItem>,
-    /// Two-point distance measurement overlays.
-    pub rulers: Vec<RulerItem>,
-    /// Progress bar overlays (loading indicators, progress feedback).
-    pub loading_bars: Vec<LoadingBarItem>,
     /// Stroked polylines. Rendered through the same pipeline as labels; share
     /// their z-order space.
     pub polylines: Vec<OverlayPolylineItem>,
@@ -42,9 +36,6 @@ impl OverlayFrame {
         self.shapes.iter().any(|i| i.z_order != 0)
             || self.labels.iter().any(|i| i.z_order != 0)
             || self.glyph_runs.iter().any(|i| i.z_order != 0)
-            || self.scalar_bars.iter().any(|i| i.z_order != 0)
-            || self.rulers.iter().any(|i| i.z_order != 0)
-            || self.loading_bars.iter().any(|i| i.z_order != 0)
             || self.polylines.iter().any(|i| i.z_order != 0)
     }
 }

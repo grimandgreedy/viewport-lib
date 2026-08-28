@@ -71,33 +71,6 @@ macro_rules! emit_overlay_2d_hardcoded {
                 $render_pass.draw(0..ld.vertex_count, 0..1);
             }
         }
-        // Scalar bars (drawn after labels).
-        if let Some(ref sb) = $this.scalar_bar_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
-                $render_pass.set_pipeline(pipeline);
-                $render_pass.set_bind_group(0, &sb.bind_group, &[]);
-                $render_pass.set_vertex_buffer(0, sb.vertex_buf.slice(..));
-                $render_pass.draw(0..sb.vertex_count, 0..1);
-            }
-        }
-        // Rulers (drawn after scalar bars).
-        if let Some(ref rd) = $this.ruler_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
-                $render_pass.set_pipeline(pipeline);
-                $render_pass.set_bind_group(0, &rd.bind_group, &[]);
-                $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
-                $render_pass.draw(0..rd.vertex_count, 0..1);
-            }
-        }
-        // Loading bars (drawn after rulers).
-        if let Some(ref lb) = $this.loading_bar_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
-                $render_pass.set_pipeline(pipeline);
-                $render_pass.set_bind_group(0, &lb.bind_group, &[]);
-                $render_pass.set_vertex_buffer(0, lb.vertex_buf.slice(..));
-                $render_pass.draw(0..lb.vertex_count, 0..1);
-            }
-        }
     }};
 }
 
@@ -109,7 +82,7 @@ macro_rules! emit_overlay_2d_hardcoded {
 /// case) stay batched.
 macro_rules! emit_overlay_2d_ordered {
     ($this:ident, $render_pass:ident) => {{
-        use crate::renderer::overlay_draw_order::{OverlayDrawSource, OverlayTextFamily};
+        use crate::renderer::overlay_draw_order::OverlayDrawSource;
         // Which pipeline is currently bound, so same-pipeline segments avoid a
         // redundant set_pipeline.
         #[derive(PartialEq)]
@@ -159,19 +132,13 @@ macro_rules! emit_overlay_2d_ordered {
                     }
                 }
                 OverlayDrawSource::Text {
-                    family,
                     vertex_start,
                     vertex_count,
                 } => {
-                    let data = match family {
-                        OverlayTextFamily::Merged => $this.label_gpu_data.as_ref(),
-                        OverlayTextFamily::ScalarBar => $this.scalar_bar_gpu_data.as_ref(),
-                        OverlayTextFamily::Ruler => $this.ruler_gpu_data.as_ref(),
-                        OverlayTextFamily::LoadingBar => $this.loading_bar_gpu_data.as_ref(),
-                    };
-                    if let (Some(pipeline), Some(td)) =
-                        (&$this.resources.overlay_text.pipeline, data)
-                    {
+                    if let (Some(pipeline), Some(td)) = (
+                        &$this.resources.overlay_text.pipeline,
+                        $this.label_gpu_data.as_ref(),
+                    ) {
                         if last_pipe != LastPipe::Text {
                             $render_pass.set_pipeline(pipeline);
                             last_pipe = LastPipe::Text;

@@ -1,18 +1,17 @@
 //! Global draw ordering for overlay families.
 //!
-//! Overlay items across families (shapes, labels, polylines, scalar bars,
-//! rulers, loading bars) each carry a `z_order`. The overlay
-//! prepare passes build one vertex buffer per family; alongside each buffer they
-//! record which slice draws at which `z_order` as an [`OverlayDrawSegment`].
-//! Sorting the segments by `(z_order, family_rank)` gives a single stacking
-//! context across families, instead of the fixed family sequence the emit path
-//! used before.
+//! Overlay items across families (shapes, labels, glyph runs, polylines) each
+//! carry a `z_order`. The overlay prepare passes build one vertex buffer per
+//! family; alongside each buffer they record which slice draws at which
+//! `z_order` as an [`OverlayDrawSegment`]. Sorting the segments by
+//! `(z_order, family_rank)` gives a single stacking context across families,
+//! instead of the fixed family sequence the emit path uses when no item sets a
+//! `z_order`.
 //!
 //! `family_rank` is the tiebreak for equal `z_order`. It reproduces the
-//! back-to-front family order the renderer used previously (shapes under the
-//! merged text batch, under scalar bars, rulers, and finally loading bars on
-//! top), so a scene that leaves every `z_order` at its default `0` keeps the
-//! same result.
+//! back-to-front family order the renderer uses by default (shapes under the
+//! merged text batch), so a scene that leaves every `z_order` at its default `0`
+//! keeps the same result.
 //!
 //! Backdrop-blur shapes are not represented here: they are composited by a
 //! separate pass, not the ordered overlay draw.
@@ -21,29 +20,8 @@
 pub(crate) mod family_rank {
     /// Untextured and textured SDF shapes (bottom).
     pub(crate) const SHAPE: u8 = 0;
-    /// Merged labels, glyph runs, and polylines.
+    /// Merged labels, glyph runs, and polylines (top).
     pub(crate) const TEXT_MERGED: u8 = 1;
-    /// Scalar bars.
-    pub(crate) const SCALAR_BAR: u8 = 2;
-    /// Rulers.
-    pub(crate) const RULER: u8 = 3;
-    /// Loading bars (top).
-    pub(crate) const LOADING_BAR: u8 = 4;
-}
-
-/// Which text-pipeline buffer a [`OverlayDrawSource::Text`] segment draws from.
-/// Each maps to one of the renderer's per-family `LabelGpuData` slots, each with
-/// its own bind group.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum OverlayTextFamily {
-    /// Merged labels, glyph runs, and polylines (`label_gpu_data`).
-    Merged,
-    /// Scalar bars (`scalar_bar_gpu_data`).
-    ScalarBar,
-    /// Rulers (`ruler_gpu_data`).
-    Ruler,
-    /// Loading bars (`loading_bar_gpu_data`).
-    LoadingBar,
 }
 
 /// Locates the vertices (or draw) one segment issues. Ranges index into the
@@ -57,9 +35,9 @@ pub(crate) enum OverlayDrawSource {
     },
     /// One textured-shape batch, by index into `OverlayShapeGpuData::tex_batches`.
     ShapeTex { batch_index: u32 },
-    /// A sub-range of one text-pipeline family buffer.
+    /// A sub-range of the merged text-pipeline buffer (`label_gpu_data`): labels,
+    /// glyph runs, and polylines.
     Text {
-        family: OverlayTextFamily,
         vertex_start: u32,
         vertex_count: u32,
     },
@@ -78,15 +56,12 @@ pub(crate) struct OverlayDrawSegment {
 }
 
 impl OverlayDrawSegment {
-    /// Append a text-family segment, coalescing with the previous segment when
-    /// it is the same family at the same `z_order` and the ranges are
-    /// contiguous. Chrome families (scalar bars, rulers, loading bars) build
-    /// their buffers in submission order, so runs of same-`z_order` items are
-    /// contiguous and collapse to one draw.
+    /// Append a merged-text segment, coalescing with the previous text segment at
+    /// the same `z_order` when the ranges are contiguous. The merged batch is
+    /// built in z-sorted order, so runs of same-`z_order` items collapse to one
+    /// draw.
     pub fn push_text(
         segments: &mut Vec<OverlayDrawSegment>,
-        family: OverlayTextFamily,
-        rank: u8,
         z_order: i32,
         vertex_start: u32,
         vertex_count: u32,
@@ -95,14 +70,13 @@ impl OverlayDrawSegment {
             return;
         }
         if let Some(last) = segments.last_mut() {
-            if last.z_order == z_order && last.family_rank == rank {
+            if last.z_order == z_order && last.family_rank == family_rank::TEXT_MERGED {
                 if let OverlayDrawSource::Text {
-                    family: lf,
                     vertex_start: ls,
                     vertex_count: lc,
                 } = &mut last.source
                 {
-                    if *lf == family && *ls + *lc == vertex_start {
+                    if *ls + *lc == vertex_start {
                         *lc += vertex_count;
                         return;
                     }
@@ -111,9 +85,8 @@ impl OverlayDrawSegment {
         }
         segments.push(OverlayDrawSegment {
             z_order,
-            family_rank: rank,
+            family_rank: family_rank::TEXT_MERGED,
             source: OverlayDrawSource::Text {
-                family,
                 vertex_start,
                 vertex_count,
             },
@@ -187,27 +160,12 @@ mod tests {
 
     #[test]
     fn all_default_zorder_keeps_family_order() {
-        // Every family at z 0: order collapses to the family-rank tiebreak,
-        // reproducing the historical bottom-to-top stack.
-        let mut segs = vec![
-            seg(0, family_rank::LOADING_BAR),
-            seg(0, family_rank::TEXT_MERGED),
-            seg(0, family_rank::SHAPE),
-            seg(0, family_rank::SCALAR_BAR),
-            seg(0, family_rank::RULER),
-        ];
+        // Every family at z 0: order collapses to the family-rank tiebreak, so
+        // shapes draw under the merged text batch.
+        let mut segs = vec![seg(0, family_rank::TEXT_MERGED), seg(0, family_rank::SHAPE)];
         sort_overlay_segments(&mut segs);
         let ranks: Vec<u8> = segs.iter().map(|s| s.family_rank).collect();
-        assert_eq!(
-            ranks,
-            vec![
-                family_rank::SHAPE,
-                family_rank::TEXT_MERGED,
-                family_rank::SCALAR_BAR,
-                family_rank::RULER,
-                family_rank::LOADING_BAR,
-            ]
-        );
+        assert_eq!(ranks, vec![family_rank::SHAPE, family_rank::TEXT_MERGED]);
     }
 
     #[test]
@@ -251,27 +209,12 @@ mod tests {
     #[test]
     fn push_text_coalesces_contiguous_same_z() {
         let mut segs = Vec::new();
-        OverlayDrawSegment::push_text(
-            &mut segs,
-            OverlayTextFamily::ScalarBar,
-            family_rank::SCALAR_BAR,
-            0,
-            0,
-            12,
-        );
-        OverlayDrawSegment::push_text(
-            &mut segs,
-            OverlayTextFamily::ScalarBar,
-            family_rank::SCALAR_BAR,
-            0,
-            12,
-            8,
-        );
+        OverlayDrawSegment::push_text(&mut segs, 0, 0, 12);
+        OverlayDrawSegment::push_text(&mut segs, 0, 12, 8);
         assert_eq!(segs.len(), 1);
         assert_eq!(
             segs[0].source,
             OverlayDrawSource::Text {
-                family: OverlayTextFamily::ScalarBar,
                 vertex_start: 0,
                 vertex_count: 20,
             }
@@ -281,22 +224,8 @@ mod tests {
     #[test]
     fn push_text_splits_on_different_z() {
         let mut segs = Vec::new();
-        OverlayDrawSegment::push_text(
-            &mut segs,
-            OverlayTextFamily::ScalarBar,
-            family_rank::SCALAR_BAR,
-            0,
-            0,
-            12,
-        );
-        OverlayDrawSegment::push_text(
-            &mut segs,
-            OverlayTextFamily::ScalarBar,
-            family_rank::SCALAR_BAR,
-            5,
-            12,
-            8,
-        );
+        OverlayDrawSegment::push_text(&mut segs, 0, 0, 12);
+        OverlayDrawSegment::push_text(&mut segs, 5, 12, 8);
         assert_eq!(segs.len(), 2);
     }
 

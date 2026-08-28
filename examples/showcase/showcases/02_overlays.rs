@@ -1,10 +1,9 @@
 //! Overlays and annotations: the 2D layer viewport-lib draws over the 3D scene
-//! after post-processing. World-anchored labels and a ruler track scene points;
-//! a scalar bar acts as a colour legend; a `GlyphRunItem` draws pre-positioned,
-//! per-glyph-coloured glyphs (the low-level text path); and a gallery of
-//! `OverlayShapeItem`s and `OverlayPolylineItem`s exercises SDF shapes, fills,
-//! gradients, shadows, border modes, animations, texture masking, 9-slice, clip
-//! masks, backdrop blur, and stroke patterns.
+//! after post-processing. World-anchored labels track scene points; a
+//! `GlyphRunItem` draws pre-positioned, per-glyph-coloured glyphs (the low-level
+//! text path); and a gallery of `OverlayShapeItem`s and `OverlayPolylineItem`s
+//! exercises SDF shapes, fills, gradients, shadows, border modes, animations,
+//! texture masking, 9-slice, clip masks, backdrop blur, and stroke patterns.
 //!
 //! Everything overlay-side is rebuilt each frame and pushed into
 //! `session.frame_data_mut().overlays` after `ctx.drive_camera()`, because
@@ -15,28 +14,16 @@ use std::f32::consts::{PI, TAU};
 use eframe::egui;
 use glam::{Mat4, Vec3};
 use viewport_lib::{
-    AnimTrack, BorderMode, BuiltinColourmap, ColourmapId, FontHandle, GlyphRunItem, GradientStop,
-    LabelAnchor, LabelItem, LineCap, Material, NineSlice, OverlayAnimation, OverlayAnimations,
-    OverlayEasing, OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, PolylineCap, PositionedGlyph, RepeatMode, RulerItem, ScalarBarAnchor,
-    ScalarBarItem, ScalarBarOrientation, StrokePattern, TextureTransform, TileMode,
-    TriangleDirection, primitives,
+    AnimTrack, BorderMode, FontHandle, GlyphRunItem, GradientStop, LabelAnchor, LabelItem, LineCap,
+    Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PolylineCap,
+    PositionedGlyph, RepeatMode, StrokePattern, TextureTransform, TileMode, TriangleDirection,
+    primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
-const ALL_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
-    (BuiltinColourmap::Viridis, "Viridis"),
-    (BuiltinColourmap::Plasma, "Plasma"),
-    (BuiltinColourmap::Turbo, "Turbo"),
-    (BuiltinColourmap::Inferno, "Inferno"),
-    (BuiltinColourmap::Magma, "Magma"),
-    (BuiltinColourmap::Coolwarm, "Coolwarm"),
-    (BuiltinColourmap::Rainbow, "Rainbow"),
-    (BuiltinColourmap::Jet, "Jet"),
-];
-
-/// The three world anchors the labels and ruler attach to (Z-up).
+/// The three world anchors the labels attach to (Z-up).
 const PEAK: [f32; 3] = [2.5, 0.5, 2.0];
 const TROUGH: [f32; 3] = [-2.5, -0.5, 0.4];
 const ORIGIN: [f32; 3] = [0.0, 0.0, 0.6];
@@ -51,13 +38,6 @@ const CARLGAUSS_H: u32 = 1000;
 const CARLGAUSS_RGBA: &[u8] = include_bytes!("../../eframe_showcase/carlgauss.rgba");
 
 pub struct OverlaysShowcase {
-    colourmap: BuiltinColourmap,
-    bar_orientation: ScalarBarOrientation,
-    bar_anchor: ScalarBarAnchor,
-    bar_size: f32,
-    tick_count: u32,
-    bg_colour: [f32; 4],
-    show_ruler: bool,
     show_labels: bool,
     show_glyph_run: bool,
     show_emoji: bool,
@@ -80,13 +60,6 @@ pub struct OverlaysShowcase {
 impl OverlaysShowcase {
     pub fn new() -> Self {
         Self {
-            colourmap: BuiltinColourmap::Viridis,
-            bar_orientation: ScalarBarOrientation::Vertical,
-            bar_anchor: ScalarBarAnchor::BottomLeft,
-            bar_size: 220.0,
-            tick_count: 5,
-            bg_colour: [0.0, 0.0, 0.0, 0.63],
-            show_ruler: true,
             show_labels: true,
             show_glyph_run: true,
             show_emoji: true,
@@ -111,7 +84,7 @@ impl Showcase for OverlaysShowcase {
     }
 
     fn setup(&mut self, ctx: &mut SetupCtx) {
-        // A small 3D scene so the labels and ruler have something to anchor to.
+        // A small 3D scene so the labels have something to anchor to.
         let cube = ctx
             .session
             .resources_mut()
@@ -166,7 +139,6 @@ impl Showcase for OverlaysShowcase {
         let fd = session.frame_data_mut();
         fd.overlays.time = self.time as f64;
 
-        fd.overlays.scalar_bars.push(self.build_bar());
         if self.show_labels {
             self.build_labels(&mut fd.overlays.labels);
         }
@@ -176,9 +148,6 @@ impl Showcase for OverlaysShowcase {
         if self.show_emoji {
             self.build_emoji_run(&mut fd.overlays.glyph_runs);
         }
-        if self.show_ruler {
-            fd.overlays.rulers.push(self.build_ruler());
-        }
         if self.show_shapes {
             self.build_shapes(&mut fd.overlays.shapes);
             self.build_polylines(&mut fd.overlays.polylines);
@@ -186,16 +155,15 @@ impl Showcase for OverlaysShowcase {
     }
 
     fn description(&self) -> &str {
-        "The 2D overlay layer: labels and a ruler anchored to the 3D scene, a \
-         scalar-bar legend, a pre-positioned glyph run, a colour-emoji row (when a \
-         system emoji font is present), and a gallery of overlay shapes and \
-         polylines."
+        "The 2D overlay layer: labels anchored to the 3D scene, a pre-positioned \
+         glyph run, a colour-emoji row (when a system emoji font is present), and \
+         a gallery of overlay shapes and polylines."
     }
 
     fn controls(&mut self, ui: &mut egui::Ui) {
         ui.label("Overlays draw over the 3D scene and ignore tone-mapping.");
-        ui.label("Adjust the legend and shape gallery in the right panel.");
-        ui.label("Labels and the ruler are anchored to the three cubes.");
+        ui.label("Adjust the shape gallery in the right panel.");
+        ui.label("Labels are anchored to the three cubes.");
     }
 
     fn has_controls(&self) -> bool {
@@ -203,58 +171,6 @@ impl Showcase for OverlaysShowcase {
     }
 
     fn panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Scalar bar");
-        let selected = ALL_COLOURMAPS
-            .iter()
-            .find(|(c, _)| *c == self.colourmap)
-            .map(|(_, n)| *n)
-            .unwrap_or("?");
-        egui::ComboBox::from_label("Colourmap")
-            .selected_text(selected)
-            .show_ui(ui, |ui| {
-                for (cmap, name) in ALL_COLOURMAPS {
-                    ui.selectable_value(&mut self.colourmap, *cmap, *name);
-                }
-            });
-
-        ui.horizontal(|ui| {
-            ui.selectable_value(
-                &mut self.bar_orientation,
-                ScalarBarOrientation::Vertical,
-                "Vertical",
-            );
-            ui.selectable_value(
-                &mut self.bar_orientation,
-                ScalarBarOrientation::Horizontal,
-                "Horizontal",
-            );
-        });
-        egui::ComboBox::from_label("Anchor")
-            .selected_text(anchor_name(self.bar_anchor))
-            .show_ui(ui, |ui| {
-                for anchor in [
-                    ScalarBarAnchor::TopLeft,
-                    ScalarBarAnchor::TopRight,
-                    ScalarBarAnchor::BottomLeft,
-                    ScalarBarAnchor::BottomRight,
-                ] {
-                    ui.selectable_value(&mut self.bar_anchor, anchor, anchor_name(anchor));
-                }
-            });
-        ui.add(egui::Slider::new(&mut self.bar_size, 80.0..=400.0).text("Size (px)"));
-        ui.add(egui::Slider::new(&mut self.tick_count, 2..=10).text("Ticks"));
-        let mut rgb = [self.bg_colour[0], self.bg_colour[1], self.bg_colour[2]];
-        ui.horizontal(|ui| {
-            if ui.color_edit_button_rgb(&mut rgb).changed() {
-                self.bg_colour[0] = rgb[0];
-                self.bg_colour[1] = rgb[1];
-                self.bg_colour[2] = rgb[2];
-            }
-            ui.label("Background");
-        });
-        ui.add(egui::Slider::new(&mut self.bg_colour[3], 0.0..=1.0).text("Opacity"));
-
-        ui.separator();
         ui.heading("Annotations");
         ui.checkbox(&mut self.show_labels, "World labels");
         ui.checkbox(&mut self.show_glyph_run, "Glyph run");
@@ -265,7 +181,6 @@ impl Showcase for OverlaysShowcase {
         if self.emoji_font.is_none() {
             ui.label(egui::RichText::new("No system colour-emoji font found.").weak());
         }
-        ui.checkbox(&mut self.show_ruler, "Ruler");
 
         ui.separator();
         ui.heading("Shape gallery");
@@ -284,16 +199,6 @@ impl Showcase for OverlaysShowcase {
 // ---------------------------------------------------------------------------
 
 impl OverlaysShowcase {
-    fn build_bar(&self) -> ScalarBarItem {
-        ScalarBarItem::new(ColourmapId(self.colourmap as usize), -1.5, 1.5)
-            .with_title("Height (m)")
-            .with_anchor(self.bar_anchor)
-            .with_orientation(self.bar_orientation)
-            .with_tick_count(self.tick_count)
-            .with_bar_length(self.bar_size)
-            .with_background_colour(self.bg_colour)
-    }
-
     fn build_labels(&self, out: &mut Vec<LabelItem>) {
         for (text, pos, colour) in [
             ("Peak +2.0 m", PEAK, [0.3, 1.0, 0.5, 1.0]),
@@ -401,14 +306,6 @@ impl OverlaysShowcase {
                 .with_origin([40.0, 930.0])
                 .with_font_size(size),
         );
-    }
-
-    fn build_ruler(&self) -> RulerItem {
-        RulerItem::new(PEAK, TROUGH)
-            .with_colour([1.0, 0.85, 0.2, 1.0])
-            .with_label_colour([1.0, 0.85, 0.2, 1.0])
-            .with_label_format("{:.2} m")
-            .with_end_caps(true)
     }
 
     fn build_shapes(&self, out: &mut Vec<OverlayShapeItem>) {
@@ -1206,13 +1103,4 @@ fn infinity_bezier_point(t: f32, cx: f32, cy: f32) -> [f32; 2] {
         w0 * p0[0] + w1 * p1[0] + w2 * p2[0] + w3 * p3[0],
         w0 * p0[1] + w1 * p1[1] + w2 * p2[1] + w3 * p3[1],
     ]
-}
-
-fn anchor_name(a: ScalarBarAnchor) -> &'static str {
-    match a {
-        ScalarBarAnchor::TopLeft => "Top-left",
-        ScalarBarAnchor::TopRight => "Top-right",
-        ScalarBarAnchor::BottomLeft => "Bottom-left",
-        ScalarBarAnchor::BottomRight => "Bottom-right",
-    }
 }

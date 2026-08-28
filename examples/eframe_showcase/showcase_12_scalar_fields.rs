@@ -8,8 +8,8 @@
 use crate::App;
 use eframe::egui;
 use viewport_lib::{
-    AttributeData, BuiltinColourmap, Material, MeshData, MeshId, NodeId, ScalarBarAnchor,
-    ScalarBarItem, ScalarBarOrientation, Selection, ViewportRenderer, scene::Scene,
+    AttributeData, BuiltinColourmap, Material, MeshData, MeshId, NodeId, Selection,
+    ViewportRenderer, scene::Scene,
 };
 
 // ---------------------------------------------------------------------------
@@ -24,8 +24,6 @@ pub(crate) struct ScalarFieldsState {
     pub range_auto: bool,
     pub range: (f32, f32),
     pub nan_on: bool,
-    pub bar_anchor: ScalarBarAnchor,
-    pub bar_orientation: ScalarBarOrientation,
     pub node_ids: [NodeId; 3],
     pub mesh_indices: [MeshId; 3],
     pub pick_positions: [Vec<[f32; 3]>; 3],
@@ -44,8 +42,6 @@ impl Default for ScalarFieldsState {
             range_auto: true,
             range: (0.0, 1.0),
             nan_on: false,
-            bar_anchor: ScalarBarAnchor::BottomRight,
-            bar_orientation: ScalarBarOrientation::Vertical,
             node_ids: [0; 3],
             mesh_indices: [MeshId::INVALID; 3],
             pick_positions: [Vec::new(), Vec::new(), Vec::new()],
@@ -168,38 +164,6 @@ impl App {
 
         self.scalar_state.built = true;
     }
-
-    /// Build a [`ScalarBarItem`] for the current scalar bar UI state.
-    ///
-    /// Called each frame when Showcase 12 is active; the returned item is
-    /// inserted into `OverlayFrame::scalar_bars` for native rendering.
-    pub(crate) fn scalar_bar_item(&self) -> ScalarBarItem {
-        let s = &self.scalar_state;
-        let (scalar_min, scalar_max) = if s.range_auto {
-            let vals = &s.values[s.active_object];
-            if vals.is_empty() {
-                (0.0_f32, 1.0_f32)
-            } else {
-                let mn = vals.iter().cloned().fold(f32::INFINITY, f32::min);
-                let mx = vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                (mn, mx)
-            }
-        } else {
-            s.range
-        };
-
-        ScalarBarItem::new(
-            viewport_lib::ColourmapId(s.colourmap as usize),
-            scalar_min,
-            scalar_max,
-        )
-        .with_anchor(s.bar_anchor)
-        .with_orientation(s.bar_orientation)
-        .with_bar_width(20.0)
-        .with_bar_length(140.0)
-        .with_margin(12.0)
-        .with_tick_count(3)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,39 +229,6 @@ pub(crate) fn controls_scalar_fields(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.checkbox(&mut s.nan_on, "Show NaN colour (purple)");
     ui.label("(box object: values < threshold set to NaN)");
-
-    ui.separator();
-    ui.label("Scalar Bar:");
-    for (anchor, label) in [
-        (ScalarBarAnchor::TopLeft, "Top-Left"),
-        (ScalarBarAnchor::TopRight, "Top-Right"),
-        (ScalarBarAnchor::BottomLeft, "Bottom-Left"),
-        (ScalarBarAnchor::BottomRight, "Bottom-Right"),
-    ] {
-        if ui.radio(s.bar_anchor == anchor, label).clicked() {
-            s.bar_anchor = anchor;
-        }
-    }
-    ui.horizontal(|ui| {
-        if ui
-            .radio(
-                s.bar_orientation == ScalarBarOrientation::Vertical,
-                "Vertical",
-            )
-            .clicked()
-        {
-            s.bar_orientation = ScalarBarOrientation::Vertical;
-        }
-        if ui
-            .radio(
-                s.bar_orientation == ScalarBarOrientation::Horizontal,
-                "Horizontal",
-            )
-            .clicked()
-        {
-            s.bar_orientation = ScalarBarOrientation::Horizontal;
-        }
-    });
 }
 
 // ---------------------------------------------------------------------------
