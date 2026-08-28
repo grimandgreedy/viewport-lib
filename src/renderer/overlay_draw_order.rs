@@ -1,7 +1,7 @@
 //! Global draw ordering for overlay families.
 //!
-//! Overlay items across families (shapes, rects, labels, polylines, scalar
-//! bars, rulers, loading bars, images) each carry a `z_order`. The overlay
+//! Overlay items across families (shapes, labels, polylines, scalar bars,
+//! rulers, loading bars) each carry a `z_order`. The overlay
 //! prepare passes build one vertex buffer per family; alongside each buffer they
 //! record which slice draws at which `z_order` as an [`OverlayDrawSegment`].
 //! Sorting the segments by `(z_order, family_rank)` gives a single stacking
@@ -10,9 +10,9 @@
 //!
 //! `family_rank` is the tiebreak for equal `z_order`. It reproduces the
 //! back-to-front family order the renderer used previously (shapes under the
-//! merged text batch, under scalar bars, rulers, loading bars, and finally
-//! images on top), so a scene that leaves every `z_order` at its default `0`
-//! keeps the same result.
+//! merged text batch, under scalar bars, rulers, and finally loading bars on
+//! top), so a scene that leaves every `z_order` at its default `0` keeps the
+//! same result.
 //!
 //! Backdrop-blur shapes are not represented here: they are composited by a
 //! separate pass, not the ordered overlay draw.
@@ -21,16 +21,14 @@
 pub(crate) mod family_rank {
     /// Untextured and textured SDF shapes (bottom).
     pub(crate) const SHAPE: u8 = 0;
-    /// Merged rects, polylines, and labels.
+    /// Merged labels, glyph runs, and polylines.
     pub(crate) const TEXT_MERGED: u8 = 1;
     /// Scalar bars.
     pub(crate) const SCALAR_BAR: u8 = 2;
     /// Rulers.
     pub(crate) const RULER: u8 = 3;
-    /// Loading bars.
+    /// Loading bars (top).
     pub(crate) const LOADING_BAR: u8 = 4;
-    /// Overlay images (top).
-    pub(crate) const IMAGE: u8 = 5;
 }
 
 /// Which text-pipeline buffer a [`OverlayDrawSource::Text`] segment draws from.
@@ -38,7 +36,7 @@ pub(crate) mod family_rank {
 /// its own bind group.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum OverlayTextFamily {
-    /// Merged rects + polylines + labels (`label_gpu_data`).
+    /// Merged labels, glyph runs, and polylines (`label_gpu_data`).
     Merged,
     /// Scalar bars (`scalar_bar_gpu_data`).
     ScalarBar,
@@ -65,8 +63,6 @@ pub(crate) enum OverlayDrawSource {
         vertex_start: u32,
         vertex_count: u32,
     },
-    /// One overlay image, by index into `overlay_image_gpu_data`.
-    Image { index: u32 },
 }
 
 /// A single draw within the overlay pass, tagged with its z-order and family
@@ -182,7 +178,10 @@ mod tests {
         OverlayDrawSegment {
             z_order: z,
             family_rank: rank,
-            source: OverlayDrawSource::Image { index: 0 },
+            source: OverlayDrawSource::Shape {
+                vertex_start: 0,
+                vertex_count: 0,
+            },
         }
     }
 
@@ -191,10 +190,9 @@ mod tests {
         // Every family at z 0: order collapses to the family-rank tiebreak,
         // reproducing the historical bottom-to-top stack.
         let mut segs = vec![
-            seg(0, family_rank::IMAGE),
+            seg(0, family_rank::LOADING_BAR),
             seg(0, family_rank::TEXT_MERGED),
             seg(0, family_rank::SHAPE),
-            seg(0, family_rank::LOADING_BAR),
             seg(0, family_rank::SCALAR_BAR),
             seg(0, family_rank::RULER),
         ];
@@ -208,7 +206,6 @@ mod tests {
                 family_rank::SCALAR_BAR,
                 family_rank::RULER,
                 family_rank::LOADING_BAR,
-                family_rank::IMAGE,
             ]
         );
     }

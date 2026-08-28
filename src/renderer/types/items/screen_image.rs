@@ -22,12 +22,10 @@ pub enum ImageAnchor {
 /// The image is drawn after all 3D geometry and anchored to one of the viewport
 /// corners or the center.
 ///
-/// ## Migration note
-///
-/// If you do not need depth compositing against scene geometry, prefer
-/// [`OverlayImageItem`] in [`OverlayFrame`] instead. `OverlayImageItem` has no
-/// `depth` field and renders after post-processing alongside other semantic
-/// overlays (labels, scalar bars, rulers).
+/// For a pure screen-space image with no depth compositing, use a textured
+/// `OverlayShapeItem` (see `OverlayShapeItem::textured_image`) fed by a streaming
+/// `OverlayTextureId`, which renders after post-processing alongside labels,
+/// scalar bars, and rulers.
 ///
 /// ## Depth compositing
 ///

@@ -1,7 +1,7 @@
 use crate::renderer::types::*;
 
 /// Semantic overlays rendered after post-processing: labels, scalar bars,
-/// rulers, screen-space images, and loading bars.
+/// rulers, and loading bars.
 ///
 /// This frame section is the right place for any visual element that belongs
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
@@ -13,10 +13,8 @@ pub struct OverlayFrame {
     pub time: f64,
     /// SDF-based shapes rendered before labels. Supports rounded rects,
     /// circles, ellipses, and capsules with anti-aliased edges and borders.
+    /// A solid rectangle is `OverlayShape::Rect` with an `OverlayFill::Solid`.
     pub shapes: Vec<OverlayShapeItem>,
-    /// Solid filled rectangles rendered before labels. Useful for panel
-    /// backgrounds, scrims, and full-screen fades.
-    pub rects: Vec<OverlayRectItem>,
     /// Text labels anchored to world-space or screen-space positions.
     pub labels: Vec<LabelItem>,
     /// Pre-positioned glyph runs. The low-level text path: the caller supplies
@@ -28,12 +26,10 @@ pub struct OverlayFrame {
     pub scalar_bars: Vec<ScalarBarItem>,
     /// Two-point distance measurement overlays.
     pub rulers: Vec<RulerItem>,
-    /// Pixel images composited over the viewport in screen space.
-    pub images: Vec<OverlayImageItem>,
     /// Progress bar overlays (loading indicators, progress feedback).
     pub loading_bars: Vec<LoadingBarItem>,
-    /// Stroked polylines. Rendered through the same pipeline as overlay
-    /// rects and labels; share their z-order space.
+    /// Stroked polylines. Rendered through the same pipeline as labels; share
+    /// their z-order space.
     pub polylines: Vec<OverlayPolylineItem>,
 }
 
@@ -44,12 +40,10 @@ impl OverlayFrame {
     /// nothing for the feature.
     pub(crate) fn uses_nonzero_z_order(&self) -> bool {
         self.shapes.iter().any(|i| i.z_order != 0)
-            || self.rects.iter().any(|i| i.z_order != 0)
             || self.labels.iter().any(|i| i.z_order != 0)
             || self.glyph_runs.iter().any(|i| i.z_order != 0)
             || self.scalar_bars.iter().any(|i| i.z_order != 0)
             || self.rulers.iter().any(|i| i.z_order != 0)
-            || self.images.iter().any(|i| i.z_order != 0)
             || self.loading_bars.iter().any(|i| i.z_order != 0)
             || self.polylines.iter().any(|i| i.z_order != 0)
     }

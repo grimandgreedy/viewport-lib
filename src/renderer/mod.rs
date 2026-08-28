@@ -59,14 +59,13 @@ pub use self::types::{
     LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, LoadingBarAnchor,
     LoadingBarItem, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice,
     OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnimation, OverlayAnimations,
-    OverlayEasing, OverlayFill, OverlayFrame, OverlayImageItem, OverlayPolylineItem,
-    OverlayRectItem, OverlayShape, OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE,
-    ParticleMeshAlign, PathTrack, PickId, PipelineMode, PointCloudItem, PointCloudRefItem,
-    PointRenderMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RibbonItem, RibbonRefItem, RulerItem,
-    ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality, ScatterSettings,
-    ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree,
-    ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathTrack, PickId, PipelineMode,
+    PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
+    RibbonRefItem, RulerItem, ScalarBarAnchor, ScalarBarItem, ScalarBarOrientation, ScatterQuality,
+    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem,
+    ShDegree, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
     SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
     SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern,
     SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
@@ -426,8 +425,6 @@ pub struct ViewportRenderer {
     gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
-    /// Per-frame overlay image GPU data, rebuilt in prepare(), consumed in paint().
-    overlay_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame scalar bar GPU data, rebuilt in prepare(), consumed in paint().
@@ -436,8 +433,6 @@ pub struct ViewportRenderer {
     ruler_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame loading bar GPU data, rebuilt in prepare(), consumed in paint().
     loading_bar_gpu_data: Option<crate::resources::LabelGpuData>,
-    /// Per-frame overlay rect GPU data, rebuilt in prepare(), consumed in paint().
-    overlay_rect_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
     overlay_shape_gpu_data: Option<crate::resources::OverlayShapeGpuData>,
     /// Per-frame ordered overlay draw list. The overlay prepare passes record one
@@ -928,12 +923,10 @@ impl ViewportRenderer {
             decal_exclude_items: Vec::new(),
             mc_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),
-            overlay_image_gpu_data: Vec::new(),
             label_gpu_data: None,
             scalar_bar_gpu_data: None,
             ruler_gpu_data: None,
             loading_bar_gpu_data: None,
-            overlay_rect_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,

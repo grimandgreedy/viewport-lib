@@ -221,6 +221,11 @@ pub struct OverlayShapeItem {
     /// bounding box defines a clipping rectangle for any shape whose
     /// `clip_id` equals this value. `None` means the shape is not a mask.
     ///
+    /// A `clip_mask_id` must be unique within a frame. If two shapes carry the
+    /// same id, the first one in submission order is used as the mask and the
+    /// rest are ignored. When several independent sources emit into one frame,
+    /// offset their ids so they do not collide.
+    ///
     /// Used for scroll containers, masked panels, and composite widgets.
     /// Only the solid (non-textured, non-blur) shape path participates in
     /// clipping; textured and backdrop-blur shapes ignore both
@@ -558,6 +563,40 @@ impl OverlayShapeItem {
             size,
             ..Default::default()
         }
+    }
+
+    /// Build a textured rectangle that fills the given `texture` at its natural
+    /// pixel size times `scale`, anchored to a corner or the centre of the
+    /// viewport. This covers the common screen-space image overlay: a corner
+    /// logo, a watermark, a diagnostic HUD, or a live feed.
+    ///
+    /// `natural_size` is the image's display size in logical pixels and
+    /// `viewport_size` is the current logical viewport size. Pair `texture` with
+    /// a streaming `OverlayTextureId` updated each frame for a live image, or a
+    /// static uploaded one for a fixed image. The fill is left as a white tint,
+    /// so the texture is drawn unmodified; set `opacity` or a non-white fill
+    /// afterwards to tint or fade it.
+    pub fn textured_image(
+        texture: OverlayTextureId,
+        natural_size: [f32; 2],
+        scale: f32,
+        anchor: ImageAnchor,
+        viewport_size: [f32; 2],
+    ) -> Self {
+        let size = [natural_size[0] * scale, natural_size[1] * scale];
+        let position = match anchor {
+            ImageAnchor::TopLeft => [0.0, 0.0],
+            ImageAnchor::TopRight => [viewport_size[0] - size[0], 0.0],
+            ImageAnchor::BottomLeft => [0.0, viewport_size[1] - size[1]],
+            ImageAnchor::BottomRight => [viewport_size[0] - size[0], viewport_size[1] - size[1]],
+            ImageAnchor::Center => [
+                (viewport_size[0] - size[0]) * 0.5,
+                (viewport_size[1] - size[1]) * 0.5,
+            ],
+        };
+        Self::new(OverlayShape::Rect { corner_radius: 0.0 }, position, size)
+            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+            .with_texture(texture)
     }
 
     /// Set the fill style (solid colour or gradient).

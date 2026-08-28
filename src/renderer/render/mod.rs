@@ -62,16 +62,7 @@ macro_rules! emit_overlay_2d_hardcoded {
                 }
             }
         }
-        // Overlay rects (drawn before labels so they act as backgrounds).
-        if let Some(ref rr) = $this.overlay_rect_gpu_data {
-            if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
-                $render_pass.set_pipeline(pipeline);
-                $render_pass.set_bind_group(0, &rr.bind_group, &[]);
-                $render_pass.set_vertex_buffer(0, rr.vertex_buf.slice(..));
-                $render_pass.draw(0..rr.vertex_count, 0..1);
-            }
-        }
-        // Overlay labels (drawn after rects).
+        // Overlay labels, glyph runs, and polylines (merged text batch).
         if let Some(ref ld) = $this.label_gpu_data {
             if let Some(pipeline) = &$this.resources.overlay_text.pipeline {
                 $render_pass.set_pipeline(pipeline);
@@ -107,16 +98,6 @@ macro_rules! emit_overlay_2d_hardcoded {
                 $render_pass.draw(0..lb.vertex_count, 0..1);
             }
         }
-        // Overlay images (drawn last, no depth test).
-        if !$this.overlay_image_gpu_data.is_empty() {
-            if let Some(pipeline) = &$this.resources.screen_image.pipeline {
-                $render_pass.set_pipeline(pipeline);
-                for gpu in &$this.overlay_image_gpu_data {
-                    $render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                    $render_pass.draw(0..6, 0..1);
-                }
-            }
-        }
     }};
 }
 
@@ -137,7 +118,6 @@ macro_rules! emit_overlay_2d_ordered {
             Shape,
             ShapeTex,
             Text,
-            Image,
         }
         let mut last_pipe = LastPipe::None;
         for seg in &$this.overlay_draw_segments {
@@ -199,19 +179,6 @@ macro_rules! emit_overlay_2d_ordered {
                         $render_pass.set_bind_group(0, &td.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, td.vertex_buf.slice(..));
                         $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
-                    }
-                }
-                OverlayDrawSource::Image { index } => {
-                    if let (Some(pipeline), Some(gpu)) = (
-                        &$this.resources.screen_image.pipeline,
-                        $this.overlay_image_gpu_data.get(index as usize),
-                    ) {
-                        if last_pipe != LastPipe::Image {
-                            $render_pass.set_pipeline(pipeline);
-                            last_pipe = LastPipe::Image;
-                        }
-                        $render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                        $render_pass.draw(0..6, 0..1);
                     }
                 }
             }

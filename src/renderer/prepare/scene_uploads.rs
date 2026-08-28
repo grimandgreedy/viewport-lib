@@ -620,7 +620,6 @@ impl ViewportRenderer {
     pub(super) fn upload_images(
         resources: &mut DeviceResources,
         screen_image_gpu_data: &mut Vec<crate::resources::ScreenImageGpuData>,
-        overlay_image_gpu_data: &mut Vec<crate::resources::ScreenImageGpuData>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
@@ -649,23 +648,6 @@ impl ViewportRenderer {
                 }
                 let gpu = resources.upload_screen_image(device, queue, item, vp_w, vp_h);
                 screen_image_gpu_data.push(gpu);
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // Overlay image overlays (OverlayFrame).
-        // ------------------------------------------------------------------
-        overlay_image_gpu_data.clear();
-        if !frame.overlays.images.is_empty() {
-            resources.ensure_screen_image_pipeline(device);
-            let vp_w = vp_size[0];
-            let vp_h = vp_size[1];
-            for item in &frame.overlays.images {
-                if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
-                    continue;
-                }
-                let gpu = resources.upload_overlay_image(device, queue, item, vp_w, vp_h);
-                overlay_image_gpu_data.push(gpu);
             }
         }
     }

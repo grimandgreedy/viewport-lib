@@ -105,15 +105,24 @@ fn encode_overlay_shape(
 }
 
 /// Build the per-frame clip-shape registry from the overlay shapes that are clip
-/// masks (`clip_mask_id` set). Returns the GPU array (framebuffer-pixel geometry)
-/// and a map from `clip_mask_id` to its index in that array. A mask's own `clip_id`
-/// links it to a parent, so nested masks compose by intersection.
+/// masks (`clip_mask_id` set). Returns the GPU array (framebuffer-pixel geometry),
+/// a map from `clip_mask_id` to its index in that array, and the axis-aligned
+/// bounding box (framebuffer pixels) of each mask, parallel to the GPU array. A
+/// mask's own `clip_id` links it to a parent, so nested masks compose by
+/// intersection.
+///
+/// The bounding boxes drive the shader's cheap pre-reject and share this array's
+/// indexing, so a drawn item's `clip_rect` and `clip_index` always describe the
+/// same mask. A `clip_mask_id` is expected to be unique within a frame; if one is
+/// reused, the first mask with that id wins (both for the index and the bbox),
+/// which is why the bbox comes from here rather than a separate id-keyed map.
 fn build_clip_shapes(
     shapes: &[crate::renderer::types::OverlayShapeItem],
     ppp: f32,
 ) -> (
     Vec<crate::resources::ClipShapeGpu>,
     std::collections::HashMap<u32, i32>,
+    Vec<[f32; 4]>,
 ) {
     // Collect masks in stable order, recording each id's index.
     let mut index_of: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
@@ -127,6 +136,7 @@ fn build_clip_shapes(
         }
     }
     let mut out = Vec::with_capacity(masks.len());
+    let mut bboxes = Vec::with_capacity(masks.len());
     for s in &masks {
         let hw = s.size[0] * 0.5;
         let hh = s.size[1] * 0.5;
@@ -156,8 +166,14 @@ fn build_clip_shapes(
             pivot: [s.rotation_pivot[0] * ppp, s.rotation_pivot[1] * ppp],
             _pad: [0.0, 0.0],
         });
+        bboxes.push([
+            s.position[0] * ppp,
+            s.position[1] * ppp,
+            (s.position[0] + s.size[0]) * ppp,
+            (s.position[1] + s.size[1]) * ppp,
+        ]);
     }
-    (out, index_of)
+    (out, index_of, bboxes)
 }
 
 /// Create the clip-shape storage buffer for a frame, always non-empty (a single
@@ -233,16 +249,14 @@ impl ViewportRenderer {
         // ---------------------------------------------------------------
         // Overlay labels
         // ---------------------------------------------------------------
-        // Rects and labels are merged into a single z_order-sorted vertex buffer so
-        // that rects and labels at the same z_order interleave correctly (e.g. a
-        // console background rect at i32::MAX sits below console text at i32::MAX
-        // but above HUD labels at 0).
+        // Labels, glyph runs, and polylines are merged into a single
+        // z_order-sorted vertex buffer so that items at the same z_order
+        // interleave correctly (e.g. a polyline underline at i32::MAX sits with
+        // console text at i32::MAX but above HUD labels at 0).
         self.label_gpu_data = None;
-        self.overlay_rect_gpu_data = None;
         let (_, gizmo_polylines) = self.gizmo_overlay_items(frame);
         let has_overlay = !frame.overlays.labels.is_empty()
             || !frame.overlays.glyph_runs.is_empty()
-            || !frame.overlays.rects.is_empty()
             || !frame.overlays.polylines.is_empty()
             || !gizmo_polylines.is_empty();
         if has_overlay {
@@ -254,95 +268,35 @@ impl ViewportRenderer {
                 let view = &frame.camera.render_camera.view;
                 let proj = &frame.camera.render_camera.projection;
 
-                // Each item (label or rect) contributes a (z_order, verts) batch.
-                // Rects are pushed before labels so that after a stable sort, items at
-                // equal z_order always draw rect (background) before label (text).
+                // Each item (label, glyph run, or polyline) contributes a
+                // (z_order, verts) batch. A stable sort keeps submission order
+                // within an equal z_order.
                 let mut batches: Vec<(i32, Vec<crate::resources::OverlayTextVertex>)> = Vec::new();
 
                 // Clip masks: an overlay shape with `clip_mask_id` set contributes a
-                // clipping bounding box (framebuffer pixels), keyed by id. Rects and
-                // labels with a matching `clip_id` are clipped to it, the same way the
-                // shape pipeline clips shapes. (Shape-accurate SDF clipping is applied
-                // in the shape pass; text/rects use the bounding box, exact for the
-                // rectangular masks scroll containers use.)
-                let mut clip_bboxes: std::collections::HashMap<u32, [f32; 4]> =
-                    std::collections::HashMap::new();
-                for shape in &frame.overlays.shapes {
-                    if let Some(id) = shape.clip_mask_id {
-                        let x0 = shape.position[0] * ppp;
-                        let y0 = shape.position[1] * ppp;
-                        let x1 = (shape.position[0] + shape.size[0]) * ppp;
-                        let y1 = (shape.position[1] + shape.size[1]) * ppp;
-                        clip_bboxes.insert(id, [x0, y0, x1, y1]);
-                    }
-                }
-                // The full SDF clip registry (shared with the shape pass), for
-                // shape-accurate and nested clipping of text and rects.
-                let (clip_shapes, clip_index_of) = build_clip_shapes(&frame.overlays.shapes, ppp);
+                // clipping bounding box (framebuffer pixels) plus an SDF entry. Labels
+                // with a matching `clip_id` are clipped to it, the same way the shape
+                // pipeline clips shapes. (Shape-accurate SDF clipping is applied in the
+                // shape pass; text uses the bounding box, exact for the rectangular
+                // masks scroll containers use.) The bbox and the SDF index come from the
+                // same registry, so a clipped item's `clip_rect` and `clip_index` always
+                // describe the same mask.
+                let (clip_shapes, clip_index_of, clip_bboxes) =
+                    build_clip_shapes(&frame.overlays.shapes, ppp);
                 let stamp_clip = |batch: &mut [crate::resources::OverlayTextVertex],
                                   clip_id: Option<u32>| {
                     if let Some(id) = clip_id {
-                        let cr = clip_bboxes.get(&id).copied();
-                        let ci = clip_index_of.get(&id).copied();
-                        for v in batch.iter_mut() {
-                            if let Some(cr) = cr {
+                        if let Some(&ci) = clip_index_of.get(&id) {
+                            let cr = clip_bboxes[ci as usize];
+                            for v in batch.iter_mut() {
                                 v.clip_rect = cr;
-                            }
-                            if let Some(ci) = ci {
                                 v.clip_index = ci as f32;
                             }
                         }
                     }
                 };
 
-                // --- Rects (processed first so equal-z_order rects draw before labels) ---
-                for rect in &frame.overlays.rects {
-                    if rect.opacity <= 0.0 {
-                        continue;
-                    }
-                    let x0 = rect.position[0];
-                    let y0 = rect.position[1];
-                    let x1 = x0 + rect.size[0];
-                    let y1 = y0 + rect.size[1];
-
-                    let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-
-                    if rect.border_width > 0.0 {
-                        let bw = rect.border_width;
-                        let mut bc = rect.border_colour;
-                        bc[3] *= rect.opacity;
-                        emit_rounded_quad(
-                            &mut batch,
-                            x0 - bw,
-                            y0 - bw,
-                            x1 + bw,
-                            y1 + bw,
-                            rect.corner_radius + bw,
-                            bc,
-                            vp_w,
-                            vp_h,
-                        );
-                    }
-
-                    let mut fc = rect.colour;
-                    fc[3] *= rect.opacity;
-                    emit_rounded_quad(
-                        &mut batch,
-                        x0,
-                        y0,
-                        x1,
-                        y1,
-                        rect.corner_radius,
-                        fc,
-                        vp_w,
-                        vp_h,
-                    );
-
-                    stamp_clip(&mut batch, rect.clip_id);
-                    batches.push((rect.z_order, batch));
-                }
-
-                // --- Polylines (between rects and labels in z order) ---
+                // --- Polylines (between shapes and labels in z order) ---
                 // The gizmo's rings, plane quads, cube faces, and centre handle
                 // ride along here as generated polylines.
                 for poly in frame
@@ -1387,26 +1341,15 @@ impl ViewportRenderer {
 
                 let overlay_time = frame.overlays.time;
 
-                // First pass: collect clip-mask bounding rects keyed by
-                // clip_mask_id. Shape positions are logical pixels; the
-                // fragment shader's `clip_position.xy` reports framebuffer
-                // (physical) pixels, so the rect is scaled by ppp here.
+                // The SDF clip registry, plus each mask's bounding box (framebuffer
+                // pixels) for the shader's cheap pre-reject. Built from
+                // `frame.overlays.shapes` (not `sorted`) so the mask indices match
+                // exactly what the label pass assigned, since text and shapes reference
+                // the same masks by index. The bbox is looked up by that same index, so
+                // `clip_rect` and `clip_index` always describe the same mask.
                 let ppp = frame.camera.pixels_per_point;
-                let mut clip_rects: std::collections::HashMap<u32, [f32; 4]> =
-                    std::collections::HashMap::new();
-                for shape in &sorted {
-                    if let Some(id) = shape.clip_mask_id {
-                        let x0 = shape.position[0] * ppp;
-                        let y0 = shape.position[1] * ppp;
-                        let x1 = (shape.position[0] + shape.size[0]) * ppp;
-                        let y1 = (shape.position[1] + shape.size[1]) * ppp;
-                        clip_rects.insert(id, [x0, y0, x1, y1]);
-                    }
-                }
-                // The SDF clip registry. Built from `frame.overlays.shapes` (not
-                // `sorted`) so the mask indices match exactly what the label pass
-                // assigned, since text and shapes reference the same masks by index.
-                let (clip_shapes, clip_index_of) = build_clip_shapes(&frame.overlays.shapes, ppp);
+                let (clip_shapes, clip_index_of, clip_bboxes) =
+                    build_clip_shapes(&frame.overlays.shapes, ppp);
 
                 for shape_orig in &sorted {
                     // Mask-only shapes contribute a clip rectangle but are
@@ -1857,18 +1800,21 @@ impl ViewportRenderer {
                             });
                         }
                     } else {
-                        // Look up the clip rect for this shape (if it has a
-                        // clip_id). Missing or unmatched ids fall through to
-                        // an all-zero rect, which the shader treats as no
-                        // clipping.
-                        let clip_rect = shape
-                            .clip_id
-                            .and_then(|id| clip_rects.get(&id).copied())
-                            .unwrap_or([0.0, 0.0, 0.0, 0.0]);
-                        let clip_index = shape
+                        // Look up the clip mask for this shape (if it has a
+                        // clip_id). Missing or unmatched ids fall through to a
+                        // -1 index and an all-zero rect, which the shader treats
+                        // as no clipping. The bbox and index come from the same
+                        // registry entry, so they never disagree.
+                        let clip_index_i = shape
                             .clip_id
                             .and_then(|id| clip_index_of.get(&id).copied())
-                            .unwrap_or(-1) as f32;
+                            .unwrap_or(-1);
+                        let clip_rect = if clip_index_i >= 0 {
+                            clip_bboxes[clip_index_i as usize]
+                        } else {
+                            [0.0, 0.0, 0.0, 0.0]
+                        };
+                        let clip_index = clip_index_i as f32;
                         // gradient_params is now vec4: [type, angle, stop_count, _pad]
                         let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
 
@@ -2186,32 +2132,16 @@ impl ViewportRenderer {
         }
     }
 
-    /// Append the overlay-image draw segments, then sort the whole overlay draw
-    /// list into paint order. The family passes have already recorded their own
-    /// segments; images are added here because their GPU data is uploaded in the
-    /// shared scene phase (`upload_images`), and the same non-empty filter is
-    /// applied so `index` lines up with `overlay_image_gpu_data`.
-    pub(super) fn finalize_overlay_draw_order(&mut self, frame: &FrameData) {
+    /// Sort the overlay draw list into paint order. The family passes have
+    /// already recorded their own segments; this orders them by
+    /// `(z_order, family_rank)` for the ordered emit path.
+    pub(super) fn finalize_overlay_draw_order(&mut self, _frame: &FrameData) {
         // When no overlay uses z_order, the family passes recorded nothing and
         // the emit path keeps its fixed order; there is nothing to finalize.
         if !self.overlay_uses_zorder {
             return;
         }
-        use crate::renderer::overlay_draw_order::{
-            OverlayDrawSegment, OverlayDrawSource, family_rank, sort_overlay_segments,
-        };
-        let mut gpu_index = 0u32;
-        for item in &frame.overlays.images {
-            if item.width == 0 || item.height == 0 || item.pixels.is_empty() {
-                continue;
-            }
-            self.overlay_draw_segments.push(OverlayDrawSegment {
-                z_order: item.z_order,
-                family_rank: family_rank::IMAGE,
-                source: OverlayDrawSource::Image { index: gpu_index },
-            });
-            gpu_index += 1;
-        }
+        use crate::renderer::overlay_draw_order::sort_overlay_segments;
         sort_overlay_segments(&mut self.overlay_draw_segments);
     }
 }
@@ -2234,7 +2164,7 @@ mod clip_registry_tests {
         let child = OverlayShapeItem::new(OverlayShape::Circle, [110.0, 60.0], [80.0, 80.0])
             .with_clip_mask(20)
             .with_clip(10);
-        let (gpu, map) = build_clip_shapes(&[parent, child], 2.0);
+        let (gpu, map, bboxes) = build_clip_shapes(&[parent, child], 2.0);
 
         assert_eq!(gpu.len(), 2);
         assert_eq!(map[&10], 0);
@@ -2250,13 +2180,45 @@ mod clip_registry_tests {
         // Child: circle shape type, parent index points at the parent (0).
         assert_eq!(gpu[1].params[0], 1.0);
         assert_eq!(gpu[1].params[2], 0.0);
+
+        // Bounding boxes are parallel to the GPU array and scaled by ppp:
+        // [pos.x, pos.y, pos.x + size.x, pos.y + size.y] * ppp.
+        assert_eq!(bboxes.len(), 2);
+        assert_eq!(bboxes[0], [200.0, 100.0, 600.0, 300.0]);
+        assert_eq!(bboxes[1], [220.0, 120.0, 380.0, 280.0]);
+    }
+
+    #[test]
+    fn duplicate_mask_ids_resolve_to_the_first_consistently() {
+        // Two masks share id 5. The first wins for both the index and the bbox,
+        // so a clipped item can never get a bbox from one and an SDF index from
+        // another.
+        let first = OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 0.0 },
+            [0.0, 0.0],
+            [100.0, 100.0],
+        )
+        .with_clip_mask(5);
+        let second = OverlayShapeItem::new(
+            OverlayShape::Rect { corner_radius: 0.0 },
+            [500.0, 500.0],
+            [50.0, 50.0],
+        )
+        .with_clip_mask(5);
+        let (gpu, map, bboxes) = build_clip_shapes(&[first, second], 1.0);
+
+        assert_eq!(gpu.len(), 1);
+        assert_eq!(map[&5], 0);
+        // The bbox is the first mask's, matching the index the first mask claimed.
+        assert_eq!(bboxes[0], [0.0, 0.0, 100.0, 100.0]);
     }
 
     #[test]
     fn non_mask_shapes_are_ignored() {
         let drawn = OverlayShapeItem::new(OverlayShape::Circle, [0.0, 0.0], [10.0, 10.0]);
-        let (gpu, map) = build_clip_shapes(&[drawn], 1.0);
+        let (gpu, map, bboxes) = build_clip_shapes(&[drawn], 1.0);
         assert!(gpu.is_empty());
         assert!(map.is_empty());
+        assert!(bboxes.is_empty());
     }
 }

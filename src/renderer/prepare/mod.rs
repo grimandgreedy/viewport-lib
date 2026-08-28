@@ -419,7 +419,6 @@ impl ViewportRenderer {
         Self::upload_images(
             resources,
             &mut self.screen_image_gpu_data,
-            &mut self.overlay_image_gpu_data,
             device,
             queue,
             frame,
