@@ -195,6 +195,12 @@ impl GlyphAtlas {
         Ok(FontHandle(index))
     }
 
+    /// The raw bytes of the font at `index` (a [`FontHandle`]'s value), if it has
+    /// been uploaded. Index 0 is the built-in default font.
+    pub(crate) fn font_bytes(&self, index: usize) -> Option<&[u8]> {
+        self.font_bytes.get(index).map(Vec::as_slice)
+    }
+
     /// Lay out a single-line string and return positioned glyph quads.
     ///
     /// Glyphs that are not yet in the atlas are rasterized and packed on the
@@ -832,5 +838,14 @@ impl crate::resources::DeviceResources {
         font: Option<FontHandle>,
     ) -> TextMetrics {
         self.content.glyph_atlas.measure_text(text, font_size, font)
+    }
+
+    /// The raw bytes of the font `font` refers to (`None` = the built-in default),
+    /// if uploaded. A downstream text shaper can register these exact bytes so its
+    /// glyph ids match what the overlay atlas rasterizes them to.
+    pub fn font_bytes(&self, font: Option<FontHandle>) -> Option<&[u8]> {
+        self.content
+            .glyph_atlas
+            .font_bytes(font.map_or(0, |h| h.0))
     }
 }
