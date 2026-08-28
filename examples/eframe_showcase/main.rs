@@ -74,6 +74,7 @@ mod showcase_55_foreground_pass;
 mod showcase_56_submesh_materials;
 mod showcase_57_photometric_lighting;
 mod showcase_58_physically_based_surfaces;
+mod showcase_59_vector_art;
 mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
@@ -246,6 +247,7 @@ fn main() -> eframe::Result {
                 ),
                 surfaces_state:
                     showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState::default(),
+                va_state: showcase_59_vector_art::VectorArtState::default(),
                 last_cluster_stats: None,
             }))
         }),
@@ -318,6 +320,7 @@ enum ShowcaseMode {
     SubmeshMaterials,
     PhotometricLighting,
     PhysicallyBasedSurfaces,
+    VectorArt,
 }
 
 impl ShowcaseMode {
@@ -381,6 +384,7 @@ impl ShowcaseMode {
             Self::SubmeshMaterials => "56: Submesh Materials",
             Self::PhotometricLighting => "57: Photometric Lighting",
             Self::PhysicallyBasedSurfaces => "58: Physically-Based Surfaces",
+            Self::VectorArt => "59: Vector Art (SVG)",
         }
     }
 }
@@ -575,6 +579,7 @@ pub(crate) struct App {
 
     // --- Showcase 58: Physically-Based Surfaces (shading parity + emissive/IBL) ---
     pub(crate) surfaces_state: showcase_58_physically_based_surfaces::PhysicallyBasedSurfacesState,
+    pub(crate) va_state: showcase_59_vector_art::VectorArtState,
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
@@ -782,6 +787,7 @@ impl eframe::App for App {
                     ShowcaseMode::SubmeshMaterials,
                     ShowcaseMode::PhotometricLighting,
                     ShowcaseMode::PhysicallyBasedSurfaces,
+                    ShowcaseMode::VectorArt,
                 ] {
                     if ui
                         .selectable_label(self.mode == mode, mode.label())
@@ -2561,6 +2567,7 @@ impl App {
             ShowcaseMode::PhysicallyBasedSurfaces => {
                 showcase_58_physically_based_surfaces::controls_physically_based_surfaces(self, ui)
             }
+            ShowcaseMode::VectorArt => showcase_59_vector_art::controls_vector_art(self, ui),
         }
     }
 }
@@ -3165,6 +3172,15 @@ impl App {
             }
 
             ShowcaseMode::Overlay => (
+                Vec::new(),
+                Some(BG_COLOUR),
+                LightingSettings::default(),
+                0,
+                0,
+            ),
+
+            // The artwork is a 2-D overlay; the 3-D scene is empty.
+            ShowcaseMode::VectorArt => (
                 Vec::new(),
                 Some(BG_COLOUR),
                 LightingSettings::default(),
@@ -3888,6 +3904,11 @@ impl App {
                 pc.point_size = 4.0;
                 fd.scene.point_clouds.push(pc);
             }
+        }
+        if self.mode == ShowcaseMode::VectorArt {
+            let vw = fd.camera.viewport_size[0];
+            let vh = fd.camera.viewport_size[1];
+            fd.overlays.shapes = showcase_59_vector_art::build_overlay_shapes(self, vw, vh);
         }
         if self.mode == ShowcaseMode::Labels && self.lbl_state.built {
             // World-anchored part labels (built once, filtered by toggle).
