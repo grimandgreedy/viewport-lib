@@ -34,7 +34,7 @@
 //! still covers the full viewport).
 
 use crate::camera::camera::{Camera, Projection};
-use crate::renderer::{ImageAnchor, ScreenImageItem};
+use crate::renderer::ScreenImageItem;
 use glam::Vec3;
 use rayon::prelude::*;
 
@@ -282,7 +282,6 @@ where
         pixels,
         width: w,
         height: h,
-        anchor: ImageAnchor::TopLeft,
         scale: 1.0,
         alpha: 1.0,
         depth: Some(depths),

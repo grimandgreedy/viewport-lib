@@ -1102,16 +1102,12 @@ impl ViewportRenderer {
                 }
                 let img_w = item.width as f32 * item.scale;
                 let img_h = item.height as f32 * item.scale;
-                let (sx, sy) = match item.anchor {
-                    ImageAnchor::TopLeft => (0.0, 0.0),
-                    ImageAnchor::TopRight => (viewport_size.x - img_w, 0.0),
-                    ImageAnchor::BottomLeft => (0.0, viewport_size.y - img_h),
-                    ImageAnchor::BottomRight => (viewport_size.x - img_w, viewport_size.y - img_h),
-                    ImageAnchor::Center => (
-                        (viewport_size.x - img_w) * 0.5,
-                        (viewport_size.y - img_h) * 0.5,
-                    ),
-                };
+                let [sx, sy] = crate::renderer::types::viewport_anchored_top_left(
+                    item.anchor_x,
+                    item.anchor_y,
+                    [img_w, img_h],
+                    [viewport_size.x, viewport_size.y],
+                );
                 if click_pos.x >= sx
                     && click_pos.x <= sx + img_w
                     && click_pos.y >= sy

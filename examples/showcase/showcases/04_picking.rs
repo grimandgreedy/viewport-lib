@@ -18,14 +18,14 @@ use std::sync::Arc;
 use eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use viewport_lib::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GaussianSplatData,
-    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
-    GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive, ItemSettings, Material,
-    McVolumeId, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask,
-    PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, ScreenImageItem, ShDegree,
-    SpriteItem, StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef, TensorGlyphItem,
-    TextureId, TubeItem, VolumeData, VolumeId, VolumeItem, VolumeMeshData, VolumeMeshItem,
-    VolumeSelectionInfo, VolumeSurfaceSliceItem, primitives,
+    AnchorX, AnchorY, BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
+    GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
+    Material, McVolumeId, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId,
+    PickMask, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, ScreenImageItem,
+    ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef,
+    TensorGlyphItem, TextureId, TubeItem, VolumeData, VolumeId, VolumeItem, VolumeMeshData,
+    VolumeMeshItem, VolumeSelectionInfo, VolumeSurfaceSliceItem, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -320,7 +320,8 @@ impl PickingShowcase {
             img.pixels = self.screen_pixels.clone();
             img.width = 48;
             img.height = 48;
-            img.anchor = ImageAnchor::TopRight;
+            img.anchor_x = AnchorX::Right;
+            img.anchor_y = AnchorY::Top;
             img.scale = 2.0;
             img.settings.pick_id = PickId(SCREEN);
             img.settings.selected = sel(SCREEN);

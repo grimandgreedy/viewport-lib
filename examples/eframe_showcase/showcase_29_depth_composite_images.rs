@@ -16,7 +16,7 @@
 use crate::{App, MeshId};
 use eframe::egui;
 use viewport_lib::{
-    Camera, ImageAnchor, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
+    AnchorX, AnchorY, Camera, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
     ScreenImageItem, ViewportRenderer,
 };
 
@@ -180,7 +180,8 @@ impl App {
         img.pixels = self.dc_state.pixels.clone();
         img.width = IMG_W;
         img.height = IMG_H;
-        img.anchor = ImageAnchor::Center;
+        img.anchor_x = AnchorX::Middle;
+        img.anchor_y = AnchorY::Middle;
         img.scale = 1.7; // ~870 x 435 screen pixels; covers all three spheres
         img.alpha = 1.0;
         if self.dc_state.mode == DcMode::DepthComposite {

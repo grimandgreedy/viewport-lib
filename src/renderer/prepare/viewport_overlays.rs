@@ -519,8 +519,8 @@ impl ViewportRenderer {
                         crate::renderer::types::AnchorY::Bottom => -layout.height,
                     };
 
-                    let text_x = anchor_px[0] + align_offset + label.anchor_offset[0];
-                    let text_y = anchor_px[1] + align_offset_y + label.anchor_offset[1];
+                    let text_x = anchor_px[0] + align_offset + label.position[0];
+                    let text_y = anchor_px[1] + align_offset_y + label.position[1];
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 

@@ -294,7 +294,7 @@ impl App {
 
         // -- Row 3: Offset --
         y += 34.0;
-        out.push(heading(y, "anchor_offset:"));
+        out.push(heading(y, "position:"));
         y += 16.0;
         for (i, (off, desc)) in [
             ([0.0f32, 0.0], "[0,0]"),
@@ -312,7 +312,7 @@ impl App {
                     .with_font_size(11.0)
                     .with_background(true)
                     .with_background_colour(demo_bg)
-                    .with_anchor_offset(*off)
+                    .with_position(*off)
                     .with_z_order(100),
             );
         }
@@ -446,7 +446,7 @@ pub(crate) fn controls_labels(app: &mut App, ui: &mut eframe::egui::Ui) {
     ui.label("Feature rows (left side):");
     ui.label("  align_x: Left/Middle/Right");
     ui.label("  opacity: 100% -> 25%");
-    ui.label("  anchor_offset: pixel nudge from anchor");
+    ui.label("  position: placement relative to anchor");
     ui.label("  max_width: word wrapping");
     ui.label("  border_radius: rounded corners");
     ui.label("  padding: 0 -> 16px");

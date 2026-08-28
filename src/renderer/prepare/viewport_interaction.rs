@@ -1138,21 +1138,16 @@ impl ViewportRenderer {
                     {
                         continue;
                     }
-                    use crate::ImageAnchor;
-                    let img_w_ndc = 2.0 * item.width as f32 * item.scale / vp_w.max(1.0);
-                    let img_h_ndc = 2.0 * item.height as f32 * item.scale / vp_h.max(1.0);
-                    let (ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y) = match item.anchor {
-                        ImageAnchor::TopLeft => (-1.0, -1.0 + img_w_ndc, 1.0 - img_h_ndc, 1.0),
-                        ImageAnchor::TopRight => (1.0 - img_w_ndc, 1.0, 1.0 - img_h_ndc, 1.0),
-                        ImageAnchor::BottomLeft => (-1.0, -1.0 + img_w_ndc, -1.0, -1.0 + img_h_ndc),
-                        ImageAnchor::BottomRight => (1.0 - img_w_ndc, 1.0, -1.0, -1.0 + img_h_ndc),
-                        _ => (
-                            -img_w_ndc * 0.5,
-                            img_w_ndc * 0.5,
-                            -img_h_ndc * 0.5,
-                            img_h_ndc * 0.5,
-                        ),
-                    };
+                    let [ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y] =
+                        crate::renderer::types::viewport_anchored_ndc(
+                            item.anchor_x,
+                            item.anchor_y,
+                            [
+                                item.width as f32 * item.scale,
+                                item.height as f32 * item.scale,
+                            ],
+                            [vp_w, vp_h],
+                        );
                     #[repr(C)]
                     #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
                     struct NdcRectUniform {

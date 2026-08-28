@@ -76,10 +76,10 @@ pub struct LabelItem {
     /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
     pub anchor_padding: f32,
 
-    /// Pixel offset from the anchor, applied after anchor resolution and
-    /// alignment. Useful for nudging a label away from its anchor without moving
-    /// the leader line endpoint.  Default: `[0.0, 0.0]`.
-    pub anchor_offset: [f32; 2],
+    /// Placement relative to the resolved anchor, in logical pixels, applied
+    /// after anchor resolution and alignment. Nudges the label away from its
+    /// anchor without moving the leader line endpoint.  Default: `[0.0, 0.0]`.
+    pub position: [f32; 2],
 
     /// Overall opacity multiplier applied to text, background, and leader
     /// line colours.  Range 0.0 (invisible) to 1.0 (fully opaque).
@@ -126,7 +126,7 @@ impl Default for LabelItem {
             align_x: AnchorX::Left,
             align_y: AnchorY::Middle,
             anchor_padding: 6.0,
-            anchor_offset: [0.0, 0.0],
+            position: [0.0, 0.0],
             opacity: 1.0,
             max_width: None,
             border_radius: 0.0,
@@ -228,10 +228,10 @@ impl LabelItem {
         self
     }
 
-    /// Set the pixel offset from the anchor, applied after anchor resolution and
-    /// alignment.
-    pub fn with_anchor_offset(mut self, anchor_offset: [f32; 2]) -> Self {
-        self.anchor_offset = anchor_offset;
+    /// Set the placement relative to the anchor, applied after anchor resolution
+    /// and alignment.
+    pub fn with_position(mut self, position: [f32; 2]) -> Self {
+        self.position = position;
         self
     }
 

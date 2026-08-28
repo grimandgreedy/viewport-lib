@@ -599,29 +599,24 @@ impl OverlayShapeItem {
     /// logo, a watermark, a diagnostic HUD, or a live feed.
     ///
     /// `natural_size` is the image's display size in logical pixels and
-    /// `viewport_size` is the current logical viewport size. Pair `texture` with
-    /// a streaming `OverlayTextureId` updated each frame for a live image, or a
-    /// static uploaded one for a fixed image. The fill is left as a white tint,
-    /// so the texture is drawn unmodified; set `opacity` or a non-white fill
-    /// afterwards to tint or fade it.
+    /// `viewport_size` is the current logical viewport size. `anchor_x` /
+    /// `anchor_y` pin the image to a viewport edge or centre (e.g. `Right` /
+    /// `Bottom` for the bottom-right corner). Pair `texture` with a streaming
+    /// `OverlayTextureId` updated each frame for a live image, or a static
+    /// uploaded one for a fixed image. The fill is left as a white tint, so the
+    /// texture is drawn unmodified; set `opacity` or a non-white fill afterwards
+    /// to tint or fade it.
     pub fn textured_image(
         texture: OverlayTextureId,
         natural_size: [f32; 2],
         scale: f32,
-        anchor: ImageAnchor,
+        anchor_x: AnchorX,
+        anchor_y: AnchorY,
         viewport_size: [f32; 2],
     ) -> Self {
         let size = [natural_size[0] * scale, natural_size[1] * scale];
-        let position = match anchor {
-            ImageAnchor::TopLeft => [0.0, 0.0],
-            ImageAnchor::TopRight => [viewport_size[0] - size[0], 0.0],
-            ImageAnchor::BottomLeft => [0.0, viewport_size[1] - size[1]],
-            ImageAnchor::BottomRight => [viewport_size[0] - size[0], viewport_size[1] - size[1]],
-            ImageAnchor::Center => [
-                (viewport_size[0] - size[0]) * 0.5,
-                (viewport_size[1] - size[1]) * 0.5,
-            ],
-        };
+        let position =
+            super::anchor::viewport_anchored_top_left(anchor_x, anchor_y, size, viewport_size);
         Self::new(OverlayShape::Rect { corner_radius: 0.0 }, position, size)
             .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
             .with_texture(texture)

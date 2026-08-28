@@ -2448,7 +2448,8 @@ fn gpu_pick_hits_top_right_scaled_screen_image() {
     image.width = 8;
     image.height = 8;
     image.scale = 2.0;
-    image.anchor = ImageAnchor::TopRight;
+    image.anchor_x = AnchorX::Right;
+    image.anchor_y = AnchorY::Top;
     image.settings.pick_id = PickId(52);
     frame.scene.screen_images.push(image);
 
@@ -2534,7 +2535,8 @@ fn gpu_pick_hits_screen_image() {
     image.pixels = vec![[255, 255, 255, 255]; 16 * 16];
     image.width = 16;
     image.height = 16;
-    image.anchor = ImageAnchor::Center;
+    image.anchor_x = AnchorX::Middle;
+    image.anchor_y = AnchorY::Middle;
     image.settings.pick_id = PickId(444);
     frame.scene.screen_images.push(image);
 
@@ -2576,7 +2578,8 @@ fn gpu_pick_rect_hits_screen_image() {
     image.pixels = vec![[255, 255, 255, 255]; 16 * 16];
     image.width = 16;
     image.height = 16;
-    image.anchor = ImageAnchor::Center;
+    image.anchor_x = AnchorX::Middle;
+    image.anchor_y = AnchorY::Middle;
     image.settings.pick_id = PickId(555);
     frame.scene.screen_images.push(image);
 

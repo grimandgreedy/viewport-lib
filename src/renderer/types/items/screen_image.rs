@@ -1,21 +1,5 @@
+use crate::renderer::types::{AnchorX, AnchorY};
 use crate::scene::material::ItemSettings;
-
-/// Anchor corner for a [`ScreenImageItem`].
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ImageAnchor {
-    /// Top-left corner of the viewport (default).
-    #[default]
-    TopLeft,
-    /// Top-right corner of the viewport.
-    TopRight,
-    /// Bottom-left corner of the viewport.
-    BottomLeft,
-    /// Bottom-right corner of the viewport.
-    BottomRight,
-    /// Centered in the viewport.
-    Center,
-}
 
 /// A floating screen-space RGBA image rendered as a viewport overlay.
 ///
@@ -49,8 +33,12 @@ pub struct ScreenImageItem {
     pub width: u32,
     /// Image height in pixels.
     pub height: u32,
-    /// Which corner (or center) of the viewport to anchor the image to.
-    pub anchor: ImageAnchor,
+    /// Horizontal viewport anchor: `Left` pins the image's left edge to the
+    /// viewport's left edge, `Right` its right edge, `Middle` centres it.
+    pub anchor_x: AnchorX,
+    /// Vertical viewport anchor: `Top` pins the image's top edge to the
+    /// viewport's top edge, `Bottom` its bottom edge, `Middle` centres it.
+    pub anchor_y: AnchorY,
     /// Scale factor relative to natural pixel size (`1.0` = one pixel per screen pixel).
     pub scale: f32,
     /// Overall opacity multiplier applied on top of per-pixel alpha. Default: `1.0`.
@@ -69,7 +57,8 @@ impl Default for ScreenImageItem {
             pixels: Vec::new(),
             width: 0,
             height: 0,
-            anchor: ImageAnchor::TopLeft,
+            anchor_x: AnchorX::Left,
+            anchor_y: AnchorY::Top,
             scale: 1.0,
             alpha: 1.0,
             depth: None,

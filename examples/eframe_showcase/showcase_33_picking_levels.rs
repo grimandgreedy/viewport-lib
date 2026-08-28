@@ -19,9 +19,9 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use viewport_lib::{
-    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData,
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesJob, ImageAnchor, ImplicitBlendMode, ImplicitPrimitive,
+    AnchorX, AnchorY, BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem,
+    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
+    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive,
     ItemSettings, LightingSettings, Material, McVolumeId, MeshId, NodeId, PickBackend, PickId,
     PickMask, PickRectResult, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem,
     SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem,
@@ -2158,7 +2158,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         img.pixels = pixels;
         img.width = iw;
         img.height = ih;
-        img.anchor = ImageAnchor::TopRight;
+        img.anchor_x = AnchorX::Right;
+        img.anchor_y = AnchorY::Top;
         img.scale = 2.0;
         img.settings.pick_id = PickId(52);
         img.settings.selected = app.pl_state.selection.contains(52);

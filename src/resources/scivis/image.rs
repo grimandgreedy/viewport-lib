@@ -423,8 +423,6 @@ impl DeviceResources {
         viewport_w: f32,
         viewport_h: f32,
     ) -> ScreenImageGpuData {
-        use crate::ImageAnchor;
-
         // Infer the physical texture dimensions from the pixel buffer.
         // item.width/height are in logical pixels (the visual size); callers may
         // supply a higher-resolution buffer (e.g. width*ppp x height*ppp) for
@@ -503,21 +501,15 @@ impl DeviceResources {
             crate::resources::builders::clamp_linear_sampler(device, "screen_image_sampler");
 
         // Compute NDC extents from anchor, image size, and scale.
-        let img_w_ndc = 2.0 * item.width as f32 * item.scale / viewport_w.max(1.0);
-        let img_h_ndc = 2.0 * item.height as f32 * item.scale / viewport_h.max(1.0);
-
-        let (ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y) = match item.anchor {
-            ImageAnchor::TopLeft => (-1.0, -1.0 + img_w_ndc, 1.0 - img_h_ndc, 1.0),
-            ImageAnchor::TopRight => (1.0 - img_w_ndc, 1.0, 1.0 - img_h_ndc, 1.0),
-            ImageAnchor::BottomLeft => (-1.0, -1.0 + img_w_ndc, -1.0, -1.0 + img_h_ndc),
-            ImageAnchor::BottomRight => (1.0 - img_w_ndc, 1.0, -1.0, -1.0 + img_h_ndc),
-            _ => (
-                -img_w_ndc * 0.5,
-                img_w_ndc * 0.5,
-                -img_h_ndc * 0.5,
-                img_h_ndc * 0.5,
-            ),
-        };
+        let [ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y] = crate::renderer::viewport_anchored_ndc(
+            item.anchor_x,
+            item.anchor_y,
+            [
+                item.width as f32 * item.scale,
+                item.height as f32 * item.scale,
+            ],
+            [viewport_w, viewport_h],
+        );
 
         // ScreenImageUniform: ndc_min(vec2) + ndc_max(vec2) + alpha(f32) + pad(3xf32) = 32 bytes
         #[repr(C)]

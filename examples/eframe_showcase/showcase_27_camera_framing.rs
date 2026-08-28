@@ -18,8 +18,9 @@ use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
 use viewport_lib::{
-    CameraTarget, CameraTrack, ImageAnchor, LightKind, LightSource, LightingSettings, Material,
-    PolylineItem, ScreenImageItem, TurntableController, ViewportRenderer, interpolate_camera,
+    AnchorX, AnchorY, CameraTarget, CameraTrack, LightKind, LightSource, LightingSettings,
+    Material, PolylineItem, ScreenImageItem, TurntableController, ViewportRenderer,
+    interpolate_camera,
 };
 
 /// Sub-mode for Showcase 27 (camera framing).
@@ -631,17 +632,18 @@ impl App {
             None => ([160u8, 160u8, 160u8, 80u8], 40u32, 16u32, 3u32),
         };
 
-        for (anchor, fx, fy) in [
-            (ImageAnchor::TopLeft, false, false),
-            (ImageAnchor::TopRight, true, false),
-            (ImageAnchor::BottomLeft, false, true),
-            (ImageAnchor::BottomRight, true, true),
+        for (ax, ay, fx, fy) in [
+            (AnchorX::Left, AnchorY::Top, false, false),
+            (AnchorX::Right, AnchorY::Top, true, false),
+            (AnchorX::Left, AnchorY::Bottom, false, true),
+            (AnchorX::Right, AnchorY::Bottom, true, true),
         ] {
             let mut item = ScreenImageItem::default();
             item.pixels = bracket_pixels(colour, px(size), px(arm_len), px(thick), fx, fy);
             item.width = size;
             item.height = size;
-            item.anchor = anchor;
+            item.anchor_x = ax;
+            item.anchor_y = ay;
             item.scale = self.aux_state.img_scale;
             item.alpha = self.aux_state.img_alpha;
             fd.scene.screen_images.push(item);
@@ -652,7 +654,8 @@ impl App {
             item.pixels = crosshair_pixels(colour, px(40), px(3), px(5));
             item.width = 40;
             item.height = 40;
-            item.anchor = ImageAnchor::Center;
+            item.anchor_x = AnchorX::Middle;
+            item.anchor_y = AnchorY::Middle;
             item.scale = self.aux_state.img_scale;
             item.alpha = self.aux_state.img_alpha;
             fd.scene.screen_images.push(item);
