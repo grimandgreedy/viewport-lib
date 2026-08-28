@@ -102,7 +102,8 @@ pub struct FrameData {
     pub interaction: InteractionFrame,
     /// Global rendering effects (lighting, clipping, post-process).
     pub effects: EffectsFrame,
-    /// Semantic overlays rendered after post-processing (labels, scalar bars, rulers).
+    /// Screen-space overlays rendered after post-processing (shapes, labels,
+    /// glyph runs, polylines).
     pub overlays: OverlayFrame,
 }
 

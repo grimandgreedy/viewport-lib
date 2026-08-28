@@ -1,8 +1,8 @@
 //! Font atlas and single-line text layout for overlay rendering.
 //!
-//! This module is the text back-end for [`LabelItem`] and [`GlyphRunItem`].  It
-//! uses [`fontdue`] for glyph rasterization and packs glyphs into a single GPU
-//! texture atlas on demand.
+//! This module is the text back-end for [`LabelItem`](crate::LabelItem) and
+//! [`GlyphRunItem`](crate::GlyphRunItem).  It uses [`fontdue`] for glyph
+//! rasterization and packs glyphs into a single GPU texture atlas on demand.
 //!
 //! Public surface: [`FontHandle`] (opaque font identifier) and
 //! [`super::DeviceResources::upload_font`].  Everything else is `pub(crate)`.
@@ -809,9 +809,10 @@ pub enum FontError {
 impl crate::resources::DeviceResources {
     /// Upload a user-supplied TTF font for use with overlay items.
     ///
-    /// Returns an opaque [`FontHandle`] that can be passed to [`LabelItem`] or
-    /// [`GlyphRunItem`] via their `font` field.  Pass `None` on those items to
-    /// use the built-in default font instead.
+    /// Returns an opaque [`FontHandle`] that can be passed to
+    /// [`LabelItem`](crate::LabelItem) or [`GlyphRunItem`](crate::GlyphRunItem)
+    /// via their `font` field.  Pass `None` on those items to use the built-in
+    /// default font instead.
     ///
     /// The font bytes must be a valid TrueType (`.ttf`) file.
     pub fn upload_font(&mut self, ttf_bytes: &[u8]) -> Result<FontHandle, FontError> {

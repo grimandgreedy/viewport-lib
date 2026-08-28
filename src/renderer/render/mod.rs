@@ -31,10 +31,10 @@ pub(crate) fn emit_indirect_run(
 }
 
 /// Emit the 2D overlay draw calls in the fixed family order used when no
-/// overlay carries a non-zero `z_order`: SDF shapes, rects, labels, scalar bars,
-/// rulers, loading bars, and overlay images, back to front. Each block is
-/// guarded by its own prepared GPU data, so a path with no data for a given
-/// overlay skips it. Run after all scene content so the overlays sit on top.
+/// overlay carries a non-zero `z_order`: SDF shapes, then the merged text batch
+/// (labels, glyph runs, polylines), back to front. Each block is guarded by its
+/// own prepared GPU data, so a path with no data for a given overlay skips it.
+/// Run after all scene content so the overlays sit on top.
 /// The overlay pipelines are format-neutral (no separate LDR/HDR variant), so
 /// this is shared verbatim across paths.
 macro_rules! emit_overlay_2d_hardcoded {

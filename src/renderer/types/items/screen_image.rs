@@ -24,8 +24,8 @@ pub enum ImageAnchor {
 ///
 /// For a pure screen-space image with no depth compositing, use a textured
 /// `OverlayShapeItem` (see `OverlayShapeItem::textured_image`) fed by a streaming
-/// `OverlayTextureId`, which renders after post-processing alongside labels,
-/// scalar bars, and rulers.
+/// `OverlayTextureId`, which renders after post-processing alongside the other
+/// overlays.
 ///
 /// ## Depth compositing
 ///

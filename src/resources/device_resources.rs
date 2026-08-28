@@ -521,7 +521,7 @@ pub struct ContentResources {
     /// per-entry byte charge feeds `ResidentBytes::projected_tet_bytes`.
     pub(crate) projected_tet_store:
         crate::resources::handle::SlotStore<GpuProjectedTetMesh, crate::resources::ProjectedTetId>,
-    /// Glyph atlas for overlay text rendering (labels, scalar bars, rulers).
+    /// Glyph atlas for overlay text rendering (labels and glyph runs).
     pub(crate) glyph_atlas: crate::resources::overlay::font::GlyphAtlas,
     /// Textures for overlay shape fills: one-shot uploads (`upload_overlay_texture`)
     /// and reusable streaming textures (`create_streaming_overlay_texture`). Slotted
