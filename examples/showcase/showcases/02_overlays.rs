@@ -241,7 +241,7 @@ impl OverlaysShowcase {
         out.push(
             GlyphRunItem::new(glyphs)
                 // Just above the emoji row at the bottom.
-                .with_origin([40.0, 870.0])
+                .with_position([40.0, 870.0])
                 .with_font_size(30.0)
                 .with_colours(colours),
         );
@@ -303,7 +303,7 @@ impl OverlaysShowcase {
             GlyphRunItem::new(glyphs)
                 .with_font(font)
                 // A new bottom row, below the shape and polyline rows.
-                .with_origin([40.0, 930.0])
+                .with_position([40.0, 930.0])
                 .with_font_size(size),
         );
     }
@@ -584,17 +584,14 @@ impl OverlaysShowcase {
             )
             .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]))
             .with_border([1.0, 0.85, 0.4, 0.9], bw)
-            .with_animations(OverlayAnimations {
-                position: Some(AnimTrack {
-                    start_time: 0.0,
-                    duration: 1.8,
-                    from: [x, y + 20.0],
-                    to: [x + 50.0, y + 20.0],
-                    easing: OverlayEasing::EaseInOut,
-                    repeat: RepeatMode::PingPong,
-                }),
-                ..Default::default()
-            }),
+            .with_animations(OverlayAnimations::default().with_position(AnimTrack {
+                start_time: 0.0,
+                duration: 1.8,
+                from: [x, y + 20.0],
+                to: [x + 50.0, y + 20.0],
+                easing: OverlayEasing::EaseInOut,
+                repeat: RepeatMode::PingPong,
+            })),
         );
     }
 

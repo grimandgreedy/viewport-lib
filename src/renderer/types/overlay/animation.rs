@@ -115,11 +115,12 @@ impl<T: Copy + Default> Default for AnimTrack<T> {
 /// Animation resolution is CPU-side in `prepare()`; the host must request
 /// continuous repaints while any track is active.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct OverlayAnimations {
     /// Drives the item's overall opacity multiplier. Takes precedence over
     /// the legacy [`OverlayShapeItem::animation`] field when both are set.
     pub opacity: Option<AnimTrack<f32>>,
-    /// Drives `position` (top-left in logical pixels).
+    /// Drives `position`, the screen-pixel nudge layered on the resolved anchor.
     pub position: Option<AnimTrack<[f32; 2]>>,
     /// Drives `size` (width / height in logical pixels).
     pub size: Option<AnimTrack<[f32; 2]>>,
@@ -148,6 +149,80 @@ pub struct OverlayAnimations {
     /// Arbitrary path channel driving `rotation`. Overrides the linear
     /// `rotation` track when set.
     pub rotation_path: Option<PathTrack<f32>>,
+}
+
+impl OverlayAnimations {
+    /// Set the linear `opacity` track.
+    pub fn with_opacity(mut self, track: AnimTrack<f32>) -> Self {
+        self.opacity = Some(track);
+        self
+    }
+
+    /// Set the linear `position` track (the screen-pixel nudge on the anchor).
+    pub fn with_position(mut self, track: AnimTrack<[f32; 2]>) -> Self {
+        self.position = Some(track);
+        self
+    }
+
+    /// Set the linear `size` track.
+    pub fn with_size(mut self, track: AnimTrack<[f32; 2]>) -> Self {
+        self.size = Some(track);
+        self
+    }
+
+    /// Set the linear solid-`fill` colour track.
+    pub fn with_fill(mut self, track: AnimTrack<[f32; 4]>) -> Self {
+        self.fill = Some(track);
+        self
+    }
+
+    /// Set the linear `border_colour` track.
+    pub fn with_border(mut self, track: AnimTrack<[f32; 4]>) -> Self {
+        self.border = Some(track);
+        self
+    }
+
+    /// Set the linear `rotation` track.
+    pub fn with_rotation(mut self, track: AnimTrack<f32>) -> Self {
+        self.rotation = Some(track);
+        self
+    }
+
+    /// Set the arbitrary-path `opacity` channel.
+    pub fn with_opacity_path(mut self, track: PathTrack<f32>) -> Self {
+        self.opacity_path = Some(track);
+        self
+    }
+
+    /// Set the arbitrary-path `position` channel.
+    pub fn with_position_path(mut self, track: PathTrack<[f32; 2]>) -> Self {
+        self.position_path = Some(track);
+        self
+    }
+
+    /// Set the arbitrary-path `size` channel.
+    pub fn with_size_path(mut self, track: PathTrack<[f32; 2]>) -> Self {
+        self.size_path = Some(track);
+        self
+    }
+
+    /// Set the arbitrary-path solid-`fill` colour channel.
+    pub fn with_fill_path(mut self, track: PathTrack<[f32; 4]>) -> Self {
+        self.fill_path = Some(track);
+        self
+    }
+
+    /// Set the arbitrary-path `border_colour` channel.
+    pub fn with_border_path(mut self, track: PathTrack<[f32; 4]>) -> Self {
+        self.border_path = Some(track);
+        self
+    }
+
+    /// Set the arbitrary-path `rotation` channel.
+    pub fn with_rotation_path(mut self, track: PathTrack<f32>) -> Self {
+        self.rotation_path = Some(track);
+        self
+    }
 }
 
 /// Trait used by [`AnimTrack`] resolution to interpolate between `from`

@@ -673,7 +673,7 @@ impl DebugDraw {
             } = prim
             {
                 out.push(LabelItem {
-                    world_anchor: Some((*position).into()),
+                    anchor: crate::renderer::OverlayAnchor::World((*position).into()),
                     text: text.clone(),
                     colour: *colour,
                     leader_line: true,

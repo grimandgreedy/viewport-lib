@@ -39,8 +39,8 @@ impl PositionedGlyph {
 ///
 /// One run carries one font. A line that spans several fonts (script fallback,
 /// or mixing a text font with an icon font) is submitted as several runs sharing
-/// a baseline, one per font. Positions are relative to `origin`, so moving a
-/// whole run is a change to `origin` alone.
+/// a baseline, one per font. Glyph positions are relative to the resolved
+/// `anchor` origin, so moving a whole run is a change to `anchor` / `position`.
 ///
 /// [`LabelItem`]: crate::renderer::types::LabelItem
 #[derive(Debug, Clone)]
@@ -53,9 +53,22 @@ pub struct GlyphRunItem {
     /// positions themselves come from `glyphs`.
     pub font_size: f32,
 
-    /// Screen-space origin in logical pixels from the top-left. Each glyph's
-    /// `(x, y)` is added to this.
-    pub origin: [f32; 2],
+    /// Origin the run hangs from: a viewport corner (default top-left) or a
+    /// projected world point. Each glyph's `(x, y)` is relative to this.
+    pub anchor: crate::renderer::types::OverlayAnchor,
+
+    /// Placement in logical pixels relative to the resolved `anchor` origin.
+    /// With the default anchor and alignment this is the run's screen position
+    /// from the viewport top-left. Default: `[0.0, 0.0]`.
+    pub position: [f32; 2],
+
+    /// How the run's glyph-extent box sits horizontally on `anchor` + `position`.
+    /// Default `Left` leaves the glyph positions as authored.
+    pub align_x: crate::renderer::types::AnchorX,
+
+    /// How the run's glyph-extent box sits vertically on `anchor` + `position`.
+    /// Default `Top` leaves the glyph positions as authored.
+    pub align_y: crate::renderer::types::AnchorY,
 
     /// Positioned glyphs, in draw order.
     pub glyphs: Vec<PositionedGlyph>,
@@ -91,7 +104,10 @@ impl Default for GlyphRunItem {
         Self {
             font: None,
             font_size: 14.0,
-            origin: [0.0, 0.0],
+            anchor: crate::renderer::types::OverlayAnchor::default(),
+            position: [0.0, 0.0],
+            align_x: crate::renderer::types::AnchorX::Left,
+            align_y: crate::renderer::types::AnchorY::Top,
             glyphs: Vec::new(),
             colour: [1.0, 1.0, 1.0, 1.0],
             colours: Vec::new(),
@@ -125,9 +141,35 @@ impl GlyphRunItem {
         self
     }
 
-    /// Set the screen-space origin in logical pixels from the top-left.
-    pub fn with_origin(mut self, origin: [f32; 2]) -> Self {
-        self.origin = origin;
+    /// Set the origin the run hangs from (a viewport corner or a world point).
+    pub fn with_anchor(mut self, anchor: crate::renderer::types::OverlayAnchor) -> Self {
+        self.anchor = anchor;
+        self
+    }
+
+    /// Pin the run to a world-space position, reprojected each frame. Sugar for
+    /// `with_anchor(OverlayAnchor::World(pos))`.
+    pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
+        self.anchor = crate::renderer::types::OverlayAnchor::World(pos);
+        self
+    }
+
+    /// Set the placement in logical pixels relative to the resolved anchor
+    /// origin. With the default anchor this is the run's screen position from
+    /// the viewport top-left.
+    pub fn with_position(mut self, position: [f32; 2]) -> Self {
+        self.position = position;
+        self
+    }
+
+    /// Set how the run's glyph-extent box aligns onto the resolved anchor origin.
+    pub fn with_align(
+        mut self,
+        align_x: crate::renderer::types::AnchorX,
+        align_y: crate::renderer::types::AnchorY,
+    ) -> Self {
+        self.align_x = align_x;
+        self.align_y = align_y;
         self
     }
 
@@ -183,7 +225,7 @@ mod tests {
         let run = GlyphRunItem::default();
         assert!(run.font.is_none());
         assert_eq!(run.font_size, 14.0);
-        assert_eq!(run.origin, [0.0, 0.0]);
+        assert_eq!(run.position, [0.0, 0.0]);
         assert!(run.glyphs.is_empty());
         assert!(run.colours.is_empty());
         assert_eq!(run.opacity, 1.0);
@@ -196,7 +238,7 @@ mod tests {
         ];
         let run = GlyphRunItem::new(glyphs.clone())
             .with_font_size(20.0)
-            .with_origin([10.0, 12.0])
+            .with_position([10.0, 12.0])
             .with_colour([1.0, 0.0, 0.0, 1.0])
             .with_colours(vec![[0.0, 1.0, 0.0, 1.0]])
             .with_opacity(0.5)
@@ -205,7 +247,7 @@ mod tests {
 
         assert_eq!(run.glyphs, glyphs);
         assert_eq!(run.font_size, 20.0);
-        assert_eq!(run.origin, [10.0, 12.0]);
+        assert_eq!(run.position, [10.0, 12.0]);
         assert_eq!(run.colour, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(run.colours, vec![[0.0, 1.0, 0.0, 1.0]]);
         assert_eq!(run.opacity, 0.5);

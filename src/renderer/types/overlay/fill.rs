@@ -4,6 +4,7 @@
 /// `LinearGradient`, `RadialGradient`, and `ConicalGradient` interpolate
 /// between two colours across the shape's bounding box.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum OverlayFill {
     /// Uniform solid colour in linear RGBA float format.
     Solid([f32; 4]),

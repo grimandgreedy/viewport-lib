@@ -73,8 +73,22 @@ pub enum StrokePattern {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct OverlayPolylineItem {
-    /// Waypoints in logical pixels from the viewport top-left.
+    /// Waypoints in logical pixels, relative to the resolved `anchor` origin.
+    /// With the default anchor (viewport top-left) and a zero `position` these
+    /// are absolute screen coordinates, unchanged from before anchoring existed.
     pub points: Vec<[f32; 2]>,
+    /// Origin the path hangs from: a viewport corner (default top-left) or a
+    /// projected world point. Every point in `points` is relative to this.
+    pub anchor: OverlayAnchor,
+    /// Placement in logical pixels relative to the resolved `anchor` origin,
+    /// added to every point. Default: `[0.0, 0.0]`.
+    pub position: [f32; 2],
+    /// How the path's bounding box sits horizontally on `anchor` + `position`.
+    /// Default `Left` leaves the points as authored.
+    pub align_x: AnchorX,
+    /// How the path's bounding box sits vertically on `anchor` + `position`.
+    /// Default `Top` leaves the points as authored.
+    pub align_y: AnchorY,
     /// Stroke thickness in logical pixels.
     pub thickness: f32,
     /// RGBA colour in linear float format.
@@ -120,6 +134,10 @@ impl Default for OverlayPolylineItem {
     fn default() -> Self {
         Self {
             points: Vec::new(),
+            anchor: OverlayAnchor::default(),
+            position: [0.0, 0.0],
+            align_x: AnchorX::Left,
+            align_y: AnchorY::Top,
             thickness: 2.0,
             colour: [1.0, 1.0, 1.0, 1.0],
             join: LineJoin::Mitre,
@@ -146,6 +164,65 @@ impl OverlayPolylineItem {
             points,
             ..Default::default()
         }
+    }
+
+    /// Set the origin the path hangs from (a viewport corner or a world point).
+    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
+        self.anchor = anchor;
+        self
+    }
+
+    /// Pin the path to a world-space position, reprojected each frame. Sugar for
+    /// `with_anchor(OverlayAnchor::World(pos))`.
+    pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
+        self.anchor = OverlayAnchor::World(pos);
+        self
+    }
+
+    /// Set the placement in logical pixels relative to the resolved anchor
+    /// origin, added to every point.
+    pub fn with_position(mut self, position: [f32; 2]) -> Self {
+        self.position = position;
+        self
+    }
+
+    /// Set how the path's bounding box aligns onto the resolved anchor origin.
+    pub fn with_align(mut self, align_x: AnchorX, align_y: AnchorY) -> Self {
+        self.align_x = align_x;
+        self.align_y = align_y;
+        self
+    }
+
+    /// Resolve the screen-pixel offset added to every point for a frame: the
+    /// `anchor` origin, plus `position`, shifted by `align_x` / `align_y` for the
+    /// path's bounding box. Returns `None` when a `World` anchor projects behind
+    /// the camera or off-screen (the path is skipped that frame). The default
+    /// anchor with a zero `position` and `Left` / `Top` alignment resolves to
+    /// `[0, 0]`, so absolute points are drawn unchanged.
+    pub fn resolve_offset(
+        &self,
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+    ) -> Option<[f32; 2]> {
+        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let (mut min_x, mut min_y, mut max_x, mut max_y) = (0.0, 0.0, 0.0, 0.0);
+        if let Some((first, rest)) = self.points.split_first() {
+            min_x = first[0];
+            min_y = first[1];
+            max_x = first[0];
+            max_y = first[1];
+            for p in rest {
+                min_x = min_x.min(p[0]);
+                min_y = min_y.min(p[1]);
+                max_x = max_x.max(p[0]);
+                max_y = max_y.max(p[1]);
+            }
+        }
+        Some([
+            origin[0] + self.position[0] + self.align_x.align_shift(max_x - min_x),
+            origin[1] + self.position[1] + self.align_y.align_shift(max_y - min_y),
+        ])
     }
 
     /// Set the stroke thickness in logical pixels.
@@ -348,6 +425,34 @@ mod path_sample_tests {
         assert!((item.points[0][0] - item.points[4][0]).abs() > 1e-3);
         let expected_last = circle(4.0 / 5.0);
         assert!((item.points[4][0] - expected_last[0]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn resolve_offset_default_is_zero() {
+        // Default anchor + zero position + Left/Top align resolves to no offset,
+        // so absolute points draw unchanged, with no camera needed.
+        let p = OverlayPolylineItem::new(vec![[10.0, 20.0], [30.0, 40.0]]);
+        let off = p
+            .resolve_offset([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
+            .unwrap();
+        assert_eq!(off, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn resolve_offset_pins_bottom_right() {
+        // A path spanning [0,0]..[40,20], anchored and aligned bottom-right, has
+        // its bounding-box bottom-right corner pinned to the viewport corner.
+        let p = OverlayPolylineItem::new(vec![[0.0, 0.0], [40.0, 20.0]])
+            .with_anchor(OverlayAnchor::Viewport {
+                x: AnchorX::Right,
+                y: AnchorY::Bottom,
+            })
+            .with_align(AnchorX::Right, AnchorY::Bottom);
+        let off = p
+            .resolve_offset([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
+            .unwrap();
+        // origin [800, 600], align shifts by -(width), -(height) = -40, -20.
+        assert_eq!(off, [760.0, 580.0]);
     }
 
     #[test]

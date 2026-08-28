@@ -1,17 +1,19 @@
-use super::anchor::{AnchorX, AnchorY};
+use super::anchor::{AnchorX, AnchorY, OverlayAnchor};
 
 /// A text label rendered as a screen-space overlay.
 ///
-/// Anchored to a world-space or screen-space position with optional leader line
-/// and background box.
+/// Anchored to a viewport corner or a projected world point with an optional
+/// leader line and background box.
 ///
 /// # Anchoring
 ///
-/// Set `world_anchor` to pin the label to a 3D position that is reprojected
-/// each frame.  Set `screen_anchor` for a fixed screen position in logical
-/// pixels from the top-left corner.  When both are set, `screen_anchor` takes
-/// precedence.  World-anchored labels are frustum-culled: they are not drawn
-/// when the anchor is behind the camera or outside the viewport.
+/// `anchor` sets the origin the label hangs from: an [`OverlayAnchor::Viewport`]
+/// corner (the default is the top-left) or an [`OverlayAnchor::World`] point that
+/// is reprojected each frame.  `position` nudges the text from that origin in
+/// logical pixels, and `align_x` / `align_y` place the text box on it.  A
+/// world-anchored label is frustum-culled: it is not drawn when the point is
+/// behind the camera or outside the viewport, and it draws a leader line when
+/// `leader_line` is set.
 ///
 /// # Examples
 ///
@@ -24,13 +26,10 @@ use super::anchor::{AnchorX, AnchorY};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LabelItem {
-    /// World-space anchor.  Projected to screen by the renderer each frame.
-    /// Set `screen_anchor` instead for fixed screen positions.
-    pub world_anchor: Option<[f32; 3]>,
-
-    /// Screen-space anchor in logical pixels from top-left.
-    /// Takes precedence over `world_anchor` when both are set.
-    pub screen_anchor: Option<[f32; 2]>,
+    /// Origin the label hangs from: a viewport corner (default top-left) or a
+    /// projected world point.  `position` nudges the text from here and the
+    /// leader line draws for an [`OverlayAnchor::World`] anchor.
+    pub anchor: OverlayAnchor,
 
     /// Text content to display.
     pub text: String,
@@ -76,9 +75,9 @@ pub struct LabelItem {
     /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
     pub anchor_padding: f32,
 
-    /// Placement relative to the resolved anchor, in logical pixels, applied
-    /// after anchor resolution and alignment. Nudges the label away from its
-    /// anchor without moving the leader line endpoint.  Default: `[0.0, 0.0]`.
+    /// Placement relative to the resolved `anchor` origin, in logical pixels,
+    /// applied after anchor resolution and alignment. Nudges the label away from
+    /// its anchor without moving the leader line endpoint.  Default: `[0.0, 0.0]`.
     pub position: [f32; 2],
 
     /// Overall opacity multiplier applied to text, background, and leader
@@ -112,8 +111,7 @@ pub struct LabelItem {
 impl Default for LabelItem {
     fn default() -> Self {
         Self {
-            world_anchor: None,
-            screen_anchor: None,
+            anchor: OverlayAnchor::default(),
             text: String::new(),
             colour: [1.0, 1.0, 1.0, 1.0],
             font_size: 14.0,
@@ -147,16 +145,28 @@ impl LabelItem {
         }
     }
 
-    /// Pin the label to a world-space position, reprojected each frame.
-    pub fn with_world_anchor(mut self, anchor: [f32; 3]) -> Self {
-        self.world_anchor = Some(anchor);
+    /// Set the origin the label hangs from (a viewport corner or a world point).
+    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
+        self.anchor = anchor;
         self
     }
 
-    /// Pin the label to a fixed screen position in logical pixels from
-    /// top-left. Takes precedence over the world anchor when both are set.
-    pub fn with_screen_anchor(mut self, anchor: [f32; 2]) -> Self {
-        self.screen_anchor = Some(anchor);
+    /// Pin the label to a world-space position, reprojected each frame. Sugar
+    /// for `with_anchor(OverlayAnchor::World(pos))`.
+    pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
+        self.anchor = OverlayAnchor::World(pos);
+        self
+    }
+
+    /// Pin the label to a fixed screen position in logical pixels from the
+    /// top-left. Sugar for the default viewport-top-left anchor with `position`
+    /// set to `pos`.
+    pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
+        self.anchor = OverlayAnchor::Viewport {
+            x: AnchorX::Left,
+            y: AnchorY::Top,
+        };
+        self.position = pos;
         self
     }
 

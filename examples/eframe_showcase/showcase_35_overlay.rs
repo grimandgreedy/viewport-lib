@@ -106,7 +106,7 @@ pub(crate) fn build_emoji_run(app: &App) -> Vec<GlyphRunItem> {
         GlyphRunItem::new(glyphs)
             .with_font(font)
             // A fixed row below the dancing-As glyph run.
-            .with_origin([40.0, 960.0])
+            .with_position([40.0, 960.0])
             .with_font_size(size),
     ]
 }
@@ -128,7 +128,7 @@ pub(crate) fn build_glyph_run(app: &App) -> Vec<GlyphRunItem> {
     vec![
         GlyphRunItem::new(glyphs)
             // A fixed row below the shape gallery, above the emoji row.
-            .with_origin([40.0, 870.0])
+            .with_position([40.0, 870.0])
             .with_font_size(30.0)
             .with_colours(colours),
     ]
@@ -1110,17 +1110,16 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]))
         .with_border([1.0, 0.85, 0.4, 0.9], bw)
-        .with_animations(viewport_lib::OverlayAnimations {
-            position: Some(viewport_lib::AnimTrack {
+        .with_animations(viewport_lib::OverlayAnimations::default().with_position(
+            viewport_lib::AnimTrack {
                 start_time: 0.0,
                 duration: 1.8,
                 from: [base_x, y5_mid - 14.0],
                 to: [base_x + 50.0, y5_mid - 14.0],
                 easing: viewport_lib::OverlayEasing::EaseInOut,
                 repeat: viewport_lib::RepeatMode::PingPong,
-            }),
-            ..Default::default()
-        }),
+            },
+        )),
     );
     x5 += 100.0 + gap;
 
@@ -1135,27 +1134,27 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid([0.45, 0.85, 1.0, 0.95]))
         .with_border([0.7, 0.95, 1.0, 0.9], bw)
-        .with_animations(viewport_lib::OverlayAnimations {
-            size: Some(viewport_lib::AnimTrack {
-                start_time: 0.0,
-                duration: 1.4,
-                from: [44.0, 44.0],
-                to: [64.0, 64.0],
-                easing: viewport_lib::OverlayEasing::Pulse,
-                repeat: viewport_lib::RepeatMode::Loop,
-            }),
-            position: Some(viewport_lib::AnimTrack {
-                // Recentre while the size grows so the circle pulses
-                // about its centre rather than drifting south-east.
-                start_time: 0.0,
-                duration: 1.4,
-                from: [pulse_cx - 22.0, pulse_cy - 22.0],
-                to: [pulse_cx - 32.0, pulse_cy - 32.0],
-                easing: viewport_lib::OverlayEasing::Pulse,
-                repeat: viewport_lib::RepeatMode::Loop,
-            }),
-            ..Default::default()
-        }),
+        .with_animations(
+            viewport_lib::OverlayAnimations::default()
+                .with_size(viewport_lib::AnimTrack {
+                    start_time: 0.0,
+                    duration: 1.4,
+                    from: [44.0, 44.0],
+                    to: [64.0, 64.0],
+                    easing: viewport_lib::OverlayEasing::Pulse,
+                    repeat: viewport_lib::RepeatMode::Loop,
+                })
+                .with_position(viewport_lib::AnimTrack {
+                    // Recentre while the size grows so the circle pulses
+                    // about its centre rather than drifting south-east.
+                    start_time: 0.0,
+                    duration: 1.4,
+                    from: [pulse_cx - 22.0, pulse_cy - 22.0],
+                    to: [pulse_cx - 32.0, pulse_cy - 32.0],
+                    easing: viewport_lib::OverlayEasing::Pulse,
+                    repeat: viewport_lib::RepeatMode::Loop,
+                }),
+        ),
     );
     x5 += row5_h + gap;
 
@@ -1169,17 +1168,16 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid([0.95, 0.25, 0.5, 0.95]))
         .with_border([1.0, 1.0, 1.0, 0.7], bw)
-        .with_animations(viewport_lib::OverlayAnimations {
-            fill: Some(viewport_lib::AnimTrack {
+        .with_animations(viewport_lib::OverlayAnimations::default().with_fill(
+            viewport_lib::AnimTrack {
                 start_time: 0.0,
                 duration: 1.6,
                 from: [0.95, 0.25, 0.5, 0.95],
                 to: [0.25, 0.55, 0.95, 0.95],
                 easing: viewport_lib::OverlayEasing::EaseInOut,
                 repeat: viewport_lib::RepeatMode::PingPong,
-            }),
-            ..Default::default()
-        }),
+            },
+        )),
     );
     x5 += 70.0 + gap;
 
@@ -1196,17 +1194,16 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid([0.95, 0.9, 0.3, 0.95]))
         .with_border([1.0, 0.95, 0.5, 0.9], bw)
-        .with_animations(viewport_lib::OverlayAnimations {
-            rotation: Some(viewport_lib::AnimTrack {
+        .with_animations(viewport_lib::OverlayAnimations::default().with_rotation(
+            viewport_lib::AnimTrack {
                 start_time: 0.0,
                 duration: 4.0,
                 from: 0.0,
                 to: std::f32::consts::TAU,
                 easing: viewport_lib::OverlayEasing::Linear,
                 repeat: viewport_lib::RepeatMode::Loop,
-            }),
-            ..Default::default()
-        }),
+            },
+        )),
     );
     x5 += row5_h + gap;
 
@@ -1241,10 +1238,7 @@ fn row_anim(
             )
             .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]))
             .with_border([1.0, 0.7, 0.95, 0.9], bw)
-            .with_animations(viewport_lib::OverlayAnimations {
-                position_path: Some(path),
-                ..Default::default()
-            }),
+            .with_animations(viewport_lib::OverlayAnimations::default().with_position_path(path)),
         );
         x5 += 260.0 + gap;
     }

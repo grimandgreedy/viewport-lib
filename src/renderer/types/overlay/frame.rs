@@ -6,6 +6,7 @@ use crate::renderer::types::*;
 /// This frame section is the right place for any visual element that belongs
 /// in front of the 3D scene and must not be affected by tone-mapping or bloom.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct OverlayFrame {
     /// Current time in seconds, used to resolve [`OverlayAnimation`] on
     /// shapes. Use the same epoch as the `start_time` values in your

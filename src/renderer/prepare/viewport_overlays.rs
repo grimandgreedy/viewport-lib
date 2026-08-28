@@ -417,6 +417,28 @@ impl ViewportRenderer {
                     if poly.points.len() < 2 || poly.opacity <= 0.0 {
                         continue;
                     }
+                    // Resolve the anchor to a screen-pixel offset and draw the
+                    // path there; a culled world anchor skips it. The offset is
+                    // baked into a translated copy so the stroke and fill paths
+                    // (which read `poly.points`) both see anchored coordinates.
+                    let Some(offset) = poly.resolve_offset([vp_w, vp_h], view, proj) else {
+                        continue;
+                    };
+                    let translated_storage;
+                    let poly: &crate::renderer::types::OverlayPolylineItem = if offset == [0.0, 0.0]
+                    {
+                        poly
+                    } else {
+                        translated_storage = crate::renderer::types::OverlayPolylineItem {
+                            points: poly
+                                .points
+                                .iter()
+                                .map(|p| [p[0] + offset[0], p[1] + offset[1]])
+                                .collect(),
+                            ..poly.clone()
+                        };
+                        &translated_storage
+                    };
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     if poly.closed && poly.texture.is_none() {
                         if let Some(fill) = &poly.fill {
@@ -484,14 +506,12 @@ impl ViewportRenderer {
                         continue;
                     }
 
-                    let screen_pos = if let Some(sa) = label.screen_anchor {
-                        Some(sa)
-                    } else if let Some(wa) = label.world_anchor {
-                        project_to_screen(wa, view, proj, vp_w, vp_h)
-                    } else {
-                        continue;
-                    };
-                    let Some(anchor_px) = screen_pos else {
+                    let Some(anchor_px) = crate::renderer::types::resolve_anchor_origin(
+                        &label.anchor,
+                        [vp_w, vp_h],
+                        view,
+                        proj,
+                    ) else {
                         continue;
                     };
 
@@ -567,7 +587,7 @@ impl ViewportRenderer {
                     }
 
                     if label.leader_line {
-                        if let Some(wa) = label.world_anchor {
+                        if let crate::renderer::types::OverlayAnchor::World(wa) = label.anchor {
                             let world_px = project_to_screen(wa, view, proj, vp_w, vp_h);
                             if let Some(wp) = world_px {
                                 emit_line_quad(
@@ -608,6 +628,30 @@ impl ViewportRenderer {
                         continue;
                     }
 
+                    // Resolve the anchor origin; skip the run when a world anchor
+                    // is culled. Alignment shifts the whole run by its glyph-extent
+                    // box, so default Left/Top leaves the authored positions.
+                    let Some(origin) = crate::renderer::types::resolve_anchor_origin(
+                        &run.anchor,
+                        [vp_w, vp_h],
+                        view,
+                        proj,
+                    ) else {
+                        continue;
+                    };
+                    let (mut min_x, mut min_y, mut max_x, mut max_y) =
+                        (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                    for g in &run.glyphs {
+                        min_x = min_x.min(g.x);
+                        min_y = min_y.min(g.y);
+                        max_x = max_x.max(g.x);
+                        max_y = max_y.max(g.y);
+                    }
+                    let run_x =
+                        origin[0] + run.position[0] + run.align_x.align_shift(max_x - min_x);
+                    let run_y =
+                        origin[1] + run.position[1] + run.align_y.align_shift(max_y - min_y);
+
                     let opacity = run.opacity.clamp(0.0, 1.0);
                     // Each glyph carries its tint through layout so per-glyph
                     // colours stay aligned with the quads after zero-area skips.
@@ -627,16 +671,10 @@ impl ViewportRenderer {
                     }
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
-                    // Positions are already relative to the run origin, so the run
-                    // origin is the only offset added; no ascent, unlike labels.
-                    emit_glyph_quads_colored(
-                        &mut batch,
-                        &quads,
-                        run.origin[0],
-                        run.origin[1],
-                        vp_w,
-                        vp_h,
-                    );
+                    // Positions are already relative to the run origin, so the
+                    // resolved origin is the only offset added; no ascent, unlike
+                    // labels.
+                    emit_glyph_quads_colored(&mut batch, &quads, run_x, run_y, vp_w, vp_h);
 
                     stamp_clip(&mut batch, run.clip_id);
                     batches.push((run.z_order, batch));
@@ -1382,6 +1420,27 @@ impl ViewportRenderer {
                     if !poly.closed || poly.opacity <= 0.0 || poly.points.len() < 3 {
                         continue;
                     }
+                    // Resolve the anchor to a screen offset and translate the
+                    // points, matching the stroke/fill path in the label pass, so
+                    // an anchored textured polygon fills where it draws.
+                    let Some(offset) = poly.resolve_offset([vp_w, vp_h], view, proj) else {
+                        continue;
+                    };
+                    let translated_storage;
+                    let poly: &crate::renderer::types::OverlayPolylineItem = if offset == [0.0, 0.0]
+                    {
+                        poly
+                    } else {
+                        translated_storage = crate::renderer::types::OverlayPolylineItem {
+                            points: poly
+                                .points
+                                .iter()
+                                .map(|p| [p[0] + offset[0], p[1] + offset[1]])
+                                .collect(),
+                            ..poly.clone()
+                        };
+                        &translated_storage
+                    };
                     let Some((min, max)) = polyline_bounds(&poly.points) else {
                         continue;
                     };
