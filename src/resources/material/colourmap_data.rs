@@ -18,6 +18,24 @@ fn to_u8(x: f32) -> u8 {
     (clamp01(x) * 255.0 + 0.5) as u8
 }
 
+/// Sample a 256-entry RGBA8 LUT at `t` in `[0, 1]`, linearly interpolating
+/// between neighbouring entries. `t` is clamped to `[0, 1]`. Returns linear
+/// RGBA in `[0, 1]`, matching the GPU LUT sampler's filtering.
+fn sample_lut_rgba(lut: &[[u8; 4]; 256], t: f32) -> [f32; 4] {
+    let x = clamp01(t) * 255.0;
+    let lo = x.floor() as usize;
+    let hi = (lo + 1).min(255);
+    let frac = x - lo as f32;
+    let a = lut[lo];
+    let b = lut[hi];
+    [
+        (a[0] as f32 + (b[0] as f32 - a[0] as f32) * frac) / 255.0,
+        (a[1] as f32 + (b[1] as f32 - a[1] as f32) * frac) / 255.0,
+        (a[2] as f32 + (b[2] as f32 - a[2] as f32) * frac) / 255.0,
+        (a[3] as f32 + (b[3] as f32 - a[3] as f32) * frac) / 255.0,
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // Greyscale: linear ramp black -> white
 // ---------------------------------------------------------------------------
@@ -1661,3 +1679,104 @@ fn attr_f32(tag: &str, name: &str) -> Option<f32> {
 /// registry is never freed, so this stays a plain index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColourmapId(pub usize);
+
+impl crate::resources::BuiltinColourmap {
+    /// Return this preset's 256-sample CPU LUT as linear RGBA8.
+    ///
+    /// This is the same table the GPU texture is baked from (see
+    /// `ensure_colourmaps_initialized`), so a CPU-side legend, export, or
+    /// thumbnail samples exactly what the renderer draws. No GPU or renderer
+    /// is needed to call it.
+    pub fn lut_rgba(self) -> [[u8; 4]; 256] {
+        use crate::resources::BuiltinColourmap::*;
+        match self {
+            Viridis => viridis_rgba(),
+            Plasma => plasma_rgba(),
+            Greyscale => greyscale_rgba(),
+            Coolwarm => coolwarm_rgba(),
+            Rainbow => rainbow_rgba(),
+            Magma => magma_rgba(),
+            Inferno => inferno_rgba(),
+            Turbo => turbo_rgba(),
+            Jet => jet_rgba(),
+            RdBu => rdbu_r_rgba(),
+        }
+    }
+
+    /// Sample this preset at `t` in `[0, 1]`, returning linear RGBA in `[0, 1]`.
+    ///
+    /// `t` is clamped to `[0, 1]` and values between the 256 stored samples are
+    /// linearly interpolated.
+    pub fn sample(self, t: f32) -> [f32; 4] {
+        sample_lut_rgba(&self.lut_rgba(), t)
+    }
+
+    /// Resample this preset to an `n`-entry LUT of linear RGBA in `[0, 1]`.
+    ///
+    /// Entry `i` samples at `t = i / (n - 1)`, so the first entry is `t = 0`
+    /// and the last is `t = 1`. A single-entry request samples `t = 0`; `n == 0`
+    /// returns an empty vector. Use this to bake a legend gradient at an
+    /// arbitrary resolution.
+    pub fn bake_lut(self, n: usize) -> Vec<[f32; 4]> {
+        if n == 0 {
+            return Vec::new();
+        }
+        let lut = self.lut_rgba();
+        if n == 1 {
+            return vec![sample_lut_rgba(&lut, 0.0)];
+        }
+        (0..n)
+            .map(|i| sample_lut_rgba(&lut, i as f32 / (n - 1) as f32))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::resources::BuiltinColourmap;
+
+    #[test]
+    fn sample_matches_lut_endpoints() {
+        let cm = BuiltinColourmap::Viridis;
+        let lut = cm.lut_rgba();
+        let lo = cm.sample(0.0);
+        let hi = cm.sample(1.0);
+        // Endpoints land exactly on the first / last stored entries.
+        assert_eq!(
+            lo,
+            [
+                lut[0][0] as f32 / 255.0,
+                lut[0][1] as f32 / 255.0,
+                lut[0][2] as f32 / 255.0,
+                lut[0][3] as f32 / 255.0,
+            ]
+        );
+        assert_eq!(
+            hi,
+            [
+                lut[255][0] as f32 / 255.0,
+                lut[255][1] as f32 / 255.0,
+                lut[255][2] as f32 / 255.0,
+                lut[255][3] as f32 / 255.0,
+            ]
+        );
+    }
+
+    #[test]
+    fn sample_clamps_out_of_range() {
+        let cm = BuiltinColourmap::Turbo;
+        assert_eq!(cm.sample(-1.0), cm.sample(0.0));
+        assert_eq!(cm.sample(2.0), cm.sample(1.0));
+    }
+
+    #[test]
+    fn bake_lut_sizes_and_endpoints() {
+        let cm = BuiltinColourmap::Magma;
+        assert!(cm.bake_lut(0).is_empty());
+        assert_eq!(cm.bake_lut(1).len(), 1);
+        let baked = cm.bake_lut(16);
+        assert_eq!(baked.len(), 16);
+        assert_eq!(baked[0], cm.sample(0.0));
+        assert_eq!(baked[15], cm.sample(1.0));
+    }
+}
