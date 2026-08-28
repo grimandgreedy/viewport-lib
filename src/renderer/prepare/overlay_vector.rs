@@ -1,14 +1,13 @@
 //! Curve flattening and fill-rule tessellation for
 //! [`OverlayShape::Vector`](crate::renderer::types::OverlayShape). Turns a set
 //! of subpaths (line and Bezier segments) plus a fill rule into a triangle
-//! list the overlay fill path draws. Gated behind the `vector` feature so the
-//! tessellation dependency stays out of the default build.
+//! list the overlay fill path draws.
 
 use crate::renderer::types::{FillRule, PathSegment, SubPath};
 
-use lyon::math::point;
-use lyon::path::Path;
-use lyon::tessellation::{
+use lyon_path::Path;
+use lyon_path::math::point;
+use lyon_tessellation::{
     BuffersBuilder, FillOptions, FillRule as LyonFillRule, FillTessellator, FillVertex,
     VertexBuffers,
 };
@@ -56,7 +55,6 @@ fn build_path(subpaths: &[SubPath]) -> Path {
 /// Flatten and tessellate `subpaths` under `fill_rule`. `tolerance` is the
 /// maximum deviation, in logical pixels, of a flattened curve from the true
 /// curve: smaller is smoother and produces more triangles.
-#[cfg_attr(not(test), allow(dead_code))] // Consumed by the Vector fill path (not yet wired).
 pub(crate) fn tessellate(subpaths: &[SubPath], fill_rule: FillRule, tolerance: f32) -> VectorMesh {
     let path = build_path(subpaths);
 

@@ -171,7 +171,6 @@ fn flatten_subpath(sp: &SubPath) -> Vec<[f32; 2]> {
 /// Flatten every subpath to a polyline of points, subdividing curves at a
 /// fixed step count. Used for stroking a vector shape's outline and for the
 /// point-in-path test; the GPU fill uses a tolerance-driven tessellator.
-#[cfg_attr(not(feature = "vector"), allow(dead_code))]
 pub(crate) fn flatten_contours(subpaths: &[SubPath]) -> Vec<Vec<[f32; 2]>> {
     subpaths.iter().map(flatten_subpath).collect()
 }

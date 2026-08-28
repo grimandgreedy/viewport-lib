@@ -109,19 +109,16 @@ fn encode_overlay_shape(
 }
 
 /// Curve-flattening tolerance for vector-shape fills, in logical pixels.
-#[cfg(feature = "vector")]
 const VECTOR_FILL_TOLERANCE: f32 = 0.2;
 
 /// Mitre limit for a vector shape's outline stroke (it has no per-item value,
 /// unlike `OverlayPolylineItem`).
-#[cfg(feature = "vector")]
 const VECTOR_BORDER_MITRE_LIMIT: f32 = 4.0;
 
 /// Map a vector shape's path-local points into screen-space logical pixels,
 /// applying the item's position and rotation about its centre plus pivot. This
 /// is the inverse of the frame `OverlayShapeItem::distance` evaluates in, so
 /// the drawn shape and the hit-test agree.
-#[cfg(feature = "vector")]
 fn transform_vector_positions(
     local: &[[f32; 2]],
     shape: &crate::renderer::types::OverlayShapeItem,
@@ -152,9 +149,7 @@ fn transform_vector_positions(
 }
 
 /// Tessellate and emit a vector shape's fill, plus its outline border when set,
-/// as `OverlayTextVertex`s into `batch`. Without the `vector` feature there is
-/// no tessellator, so a vector shape draws nothing (the types and constructor
-/// still exist).
+/// as `OverlayTextVertex`s into `batch`.
 fn emit_vector_shape(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
@@ -163,49 +158,42 @@ fn emit_vector_shape(
     vp_w: f32,
     vp_h: f32,
 ) {
-    #[cfg(feature = "vector")]
-    {
-        let mesh = super::overlay_vector::tessellate(subpaths, fill_rule, VECTOR_FILL_TOLERANCE);
-        if !mesh.indices.is_empty() {
-            let positions = transform_vector_positions(&mesh.positions, shape);
-            emit_vector_fill(
-                batch,
-                &positions,
-                &mesh.indices,
-                &shape.fill,
-                shape.opacity,
+    let mesh = super::overlay_vector::tessellate(subpaths, fill_rule, VECTOR_FILL_TOLERANCE);
+    if !mesh.indices.is_empty() {
+        let positions = transform_vector_positions(&mesh.positions, shape);
+        emit_vector_fill(
+            batch,
+            &positions,
+            &mesh.indices,
+            &shape.fill,
+            shape.opacity,
+            vp_w,
+            vp_h,
+        );
+    }
+
+    // Border: a vector outline stroke, not an SDF band. Stroke each flattened
+    // contour through the same tessellator polylines use.
+    if shape.border_width > 0.0 && shape.border_colour[3] > 0.0 {
+        let mut colour = shape.border_colour;
+        colour[3] *= shape.opacity;
+        for contour in crate::renderer::types::flatten_contours(subpaths) {
+            if contour.len() < 2 {
+                continue;
+            }
+            let pts = transform_vector_positions(&contour, shape);
+            batch.extend(tessellate_polyline(
+                &pts,
+                shape.border_width,
+                true,
+                crate::renderer::types::LineJoin::Mitre,
+                VECTOR_BORDER_MITRE_LIMIT,
+                crate::renderer::types::PolylineCap::Butt,
+                colour,
                 vp_w,
                 vp_h,
-            );
+            ));
         }
-
-        // Border: a vector outline stroke, not an SDF band. Stroke each
-        // flattened contour through the same tessellator polylines use.
-        if shape.border_width > 0.0 && shape.border_colour[3] > 0.0 {
-            let mut colour = shape.border_colour;
-            colour[3] *= shape.opacity;
-            for contour in crate::renderer::types::flatten_contours(subpaths) {
-                if contour.len() < 2 {
-                    continue;
-                }
-                let pts = transform_vector_positions(&contour, shape);
-                batch.extend(tessellate_polyline(
-                    &pts,
-                    shape.border_width,
-                    true,
-                    crate::renderer::types::LineJoin::Mitre,
-                    VECTOR_BORDER_MITRE_LIMIT,
-                    crate::renderer::types::PolylineCap::Butt,
-                    colour,
-                    vp_w,
-                    vp_h,
-                ));
-            }
-        }
-    }
-    #[cfg(not(feature = "vector"))]
-    {
-        let _ = (batch, shape, subpaths, fill_rule, vp_w, vp_h);
     }
 }
 

@@ -201,7 +201,6 @@ pub(super) fn emit_filled_polyline(
 /// position and rotation); `indices` reference them in triples. The fill is
 /// sampled across the triangle list's bounding box, matching how a filled
 /// polyline resolves gradients.
-#[cfg_attr(not(feature = "vector"), allow(dead_code))]
 pub(super) fn emit_vector_fill(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     positions: &[[f32; 2]],

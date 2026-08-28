@@ -103,8 +103,7 @@ pub enum OverlayShape {
     /// effect on a vector shape and are ignored: `shadows` / `inner_shadows` /
     /// the legacy `shadow_*` (no distance field to fall off), `backdrop_blur`
     /// and its filters, `texture` / `nine_slice` / `texture_transform` (the
-    /// fill still draws). Drawing a vector shape needs the `vector` cargo
-    /// feature; without it the fill is skipped.
+    /// fill still draws).
     Vector {
         /// The contours that make up the shape.
         subpaths: Vec<SubPath>,

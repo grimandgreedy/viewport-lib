@@ -3,13 +3,10 @@
 //! Renders the real overlay pass offscreen and reads back pixels to confirm an
 //! arbitrary filled path draws: a square with a square hole reads empty in the
 //! hole under the even-odd rule and filled under non-zero, gradients vary across
-//! the shape, and an outline border draws. The types exist without the `vector`
-//! feature, but the fill needs the tessellator, so these tests are gated on it.
+//! the shape, and an outline border draws.
 //!
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
-
-#![cfg(feature = "vector")]
 
 #[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
