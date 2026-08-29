@@ -61,14 +61,7 @@ pub(crate) struct ParticleResources {
     pub(crate) mesh_pipeline_premultiplied: Option<crate::resources::DualPipeline>,
 }
 
-crate::resources::handle::registry_handle! {
-    /// Handle to a persistent GPU particle system.
-    ///
-    /// Returned by [`DeviceResources::create_gpu_particle_system`]. Stable
-    /// until [`DeviceResources::drop_gpu_particle_system`] is called. An
-    /// append-only registry handle.
-    pub struct GpuParticleSystemId;
-}
+pub use viewport_lib_types::ids::GpuParticleSystemId;
 
 /// Persistent configuration for a particle system. Set at creation; the render
 /// route and capacity are stable for the system's lifetime.
@@ -632,17 +625,17 @@ impl crate::resources::DeviceResources {
             .position(|slot: &Option<ParticleSystem>| slot.as_ref().is_none_or(|s| !s.alive))
         {
             self.particle.systems[idx] = Some(system);
-            GpuParticleSystemId(idx)
+            GpuParticleSystemId::from_index(idx)
         } else {
             self.particle.systems.push(Some(system));
-            GpuParticleSystemId(self.particle.systems.len() - 1)
+            GpuParticleSystemId::from_index(self.particle.systems.len() - 1)
         }
     }
 
     /// Release a particle system. The handle becomes invalid; the slot is
     /// reused on the next `create_gpu_particle_system` call.
     pub fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId) {
-        if let Some(Some(s)) = self.particle.systems.get_mut(id.0) {
+        if let Some(Some(s)) = self.particle.systems.get_mut(id.index()) {
             s.alive = false;
         }
     }
@@ -651,7 +644,7 @@ impl crate::resources::DeviceResources {
     pub(crate) fn particle_system(&self, id: GpuParticleSystemId) -> Option<&ParticleSystem> {
         self.particle
             .systems
-            .get(id.0)?
+            .get(id.index())?
             .as_ref()
             .filter(|s| s.alive)
     }
@@ -663,7 +656,7 @@ impl crate::resources::DeviceResources {
     ) -> Option<&mut ParticleSystem> {
         self.particle
             .systems
-            .get_mut(id.0)?
+            .get_mut(id.index())?
             .as_mut()
             .filter(|s| s.alive)
     }
@@ -1047,7 +1040,7 @@ impl crate::resources::DeviceResources {
         let mut staged: Vec<Staged> = Vec::with_capacity(items.len());
 
         for item in items {
-            let idx = item.system_id.0;
+            let idx = item.system_id.index();
             let (blend, route) = match self.particle.systems.get(idx).and_then(|s| s.as_ref()) {
                 Some(s) if s.alive => match &s.render {
                     ParticleRender::Sprite { blend, lit, .. } => {

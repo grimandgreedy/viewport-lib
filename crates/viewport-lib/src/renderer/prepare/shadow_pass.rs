@@ -1116,7 +1116,7 @@ impl ViewportRenderer {
                         break;
                     }
                     mix(&(c.item.mesh_id.index() as u64).to_le_bytes());
-                    mix(&c.item.mesh_id.generation.to_le_bytes());
+                    mix(&c.item.mesh_id.generation().to_le_bytes());
                     mix(&c.mesh.content_rev.to_le_bytes());
                     mix(bytemuck::cast_slice(&c.item.model));
                 }

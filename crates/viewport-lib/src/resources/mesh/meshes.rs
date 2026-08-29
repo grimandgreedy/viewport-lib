@@ -4184,7 +4184,7 @@ mod override_tests {
         ));
 
         // Unknown mesh id is rejected.
-        let bogus = crate::resources::mesh::mesh_store::MeshId::new(9999, 0);
+        let bogus = crate::resources::mesh::mesh_store::MeshId::from_index(9999);
         let err = resources.update_vertex_colours(&queue, bogus, 0, &[[1.0, 1.0, 1.0, 1.0]]);
         assert!(matches!(
             err,
@@ -4201,7 +4201,7 @@ mod override_tests {
         let mut resources =
             DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
         // Fabricate an id that is beyond the store.
-        let bogus = crate::resources::mesh::mesh_store::MeshId::new(9999, 0);
+        let bogus = crate::resources::mesh::mesh_store::MeshId::from_index(9999);
         let buf = dummy_override_buffer(&device, 4);
         let err = resources.set_position_override_buffer(bogus, buf);
         assert!(matches!(

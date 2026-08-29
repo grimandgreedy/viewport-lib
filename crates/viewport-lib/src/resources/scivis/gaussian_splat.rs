@@ -24,15 +24,7 @@ impl ShDegree {
     }
 }
 
-crate::resources::handle::slot_handle! {
-    /// Handle to an uploaded Gaussian splat set.
-    ///
-    /// Carries the slot index plus the generation the slot had when the handle
-    /// was issued. A handle whose splat set was removed (its slot freed and
-    /// reused by a later upload) resolves to no set on lookup, so it cannot
-    /// alias whatever now occupies the slot.
-    pub struct GaussianSplatId;
-}
+pub use viewport_lib_types::ids::GaussianSplatId;
 
 /// Upload data for a Gaussian splat set. Submitted once via
 /// `resources_mut().upload_gaussian_splat(data)`.

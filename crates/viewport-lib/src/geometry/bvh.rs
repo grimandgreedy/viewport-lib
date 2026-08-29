@@ -522,7 +522,7 @@ mod tests {
     fn test_bvh_build_single() {
         let mut scene = Scene::new();
         scene.add(
-            Some(MeshId::new(0, 0)),
+            Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
@@ -537,7 +537,7 @@ mod tests {
     fn test_bvh_pick_hit() {
         let mut scene = Scene::new();
         scene.add(
-            Some(MeshId::new(0, 0)),
+            Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
@@ -561,7 +561,7 @@ mod tests {
     fn test_bvh_pick_miss() {
         let mut scene = Scene::new();
         scene.add(
-            Some(MeshId::new(0, 0)),
+            Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
@@ -585,12 +585,12 @@ mod tests {
     fn test_bvh_pick_nearest() {
         let mut scene = Scene::new();
         scene.add(
-            Some(MeshId::new(0, 0)),
+            Some(MeshId::from_index(0)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.0)),
             Material::default(),
         );
         scene.add(
-            Some(MeshId::new(1, 0)),
+            Some(MeshId::from_index(1)),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -2.0)),
             Material::default(),
         );
@@ -616,7 +616,7 @@ mod tests {
     fn test_trimesh_cache_reuse() {
         let mut scene = Scene::new();
         scene.add(
-            Some(MeshId::new(0, 0)),
+            Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
@@ -649,12 +649,12 @@ mod tests {
     fn test_build_from_scene_skin_aware_pads_only_skinned() {
         let mut scene = Scene::new();
         scene.add(
-            Some(MeshId::new(0, 0)),
+            Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
         scene.add(
-            Some(MeshId::new(1, 0)),
+            Some(MeshId::from_index(1)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
@@ -665,7 +665,7 @@ mod tests {
         let accel = PickAccelerator::build_from_scene_skin_aware(
             &scene,
             |_| Some(unit_aabb()),
-            |mid| mid == MeshId::new(1, 0),
+            |mid| mid == MeshId::from_index(1),
             1.0,
         );
 
@@ -692,7 +692,7 @@ mod tests {
     fn test_invalidate_skinned_meshes_clears_cached_trimesh() {
         let mut scene = Scene::new();
         scene.add(
-            Some(MeshId::new(0, 0)),
+            Some(MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             Material::default(),
         );
@@ -712,7 +712,7 @@ mod tests {
         assert_eq!(accel.trimesh_cache_len(), 1);
 
         // Invalidating the skinned mesh should drop the cached entry.
-        accel.invalidate_skinned_meshes([MeshId::new(0, 0)]);
+        accel.invalidate_skinned_meshes([MeshId::from_index(0)]);
         assert_eq!(accel.trimesh_cache_len(), 0);
     }
 

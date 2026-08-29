@@ -10,15 +10,7 @@
 use crate::resources::GpuMesh;
 use crate::resources::handle::SlotStore;
 
-crate::resources::handle::slot_handle! {
-    /// Handle to a mesh in the store.
-    ///
-    /// Carries the slot index plus the generation the slot had when the handle
-    /// was issued. A handle whose generation is stale (its slot was freed and
-    /// reused) resolves to `None` on lookup rather than aliasing a different
-    /// mesh.
-    pub struct MeshId;
-}
+pub use viewport_lib_types::ids::MeshId;
 
 /// Slotted storage for GPU meshes with generational handles, a free list, and a
 /// maintained resident-byte total. An entry's byte charge is its

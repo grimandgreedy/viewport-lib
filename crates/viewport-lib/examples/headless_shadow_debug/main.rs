@@ -114,9 +114,7 @@ fn main() {
         glam::Quat::from_rotation_z(f(9, 0.6)) * glam::Quat::from_rotation_x(f(10, 1.0));
     camera.set_aspect_ratio(W as f32, H as f32);
 
-    let build_lighting = |dbg: Option<(DebugQuantity, DebugQuantity, DebugQuantity, f32)>,
-                          shadows_on: bool,
-                          hemi: f32| {
+    let build_lighting = |shadows_on: bool, hemi: f32| {
         let mut l = LightingSettings::default();
         l.lights = vec![{
             let mut src = LightSource::default();
@@ -133,16 +131,6 @@ fn main() {
         l.hemisphere_intensity = hemi;
         l.sky_colour = [0.8, 0.9, 1.0];
         l.ground_colour = [0.5, 0.55, 0.6];
-        if let Some((r, g, b, scale)) = dbg {
-            let mut dv = DebugVis::default();
-            dv.active = true;
-            dv.mode = DebugOutputMode::Replace;
-            dv.channel_r = r;
-            dv.channel_g = g;
-            dv.channel_b = b;
-            dv.scale = scale;
-            l.debug_vis = dv;
-        }
         l
     };
 
@@ -245,7 +233,17 @@ fn main() {
         );
         let shadows_on = !name.contains("noshadow");
         let hemi = if name.contains("nohemi") { 0.0 } else { 0.2 };
-        fd.effects.lighting = build_lighting(dbg, shadows_on, hemi);
+        fd.effects.lighting = build_lighting(shadows_on, hemi);
+        if let Some((r, g, b, scale)) = dbg {
+            let mut dv = DebugVis::default();
+            dv.active = true;
+            dv.mode = DebugOutputMode::Replace;
+            dv.channel_r = r;
+            dv.channel_g = g;
+            dv.channel_b = b;
+            dv.scale = scale;
+            fd.effects.debug.debug_vis = dv;
+        }
         fd.effects.debug.show_shadow_atlas = show_atlas;
         fd.effects.debug.atlas_viewer_corner = AtlasViewerCorner::BottomRight;
         fd.effects.debug.atlas_viewer_scale = 0.6;

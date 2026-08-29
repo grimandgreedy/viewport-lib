@@ -20,16 +20,7 @@ use crate::scene::aabb::Aabb;
 /// every frame: it must move past the boundary by this much to switch.
 const LOD_HYSTERESIS: f32 = 0.1;
 
-crate::resources::handle::slot_handle! {
-    /// Handle to a LOD group in the renderer's group registry.
-    ///
-    /// Carries the slot index plus the generation the slot had when the handle
-    /// was issued. A group freed with
-    /// [`free_lod_group`](crate::DeviceResources::free_lod_group) bumps its
-    /// slot generation, so a stale handle resolves to `None` rather than
-    /// aliasing a group registered later into the reused slot.
-    pub struct LodGroupId;
-}
+pub use viewport_lib_types::ids::LodGroupId;
 
 /// One detail level of a [`LodGroup`].
 #[derive(Debug, Clone, Copy)]

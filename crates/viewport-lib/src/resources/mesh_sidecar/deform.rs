@@ -2029,7 +2029,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId::new(7, 0);
+        let mesh = MeshId::from_index(7);
         assert_eq!(s.flag_bits(mesh), 0);
         assert!(!s.has_slot(mesh, 0));
 
@@ -2050,7 +2050,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId::new(11, 0);
+        let mesh = MeshId::from_index(11);
         s.attach_slot(&device, mesh, 1, 1, &[0u8; 16]);
         assert_eq!(s.flag_bits(mesh), 0b0010);
 
@@ -2066,7 +2066,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId::new(42, 0);
+        let mesh = MeshId::from_index(42);
         let instance = 3u32;
         assert_eq!(s.flag_bits(mesh), 0);
 
@@ -2103,7 +2103,13 @@ mod tests {
         };
         let mut s = DeformationState::new(&device);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            s.attach_slot(&device, MeshId::new(0, 0), DEFORM_SLOT_COUNT, 1, &[0u8; 4])
+            s.attach_slot(
+                &device,
+                MeshId::from_index(0),
+                DEFORM_SLOT_COUNT,
+                1,
+                &[0u8; 4],
+            )
         }));
         assert!(result.is_err());
     }
@@ -2256,7 +2262,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId::new(101, 0);
+        let mesh = MeshId::from_index(101);
         let src = ExternalDeformSource {
             buffer: copy_src_buffer(&device, 48),
             src_offset_bytes: 0,
@@ -2292,7 +2298,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId::new(102, 0);
+        let mesh = MeshId::from_index(102);
         // Slot 0: CPU-uploaded. Slot 1: external.
         s.attach_slot(&device, mesh, 0, 1, &[0u8; 16]);
         let src = ExternalDeformSource {
@@ -2317,7 +2323,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId::new(103, 0);
+        let mesh = MeshId::from_index(103);
         let src = ExternalDeformSource {
             buffer: copy_src_buffer(&device, 48),
             src_offset_bytes: 0,
@@ -2339,7 +2345,7 @@ mod tests {
             return;
         };
         let mut s = DeformationState::new(&device);
-        let mesh = MeshId::new(104, 0);
+        let mesh = MeshId::from_index(104);
         let src = ExternalDeformSource {
             buffer: copy_src_buffer(&device, 48),
             src_offset_bytes: 0,
@@ -2369,7 +2375,7 @@ mod tests {
         };
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
-        let mesh = MeshId::new(105, 0);
+        let mesh = MeshId::from_index(105);
 
         // Missing COPY_SRC.
         let storage_only = device.create_buffer(&crate::gpu::BufferDescriptor {

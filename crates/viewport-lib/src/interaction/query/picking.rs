@@ -1496,7 +1496,7 @@ mod tests {
 
         let mut scene = crate::scene::scene::Scene::new();
         scene.add(
-            Some(crate::resources::mesh::mesh_store::MeshId::new(0, 0)),
+            Some(crate::resources::mesh::mesh_store::MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             crate::scene::material::Material::default(),
         );
@@ -1519,7 +1519,7 @@ mod tests {
 
         let mut scene = crate::scene::scene::Scene::new();
         scene.add(
-            Some(crate::resources::mesh::mesh_store::MeshId::new(0, 0)),
+            Some(crate::resources::mesh::mesh_store::MeshId::from_index(0)),
             glam::Mat4::IDENTITY,
             crate::scene::material::Material::default(),
         );

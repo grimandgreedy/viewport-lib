@@ -1515,7 +1515,7 @@ impl DeviceResources {
         // Index and generation both: cached entries can outlive a mesh slot's
         // occupant, so a freed-and-reused slot must not alias the old bind group.
         mesh_id.index().hash(&mut h);
-        mesh_id.generation.hash(&mut h);
+        mesh_id.generation().hash(&mut h);
         albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX).hash(&mut h);
         normal_map_id
             .map(|t| t.raw())

@@ -181,7 +181,7 @@ mod tests {
             return;
         };
 
-        let mesh_id = MeshId::new(0, 0);
+        let mesh_id = MeshId::from_index(0);
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let mut runtime = ViewportRuntime::new();
@@ -226,7 +226,7 @@ mod tests {
 
         let mut ctx = PluginInstallCtx::new(&device, &queue, None, &mut renderer);
         let result =
-            SkinnedMeshFeature::new(gpu_skeleton_plugin(MeshId::new(0, 0))).install(&mut ctx);
+            SkinnedMeshFeature::new(gpu_skeleton_plugin(MeshId::from_index(0))).install(&mut ctx);
 
         assert!(matches!(
             result,
@@ -248,7 +248,7 @@ mod tests {
             return;
         };
 
-        let mesh_id = MeshId::new(0, 0);
+        let mesh_id = MeshId::from_index(0);
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         let mut runtime = ViewportRuntime::new();

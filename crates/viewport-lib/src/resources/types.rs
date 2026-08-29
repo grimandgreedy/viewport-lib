@@ -84,116 +84,11 @@ pub(crate) use crate::resources::volume::volumes::ImageSliceGpuData;
 pub use crate::resources::volume::volumes::VolumeGpuData;
 pub(crate) use crate::resources::volume::volumes::VolumeSurfaceSliceGpuData;
 
-crate::resources::handle::slot_handle! {
-    /// Identifies a 3D volume texture uploaded to the GPU.
-    ///
-    /// A slotted, generational handle: a volume can be replaced in place
-    /// ([`replace_volume`](crate::resources::DeviceResources::replace_volume)) or
-    /// freed ([`free_volume`](crate::resources::DeviceResources::free_volume)) so
-    /// a time-series playback reuses one slot instead of leaking a 3D texture per
-    /// timestep. A handle held across a free-then-reupload resolves to nothing
-    /// rather than aliasing the new occupant.
-    pub struct VolumeId;
-}
+pub use viewport_lib_types::ids::{ProjectedTetId, VolumeId};
 
-crate::resources::handle::slot_handle! {
-    /// Identifies a projected-tetrahedra mesh uploaded to the GPU for transparent
-    /// volume rendering.
-    ///
-    /// A slotted, generational handle: the mesh can be refreshed in place
-    /// ([`replace_projected_tet`](crate::resources::DeviceResources::replace_projected_tet),
-    /// [`replace_projected_tet_scalar`](crate::resources::DeviceResources::replace_projected_tet_scalar))
-    /// or freed ([`free_projected_tet`](crate::resources::DeviceResources::free_projected_tet))
-    /// so a transparent time-series reuses one slot instead of leaking a tet
-    /// buffer per fresh upload.
-    pub struct ProjectedTetId;
-}
+pub use viewport_lib_types::data::attribute::{AttributeData, AttributeKind, AttributeRef};
 
-/// Scalar attribute interpolation domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttributeKind {
-    /// One value per vertex.
-    Vertex,
-    /// One value per triangle (cell). Averaged to vertices at upload time.
-    Cell,
-    /// One value per triangle. NOT averaged : rendered flat via vertex duplication.
-    /// Colourmapped through the active LUT just like `Vertex`.
-    Face,
-    /// One RGBA colour per triangle. NOT averaged : rendered flat via vertex duplication.
-    /// Bypasses the colourmap; the per-face colour is used directly.
-    FaceColour,
-    /// One value per directed triangle edge. `values[3*t + k]` is the scalar on the
-    /// k-th edge of triangle `t` (edge from vertex `k` to vertex `(k+1)%3`).
-    /// Averaged to the two endpoint vertices for rendering.
-    Edge,
-    /// One value per directed triangle edge (halfedge). `values[3*t + k]` is the
-    /// scalar for the k-th halfedge of triangle `t`.
-    /// Rendered flat per triangle corner via vertex duplication (like `Face`).
-    Halfedge,
-    /// One value per triangle corner. `values[3*t + k]` is the scalar at the
-    /// k-th corner of triangle `t`.
-    /// Rendered flat per triangle corner via vertex duplication (like `Face`).
-    Corner,
-}
-
-/// Reference to a named scalar attribute on a mesh.
-#[derive(Debug, Clone)]
-pub struct AttributeRef {
-    /// Name of the attribute as stored in `MeshData::attributes`.
-    pub name: String,
-    /// Whether the attribute is per-vertex, per-cell, or per-face.
-    pub kind: AttributeKind,
-}
-
-/// Scalar data for a mesh attribute.
-#[derive(Debug, Clone)]
-pub enum AttributeData {
-    /// One `f32` per vertex.
-    Vertex(Vec<f32>),
-    /// One `f32` per triangle (cell). Averaged to vertices at upload.
-    Cell(Vec<f32>),
-    /// One `f32` per triangle. Not averaged; stored in a non-indexed expanded buffer.
-    Face(Vec<f32>),
-    /// One `[r, g, b, a]` per triangle. Not averaged; stored in a non-indexed expanded buffer.
-    FaceColour(Vec<[f32; 4]>),
-    /// One `f32` per directed triangle edge. `values[3*t + k]` = k-th edge of triangle `t`.
-    /// Averaged to the two endpoint vertices for rendering.
-    Edge(Vec<f32>),
-    /// One `f32` per directed triangle edge (halfedge). `values[3*t + k]` = k-th halfedge of
-    /// triangle `t`. Rendered flat per corner via vertex duplication (like `Face`).
-    Halfedge(Vec<f32>),
-    /// One `f32` per triangle corner. `values[3*t + k]` = k-th corner of triangle `t`.
-    /// Rendered flat per corner via vertex duplication (like `Face`).
-    Corner(Vec<f32>),
-    /// One `[x, y, z]` per vertex. Uploaded as a flat `array<f32>` storage buffer (3 floats
-    /// per vertex) for use in per-vertex vector field rendering (e.g. Surface LIC).
-    VertexVector(Vec<[f32; 3]>),
-}
-
-/// Built-in colourmap presets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuiltinColourmap {
-    /// Viridis : perceptually uniform, colourblind-friendly (purple -> teal -> yellow).
-    Viridis = 0,
-    /// Plasma : perceptually uniform, colourblind-friendly (blue -> pink -> yellow).
-    Plasma = 1,
-    /// Greyscale : linear black->white.
-    Greyscale = 2,
-    /// Coolwarm : diverging blue->white->red.
-    Coolwarm = 3,
-    /// Rainbow : HSV hue sweep 240 deg->0 deg.
-    Rainbow = 4,
-    /// Magma : perceptually uniform (black -> purple -> orange -> near-white).
-    Magma = 5,
-    /// Inferno : perceptually uniform (black -> deep-red -> orange -> light-yellow).
-    Inferno = 6,
-    /// Turbo : improved rainbow (Google 2019). Better perceptual uniformity than Jet.
-    Turbo = 7,
-    /// Jet : classic blue-cyan-green-yellow-red. Widely used in engineering.
-    Jet = 8,
-    /// RdBu : diverging blue->white->red (blue at t=0, red at t=1).
-    RdBu = 9,
-}
+pub use viewport_lib_types::colourmap::BuiltinColourmap;
 
 // ---------------------------------------------------------------------------
 // Vertex and uniform structs (bytemuck::Pod for GPU buffer casting)
