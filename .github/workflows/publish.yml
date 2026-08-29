@@ -1,4 +1,4 @@
-name: Publish Crate
+name: Publish Crates
 
 on:
   push:
@@ -15,10 +15,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check tag matches Cargo.toml version
+      - name: Check tag matches viewport-lib version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CARGO_VERSION=$(grep '^version = ' crates/viewport-lib/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           test "$TAG_VERSION" = "$CARGO_VERSION"
 
       - name: Install Rust
@@ -27,13 +27,28 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Dry run publish
-        run: cargo publish --dry-run
-
-      - name: Publish to crates.io
-        run: cargo publish
+      # Publish workspace members bottom-up: the pure-data types crate first, then
+      # the renderer that depends on it. Each is skipped if that exact version is
+      # already on crates.io, so a release that only bumped one crate does not fail
+      # on the unchanged one (the two crates version independently).
+      - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          publish_if_new() {
+            name="$1"
+            ver=$(cargo metadata --no-deps --format-version 1 \
+              | python3 -c "import sys,json;print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='$name'))")
+            idx="https://index.crates.io/${name:0:2}/${name:2:2}/$name"
+            if curl -sf "$idx" | grep -q "\"vers\":\"$ver\""; then
+              echo "$name $ver already on crates.io, skipping"
+            else
+              echo "publishing $name $ver"
+              cargo publish -p "$name"
+            fi
+          }
+          publish_if_new viewport-lib-types
+          publish_if_new viewport-lib
 
       - name: Get changelog entry
         id: changelog

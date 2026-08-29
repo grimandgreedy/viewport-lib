@@ -1123,9 +1123,9 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod async_tests {
+    use super::GaussianSplatData;
     use crate::DeviceResources;
     use crate::resources::UploadStatus;
-    use GaussianSplatData;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();

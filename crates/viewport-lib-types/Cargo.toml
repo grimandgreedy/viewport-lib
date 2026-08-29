@@ -1,0 +1,22 @@
+[package]
+name = "viewport-lib-types"
+version = "0.1.0"
+edition = "2024"
+description = "Pure-data types for viewport-lib: submission payloads, handles, and frame config, free of any GPU dependency."
+readme = "README.md"
+license = "GPL-3.0-only"
+repository = "https://github.com/grimandgreedy/viewport-lib"
+homepage = "https://github.com/grimandgreedy/viewport-lib"
+documentation = "https://docs.rs/viewport-lib-types"
+keywords = ["3d", "viewport", "types", "mesh", "visualization"]
+categories = ["graphics", "rendering", "data-structures"]
+rust-version = "1.85"
+publish = true
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "glam/serde"]
+
+[dependencies]
+glam = { workspace = true }
+serde = { version = "1", features = ["derive"], optional = true }
