@@ -260,7 +260,7 @@ mod lit_sprite_tests {
                 receive_shadows: true,
                 ambient_scale: 0.2,
             },
-            normal_texture_id: Some(crate::resources::TextureId(7)),
+            normal_texture_id: Some(crate::resources::TextureId::from_raw(7)),
             orientation: SpriteOrientation::VelocityStretched,
             velocities: vec![[1.0, 0.0, 0.0]],
             positions: vec![[0.0, 0.0, 0.0]],
@@ -271,7 +271,7 @@ mod lit_sprite_tests {
         assert!(item.lit);
         assert_eq!(item.lit_params.normal_mode, SpriteNormalMode::NormalMap);
         assert!(item.lit_params.receive_shadows);
-        assert_eq!(item.normal_texture_id, Some(crate::resources::TextureId(7)));
+        assert_eq!(item.normal_texture_id, Some(crate::resources::TextureId::from_raw(7)));
         assert_eq!(item.orientation, SpriteOrientation::VelocityStretched);
     }
 

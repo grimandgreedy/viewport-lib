@@ -309,7 +309,7 @@ mod tests {
         );
 
         // An emissive texture forces the per-object path where it is sampled.
-        item.material.emissive_texture_id = Some(crate::resources::TextureId(1));
+        item.material.emissive_texture_id = Some(crate::resources::TextureId::from_raw(1));
         assert!(
             !is_instanceable(&item, &resources, &[]),
             "an emissive-textured item must fall back to the per-object path",

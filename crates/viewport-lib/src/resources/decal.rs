@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn identical_decals_hash_equal() {
         let a = DecalItem {
-            texture_id: crate::resources::TextureId(3),
+            texture_id: crate::resources::TextureId::from_raw(3),
             ..DecalItem::default()
         };
         let b = a.clone();
@@ -839,7 +839,7 @@ mod tests {
     fn texture_and_transform_change_hash() {
         let base = DecalItem::default();
         let tex = DecalItem {
-            texture_id: crate::resources::TextureId(7),
+            texture_id: crate::resources::TextureId::from_raw(7),
             ..DecalItem::default()
         };
         assert_ne!(hash_decal_item(&base), hash_decal_item(&tex));

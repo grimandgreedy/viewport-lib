@@ -1312,9 +1312,10 @@ mod tests {
         fd.scene.submit_plugin_items(
             "mock",
             MockItems {
-                settings: crate::scene::material::ItemSettings {
-                    pick_id: crate::renderer::PickId(1),
-                    ..Default::default()
+                settings: {
+                    let mut s = crate::scene::material::ItemSettings::default();
+                    s.pick_id = crate::renderer::PickId(1);
+                    s
                 },
             },
         );

@@ -454,11 +454,11 @@ impl LightingSettings {
     /// `LightingPosture::PhysicalDaylight`; pair them by
     /// hand only when you need a non-default exposure:
     ///
-    /// ```no_run
-    /// # use viewport_lib::{EffectsFrame, LightingSettings, ExposureSettings};
-    /// let mut effects = EffectsFrame::default();
-    /// effects.lighting = LightingSettings::daylight();
-    /// effects.display.exposure = ExposureSettings::automatic();
+    /// ```
+    /// # use viewport_lib_types::effects::lighting::LightingSettings;
+    /// # use viewport_lib_types::effects::postprocess::ExposureSettings;
+    /// let lighting = LightingSettings::daylight();
+    /// let exposure = ExposureSettings::automatic();
     /// ```
     pub fn daylight() -> Self {
         let mut sun = LightSource::default();

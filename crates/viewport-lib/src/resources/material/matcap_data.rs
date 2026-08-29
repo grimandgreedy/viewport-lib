@@ -305,20 +305,7 @@ pub fn normal() -> Vec<u8> {
     })
 }
 
-/// Identifies a matcap texture uploaded to the GPU.
-///
-/// Obtained from [`DeviceResources::upload_matcap`] or
-/// [`DeviceResources::builtin_matcap_id`]. An append-only registry handle.
-/// The `blendable` flag controls whether the alpha channel tints the base
-/// geometry colour (`true`) or the matcap fully replaces the object colour (`false`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct MatcapId {
-    /// Index into the GPU matcap texture store.
-    pub(crate) index: usize,
-    /// Whether the alpha channel blends with base geometry colour.
-    pub blendable: bool,
-}
+pub use viewport_lib_types::ids::MatcapId;
 /// Built-in matcap presets bundled with viewport-lib.
 ///
 /// Pass to [`DeviceResources::builtin_matcap_id`] after the renderer

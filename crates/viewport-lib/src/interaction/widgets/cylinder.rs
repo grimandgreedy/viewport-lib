@@ -191,9 +191,10 @@ impl CylinderWidget {
             default_colour: self.colour,
             line_width: 1.5,
 
-            settings: crate::scene::material::ItemSettings {
-                pick_id: crate::renderer::PickId(id),
-                ..Default::default()
+            settings: {
+                let mut s = crate::scene::material::ItemSettings::default();
+                s.pick_id = crate::renderer::PickId(id);
+                s
             },
             ..PolylineItem::default()
         }
@@ -230,9 +231,10 @@ impl CylinderWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
 
-            settings: crate::scene::material::ItemSettings {
-                pick_id: crate::renderer::PickId(id_base),
-                ..Default::default()
+            settings: {
+                let mut s = crate::scene::material::ItemSettings::default();
+                s.pick_id = crate::renderer::PickId(id_base);
+                s
             },
             default_colour: self.handle_colour,
             use_default_colour: self.handle_colour[3] > 0.0,

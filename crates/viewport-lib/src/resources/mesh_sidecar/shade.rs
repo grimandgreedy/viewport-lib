@@ -702,10 +702,7 @@ impl crate::resources::DeviceResources {
         if let Some(existing) = self.shading_hook_id_by_name(plugin.name()) {
             let id = existing.0 as u32;
             if self.material_plugins.contains_key(&id) {
-                return Ok(MaterialPluginId {
-                    plugin: id,
-                    variant: 0,
-                });
+                return Ok(MaterialPluginId::from_parts(id, 0));
             }
             return Err(ViewportError::ShadeNameTaken {
                 name: plugin.name().to_string(),
@@ -794,10 +791,7 @@ impl crate::resources::DeviceResources {
                 pipelines: None,
             },
         );
-        Ok(MaterialPluginId {
-            plugin: id,
-            variant: 0,
-        })
+        Ok(MaterialPluginId::from_parts(id, 0))
     }
 
     /// Create a new variant of a registered plugin: same WGSL and pipelines,
@@ -819,15 +813,15 @@ impl crate::resources::DeviceResources {
         params: &[[f32; 4]],
         textures: &[crate::resources::TextureId],
     ) -> ViewportResult<MaterialPluginId> {
-        let Some(gpu) = self.material_plugins.get(&plugin.plugin) else {
+        let Some(gpu) = self.material_plugins.get(&plugin.plugin_index()) else {
             return Err(ViewportError::ShadeShaderInvalid {
                 reason: format!(
                     "create_material_plugin_variant: id {} is not a registered material plugin",
-                    plugin.plugin
+                    plugin.plugin_index()
                 ),
             });
         };
-        let name = self.shade_hooks[plugin.plugin as usize].desc.name;
+        let name = self.shade_hooks[plugin.plugin_index() as usize].desc.name;
         let mut window = [[0.0f32; 4]; MATERIAL_PLUGIN_PARAM_VEC4S];
         for (dst, src) in window.iter_mut().zip(params.iter()) {
             *dst = *src;
@@ -843,13 +837,10 @@ impl crate::resources::DeviceResources {
         );
         let gpu = self
             .material_plugins
-            .get_mut(&plugin.plugin)
+            .get_mut(&plugin.plugin_index())
             .expect("checked above");
         gpu.variants.push(variant);
-        Ok(MaterialPluginId {
-            plugin: plugin.plugin,
-            variant: (gpu.variants.len() - 1) as u32,
-        })
+        Ok(MaterialPluginId::from_parts(plugin.plugin_index(), (gpu.variants.len() - 1) as u32))
     }
 
     /// Build one variant's params buffer and group-3 bind group, resolving
@@ -910,9 +901,9 @@ impl crate::resources::DeviceResources {
         id: MaterialPluginId,
     ) -> Option<MaterialPluginParamsHandle> {
         self.material_plugins
-            .get(&id.plugin)?
+            .get(&id.plugin_index())?
             .variants
-            .get(id.variant as usize)
+            .get(id.variant_index() as usize)
             .map(|v| MaterialPluginParamsHandle {
                 buffer: v.params_buffer.clone(),
             })
@@ -933,10 +924,7 @@ impl crate::resources::DeviceResources {
             .map(|id| {
                 let gpu = &self.material_plugins[&id];
                 MaterialPluginStats {
-                    id: MaterialPluginId {
-                        plugin: id,
-                        variant: 0,
-                    },
+                    id: MaterialPluginId::from_parts(id, 0),
                     name: self.shade_hooks[id as usize].desc.name,
                     variants: gpu.variants.len() as u32,
                     texture_count: gpu.texture_count,
@@ -987,7 +975,7 @@ impl crate::resources::DeviceResources {
         for plugin in ids {
             self.ensure_material_plugin_pipelines(
                 device,
-                crate::scene::material::MaterialPluginId { plugin, variant: 0 },
+                crate::scene::material::MaterialPluginId::from_parts(plugin, 0),
             );
         }
     }
@@ -1012,7 +1000,7 @@ impl crate::resources::DeviceResources {
         id: crate::scene::material::MaterialPluginId,
     ) -> bool {
         self.material_plugins
-            .get(&id.plugin)
+            .get(&id.plugin_index())
             .is_some_and(|gpu| gpu.pipelines.is_some())
     }
 
@@ -1024,7 +1012,7 @@ impl crate::resources::DeviceResources {
         id: crate::scene::material::MaterialPluginId,
     ) -> bool {
         self.material_plugins
-            .get(&id.plugin)
+            .get(&id.plugin_index())
             .is_some_and(|gpu| gpu.pipelines.is_none())
     }
 
@@ -1038,20 +1026,20 @@ impl crate::resources::DeviceResources {
         device: &crate::gpu::Device,
         id: MaterialPluginId,
     ) {
-        let Some(gpu) = self.material_plugins.get(&id.plugin) else {
+        let Some(gpu) = self.material_plugins.get(&id.plugin_index()) else {
             return;
         };
         if gpu.pipelines.is_some() {
             return;
         }
-        let hook_id = ShadingHookId(id.plugin as usize);
+        let hook_id = ShadingHookId(id.plugin_index() as usize);
         let Some(mesh_src) = self.composed_shading_hook_source(hook_id, "mesh.wgsl") else {
             return;
         };
         let Some(oit_src) = self.composed_shading_hook_source(hook_id, "mesh_oit.wgsl") else {
             return;
         };
-        let name = self.shade_hooks[id.plugin as usize].desc.name;
+        let name = self.shade_hooks[id.plugin_index() as usize].desc.name;
 
         let mesh_module = crate::resources::builders::wgsl_module(
             device,
@@ -1066,7 +1054,7 @@ impl crate::resources::DeviceResources {
 
         let gpu = self
             .material_plugins
-            .get(&id.plugin)
+            .get(&id.plugin_index())
             .expect("checked above");
         let label = format!("material_plugin_{name}_layout");
         let layout = crate::resources::builders::pipeline_layout(
@@ -1098,7 +1086,7 @@ impl crate::resources::DeviceResources {
             &oit_module,
         );
         self.material_plugins
-            .get_mut(&id.plugin)
+            .get_mut(&id.plugin_index())
             .expect("checked above")
             .pipelines = Some(MaterialPluginPipelines { ldr, hdr, oit });
     }
@@ -1113,8 +1101,8 @@ impl crate::resources::DeviceResources {
         plugin: Option<MaterialPluginId>,
     ) -> Option<(&MaterialPluginPipelines, &crate::gpu::BindGroup)> {
         let id = plugin?;
-        let gpu = self.material_plugins.get(&id.plugin)?;
-        let variant = gpu.variants.get(id.variant as usize)?;
+        let gpu = self.material_plugins.get(&id.plugin_index())?;
+        let variant = gpu.variants.get(id.variant_index() as usize)?;
         let pipes = gpu.pipelines.as_ref()?;
         Some((pipes, &variant.bind_group))
     }
@@ -1212,10 +1200,7 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let row = stats.iter().find(|s| s.id == id).expect("stats row");
         assert_eq!(row.pipelines_built, MaterialPluginPipelines::COUNT);
 
-        let unknown = MaterialPluginId {
-            plugin: 9999,
-            variant: 0,
-        };
+        let unknown = MaterialPluginId::from_parts(9999, 0);
         assert!(!resources.material_plugin_pipelines_ready(unknown));
         assert!(!resources.material_plugin_needs_build(unknown));
     }

@@ -260,9 +260,10 @@ impl BoxWidget {
             strip_lengths: vec![5, 5, 2, 2, 2, 2],
             default_colour: self.colour,
 
-            settings: crate::scene::material::ItemSettings {
-                pick_id: crate::renderer::PickId(id),
-                ..Default::default()
+            settings: {
+                let mut s = crate::scene::material::ItemSettings::default();
+                s.pick_id = crate::renderer::PickId(id);
+                s
             },
             ..PolylineItem::default()
         }
@@ -305,9 +306,10 @@ impl BoxWidget {
             default_colour: self.colour,
             line_width: 1.2,
 
-            settings: crate::scene::material::ItemSettings {
-                pick_id: crate::renderer::PickId(id),
-                ..Default::default()
+            settings: {
+                let mut s = crate::scene::material::ItemSettings::default();
+                s.pick_id = crate::renderer::PickId(id);
+                s
             },
             ..PolylineItem::default()
         }
@@ -362,9 +364,10 @@ impl BoxWidget {
             scalar_range: Some((0.0, 1.0)),
             glyph_type: GlyphType::Sphere,
 
-            settings: crate::scene::material::ItemSettings {
-                pick_id: crate::renderer::PickId(id_base),
-                ..Default::default()
+            settings: {
+                let mut s = crate::scene::material::ItemSettings::default();
+                s.pick_id = crate::renderer::PickId(id_base);
+                s
             },
             default_colour: self.handle_colour,
             use_default_colour: self.handle_colour[3] > 0.0,

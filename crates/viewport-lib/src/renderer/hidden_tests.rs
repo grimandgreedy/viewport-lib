@@ -53,19 +53,17 @@ fn empty_frame() -> FrameData {
 }
 
 fn visible() -> ItemSettings {
-    ItemSettings {
-        hidden: false,
-        pick_id: PickId(1),
-        ..Default::default()
-    }
+    let mut s = ItemSettings::default();
+    s.hidden = false;
+    s.pick_id = PickId(1);
+    s
 }
 
 fn hidden() -> ItemSettings {
-    ItemSettings {
-        hidden: true,
-        pick_id: PickId(2),
-        ..Default::default()
-    }
+    let mut s = ItemSettings::default();
+    s.hidden = true;
+    s.pick_id = PickId(2);
+    s
 }
 
 /// Single-pass regression test: every non-mesh pipeline must drop hidden items

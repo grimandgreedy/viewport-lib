@@ -302,10 +302,10 @@ impl ViewportRenderer {
             let Some(pid) = item.material.shading_plugin else {
                 continue;
             };
-            if !resources.material_plugin_needs_build(pid) || cold_seen.contains(&pid.plugin) {
+            if !resources.material_plugin_needs_build(pid) || cold_seen.contains(&pid.plugin_index()) {
                 continue;
             }
-            cold_seen.push(pid.plugin);
+            cold_seen.push(pid.plugin_index());
             if plugin_builds >= MATERIAL_PLUGIN_BUILDS_PER_PREPARE {
                 plugin_builds_deferred += 1;
                 continue;

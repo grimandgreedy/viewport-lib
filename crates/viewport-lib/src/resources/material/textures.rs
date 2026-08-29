@@ -1259,7 +1259,7 @@ impl DeviceResources {
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             lut_id.map(|id| id.0 as u64).unwrap_or(u64::MAX),
             attr_hash,
-            matcap_id.map(|id| id.index as u64).unwrap_or(u64::MAX),
+            matcap_id.map(|id| id.index() as u64).unwrap_or(u64::MAX),
             warp_hash,
             metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             emissive_texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -1353,8 +1353,8 @@ impl DeviceResources {
 
         // Resolve matcap texture view : fallback to 1x1 white when no matcap active.
         let matcap_view: &crate::gpu::TextureView = match matcap_id {
-            Some(id) if id.index < self.content.matcap_views.len() => {
-                &self.content.matcap_views[id.index]
+            Some(id) if id.index() < self.content.matcap_views.len() => {
+                &self.content.matcap_views[id.index()]
             }
             _ => self
                 .content
@@ -1528,7 +1528,7 @@ impl DeviceResources {
             .hash(&mut h);
         attr_hash.hash(&mut h);
         matcap_id
-            .map(|id| id.index as u64)
+            .map(|id| id.index() as u64)
             .unwrap_or(u64::MAX)
             .hash(&mut h);
         warp_hash.hash(&mut h);
@@ -1638,8 +1638,8 @@ impl DeviceResources {
         };
 
         let matcap_view: &crate::gpu::TextureView = match matcap_id {
-            Some(id) if id.index < self.content.matcap_views.len() => {
-                &self.content.matcap_views[id.index]
+            Some(id) if id.index() < self.content.matcap_views.len() => {
+                &self.content.matcap_views[id.index()]
             }
             _ => self
                 .content
@@ -2022,7 +2022,7 @@ impl DeviceResources {
         }
 
         tracing::debug!(matcap_index = index, blendable, "matcap uploaded");
-        Ok(crate::resources::MatcapId { index, blendable })
+        Ok(crate::resources::MatcapId::from_parts(index, blendable))
     }
 
     /// Return the `MatcapId` for a built-in preset.
@@ -2193,7 +2193,7 @@ mod async_texture_tests {
 
         let tex_id = resources.upload_result_texture(id).expect("ready result");
         // The first uploaded texture lands at index 0.
-        assert_eq!(tex_id, crate::resources::TextureId(0));
+        assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
 
         // Taking the result again reports missing.
         let err = resources.upload_result_texture(id).unwrap_err();
@@ -2218,7 +2218,7 @@ mod async_texture_tests {
             .unwrap();
         drive_until_ready(&mut resources, &device, &queue, id);
         let tex_id = resources.upload_result_texture(id).expect("ready result");
-        assert_eq!(tex_id, crate::resources::TextureId(0));
+        assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
     }
 
     #[test]
@@ -2234,7 +2234,7 @@ mod async_texture_tests {
         let tex_id = resources
             .upload_texture(&device, &queue, 4, 4, &rgba)
             .unwrap();
-        assert_eq!(tex_id, crate::resources::TextureId(0));
+        assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
     }
 
     #[test]
@@ -2476,7 +2476,7 @@ mod async_texture_tests {
             .unwrap();
         drive_until_ready(&mut resources, &device, &queue, id);
         let tex_id = resources.upload_result_texture(id).expect("ready result");
-        assert_eq!(tex_id, crate::resources::TextureId(0));
+        assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
 
         let stats = resources.texture_memory_stats();
         assert_eq!(stats.used_bytes - before, 16);

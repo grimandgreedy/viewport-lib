@@ -83,25 +83,7 @@ pub(crate) struct IblResources {
     pub(crate) skybox_pipeline: crate::gpu::RenderPipeline,
 }
 
-/// Handle to one environment in the indexed set.
-///
-/// Layer 0 is the scene default (uploaded via [`upload_environment_map`]); extra
-/// environments from [`upload_environment`] take layers 1.. up to the fixed
-/// [`IBL_ENV_CAPACITY`]. The value is the array-texture layer the environment's
-/// irradiance and prefiltered specular occupy.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EnvironmentMapId(pub(crate) u32);
-
-impl EnvironmentMapId {
-    /// The scene default environment (array layer 0).
-    pub const DEFAULT: Self = Self(0);
-
-    /// The array layer this environment occupies.
-    pub fn index(self) -> u32 {
-        self.0
-    }
-}
+pub use viewport_lib_types::ids::EnvironmentMapId;
 
 /// Maximum number of environment-selection zones uploaded to the GPU at once.
 /// Extra zones past this are dropped (with a log). The per-fragment zone loop
@@ -182,7 +164,7 @@ pub fn set_environment_zones(
             .iter()
             .map(|z| EnvZoneGpu {
                 center: z.bounds.center().into(),
-                layer: z.environment.0,
+                layer: z.environment.index(),
                 half_extents: z.bounds.half_extents().into(),
                 fade: z.fade_distance,
                 parallax: u32::from(z.parallax),
@@ -322,7 +304,7 @@ pub fn begin_upload_environment(
         alloc_env_layer(resources).ok_or(crate::error::ViewportError::TooManyEnvironments {
             max: IBL_ENV_CAPACITY,
         })?;
-    let env = EnvironmentMapId(layer);
+    let env = EnvironmentMapId::from_raw(layer);
     let id = begin_upload_layer(resources, device, queue, pixels, width, height, env)?;
     Ok((id, env))
 }
@@ -350,7 +332,7 @@ fn begin_upload_layer(
     let needs_brdf = resources.ibl.brdf_lut_texture.is_none();
     let (irr_array, pref_array) = ensure_ibl_arrays(resources, device, compute_supported);
     let is_default = env == EnvironmentMapId::DEFAULT;
-    let layer = env.0;
+    let layer = env.index();
 
     let mut runner = resources.jobs.lock().expect("upload job runner poisoned");
     let id = if compute_supported {
