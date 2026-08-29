@@ -104,6 +104,7 @@ impl ViewportRenderer {
                         glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, *range);
                     light_proj * light_view
                 }
+                _ => unreachable!("unhandled LightKind variant"),
             }
         }
 
@@ -277,6 +278,7 @@ impl ViewportRenderer {
                     radius: *radius,
                     _pad: [0.0; 2],
                 },
+                _ => unreachable!("unhandled LightKind variant"),
             }
         }
 
@@ -340,6 +342,7 @@ impl ViewportRenderer {
                     }
                     keep
                 }
+                _ => false,
             })
             .collect();
         *last_frustum_culled_lights = frustum_culled;
@@ -379,6 +382,7 @@ impl ViewportRenderer {
                             // Light is fully relevant within `range`; fades to ~0 beyond 4x range.
                             (range / (range + d.max(0.0))).clamp(0.0, 1.0)
                         }
+                        _ => 1.0,
                     };
                     (l.importance.max(0.0) * proximity, *l)
                 })
@@ -544,6 +548,7 @@ impl ViewportRenderer {
                     let _ = position;
                     glam::Vec3::from(*direction).normalize()
                 }
+                _ => unreachable!("unhandled LightKind variant"),
             }
         } else {
             glam::Vec3::new(0.3, 1.0, 0.5).normalize()
@@ -663,6 +668,7 @@ impl ViewportRenderer {
                     ShadowFilter::Hard => 2,
                     ShadowFilter::PcfHigh => 3,
                     ShadowFilter::PcssFast => 4,
+                    _ => 0,
                 },
                 pcss_light_radius: lighting.shadows.pcss_light_radius,
                 atlas_rects,
@@ -803,6 +809,7 @@ impl ViewportRenderer {
                         position, range, ..
                     } => (position, range),
                     LightKind::Directional { .. } => continue,
+                    _ => continue,
                 };
                 let view_depth = -view_mat.transform_point3(glam::Vec3::from(position)).z;
                 light_far = light_far.max(view_depth + range);
@@ -892,6 +899,7 @@ impl ViewportRenderer {
                                 .normalize_or_zero();
                             (view_pos, range, 2u32, view_dir, outer_angle.cos())
                         }
+                        _ => unreachable!("unhandled LightKind variant"),
                     };
                     ActiveLightView {
                         view_pos_range: [view_pos.x, view_pos.y, view_pos.z, range],

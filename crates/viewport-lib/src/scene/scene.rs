@@ -305,14 +305,15 @@ fn resolve_light_to_world(src: &LightSource, world: glam::Mat4) -> LightSource {
                 radius: *radius,
             }
         }
+        _ => unreachable!("unhandled LightKind variant"),
     };
-    LightSource {
-        kind,
-        colour: src.colour,
-        intensity: src.intensity,
-        importance: src.importance,
-        cast_shadows: src.cast_shadows,
-    }
+    let mut out = LightSource::default();
+    out.kind = kind;
+    out.colour = src.colour;
+    out.intensity = src.intensity;
+    out.importance = src.importance;
+    out.cast_shadows = src.cast_shadows;
+    out
 }
 
 /// Default layer ID (always exists, cannot be removed).

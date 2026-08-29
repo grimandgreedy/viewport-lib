@@ -17,6 +17,7 @@
 pub mod camera;
 pub mod colourmap;
 pub mod data;
+pub mod effects;
 pub mod error;
 pub mod ids;
 pub mod scene;

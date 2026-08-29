@@ -88,6 +88,7 @@ pub fn build_light_glyphs(
                 let v = world.transform_vector3(d).normalize_or_zero();
                 (GlyphType::Arrow, v)
             }
+            _ => unreachable!("unhandled LightKind variant"),
         };
 
         let mut g = GlyphItem::default();
@@ -137,6 +138,7 @@ pub fn build_light_glyphs(
                     polylines.push(pl);
                 }
                 LightKind::Directional { .. } => {}
+                _ => {}
             }
         }
     }
@@ -183,14 +185,15 @@ fn resolve_light_for_glyph(src: &LightSource, world: glam::Mat4) -> LightSource 
                 radius: *radius,
             }
         }
+        _ => unreachable!("unhandled LightKind variant"),
     };
-    LightSource {
-        kind,
-        colour: src.colour,
-        intensity: src.intensity,
-        importance: src.importance,
-        cast_shadows: src.cast_shadows,
-    }
+    let mut out = LightSource::default();
+    out.kind = kind;
+    out.colour = src.colour;
+    out.intensity = src.intensity;
+    out.importance = src.importance;
+    out.cast_shadows = src.cast_shadows;
+    out
 }
 
 /// Build a polyline outline for a spot cone: the rim circle at the cone
