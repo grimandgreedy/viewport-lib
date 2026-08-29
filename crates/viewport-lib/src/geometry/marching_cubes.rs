@@ -136,16 +136,18 @@ fn gradient_at(volume: &VolumeData, pos: [f32; 3]) -> [f32; 3] {
 pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
     let [nx, ny, nz] = volume.dims;
     if nx < 2 || ny < 2 || nz < 2 {
-        return MeshData {
-            positions: Vec::new(),
-            normals: Vec::new(),
-            indices: Vec::new(),
-            uvs: None,
-            tangents: None,
-            vertex_colours: None,
-            attributes: HashMap::new(),
-            extension_attributes: None,
-            submeshes: Vec::new(),
+        return {
+            let mut m = MeshData::default();
+            m.positions = Vec::new();
+            m.normals = Vec::new();
+            m.indices = Vec::new();
+            m.uvs = None;
+            m.tangents = None;
+            m.vertex_colours = None;
+            m.attributes = HashMap::new();
+            m.extension_attributes = None;
+            m.submeshes = Vec::new();
+            m
         };
     }
 
@@ -184,16 +186,15 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
         extract_isosurface_slab(volume, isovalue, 0, nz - 1)
     };
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: None,
-        tangents: None,
-        vertex_colours: None,
-        attributes: HashMap::new(),
-        extension_attributes: None,
-        submeshes: Vec::new(),
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = None;
+        m.tangents = None;
+        m.vertex_colours = None;
+        m.attributes = HashMap::new();
+        m.extension_attributes = None;
+        m.submeshes = Vec::new();
+        m
     }
 }
 

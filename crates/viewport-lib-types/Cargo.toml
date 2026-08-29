@@ -20,3 +20,4 @@ serde = ["dep:serde", "glam/serde"]
 [dependencies]
 glam = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
+thiserror = "2.0"

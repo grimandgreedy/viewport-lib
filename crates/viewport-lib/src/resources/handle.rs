@@ -8,7 +8,7 @@
 //! stores wrap.
 
 pub use viewport_lib_types::ids::ContentHandle;
-pub(crate) use viewport_lib_types::{registry_handle, slot_handle};
+pub(crate) use viewport_lib_types::slot_handle;
 
 /// One slot in a [`SlotStore`]: the value when occupied, the slot's current
 /// generation, and the GPU byte size charged for it.

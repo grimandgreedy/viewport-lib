@@ -16,4 +16,6 @@
 
 pub mod colourmap;
 pub mod data;
+pub mod error;
 pub mod ids;
+pub mod scene;

@@ -527,16 +527,18 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
     let face_to_cell: Vec<u32> = boundary.iter().map(|(ci, _)| *ci as u32).collect();
 
     (
-        MeshData {
-            positions: data.positions.clone(),
-            normals,
-            indices,
-            uvs: None,
-            tangents: None,
-            vertex_colours: None,
-            attributes,
-            extension_attributes: None,
-            submeshes: Vec::new(),
+        {
+            let mut m = MeshData::default();
+            m.positions = data.positions.clone();
+            m.normals = normals;
+            m.indices = indices;
+            m.uvs = None;
+            m.tangents = None;
+            m.vertex_colours = None;
+            m.attributes = attributes;
+            m.extension_attributes = None;
+            m.submeshes = Vec::new();
+            m
         },
         face_to_cell,
     )
@@ -1171,16 +1173,15 @@ pub fn extract_clipped_volume_faces(
     let face_to_cell: Vec<u32> = indexed_tris.iter().map(|(ci, _)| *ci as u32).collect();
 
     (
-        MeshData {
-            positions,
-            normals,
-            indices,
-            uvs: None,
-            tangents: None,
-            vertex_colours: None,
-            attributes,
-            extension_attributes: None,
-            submeshes: Vec::new(),
+        {
+            let mut m = MeshData::new(positions, normals, indices);
+            m.uvs = None;
+            m.tangents = None;
+            m.vertex_colours = None;
+            m.attributes = attributes;
+            m.extension_attributes = None;
+            m.submeshes = Vec::new();
+            m
         },
         face_to_cell,
     )

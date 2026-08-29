@@ -50,12 +50,10 @@ pub fn cube(size: f32) -> MeshData {
         .flat_map(|_| [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
         .collect();
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -108,12 +106,10 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -134,12 +130,10 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
     let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     let indices = vec![0, 1, 2, 0, 2, 3];
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -228,12 +222,10 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -286,12 +278,10 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
         .flat_map(|_| [[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
         .collect();
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -327,20 +317,18 @@ fn box_unwrap_uvs() -> Vec<[f32; 2]> {
 /// face), each face here owns a distinct atlas tile, making per-face texturing
 /// and painting independent.
 pub fn cube_unwrapped(size: f32) -> MeshData {
-    MeshData {
-        uvs: Some(box_unwrap_uvs()),
-        ..cube(size)
-    }
+    let mut m = cube(size);
+    m.uvs = Some(box_unwrap_uvs());
+    m
 }
 
 /// Rectangular box with a **box-unwrap** UV layout: the [`cuboid`] counterpart of
 /// [`cube_unwrapped`]. Geometry matches [`cuboid`]; each face owns its own atlas
 /// tile so faces texture / paint independently.
 pub fn cuboid_unwrapped(width: f32, height: f32, depth: f32) -> MeshData {
-    MeshData {
-        uvs: Some(box_unwrap_uvs()),
-        ..cuboid(width, height, depth)
-    }
+    let mut m = cuboid(width, height, depth);
+    m.uvs = Some(box_unwrap_uvs());
+    m
 }
 
 /// Cone with tip at +Z and base at -Z, centered at the origin.
@@ -411,12 +399,10 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -534,12 +520,10 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -601,12 +585,10 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -676,12 +658,10 @@ fn swept_tube<F: Fn(u32) -> ([f32; 3], [f32; 2])>(
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -856,12 +836,10 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
         })
         .collect();
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1008,12 +986,10 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1046,12 +1022,10 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1118,12 +1092,10 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
         .flat_map(|_| [[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
         .collect();
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1191,12 +1163,10 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1238,12 +1208,10 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         uvs.push([u, 1.0]); // outer
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1310,12 +1278,10 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1403,12 +1369,10 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
@@ -1453,12 +1417,10 @@ pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
         }
     }
 
-    MeshData {
-        positions,
-        normals,
-        indices,
-        uvs: Some(uvs),
-        ..MeshData::default()
+    {
+        let mut m = MeshData::new(positions, normals, indices);
+        m.uvs = Some(uvs);
+        m
     }
 }
 
