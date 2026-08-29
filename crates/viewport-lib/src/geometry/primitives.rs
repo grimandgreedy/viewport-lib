@@ -50,11 +50,9 @@ pub fn cube(size: f32) -> MeshData {
         .flat_map(|_| [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
         .collect();
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// UV sphere centered at the origin.
@@ -106,11 +104,9 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         }
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Flat XY plane centered at the origin (Z-up world: this is the ground plane).
@@ -130,11 +126,9 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
     let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     let indices = vec![0, 1, 2, 0, 2, 3];
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Cylinder centered at the origin, axis along Z.
@@ -222,11 +216,9 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Non-uniform box (cuboid) centered at the origin.
@@ -278,11 +270,9 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
         .flat_map(|_| [[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
         .collect();
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Box-unwrap UVs for the shared 24-vertex cube / cuboid layout: each of the six
@@ -399,11 +389,9 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Capsule (cylinder body with hemispherical caps) centered at the origin, axis along Z.
@@ -520,11 +508,9 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
         }
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Torus centered at the origin, lying in the XY plane.
@@ -585,11 +571,9 @@ pub fn torus(major_radius: f32, minor_radius: f32, sectors: u32, stacks: u32) ->
         }
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Sweep a circular tube of radius `minor_radius` along a closed centre-line in
@@ -658,11 +642,9 @@ fn swept_tube<F: Fn(u32) -> ([f32; 3], [f32; 2])>(
         }
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Elliptic torus centered at the origin, lying in the XY plane.
@@ -836,11 +818,9 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
         })
         .collect();
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 fn ico_midpoint(
@@ -986,11 +966,9 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Flat disk in the XY plane, centered at the origin, normal pointing +Z.
@@ -1022,11 +1000,9 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Camera frustum mesh for visualization.
@@ -1092,11 +1068,9 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
         .flat_map(|_| [[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
         .collect();
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Hemisphere (upper half of a UV sphere) centered at the origin, dome facing +Z.
@@ -1163,11 +1137,9 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
         uvs.push([0.5 + 0.5 * a.cos(), 0.5 + 0.5 * a.sin()]);
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Flat ring (annulus) in the XY plane, centered at the origin, normal pointing +Z.
@@ -1208,11 +1180,9 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
         uvs.push([u, 1.0]); // outer
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Ellipsoid centered at the origin.
@@ -1278,11 +1248,9 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
         }
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Helical spring centered at the origin, axis along Z.
@@ -1369,11 +1337,9 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
         }
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 /// Subdivided plane in the XY plane, centered at the origin, normal pointing +Z.
@@ -1417,11 +1383,9 @@ pub fn grid_plane(width: f32, depth: f32, cols: u32, rows: u32) -> MeshData {
         }
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = Some(uvs);
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = Some(uvs);
+    m
 }
 
 #[cfg(test)]

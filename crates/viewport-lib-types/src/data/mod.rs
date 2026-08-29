@@ -3,4 +3,5 @@
 
 pub mod attribute;
 pub mod mesh;
+pub mod point;
 pub mod volume;

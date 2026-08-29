@@ -317,16 +317,14 @@ pub(crate) fn extract_sparse_boundary(data: &SparseVolumeGridData) -> MeshData {
         attributes.insert(name.clone(), AttributeData::Face(face_scalars));
     }
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = None;
-        m.tangents = None;
-        m.vertex_colours = None;
-        m.attributes = attributes;
-        m.extension_attributes = None;
-        m.submeshes = Vec::new();
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = None;
+    m.tangents = None;
+    m.vertex_colours = None;
+    m.attributes = attributes;
+    m.extension_attributes = None;
+    m.submeshes = Vec::new();
+    m
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod camera;
 pub mod colourmap;
 pub mod data;
 pub mod error;

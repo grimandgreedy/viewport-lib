@@ -186,16 +186,14 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
         extract_isosurface_slab(volume, isovalue, 0, nz - 1)
     };
 
-    {
-        let mut m = MeshData::new(positions, normals, indices);
-        m.uvs = None;
-        m.tangents = None;
-        m.vertex_colours = None;
-        m.attributes = HashMap::new();
-        m.extension_attributes = None;
-        m.submeshes = Vec::new();
-        m
-    }
+    let mut m = MeshData::new(positions, normals, indices);
+    m.uvs = None;
+    m.tangents = None;
+    m.vertex_colours = None;
+    m.attributes = HashMap::new();
+    m.extension_attributes = None;
+    m.submeshes = Vec::new();
+    m
 }
 
 /// Process one Z-slab of cells: `iz_start..iz_end` (exclusive end).
