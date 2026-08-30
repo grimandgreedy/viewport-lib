@@ -100,6 +100,12 @@ pub use viewport_lib_types as vplt;
 /// `vplg` alias: `viewport_lib::vplg::marching_cubes::extract_isosurface`.
 pub use viewport_lib_geometry as vplg;
 
+/// The input crate (`viewport-lib-input`: pipeline + camera controllers),
+/// re-exported under the short `vpli` alias: `viewport_lib::vpli::CameraController`.
+/// Most consumers can use the crate-root re-exports instead
+/// (`viewport_lib::OrbitCameraController`).
+pub use viewport_lib_input as vpli;
+
 /// Error types for the viewport library.
 pub mod error;
 

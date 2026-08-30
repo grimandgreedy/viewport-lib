@@ -58,3 +58,19 @@ impl CameraController for controllers::OrbitCameraController {
 // The first/third-person controllers take an extra per-frame position (eye /
 // target), so they do not fit this two-argument shape; use their inherent
 // `apply` methods directly. See `controllers`.
+
+pub mod prelude {
+    //! The input types most code reaches for, in one glob import:
+    //! `use viewport_lib_input::prelude::*;`.
+    //!
+    //! The common set, not the whole surface. Reach into [`crate::input`] and
+    //! [`crate::controllers`] for the rest.
+    pub use crate::CameraController;
+    pub use crate::controllers::{
+        CameraAnimator, FirstPersonCameraController, OrbitCameraController,
+        ThirdPersonCameraController, TurntableController,
+    };
+    pub use crate::input::ViewportInput;
+    pub use viewport_lib_types::camera::Camera;
+    pub use viewport_lib_types::input::{Action, ActionFrame, ViewportContext, ViewportEvent};
+}
