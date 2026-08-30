@@ -111,7 +111,6 @@ pub fn volume_mesh_cell_vectors_to_glyphs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn vertex_vectors_length_matches() {
@@ -138,26 +137,23 @@ mod tests {
 
     #[test]
     fn cell_vectors_tet_centroid() {
-        let data = VolumeMeshData {
-            positions: vec![
-                [0.0, 0.0, 0.0],
-                [4.0, 0.0, 0.0],
-                [0.0, 4.0, 0.0],
-                [0.0, 0.0, 4.0],
-            ],
-            cells: vec![[
-                0,
-                1,
-                2,
-                3,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-                CELL_SENTINEL,
-            ]],
-            cell_scalars: HashMap::new(),
-            cell_colours: HashMap::new(),
-        };
+        let mut data = VolumeMeshData::default();
+        data.positions = vec![
+            [0.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [0.0, 4.0, 0.0],
+            [0.0, 0.0, 4.0],
+        ];
+        data.cells = vec![[
+            0,
+            1,
+            2,
+            3,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+            CELL_SENTINEL,
+        ]];
         let cell_vectors = vec![[1.0, 0.0, 0.0]];
         let item = volume_mesh_cell_vectors_to_glyphs(&data, &cell_vectors, 1.0);
         assert_eq!(item.positions.len(), 1);
@@ -169,12 +165,7 @@ mod tests {
 
     #[test]
     fn cell_vectors_empty_data() {
-        let data = VolumeMeshData {
-            positions: vec![],
-            cells: vec![],
-            cell_scalars: HashMap::new(),
-            cell_colours: HashMap::new(),
-        };
+        let data = VolumeMeshData::default();
         let item = volume_mesh_cell_vectors_to_glyphs(&data, &[], 1.0);
         assert!(item.positions.is_empty());
     }

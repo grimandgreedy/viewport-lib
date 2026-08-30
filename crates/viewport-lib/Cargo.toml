@@ -28,6 +28,7 @@ glam = { workspace = true }
 # resolution and crates.io publish order are exercised; its types are moved in
 # incrementally and re-exported from here.
 viewport-lib-types = { path = "../viewport-lib-types", version = "0.1.0" }
+viewport-lib-geometry = { path = "../viewport-lib-geometry", version = "0.1.0" }
 bytemuck = { version = "1.25", features = ["derive"] }
 parry3d = "0.26"
 bitflags = "2"

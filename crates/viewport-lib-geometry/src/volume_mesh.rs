@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
-use crate::resources::types::{AttributeData, MeshData};
+use viewport_lib_types::data::{attribute::AttributeData, mesh::MeshData};
 
 const PARALLEL_THRESHOLD: usize = 1024;
 
@@ -40,7 +40,7 @@ pub const CELL_SENTINEL: u32 = u32::MAX;
 /// than 8 vertices, fill unused slots with [`CELL_SENTINEL`] (`u32::MAX`).
 ///
 /// ```
-/// use viewport_lib::{VolumeMeshData, CELL_SENTINEL};
+/// use viewport_lib_geometry::volume_mesh::{VolumeMeshData, CELL_SENTINEL};
 ///
 /// // Two tets sharing vertices 0-1-2
 /// let mut data = VolumeMeshData::default();
@@ -72,13 +72,13 @@ pub struct VolumeMeshData {
     /// Named per-cell scalar attributes (one `f32` per cell).
     ///
     /// Automatically remapped to boundary face scalars during upload so they
-    /// can be visualised via [`AttributeKind::Face`](super::types::AttributeKind::Face).
+    /// can be visualised via [`AttributeKind::Face`](viewport_lib_types::data::attribute::AttributeKind::Face).
     pub cell_scalars: HashMap<String, Vec<f32>>,
 
     /// Named per-cell RGBA colour attributes (one `[f32; 4]` per cell).
     ///
     /// Automatically remapped to boundary face colours during upload, rendered
-    /// via [`AttributeKind::FaceColour`](super::types::AttributeKind::FaceColour).
+    /// via [`AttributeKind::FaceColour`](viewport_lib_types::data::attribute::AttributeKind::FaceColour).
     pub cell_colours: HashMap<String, Vec<[f32; 4]>>,
 }
 
@@ -98,7 +98,8 @@ pub struct VolumeMeshData {
 /// vertex). This is the single home for the tet face winding; the CPU picker
 /// (`crate::interaction::query::picking`) references it rather than keeping its
 /// own copy.
-pub(crate) const TET_FACES: [[usize; 3]; 4] = [
+#[doc(hidden)]
+pub const TET_FACES: [[usize; 3]; 4] = [
     [1, 2, 3], // opposite v0
     [0, 3, 2], // opposite v1
     [0, 1, 3], // opposite v2
@@ -390,13 +391,14 @@ fn correct_winding(tri: &mut [u32; 3], interior_ref: &[f32; 3], positions: &[[f3
 /// Convert [`VolumeMeshData`] into a standard [`MeshData`] by extracting the
 /// boundary surface and remapping per-cell attributes to per-face attributes.
 ///
-/// After this step the boundary mesh is uploaded
-/// via [`upload_mesh_data`](super::DeviceResources::upload_mesh_data)
-/// and rendered exactly like any other surface mesh.
+/// After this step the boundary mesh is uploaded via
+/// `DeviceResources::upload_mesh_data` and rendered exactly like any other
+/// surface mesh.
 ///
 /// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell
 /// index that boundary triangle `i` belongs to.
-pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u32>) {
+#[doc(hidden)]
+pub fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u32>) {
     let n_verts = data.positions.len();
 
     // Generate face entries (parallel above threshold, sequential below). Each
@@ -619,8 +621,8 @@ pub(crate) fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u3
 ///
 /// Each entry in `clip_planes` is `[nx, ny, nz, d]` where a point `p` is on
 /// the kept side when `dot(p, [nx,ny,nz]) + d >= 0`.  This is the same
-/// encoding as [`ClipPlanesUniform::planes`](crate::renderer::types::ClipPlanesUniform)
-/// so values can be forwarded to both the CPU path and the GPU clip shader.
+/// encoding as `viewport-lib`'s clip-plane uniform, so values can be forwarded
+/// to both the CPU path and the GPU clip shader.
 ///
 /// Passing an empty slice returns the same result as [`extract_boundary_faces`].
 ///
@@ -1257,7 +1259,7 @@ impl VolumeMeshData {
     /// if a cell references a vertex index out of range.
     pub fn to_tet_mesh(
         &self,
-    ) -> Result<(super::tetmesh::TetMesh, ConversionReport), ToTetMeshError> {
+    ) -> Result<(viewport_lib_types::data::volume::TetMesh, ConversionReport), ToTetMeshError> {
         use glam::Vec3;
 
         let mut tet_indices: Vec<[u32; 4]> = Vec::new();
@@ -1300,7 +1302,7 @@ impl VolumeMeshData {
         }
 
         Ok((
-            super::tetmesh::TetMesh::new(positions, tets),
+            viewport_lib_types::data::volume::TetMesh::new(positions, tets),
             ConversionReport {
                 dropped_non_tet_cells: dropped,
             },
@@ -1361,7 +1363,8 @@ const PYRAMID_TO_TETS: [[usize; 4]; 2] = [[0, 1, 2, 4], [0, 2, 3, 4]];
 /// - Pyramid -> 2 tets
 /// - Wedge -> 3 tets
 /// - Hex -> 6 tets (Freudenthal split)
-pub(crate) fn for_each_tet<F>(data: &VolumeMeshData, attribute: &str, mut f: F)
+#[doc(hidden)]
+pub fn for_each_tet<F>(data: &VolumeMeshData, attribute: &str, mut f: F)
 where
     F: FnMut([[f32; 3]; 4], f32),
 {
@@ -1397,7 +1400,8 @@ where
 /// wedge -> 3, hex -> 6), skipping all vertex lookups. The result aligns
 /// one-to-one with the tet geometry buffer, so it can be written straight into
 /// the parallel scalar buffer.
-pub(crate) fn tet_scalars(data: &VolumeMeshData, attribute: &str) -> Vec<f32> {
+#[doc(hidden)]
+pub fn tet_scalars(data: &VolumeMeshData, attribute: &str) -> Vec<f32> {
     let cell_scalars = data.cell_scalars.get(attribute);
     let mut out = Vec::with_capacity(data.cells.len());
     for (cell_idx, cell) in data.cells.iter().enumerate() {

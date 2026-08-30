@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/viewport-lib", "crates/viewport-lib-types"]
+members = [
+    "crates/viewport-lib",
+    "crates/viewport-lib-types",
+    "crates/viewport-lib-geometry",
+]
 
 # Shared dependency pins. Both crates take `glam` from here so the version can
 # never drift across the workspace boundary (a mismatch would make `Vec3`/`Mat4`

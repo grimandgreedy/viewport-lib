@@ -1,8 +1,7 @@
 //! CPU-side marching cubes isosurface extraction from volumetric scalar data.
 //!
-//! The output is a standard [`MeshData`](crate::resources::MeshData) that can be uploaded via
-//! [`upload_mesh_data()`](crate::DeviceResources::upload_mesh_data) or
-//! [`replace_mesh_data()`](crate::DeviceResources::replace_mesh_data).
+//! The output is a standard [`MeshData`] that `viewport-lib` can upload via
+//! `DeviceResources::upload_mesh_data` or `replace_mesh_data`.
 //!
 //! # Example
 //!
@@ -17,9 +16,9 @@
 //! // mesh.positions, mesh.normals, mesh.indices ready for upload.
 //! ```
 
-use crate::resources::MeshData;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use viewport_lib_types::data::mesh::MeshData;
 
 /// A structured 3D scalar field on a regular grid.
 #[derive(Debug, Clone)]
@@ -405,7 +404,8 @@ const EDGE_TABLE: [u16; 256] = [
 
 /// Triangle table: up to 5 triangles (15 edge indices) per configuration. -1 = sentinel.
 #[rustfmt::skip]
-pub(crate) const TRI_TABLE: [[i8; 16]; 256] = [
+#[doc(hidden)]
+pub const TRI_TABLE: [[i8; 16]; 256] = [
     [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
     [ 0, 8, 3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
     [ 0, 1, 9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],

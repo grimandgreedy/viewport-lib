@@ -1,0 +1,18 @@
+[package]
+name = "viewport-lib-geometry"
+version = "0.1.0"
+edition = "2024"
+description = "CPU geometry algorithms for viewport-lib: marching cubes isosurfacing and unstructured volume-mesh boundary extraction, built on viewport-lib-types."
+license = "GPL-3.0-only"
+repository = "https://github.com/grimandgreedy/viewport-lib"
+homepage = "https://github.com/grimandgreedy/viewport-lib"
+documentation = "https://docs.rs/viewport-lib-geometry"
+keywords = ["3d", "geometry", "marching-cubes", "mesh", "visualization"]
+categories = ["graphics", "rendering", "algorithms"]
+rust-version = "1.85"
+publish = true
+
+[dependencies]
+viewport-lib-types = { path = "../viewport-lib-types", version = "0.1.0" }
+glam = { workspace = true }
+rayon = "1"
