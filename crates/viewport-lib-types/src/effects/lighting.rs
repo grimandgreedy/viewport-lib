@@ -378,10 +378,11 @@ pub struct LightingSettings {
     /// Ground colour for hemisphere ambient. Default [0.5, 0.55, 0.6].
     pub ground_colour: [f32; 3],
     /// Hemisphere (sky/ground) ambient fill, in the same linear scale as the
-    /// lights' lux/candela. `0.0` disables it. The default is a modest fill
-    /// (~half the default key light) so shadowed surfaces stay readable rather
-    /// than pitch black; scale it with your key light. (This term is a provisional
-    /// ambient approximation until image-based lighting carries absolute nits.)
+    /// lights' lux/candela. `0.0` disables it. The default is a gentle fill so
+    /// shadowed surfaces stay readable rather than pitch black without washing
+    /// out a surface's own colour; scale it with your key light. (This term is a
+    /// provisional ambient approximation until image-based lighting carries
+    /// absolute nits.)
     pub hemisphere_intensity: f32,
     /// Shadow-map configuration (cascades, atlas, filtering, bias, ...).
     pub shadows: ShadowSettings,
@@ -391,9 +392,9 @@ impl Default for LightingSettings {
     fn default() -> Self {
         Self {
             lights: vec![LightSource::default()],
-            sky_colour: [0.8, 0.9, 1.0],
-            ground_colour: [0.5, 0.55, 0.6],
-            hemisphere_intensity: 1.5,
+            sky_colour: [1.0, 1.0, 1.0],
+            ground_colour: [0.6, 0.6, 0.6],
+            hemisphere_intensity: 0.4,
             shadows: ShadowSettings::default(),
         }
     }
