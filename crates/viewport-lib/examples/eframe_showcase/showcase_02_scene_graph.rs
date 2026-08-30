@@ -53,10 +53,10 @@ impl App {
             [1.5, 1.5, 0.0],
         ];
         let colours = [
-            [0.9, 0.3, 0.3],
-            [0.3, 0.9, 0.3],
-            [0.3, 0.3, 0.9],
-            [0.9, 0.9, 0.3],
+            [0.68, 0.08, 0.08],
+            [0.10, 0.55, 0.13],
+            [0.10, 0.12, 0.62],
+            [0.60, 0.50, 0.05],
         ];
         for (i, (pos, colour)) in positions.iter().zip(&colours).enumerate() {
             let mesh = self.upload_box(renderer);
@@ -147,7 +147,7 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
                 "Child",
                 Some(mesh),
                 local,
-                Material::from_colour([1.0, 0.6, 0.2]),
+                Material::from_colour([0.75, 0.28, 0.05]),
             );
             app.sg_state.scene.set_parent(child_id, Some(parent_id));
             app.sg_state.selection.select_one(child_id);

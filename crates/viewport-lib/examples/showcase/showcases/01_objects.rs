@@ -48,11 +48,11 @@ impl Showcase for ObjectsShowcase {
 
         // Z-up: lay a few objects out on the ground plane.
         let objects: [(_, Vec3, [f32; 3]); 5] = [
-            (cube, Vec3::new(-3.0, 0.0, 0.5), [0.85, 0.35, 0.30]),
-            (sphere, Vec3::new(-1.2, 0.5, 0.7), [0.90, 0.70, 0.25]),
-            (torus, Vec3::new(0.8, -0.6, 0.6), [0.35, 0.75, 0.45]),
-            (cube, Vec3::new(2.4, 0.8, 0.5), [0.35, 0.55, 0.85]),
-            (sphere, Vec3::new(3.6, -0.8, 0.7), [0.65, 0.45, 0.80]),
+            (cube, Vec3::new(-3.0, 0.0, 0.5), [0.65, 0.09, 0.07]),
+            (sphere, Vec3::new(-1.2, 0.5, 0.7), [0.72, 0.42, 0.04]),
+            (torus, Vec3::new(0.8, -0.6, 0.6), [0.10, 0.50, 0.18]),
+            (cube, Vec3::new(2.4, 0.8, 0.5), [0.10, 0.26, 0.68]),
+            (sphere, Vec3::new(3.6, -0.8, 0.7), [0.38, 0.12, 0.62]),
         ];
         for (mesh, pos, colour) in objects {
             ctx.session.scene_mut().add(
