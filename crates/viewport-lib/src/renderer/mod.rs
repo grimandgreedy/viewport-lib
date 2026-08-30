@@ -521,6 +521,17 @@ pub struct ViewportRenderer {
     mesh_instance_lod_levels: std::collections::HashMap<(u64, u32), usize>,
     /// Surface items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_scene_items: Vec<SceneRenderItem>,
+    /// Broad-phase BVH over the surface `pick_scene_items`, accelerating the CPU
+    /// point pick. Lazily (re)built inside `pick()` behind a `Mutex` so `pick(&self)`
+    /// still works on the `Send + Sync` egui-callback path; the two revs below (set
+    /// in `cache_pick_items`) tell it when to rebuild vs refit.
+    pick_bvh: std::sync::Mutex<Option<crate::renderer::picking::point::PickSceneBvh>>,
+    /// Rev of the pickable surface set (pick id + mesh + geometry presence). A change
+    /// means items were added, removed, or toggled: rebuild the pick BVH.
+    pick_bvh_identity_rev: u64,
+    /// Identity rev folded with the per-item model transforms. A change while the
+    /// identity is stable means objects only moved: refit the pick BVH.
+    pick_bvh_transform_rev: u64,
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_point_cloud_items: Vec<PointCloudItem>,
     /// Gaussian splat items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -949,6 +960,9 @@ impl ViewportRenderer {
             lod_levels: std::collections::HashMap::new(),
             mesh_instance_lod_levels: std::collections::HashMap::new(),
             pick_scene_items: Vec::new(),
+            pick_bvh: std::sync::Mutex::new(None),
+            pick_bvh_identity_rev: 0,
+            pick_bvh_transform_rev: 0,
             pick_point_cloud_items: Vec::new(),
             pick_splat_items: Vec::new(),
             pick_volume_items: Vec::new(),

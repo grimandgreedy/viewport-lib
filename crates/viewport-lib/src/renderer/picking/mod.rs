@@ -6,7 +6,7 @@ mod gpu;
 pub(crate) use gpu::PendingPick;
 /// Pick mask for controlling item types and sub-element levels in pick calls.
 pub mod pick_mask;
-mod point;
+pub(crate) mod point;
 mod rect;
 
 // The sub-object vocabulary and pick-result types now live under
@@ -62,12 +62,18 @@ impl ViewportRenderer {
         self.pick_volume_surface_slice_items = frame.scene.volume_surface_slices.clone();
         self.pick_screen_image_items = frame.scene.screen_images.clone();
         self.pick_decal_items = frame.scene.decals.clone();
+
+        // Refresh the revs that tell the surface pick BVH when to rebuild vs refit.
+        self.update_pick_bvh_revs();
     }
 
     /// Empty the CPU pick caches populated by `cache_pick_items`, freeing their
     /// memory when the cache is turned off.
     pub(crate) fn clear_pick_cache(&mut self) {
         self.pick_scene_items = Vec::new();
+        *self.pick_bvh.lock().unwrap() = None;
+        self.pick_bvh_identity_rev = 0;
+        self.pick_bvh_transform_rev = 0;
         self.pick_point_cloud_items = Vec::new();
         self.pick_splat_items = Vec::new();
         self.pick_volume_items = Vec::new();

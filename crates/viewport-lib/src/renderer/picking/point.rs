@@ -80,7 +80,12 @@ impl ViewportRenderer {
 
         // 1. Surface mesh picks (FACE, VERTEX, EDGE, CELL, or OBJECT fallback).
         if wants_mesh_sub || wants_cell || wants_object {
-            for item in &self.pick_scene_items {
+            // Broad phase: only the items the ray actually pierces. The per-item body
+            // below is unchanged, so the result matches a full scan: items the ray
+            // misses never produce a hit anyway.
+            let candidates = self.pierced_surface_items(ray_origin, ray_dir);
+            for &item_index in &candidates {
+                let item = &self.pick_scene_items[item_index];
                 if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                     continue;
                 }
@@ -1223,5 +1228,229 @@ impl ViewportRenderer {
         }
 
         best.map(|(_, hit)| hit)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Broad-phase BVH over the surface pick items
+// ---------------------------------------------------------------------------
+
+use crate::resources::mesh::mesh_store::MeshStore;
+use spatial_query::{
+    Aabb as SqAabb, Bvh, LeafHit, Point, QueryFilter, QueryGeometry, Ray as SqRay,
+};
+
+/// One pickable surface leaf: an index into `pick_scene_items` and its world AABB.
+struct PickEntry {
+    item_index: usize,
+    world_aabb: SqAabb<3>,
+}
+
+/// A spatial BVH over the pickable surface items, plus the revs it was built for.
+/// Stored behind the renderer's `pick_bvh` mutex.
+pub(crate) struct PickSceneBvh {
+    bvh: Option<Bvh<3>>,
+    entries: Vec<PickEntry>,
+    identity_rev: u64,
+    transform_rev: u64,
+}
+
+/// `QueryGeometry` over the surface pick items. `test_ray` casts each mesh's cached
+/// parry `TriMesh` in mesh-local space, the same narrow phase the pick body uses, so
+/// a leaf is "pierced" exactly when the body would find an intersection.
+struct SurfaceGeom<'a> {
+    entries: &'a [PickEntry],
+    items: &'a [SceneRenderItem],
+    mesh_store: &'a MeshStore,
+}
+
+impl QueryGeometry<3> for SurfaceGeom<'_> {
+    type Id = u32;
+    type SubObject = ();
+
+    fn leaf_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn id(&self, leaf: usize) -> u32 {
+        self.entries[leaf].item_index as u32
+    }
+
+    fn world_aabb(&self, leaf: usize) -> SqAabb<3> {
+        self.entries[leaf].world_aabb
+    }
+
+    fn test_ray(&self, leaf: usize, ray: &SqRay<3>, max_toi: f32) -> Option<LeafHit<3>> {
+        let item = &self.items[self.entries[leaf].item_index];
+        let mesh = self.mesh_store.get(item.mesh_id)?;
+        let trimesh = mesh.cached_pick_trimesh()?;
+        let model = glam::Mat4::from_cols_array_2d(&item.model);
+        let inv_model = model.inverse();
+        let local_origin = inv_model.transform_point3(glam::Vec3::new(
+            ray.origin[0],
+            ray.origin[1],
+            ray.origin[2],
+        ));
+        let local_dir =
+            inv_model.transform_vector3(glam::Vec3::new(ray.dir[0], ray.dir[1], ray.dir[2]));
+        let pray = parry3d::query::Ray::new(
+            parry3d::math::Vector::new(local_origin.x, local_origin.y, local_origin.z),
+            parry3d::math::Vector::new(local_dir.x, local_dir.y, local_dir.z),
+        );
+        use parry3d::query::RayCast;
+        let toi = trimesh.cast_ray(&parry3d::math::Pose::identity(), &pray, max_toi, true)?;
+        if toi < 0.0 || toi > max_toi {
+            None
+        } else {
+            Some(LeafHit::new(toi, Point::ZERO))
+        }
+    }
+}
+
+impl ViewportRenderer {
+    /// Refresh the pickable-surface revs. Called from `cache_pick_items` each frame.
+    /// `identity_rev` captures which items are pickable (id + mesh + whether the mesh
+    /// carries CPU geometry); `transform_rev` folds the model matrices in too, so a
+    /// pure move changes only the transform rev.
+    pub(crate) fn update_pick_bvh_revs(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let mut id_hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut tf_hasher = std::collections::hash_map::DefaultHasher::new();
+        for item in &self.pick_scene_items {
+            if item.settings.hidden || item.settings.pick_id == PickId::NONE {
+                continue;
+            }
+            let pickable = self
+                .resources
+                .mesh_store
+                .get(item.mesh_id)
+                .map(|m| m.cpu_positions.is_some() && m.cpu_indices.is_some())
+                .unwrap_or(false);
+            item.settings.pick_id.0.hash(&mut id_hasher);
+            item.mesh_id.index().hash(&mut id_hasher);
+            pickable.hash(&mut id_hasher);
+            item.settings.pick_id.0.hash(&mut tf_hasher);
+            for row in &item.model {
+                for v in row {
+                    v.to_bits().hash(&mut tf_hasher);
+                }
+            }
+        }
+        let identity = id_hasher.finish();
+        self.pick_bvh_identity_rev = identity;
+        self.pick_bvh_transform_rev = identity ^ tf_hasher.finish();
+    }
+
+    /// Item indices the ray pierces, culled by the surface BVH. Lazily rebuilds the
+    /// BVH on an identity change (items added, removed, or toggled), refits it on a
+    /// pure move, and reuses it otherwise.
+    fn pierced_surface_items(&self, ray_origin: glam::Vec3, ray_dir: glam::Vec3) -> Vec<usize> {
+        let mut guard = self.pick_bvh.lock().unwrap();
+        let stale = guard
+            .as_ref()
+            .is_none_or(|b| b.identity_rev != self.pick_bvh_identity_rev);
+        if stale {
+            *guard = Some(self.build_pick_bvh());
+        } else if let Some(b) = guard.as_mut() {
+            if b.transform_rev != self.pick_bvh_transform_rev {
+                self.refit_pick_bvh(b);
+            }
+        }
+
+        let b = guard.as_ref().expect("pick BVH populated above");
+        let Some(bvh) = &b.bvh else {
+            return Vec::new();
+        };
+        if b.entries.is_empty() {
+            return Vec::new();
+        }
+        let geom = SurfaceGeom {
+            entries: &b.entries,
+            items: &self.pick_scene_items,
+            mesh_store: &self.resources.mesh_store,
+        };
+        let ray = SqRay::new_unnormalized(
+            Point([ray_origin.x, ray_origin.y, ray_origin.z]),
+            Point([ray_dir.x, ray_dir.y, ray_dir.z]),
+        );
+        bvh.raycast_all(&geom, &ray, f32::MAX, &QueryFilter::default())
+            .into_iter()
+            .map(|h| b.entries[h.leaf].item_index)
+            .collect()
+    }
+
+    /// Collect a `PickEntry` for every pickable surface item (world AABB from the
+    /// mesh's local AABB times its model). Skips hidden, un-pickable, and CPU-less
+    /// meshes, mirroring the pick body's guards.
+    fn collect_pick_entries(&self) -> Vec<PickEntry> {
+        let mut entries = Vec::new();
+        for (i, item) in self.pick_scene_items.iter().enumerate() {
+            if item.settings.hidden || item.settings.pick_id == PickId::NONE {
+                continue;
+            }
+            let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
+                continue;
+            };
+            if mesh.cpu_positions.is_none() || mesh.cpu_indices.is_none() {
+                continue;
+            }
+            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            let world = mesh.aabb.transformed(&model);
+            entries.push(PickEntry {
+                item_index: i,
+                world_aabb: SqAabb::new(
+                    Point([world.min.x, world.min.y, world.min.z]),
+                    Point([world.max.x, world.max.y, world.max.z]),
+                ),
+            });
+        }
+        entries
+    }
+
+    /// Build a fresh surface BVH for the current pickable items.
+    fn build_pick_bvh(&self) -> PickSceneBvh {
+        let entries = self.collect_pick_entries();
+        let bvh = if entries.is_empty() {
+            None
+        } else {
+            let geom = SurfaceGeom {
+                entries: &entries,
+                items: &self.pick_scene_items,
+                mesh_store: &self.resources.mesh_store,
+            };
+            Some(Bvh::build(&geom))
+        };
+        PickSceneBvh {
+            bvh,
+            entries,
+            identity_rev: self.pick_bvh_identity_rev,
+            transform_rev: self.pick_bvh_transform_rev,
+        }
+    }
+
+    /// Refit the surface BVH in place: recompute each leaf's world AABB from the
+    /// current model, then propagate bounds up the existing tree. Valid because the
+    /// identity rev is unchanged, so the item set and order match the build.
+    fn refit_pick_bvh(&self, b: &mut PickSceneBvh) {
+        for entry in &mut b.entries {
+            let item = &self.pick_scene_items[entry.item_index];
+            let model = glam::Mat4::from_cols_array_2d(&item.model);
+            if let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) {
+                let world = mesh.aabb.transformed(&model);
+                entry.world_aabb = SqAabb::new(
+                    Point([world.min.x, world.min.y, world.min.z]),
+                    Point([world.max.x, world.max.y, world.max.z]),
+                );
+            }
+        }
+        if let Some(bvh) = &mut b.bvh {
+            let geom = SurfaceGeom {
+                entries: &b.entries,
+                items: &self.pick_scene_items,
+                mesh_store: &self.resources.mesh_store,
+            };
+            bvh.refit(&geom);
+        }
+        b.transform_rev = self.pick_bvh_transform_rev;
     }
 }
