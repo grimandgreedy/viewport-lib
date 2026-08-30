@@ -71,7 +71,13 @@ impl ViewportRenderer {
 
         // 1. Surface mesh picks (FACE, VERTEX, CELL, or OBJECT).
         if wants_face || wants_vertex || wants_cell || wants_object {
-            for item in &self.pick_scene_items {
+            // Broad phase: only the items whose world AABB falls in the rect's
+            // frustum. The per-item body is unchanged, so the result matches a full
+            // scan; items outside the frustum project outside the rect anyway.
+            let candidates =
+                self.rect_candidate_items(rect_min, rect_max, viewport_size, view_proj);
+            for &item_index in &candidates {
+                let item = &self.pick_scene_items[item_index];
                 if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                     continue;
                 }

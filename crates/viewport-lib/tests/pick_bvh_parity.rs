@@ -134,3 +134,98 @@ fn bvh_cpu_pick_matches_gpu_pick_many_objects() {
         "CPU pick disagreed with GPU at {disagree} interior pixels"
     );
 }
+
+#[test]
+fn bvh_cpu_rect_pick_matches_oracle() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    renderer.set_cpu_pick_cache(true);
+    let mut frame = pick_frame();
+
+    let mesh = box_mesh();
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &mesh)
+        .expect("upload box mesh");
+
+    // Boxes at various positions and depths, including a far and a near one, so the
+    // rect-frustum broad phase is exercised across the whole depth range.
+    let placements: [(glam::Vec3, f32, u64); 7] = [
+        (glam::Vec3::new(0.0, 0.0, 0.0), 0.6, 1),
+        (glam::Vec3::new(1.5, 0.0, 0.0), 0.5, 2),
+        (glam::Vec3::new(-1.5, 0.0, 0.0), 0.5, 3),
+        (glam::Vec3::new(0.0, 1.5, 0.0), 0.5, 4),
+        (glam::Vec3::new(0.0, -1.5, 0.0), 0.5, 5),
+        (glam::Vec3::new(0.3, 0.3, -6.0), 0.5, 6),
+        (glam::Vec3::new(0.0, 0.0, 3.0), 0.4, 7),
+    ];
+    let mut items = Vec::new();
+    for (t, s, id) in placements {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.model = glam::Mat4::from_scale_rotation_translation(
+            glam::Vec3::splat(s),
+            glam::Quat::IDENTITY,
+            t,
+        )
+        .to_cols_array_2d();
+        item.settings.pick_id = PickId(id);
+        items.push(item);
+    }
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    let viewport = glam::Vec2::new(64.0, 64.0);
+    let view_proj = frame.camera.render_camera.view_proj();
+
+    let rects = [
+        (glam::Vec2::new(0.0, 0.0), glam::Vec2::new(64.0, 64.0)),
+        (glam::Vec2::new(20.0, 20.0), glam::Vec2::new(44.0, 44.0)),
+        (glam::Vec2::new(0.0, 0.0), glam::Vec2::new(32.0, 32.0)),
+        (glam::Vec2::new(28.0, 28.0), glam::Vec2::new(36.0, 36.0)),
+    ];
+
+    for (rmin, rmax) in rects {
+        let got: std::collections::BTreeSet<u64> = renderer
+            .pick_rect(rmin, rmax, viewport, view_proj, PickMask::OBJECT)
+            .objects
+            .into_iter()
+            .collect();
+
+        // Oracle: an object is selected iff any triangle centroid projects into the
+        // rect (in front of the camera). This is the linear scan's OBJECT logic,
+        // computed here independently of the BVH candidate set.
+        let mut expected = std::collections::BTreeSet::new();
+        for (t, s, id) in placements {
+            let model = glam::Mat4::from_scale_rotation_translation(
+                glam::Vec3::splat(s),
+                glam::Quat::IDENTITY,
+                t,
+            );
+            let mvp = view_proj * model;
+            for tri in mesh.indices.chunks(3) {
+                if tri.len() < 3 {
+                    continue;
+                }
+                let c = (glam::Vec3::from(mesh.positions[tri[0] as usize])
+                    + glam::Vec3::from(mesh.positions[tri[1] as usize])
+                    + glam::Vec3::from(mesh.positions[tri[2] as usize]))
+                    / 3.0;
+                let clip = mvp * c.extend(1.0);
+                if clip.w <= 0.0 {
+                    continue;
+                }
+                let sx = (clip.x / clip.w + 1.0) * 0.5 * viewport.x;
+                let sy = (1.0 - clip.y / clip.w) * 0.5 * viewport.y;
+                if sx >= rmin.x && sx <= rmax.x && sy >= rmin.y && sy <= rmax.y {
+                    expected.insert(id);
+                    break;
+                }
+            }
+        }
+        assert_eq!(got, expected, "rect {rmin:?}..{rmax:?}");
+    }
+}

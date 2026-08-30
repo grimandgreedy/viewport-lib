@@ -1345,6 +1345,107 @@ impl ViewportRenderer {
     /// BVH on an identity change (items added, removed, or toggled), refits it on a
     /// pure move, and reuses it otherwise.
     fn pierced_surface_items(&self, ray_origin: glam::Vec3, ray_dir: glam::Vec3) -> Vec<usize> {
+        self.query_pick_bvh(Vec::new(), |bvh, geom| {
+            let ray = SqRay::new_unnormalized(
+                Point([ray_origin.x, ray_origin.y, ray_origin.z]),
+                Point([ray_dir.x, ray_dir.y, ray_dir.z]),
+            );
+            bvh.raycast_all(geom, &ray, f32::MAX, &QueryFilter::default())
+                .into_iter()
+                .map(|h| geom.entries[h.leaf].item_index)
+                .collect()
+        })
+    }
+
+    /// Item indices whose world AABB falls in the selection rectangle's frustum,
+    /// culled by the surface BVH. The frustum's world AABB is clamped to the scene
+    /// bound so deep objects (which the linear scan also selects, since it does not
+    /// clip by depth) are kept. The per-item body then refines by projecting
+    /// geometry, so the result matches a full scan.
+    pub(super) fn rect_candidate_items(
+        &self,
+        rect_min: glam::Vec2,
+        rect_max: glam::Vec2,
+        viewport_size: glam::Vec2,
+        view_proj: glam::Mat4,
+    ) -> Vec<usize> {
+        self.query_pick_bvh(Vec::new(), |bvh, geom| {
+            // Scene bound: every leaf lives inside this.
+            let mut smin = glam::Vec3::splat(f32::INFINITY);
+            let mut smax = glam::Vec3::splat(f32::NEG_INFINITY);
+            for e in geom.entries {
+                smin = smin.min(glam::Vec3::new(
+                    e.world_aabb.min[0],
+                    e.world_aabb.min[1],
+                    e.world_aabb.min[2],
+                ));
+                smax = smax.max(glam::Vec3::new(
+                    e.world_aabb.max[0],
+                    e.world_aabb.max[1],
+                    e.world_aabb.max[2],
+                ));
+            }
+            let diag = (smax - smin).length().max(1.0);
+
+            let inv = view_proj.inverse();
+            let unproject = |sx: f32, sy: f32, ndc_z: f32| -> Option<glam::Vec3> {
+                let ndc_x = sx / viewport_size.x * 2.0 - 1.0;
+                let ndc_y = 1.0 - sy / viewport_size.y * 2.0;
+                let clip = inv * glam::Vec4::new(ndc_x, ndc_y, ndc_z, 1.0);
+                if clip.w.abs() < 1e-9 {
+                    None
+                } else {
+                    Some(clip.truncate() / clip.w)
+                }
+            };
+
+            // World AABB of the rect frustum: near corners plus each corner ray
+            // extended past the scene, then clamped to the scene bound.
+            let corners = [
+                (rect_min.x, rect_min.y),
+                (rect_max.x, rect_min.y),
+                (rect_min.x, rect_max.y),
+                (rect_max.x, rect_max.y),
+            ];
+            let mut lo = glam::Vec3::splat(f32::INFINITY);
+            let mut hi = glam::Vec3::splat(f32::NEG_INFINITY);
+            let mut any = false;
+            for (sx, sy) in corners {
+                let Some(near) = unproject(sx, sy, 0.0) else {
+                    continue;
+                };
+                lo = lo.min(near);
+                hi = hi.max(near);
+                any = true;
+                if let Some(far) = unproject(sx, sy, 1.0) {
+                    let dir = (far - near).normalize_or_zero();
+                    let ext = near + dir * (diag * 4.0);
+                    lo = lo.min(far).min(ext);
+                    hi = hi.max(far).max(ext);
+                }
+            }
+            if !any {
+                return Vec::new();
+            }
+            // Tighten to the scene bound.
+            lo = lo.max(smin);
+            hi = hi.min(smax);
+            if lo.x > hi.x || lo.y > hi.y || lo.z > hi.z {
+                return Vec::new();
+            }
+
+            let region = SqAabb::new(Point([lo.x, lo.y, lo.z]), Point([hi.x, hi.y, hi.z]));
+            bvh.overlap(geom, &region, &QueryFilter::default())
+                .into_iter()
+                .map(|o| geom.entries[o.leaf].item_index)
+                .collect()
+        })
+    }
+
+    /// Ensure the surface BVH matches the current pick items (rebuild on an identity
+    /// change, refit on a pure move, reuse otherwise), then run `query` against it.
+    /// Returns `default` when there are no pickable surface items.
+    fn query_pick_bvh<R>(&self, default: R, query: impl FnOnce(&Bvh<3>, &SurfaceGeom) -> R) -> R {
         let mut guard = self.pick_bvh.lock().unwrap();
         let stale = guard
             .as_ref()
@@ -1359,24 +1460,17 @@ impl ViewportRenderer {
 
         let b = guard.as_ref().expect("pick BVH populated above");
         let Some(bvh) = &b.bvh else {
-            return Vec::new();
+            return default;
         };
         if b.entries.is_empty() {
-            return Vec::new();
+            return default;
         }
         let geom = SurfaceGeom {
             entries: &b.entries,
             items: &self.pick_scene_items,
             mesh_store: &self.resources.mesh_store,
         };
-        let ray = SqRay::new_unnormalized(
-            Point([ray_origin.x, ray_origin.y, ray_origin.z]),
-            Point([ray_dir.x, ray_dir.y, ray_dir.z]),
-        );
-        bvh.raycast_all(&geom, &ray, f32::MAX, &QueryFilter::default())
-            .into_iter()
-            .map(|h| b.entries[h.leaf].item_index)
-            .collect()
+        query(bvh, &geom)
     }
 
     /// Collect a `PickEntry` for every pickable surface item (world AABB from the
