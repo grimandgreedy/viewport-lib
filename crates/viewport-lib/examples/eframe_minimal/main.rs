@@ -18,8 +18,8 @@ use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use vpl::input::adapters::from_egui;
 use vpl::{
-    Material, Modifiers, NodeId, OrbitCameraController, ViewportContext, ViewportEvent,
-    ViewportInstance, primitives,
+    Material, Modifiers, NodeId, OffscreenViewportTarget, OrbitCameraController, ViewportContext,
+    ViewportEvent, ViewportInstance, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -34,7 +34,11 @@ fn main() -> eframe::Result {
                 .wgpu_render_state
                 .as_ref()
                 .expect("wgpu backend required");
-            let mut session = ViewportInstance::new(&rs.device, rs.target_format);
+            // Render into the sRGB variant of egui's surface format so the
+            // renderer's linear tonemap output gets the linear->sRGB encode; the
+            // offscreen target (below) carries the matching dual-view wiring.
+            let mut session =
+                ViewportInstance::new(&rs.device, OffscreenViewportTarget::render_format(rs.target_format));
 
             let sphere = session
                 .resources_mut()
@@ -79,10 +83,8 @@ fn main() -> eframe::Result {
 
 /// The offscreen render target and its egui texture registration.
 struct Target {
-    _texture: wgpu::Texture,
-    view: wgpu::TextureView,
+    inner: OffscreenViewportTarget,
     id: egui::TextureId,
-    size: [u32; 2],
 }
 
 struct App {
@@ -110,35 +112,17 @@ impl eframe::App for App {
                 ];
 
                 // (Re)create the offscreen target and its egui texture id when the
-                // viewport size changes.
-                if self.target.as_ref().map_or(true, |t| t.size != size) {
-                    let texture = rs.device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("viewport_offscreen"),
-                        size: wgpu::Extent3d {
-                            width: size[0],
-                            height: size[1],
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: rs.target_format,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                            | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    });
-                    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                // viewport size changes. `OffscreenViewportTarget` owns the sRGB
+                // dual-view so the tonemap encode survives egui's sample; we render
+                // into its sRGB view and register its non-sRGB view with egui.
+                if self.target.as_ref().map_or(true, |t| t.inner.size() != size) {
+                    let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size);
                     let id = rs.renderer.write().register_native_texture(
                         &rs.device,
-                        &view,
+                        inner.sample_view(),
                         wgpu::FilterMode::Linear,
                     );
-                    self.target = Some(Target {
-                        _texture: texture,
-                        view,
-                        id,
-                        size,
-                    });
+                    self.target = Some(Target { inner, id });
                 }
                 let target = self.target.as_ref().unwrap();
 
@@ -174,7 +158,9 @@ impl eframe::App for App {
                 self.session.update_orbit(&mut self.orbit);
 
                 // Render into the offscreen texture and display it in the panel.
-                let cmd = self.session.render(&rs.device, &rs.queue, &target.view);
+                let cmd = self
+                    .session
+                    .render(&rs.device, &rs.queue, target.inner.render_view());
                 rs.queue.submit(std::iter::once(cmd));
                 ui.painter().image(
                     target.id,

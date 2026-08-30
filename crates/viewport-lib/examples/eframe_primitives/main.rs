@@ -5,14 +5,12 @@
 //!   Right drag                : pan
 //!   Scroll                    : zoom
 
-mod viewport_callback;
-
-use eframe::egui;
+use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
-    Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    Material, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -31,7 +29,10 @@ fn main() -> eframe::Result {
                 .expect("wgpu backend required");
             let device = &rs.device;
 
-            let mut renderer = ViewportRenderer::new(device, rs.target_format);
+            // Render into the sRGB variant of egui's surface format; the offscreen
+            // target hands egui a non-sRGB view so the encode survives its sample.
+            let mut renderer =
+                ViewportRenderer::new(device, OffscreenViewportTarget::render_format(rs.target_format));
             let res = renderer.resources_mut();
 
             macro_rules! mesh {
@@ -77,8 +78,6 @@ fn main() -> eframe::Result {
             let m_spring_a = mesh!(primitives::spring(0.35, 0.08, 5.0, 14));
             let m_spring_b = mesh!(primitives::spring(0.28, 0.12, 3.0, 18));
 
-            rs.renderer.write().callback_resources.insert(renderer);
-
             let cx = [-5.25f32, -1.75, 1.75, 5.25];
             let rz = [-7.0f32, -3.5, 0.0, 3.5, 7.0];
 
@@ -122,20 +121,30 @@ fn main() -> eframe::Result {
                 item(m_torus_stadium, cx[3], rz[4], [0.30, 0.80, 0.70]),
             ];
 
-            Ok(Box::new(App::new(scene_items)))
+            Ok(Box::new(App::new(renderer, scene_items)))
         }),
     )
 }
 
 struct App {
+    renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
     scene_items: Vec<SceneRenderItem>,
+    target: Option<Target>,
+}
+
+/// The offscreen colour target and its egui texture id, recreated on resize.
+struct Target {
+    inner: OffscreenViewportTarget,
+    id: egui::TextureId,
 }
 
 impl App {
-    fn new(scene_items: Vec<SceneRenderItem>) -> Self {
+    fn new(renderer: ViewportRenderer, scene_items: Vec<SceneRenderItem>) -> Self {
         Self {
+            renderer,
+            target: None,
             camera: Camera {
                 center: glam::Vec3::ZERO,
                 distance: 28.0,
@@ -151,7 +160,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, eframe_frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
@@ -216,12 +225,13 @@ impl eframe::App for App {
 
                 let w = rect.width();
                 let h = rect.height();
+                let ppp = ui.ctx().pixels_per_point();
 
                 self.controller.apply_to_camera(&mut self.camera);
                 self.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(
-                    CameraFrame::from_camera(&self.camera, [w, h]),
+                    CameraFrame::from_camera(&self.camera, [w, h]).with_pixels_per_point(ppp),
                     SceneFrame::from_surface_items(self.scene_items.clone()),
                 );
                 frame_data.effects.lighting = {
@@ -254,11 +264,39 @@ impl eframe::App for App {
                 frame_data.viewport.show_grid = false;
                 frame_data.viewport.show_axes_indicator = true;
 
-                ui.painter()
-                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                        rect,
-                        viewport_callback::ViewportCallback { frame: frame_data },
-                    ));
+                // Render into the offscreen target and display it as an egui image.
+                // The target's sRGB dual-view keeps the tonemap encode intact
+                // through egui's sample (see `OffscreenViewportTarget`).
+                let rs = eframe_frame
+                    .wgpu_render_state()
+                    .expect("wgpu backend required");
+                let size_px = [
+                    (w * ppp).round().max(1.0) as u32,
+                    (h * ppp).round().max(1.0) as u32,
+                ];
+                if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+                    let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
+                    let id = rs.renderer.write().register_native_texture(
+                        &rs.device,
+                        inner.sample_view(),
+                        wgpu::FilterMode::Linear,
+                    );
+                    self.target = Some(Target { inner, id });
+                }
+                let target = self.target.as_ref().unwrap();
+                let render_view = target.inner.render_view();
+                let id = target.id;
+                let cmd =
+                    self.renderer
+                        .owned()
+                        .render(&rs.device, &rs.queue, render_view, &frame_data);
+                rs.queue.submit(std::iter::once(cmd));
+                ui.painter().image(
+                    id,
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
 
                 if response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);

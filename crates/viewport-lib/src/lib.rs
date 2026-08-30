@@ -295,7 +295,7 @@ pub use renderer::{
 };
 pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
 
-pub use runners::{ExtraId, ViewportInstance};
+pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app::{AppConfig, FrameCtx, RedrawMode, ViewportApp};

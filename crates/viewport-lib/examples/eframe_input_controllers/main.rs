@@ -18,19 +18,18 @@
 //! Cmd+] cycle through all four modes. Switching modes calls `sync_from_camera`
 //! so the view continues instead of snapping.
 
-mod viewport_callback;
-
 use std::sync::{Arc, Mutex};
 use viewport_lib as vpl;
 
-use eframe::egui;
+use eframe::{egui, wgpu};
 use vpl::{
     Action, ButtonState, Camera, CameraFrame, FirstPersonCameraController, FrameData, Gizmo,
     GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult,
     ManipulationContext, ManipulationController, ManipulationKind, Material, MeshId,
-    OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem, ScrollUnits, Selection,
-    ThirdPersonCameraController, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
-    gizmo_center_for_pivot, primitives, viewport_all_bindings, wish_xy_from_actions,
+    OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
+    ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer, gizmo_center_for_pivot, primitives, viewport_all_bindings,
+    wish_xy_from_actions,
 };
 
 /// Body movement speed in world units per second for the character cameras.
@@ -55,9 +54,12 @@ fn main() -> eframe::Result {
                 .as_ref()
                 .expect("wgpu backend required");
             let device = &rs.device;
-            let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // sRGB render format; the offscreen target keeps the encode through egui.
+            let mut renderer = ViewportRenderer::new(
+                device,
+                OffscreenViewportTarget::render_format(rs.target_format),
+            );
             let res = renderer.resources_mut();
             let m_box = res
                 .upload_mesh_data(device, &primitives::cube(1.0))
@@ -69,8 +71,7 @@ fn main() -> eframe::Result {
                 .upload_mesh_data(device, &primitives::capsule(0.4, CAPSULE_HEIGHT, 16, 8))
                 .unwrap();
 
-            rs.renderer.write().callback_resources.insert(renderer);
-            Ok(Box::new(App::new(m_box, m_sphere, m_capsule)))
+            Ok(Box::new(App::new(renderer, m_box, m_sphere, m_capsule)))
         }),
     )
 }
@@ -156,7 +157,15 @@ impl Object {
 // App
 // ---------------------------------------------------------------------------
 
+/// The offscreen colour target and its egui texture id, recreated on resize.
+struct Target {
+    inner: OffscreenViewportTarget,
+    id: egui::TextureId,
+}
+
 struct App {
+    renderer: ViewportRenderer,
+    target: Option<Target>,
     mode: Mode,
     camera: Camera,
 
@@ -209,8 +218,15 @@ struct App {
 }
 
 impl App {
-    fn new(m_box: MeshId, m_sphere: MeshId, m_capsule: MeshId) -> Self {
+    fn new(
+        renderer: ViewportRenderer,
+        m_box: MeshId,
+        m_sphere: MeshId,
+        m_capsule: MeshId,
+    ) -> Self {
         Self {
+            renderer,
+            target: None,
             mode: Mode::Primitives,
             camera: Camera {
                 distance: 12.0,
@@ -370,7 +386,7 @@ fn egui_key_to_keycode(key: egui::Key) -> Option<KeyCode> {
 // ---------------------------------------------------------------------------
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, eframe_frame: &mut eframe::Frame) {
         // Drain GPU pick result from the previous frame's prepare callback.
         // Extract while holding the lock, then drop the guard before calling
         // &mut self methods (recompute_gizmo_center requires exclusive access).
@@ -910,15 +926,51 @@ impl eframe::App for App {
                     }
                 }
 
-                ui.painter()
-                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                        rect,
-                        viewport_callback::ViewportCallback {
-                            frame: frame_data,
-                            pick_cursor: self.pick_cursor,
-                            pick_result: Arc::clone(&self.pick_result),
-                        },
-                    ));
+                // Render into the offscreen target (sRGB dual-view keeps the encode
+                // through egui's sample), then GPU-pick, then display the image.
+                let rs = eframe_frame
+                    .wgpu_render_state()
+                    .expect("wgpu backend required");
+                let ppp = ui.ctx().pixels_per_point();
+                let size_px = [
+                    (w * ppp).round().max(1.0) as u32,
+                    (h * ppp).round().max(1.0) as u32,
+                ];
+                if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+                    let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
+                    let id = rs.renderer.write().register_native_texture(
+                        &rs.device,
+                        inner.sample_view(),
+                        wgpu::FilterMode::Linear,
+                    );
+                    self.target = Some(Target { inner, id });
+                }
+                let target = self.target.as_ref().unwrap();
+                let render_view = target.inner.render_view();
+                let tex_id = target.id;
+                let cmd =
+                    self.renderer
+                        .owned()
+                        .render(&rs.device, &rs.queue, render_view, &frame_data);
+                rs.queue.submit(std::iter::once(cmd));
+
+                // GPU pick after prepare/render for this frame; drained next frame.
+                if let Some(cursor) = self.pick_cursor {
+                    let hit = self
+                        .renderer
+                        .pick_scene_gpu(&rs.device, &rs.queue, cursor, &frame_data);
+                    let id = hit.map(|h| h.object_id.0).unwrap_or(0);
+                    if let Ok(mut slot) = self.pick_result.lock() {
+                        *slot = Some(id);
+                    }
+                }
+
+                ui.painter().image(
+                    tex_id,
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
 
                 // Manipulation status label: shown at the bottom-centre of the
                 // viewport while a G/R/S session is active.

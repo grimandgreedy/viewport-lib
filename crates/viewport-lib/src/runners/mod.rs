@@ -27,10 +27,12 @@
 
 mod assemble;
 mod extras;
+mod offscreen;
 mod render;
 mod settings;
 
 pub use extras::ExtraId;
+pub use offscreen::OffscreenViewportTarget;
 
 /// The standalone winit runner: `ViewportApp` owns the window and event loop
 /// (feature-gated behind `app`).
