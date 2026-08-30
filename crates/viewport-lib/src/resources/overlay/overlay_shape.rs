@@ -753,6 +753,11 @@ pub(crate) struct OverlayShapeTexVertex {
     pub border_width: f32,
     /// Encoded shape type (same values as `OverlayShapeVertex`).
     pub shape_type: f32,
+    /// Clip-mask shape index, or `-1.0` for none. Same encoding as
+    /// `OverlayShapeVertex::clip_index`. Kept adjacent to `border_width` and
+    /// `shape_type` so the three pack into one `Float32x3` vertex attribute,
+    /// keeping the textured vertex within the 16-attribute limit.
+    pub clip_index: f32,
     /// Texture UV coordinates. (0,0) = top-left of image, (1,1) = bottom-right.
     /// Slightly outside [0,1] in the border/AA padding region.
     pub uv: [f32; 2],
@@ -780,11 +785,9 @@ pub(crate) struct OverlayShapeTexVertex {
     /// `[rotation_radians, tile_mode (0/1/2), flip_x (0/1), flip_y (0/1)]`.
     pub texture_transform_b: [f32; 4],
     /// Framebuffer-pixel clip bbox `(x0, y0, x1, y1)`; all zero means no box
-    /// clip. Same encoding as `OverlayShapeVertex::clip_rect`.
+    /// clip. Same encoding as `OverlayShapeVertex::clip_rect`; the cheap
+    /// bounding-box reject before the mask SDF.
     pub clip_rect: [f32; 4],
-    /// Clip-mask shape index, or `-1.0` for none. Same encoding as
-    /// `OverlayShapeVertex::clip_index`.
-    pub clip_index: f32,
 }
 
 impl OverlayShapeTexVertex {
@@ -792,114 +795,109 @@ impl OverlayShapeTexVertex {
         crate::gpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<OverlayShapeTexVertex>() as crate::gpu::BufferAddress,
             step_mode: crate::gpu::VertexStepMode::Vertex,
+            // Offsets come from `offset_of!` so reordering fields can't desync
+            // them. Locations 0-15 fill the 16-attribute limit exactly; location
+            // 6 packs the three adjacent f32 fields (border_width, shape_type,
+            // clip_index) into one Float32x3 so clip data fits without a 17th
+            // attribute.
             attributes: &[
                 // location 0: position vec2f
                 crate::gpu::VertexAttribute {
-                    offset: 0,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, position) as u64,
                     shader_location: 0,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 1: local_pos vec2f
                 crate::gpu::VertexAttribute {
-                    offset: 8,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, local_pos) as u64,
                     shader_location: 1,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 2: fill_colour vec4f (tint)
                 crate::gpu::VertexAttribute {
-                    offset: 16,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, fill_colour) as u64,
                     shader_location: 2,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 3: border_colour vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 32,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, border_colour) as u64,
                     shader_location: 3,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 4: half_size vec2f
                 crate::gpu::VertexAttribute {
-                    offset: 48,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, half_size) as u64,
                     shader_location: 4,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 5: radii vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 56,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, radii) as u64,
                     shader_location: 5,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 6: border_width f32
+                // location 6: shape_meta vec3f (border_width, shape_type, clip_index).
+                // The three f32 fields are contiguous, so one Float32x3 reads all
+                // three and keeps the vertex within the 16-attribute limit.
                 crate::gpu::VertexAttribute {
-                    offset: 72,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, border_width) as u64,
                     shader_location: 6,
-                    format: crate::gpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32x3,
                 },
-                // location 7: shape_type f32
+                // location 7: clip_rect vec4f (framebuffer-pixel clip bbox)
                 crate::gpu::VertexAttribute {
-                    offset: 76,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, clip_rect) as u64,
                     shader_location: 7,
-                    format: crate::gpu::VertexFormat::Float32,
+                    format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 8: uv vec2f
                 crate::gpu::VertexAttribute {
-                    offset: 80,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, uv) as u64,
                     shader_location: 8,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
                 // location 9: shadow_colour vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 88,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_colour) as u64,
                     shader_location: 9,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 10: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
                 crate::gpu::VertexAttribute {
-                    offset: 104,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_params) as u64,
                     shader_location: 10,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 11: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
                 crate::gpu::VertexAttribute {
-                    offset: 120,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, extras) as u64,
                     shader_location: 11,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 12: nine_slice_uv vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 136,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_uv) as u64,
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 13: nine_slice_frac vec4f
                 crate::gpu::VertexAttribute {
-                    offset: 152,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_frac) as u64,
                     shader_location: 13,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 14: texture_transform_a vec4f (offset.xy, scale.xy)
                 crate::gpu::VertexAttribute {
-                    offset: 168,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_a) as u64,
                     shader_location: 14,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
                 // location 15: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
                 crate::gpu::VertexAttribute {
-                    offset: 184,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_b) as u64,
                     shader_location: 15,
                     format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 16: clip_rect vec4f (framebuffer-pixel clip bbox)
-                crate::gpu::VertexAttribute {
-                    offset: 200,
-                    shader_location: 16,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 17: clip_index f32 (clip-shape index, or -1)
-                crate::gpu::VertexAttribute {
-                    offset: 216,
-                    shader_location: 17,
-                    format: crate::gpu::VertexFormat::Float32,
                 },
             ],
         }

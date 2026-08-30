@@ -1295,8 +1295,8 @@ impl ViewportRenderer {
                                 nine_slice_frac: nine_frac,
                                 texture_transform_a: tt_a,
                                 texture_transform_b: tt_b,
-                                clip_rect,
                                 clip_index,
+                                clip_rect,
                             });
                         }
                         tex_shape_segs.push((
@@ -1336,8 +1336,8 @@ impl ViewportRenderer {
                                 texture_transform_b: [0.0, 0.0, 0.0, 0.0],
                                 // Backdrop blur is composited separately and is
                                 // not clipped by a mask.
-                                clip_rect: [0.0; 4],
                                 clip_index: -1.0,
+                                clip_rect: [0.0; 4],
                             });
                         }
                     } else {
@@ -1533,8 +1533,8 @@ impl ViewportRenderer {
                                 texture_transform_a: tt_a,
                                 texture_transform_b: tt_b,
                                 // Textured polyline fills carry no clip mask.
-                                clip_rect: [0.0; 4],
                                 clip_index: -1.0,
+                                clip_rect: [0.0; 4],
                             });
                         }
                     }

@@ -14,8 +14,8 @@ struct VertexInput {
     @location(3) border_colour: vec4<f32>,
     @location(4) half_size:     vec2<f32>,  // shape half-extents in pixels
     @location(5) radii:         vec4<f32>,  // shape-specific params
-    @location(6) border_width:  f32,
-    @location(7) shape_type:    f32,        // 0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle
+    @location(6) shape_meta:    vec3<f32>,  // x=border_width, y=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), z=clip_index (or -1)
+    @location(7) clip_rect:     vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
     @location(8) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
     @location(9) shadow_colour: vec4<f32>,  // RGBA shadow colour
     @location(10) shadow_params: vec4<f32>, // x=radius, y=offset_x, z=offset_y, w=border_mode
@@ -24,8 +24,6 @@ struct VertexInput {
     @location(13) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
     @location(14) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
     @location(15) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
-    @location(16) clip_rect:  vec4<f32>,          // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(17) clip_index: f32,                // clip-shape index, or -1 for none
 }
 
 // One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
@@ -41,7 +39,7 @@ struct ClipShape {
     pad:       vec2<f32>,
 }
 
-@group(1) @binding(0) var<storage, read> clip_shapes: array<ClipShape>;;
+@group(1) @binding(0) var<storage, read> clip_shapes: array<ClipShape>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -73,8 +71,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.border_colour = in.border_colour;
     out.half_size     = in.half_size;
     out.radii         = in.radii;
-    out.border_width  = in.border_width;
-    out.shape_type    = in.shape_type;
+    out.border_width  = in.shape_meta.x;
+    out.shape_type    = in.shape_meta.y;
     out.uv            = in.uv;
     out.shadow_colour = in.shadow_colour;
     out.shadow_params = in.shadow_params;
@@ -84,7 +82,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.texture_transform_a = in.texture_transform_a;
     out.texture_transform_b = in.texture_transform_b;
     out.clip_rect  = in.clip_rect;
-    out.clip_index = in.clip_index;
+    out.clip_index = in.shape_meta.z;
     return out;
 }
 
