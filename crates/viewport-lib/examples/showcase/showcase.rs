@@ -154,9 +154,16 @@ pub fn reset_session(session: &mut ViewportInstance) {
     session.scene_mut().remove_many(&ids);
     session.selection_mut().clear();
     session.clear_extras();
-    // Persistent viewport chrome (grid, background, wireframe) and clip objects
-    // are retained on the session, so reset them or one showcase's settings leak
+    // Persistent viewport chrome (grid, background, wireframe), clip objects,
+    // lighting, and indirect-light state (environment, light probes, zones) are
+    // all retained on the session, so reset them or one showcase's settings leak
     // into the next. Each showcase re-sets what it needs in `setup`.
     *session.viewport_frame_mut() = vpl::ViewportFrame::default();
     session.effects_mut().clip.objects.clear();
+    session.effects_mut().lighting = vpl::LightingSettings::default();
+    session.effects_mut().environment = None;
+    session.renderer_mut().clear_environment_zones();
+    session
+        .renderer_mut()
+        .set_light_probes(vpl::resources::LightProbeSet::new(vec![]));
 }

@@ -361,7 +361,7 @@ fn build_custom_materials(ctx: &mut SetupCtx) -> Vec<Material> {
         // default params: [0.2, 0.5, 1.0], power 3).
         plugin_mat(rim, [0.25, 0.25, 0.3]),
         dissolve_mat,
-        plugin_mat(detail_v, [0.4, 0.5, 0.35]),
+        plugin_mat(detail_v, [0.22, 0.45, 0.14]),
         plugin_mat(parallax_v, [0.8, 0.8, 0.8]),
     ]
 }
@@ -392,7 +392,7 @@ fn shading_family(matcaps: &[(MatcapId, &'static str)]) -> Vec<Material> {
         Material::pbr([0.25, 0.5, 0.85], 0.0, 0.35),
         Material::pbr([0.72, 0.48, 0.06], 1.0, 0.25),
         matcap,
-        Material::flat([0.5, 0.78, 0.45]),
+        Material::flat([0.10, 0.52, 0.18]),
     ]
 }
 
@@ -431,16 +431,16 @@ fn pbr_family() -> Vec<Material> {
 
 fn matcap_family(matcaps: &[(MatcapId, &'static str)]) -> Vec<Material> {
     let tints = [
-        [0.9, 0.5, 0.4],
-        [0.5, 0.9, 0.6],
-        [0.5, 0.6, 0.95],
-        [0.9, 0.85, 0.4],
-        [0.8, 0.8, 0.85],
-        [0.85, 0.5, 0.85],
-        [0.6, 0.85, 0.9],
-        [0.95, 0.7, 0.5],
-        [0.7, 0.9, 0.7],
-        [0.9, 0.6, 0.9],
+        [0.75, 0.30, 0.20],
+        [0.25, 0.75, 0.35],
+        [0.25, 0.35, 0.80],
+        [0.75, 0.65, 0.15],
+        [0.55, 0.55, 0.65],
+        [0.65, 0.20, 0.65],
+        [0.30, 0.65, 0.75],
+        [0.80, 0.40, 0.20],
+        [0.40, 0.70, 0.40],
+        [0.70, 0.30, 0.70],
     ];
     matcaps
         .iter()
@@ -561,9 +561,9 @@ fn vc_gradient(p: [f32; 3]) -> [f32; 4] {
 }
 fn vc_two_tone(p: [f32; 3]) -> [f32; 4] {
     if p[2] >= 0.0 {
-        [0.95, 0.75, 0.2, 1.0]
+        [0.72, 0.55, 0.08, 1.0]
     } else {
-        [0.2, 0.5, 0.85, 1.0]
+        [0.10, 0.30, 0.68, 1.0]
     }
 }
 fn vc_latitude(p: [f32; 3]) -> [f32; 4] {

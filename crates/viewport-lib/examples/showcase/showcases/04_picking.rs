@@ -356,7 +356,7 @@ impl PickingShowcase {
 
         // GPU marching cubes: gyroid surface.
         if let Some(mc_id) = self.mc_id {
-            let mut mat = Material::flat([0.5, 0.8, 0.55]);
+            let mut mat = Material::flat([0.10, 0.52, 0.18]);
             mat.roughness = 0.4;
             let mut settings = ItemSettings::default();
             settings.unlit = false;
@@ -469,7 +469,7 @@ impl Showcase for PickingShowcase {
         self.glyphs.vectors = vec![[0.0, 0.0, 1.0]; n];
         self.glyphs.scale = 0.7;
         self.glyphs.use_default_colour = true;
-        self.glyphs.default_colour = [0.75, 0.2, 1.0, 1.0];
+        self.glyphs.default_colour = [0.55, 0.10, 0.75, 1.0];
         self.glyphs.glyph_type = GlyphType::Arrow;
         self.glyphs.settings.pick_id = PickId(GLYPH);
         self.instance_lookup.insert(GLYPH, gpos);
@@ -480,7 +480,7 @@ impl Showcase for PickingShowcase {
         let (positions, strips) = helix_strips(Vec3::new(5.5, 5.0, 0.4), 3);
         self.polyline.positions = positions.clone();
         self.polyline.strip_lengths = strips.clone();
-        self.polyline.default_colour = [0.25, 0.85, 0.4, 1.0];
+        self.polyline.default_colour = [0.10, 0.52, 0.18, 1.0];
         self.polyline.line_width = 4.0;
         self.polyline.settings.pick_id = PickId(POLY);
         self.model_matrices.insert(POLY, Mat4::IDENTITY);
@@ -548,7 +548,7 @@ impl Showcase for PickingShowcase {
             self.streamtube.positions = pos;
             self.streamtube.strip_lengths = lens;
             self.streamtube.radius = 0.12;
-            self.streamtube.colour = [0.3, 0.8, 0.55, 1.0];
+            self.streamtube.colour = [0.05, 0.50, 0.40, 1.0];
             self.streamtube.settings.pick_id = PickId(STREAMTUBE);
             self.labels.insert(STREAMTUBE, ("Streamtube".into(), None));
         }
@@ -557,7 +557,7 @@ impl Showcase for PickingShowcase {
             self.tube.positions = pos;
             self.tube.strip_lengths = lens;
             self.tube.radius = 0.14;
-            self.tube.colour = [0.85, 0.4, 0.2, 1.0];
+            self.tube.colour = [0.75, 0.28, 0.05, 1.0];
             self.tube.settings.pick_id = PickId(TUBE);
             self.labels.insert(TUBE, ("Tube".into(), None));
         }
@@ -566,7 +566,7 @@ impl Showcase for PickingShowcase {
             self.ribbon.positions = pos;
             self.ribbon.strip_lengths = lens;
             self.ribbon.width = 0.4;
-            self.ribbon.colour = [0.6, 0.3, 0.9, 1.0];
+            self.ribbon.colour = [0.38, 0.12, 0.62, 1.0];
             self.ribbon.settings.pick_id = PickId(RIBBON);
             self.labels.insert(RIBBON, ("Ribbon".into(), None));
         }
@@ -1082,7 +1082,10 @@ fn splat_data(positions: &[[f32; 3]]) -> GaussianSplatData {
     let sh_coefficients = (0..n)
         .flat_map(|i| {
             let t = i as f32 / (n as f32 - 1.0).max(1.0);
-            [(t - 0.5) / SH0_C, 0.0, (1.0 - t - 0.5) / SH0_C]
+            let r = 0.05 + 0.70 * t;
+            let g = 0.45 - 0.17 * t;
+            let b = 0.45 - 0.40 * t;
+            [(r - 0.5) / SH0_C, (g - 0.5) / SH0_C, (b - 0.5) / SH0_C]
         })
         .collect();
     GaussianSplatData {

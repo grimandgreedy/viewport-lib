@@ -44,9 +44,9 @@ use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
 /// The three probe colours and their x positions along the row.
 const PROBES: [([f32; 3], f32); 3] = [
-    ([1.0, 0.45, 0.12], -4.0), // warm
-    ([0.20, 0.80, 0.30], 0.0), // green
-    ([0.20, 0.40, 1.00], 4.0), // cool
+    ([0.75, 0.28, 0.05], -4.0), // warm
+    ([0.10, 0.52, 0.18], 0.0),  // green
+    ([0.10, 0.26, 0.68], 4.0),  // cool
 ];
 
 const PROBE_ROW_Z: f32 = 1.0;
@@ -92,20 +92,20 @@ struct EnvDef {
 const ENVS: [EnvDef; 3] = [
     EnvDef {
         name: "Warm",
-        sky: [1.0, 0.55, 0.2],
-        ground: [0.35, 0.12, 0.05],
+        sky: [0.75, 0.28, 0.05],
+        ground: [0.25, 0.09, 0.03],
         x: -5.0,
     },
     EnvDef {
         name: "Cool",
-        sky: [0.3, 0.6, 1.0],
-        ground: [0.05, 0.14, 0.4],
+        sky: [0.10, 0.26, 0.68],
+        ground: [0.04, 0.10, 0.30],
         x: 0.0,
     },
     EnvDef {
         name: "Green",
-        sky: [0.55, 0.9, 0.4],
-        ground: [0.08, 0.28, 0.12],
+        sky: [0.10, 0.52, 0.18],
+        ground: [0.06, 0.20, 0.09],
         x: 5.0,
     },
 ];
@@ -151,9 +151,9 @@ const LIGHTMAP_MODES: [&str; 4] = ["Off", "Replace", "Add", "AO"];
 fn bake_radiance(w: u32, h: u32) -> Vec<u8> {
     // (centre uv, radius, colour).
     let pools: [([f32; 2], f32, [f32; 3]); 3] = [
-        ([0.28, 0.32], 0.34, [1.0, 0.55, 0.2]), // warm
-        ([0.72, 0.68], 0.32, [0.25, 0.5, 1.0]), // cool
-        ([0.5, 0.5], 0.24, [0.3, 0.9, 0.4]),    // green
+        ([0.28, 0.32], 0.34, [0.75, 0.28, 0.05]), // warm
+        ([0.72, 0.68], 0.32, [0.10, 0.26, 0.68]), // cool
+        ([0.5, 0.5], 0.24, [0.10, 0.52, 0.18]),   // green
     ];
     let mut px = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
