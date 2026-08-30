@@ -61,12 +61,16 @@ pub enum ClipShape {
 /// active clip objects apply cumulatively (AND semantics). Entries beyond the limit
 /// are silently ignored.
 ///
-/// Set `colour` to `Some(rgba)` to have the renderer draw the clip boundary automatically.
-/// For planes this produces a semi-transparent fill quad + border; for box/sphere, a
-/// wireframe outline. Leave `colour` as `None` for silent clipping with no visual.
+/// The renderer does not draw a boundary for a clip object; it only performs the
+/// clip operation (and the section cap fill). To show where a clip sits, build the
+/// visual with [`clip_plane::visual`](crate::clip_plane::visual) - an outline
+/// [`PolylineItem`](crate::PolylineItem) for any shape, plus a translucent fill mesh
+/// for the plane - and submit it as an ordinary scene primitive with
+/// `ItemSettings::ignore_clip = true` so it stays visible through active clips.
 ///
-/// The `hovered` and `active` flags are written by `ClipPlaneController` and read by
-/// the renderer to vary the plane overlay appearance (brighter when hovered, tinted when active).
+/// The `colour` / `edge_colour` / `extent` / `hovered` / `active` fields are retained
+/// for now but no longer read by the renderer; they move to the module side in a
+/// later change.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

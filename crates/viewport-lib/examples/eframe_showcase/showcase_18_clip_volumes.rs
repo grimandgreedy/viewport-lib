@@ -12,10 +12,13 @@ use crate::App;
 use eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
-    BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo, LightKind,
-    LightSource, LightingSettings, Material, SceneRenderItem, ViewportRenderer, VolumeId,
-    VolumeItem, scene::Scene, selection::Selection,
+    AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo,
+    ItemSettings, LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem,
+    ViewportRenderer, VolumeId, VolumeItem, scene::Scene, selection::Selection,
 };
+
+/// Colour for the clip-object outlines and the plane fill.
+const CLIP_COLOUR: [f32; 3] = [0.45, 0.82, 1.0];
 
 // ---------------------------------------------------------------------------
 // Scene mode
@@ -77,6 +80,8 @@ pub(crate) struct ClipVolState {
     pub built: bool,
     pub scene_mode: SceneMode,
     pub volume_id: Option<VolumeId>,
+    /// Unit quad mesh reused for every plane's translucent fill (placed per-frame).
+    pub fill_mesh_id: Option<MeshId>,
     pub clips: Vec<ActiveClip>,
     pub show_overlay: bool,
     /// Gizmo retained for main.rs compatibility (not used for clip editing).
@@ -93,6 +98,7 @@ impl Default for ClipVolState {
             built: false,
             scene_mode: SceneMode::Mesh,
             volume_id: None,
+            fill_mesh_id: None,
             clips: vec![ActiveClip::Plane {
                 elevation: 0.0,
                 azimuth: 0.0,
@@ -161,6 +167,15 @@ impl App {
             [64, 64, 64],
         );
         self.clipvol_state.volume_id = Some(vol_id);
+
+        // Unit quad reused for every clip plane's translucent fill. It is placed
+        // onto each plane per-frame with `visual::plane_fill_transform`.
+        let fill_mesh = vpl::clip_plane::visual::fill_quad_mesh();
+        let fill_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &fill_mesh)
+            .expect("clipvol fill quad mesh");
+        self.clipvol_state.fill_mesh_id = Some(fill_id);
 
         self.clipvol_state.built = true;
     }
@@ -457,21 +472,13 @@ impl App {
         Some(item)
     }
 
-    /// Build `ClipObject`s for all active clips.
+    /// Build `ClipObject`s for all active clips. These carry only the geometry
+    /// (the renderer no longer draws a boundary from them); the outlines and the
+    /// plane fill are built separately from `clip_plane::visual` and submitted as
+    /// ordinary scene primitives.
     pub(crate) fn make_clip_objects(&self) -> Vec<ClipObject> {
-        let s = &self.clipvol_state;
-        let overlay: Option<[f32; 4]> = if s.show_overlay {
-            Some([0.45, 0.82, 1.0, 1.0])
-        } else {
-            None
-        };
-        let plane_overlay: Option<[f32; 4]> = if s.show_overlay {
-            Some([0.45, 0.82, 1.0, 0.5])
-        } else {
-            None
-        };
-
-        s.clips
+        self.clipvol_state
+            .clips
             .iter()
             .map(|clip| match clip {
                 ActiveClip::Plane {
@@ -480,9 +487,7 @@ impl App {
                     distance,
                 } => {
                     let normal = plane_normal(*elevation, *azimuth);
-                    let mut co = ClipObject::plane(normal, *distance);
-                    co.colour = plane_overlay;
-                    co
+                    ClipObject::plane(normal, *distance)
                 }
                 ActiveClip::Box {
                     center,
@@ -492,15 +497,9 @@ impl App {
                     let yaw_rad = yaw.to_radians();
                     let (sin_y, cos_y) = yaw_rad.sin_cos();
                     let orient = [[cos_y, sin_y, 0.0], [-sin_y, cos_y, 0.0], [0.0, 0.0, 1.0]];
-                    let mut co = ClipObject::box_shape(*center, *half_extents, orient);
-                    co.colour = overlay;
-                    co
+                    ClipObject::box_shape(*center, *half_extents, orient)
                 }
-                ActiveClip::Sphere { center, radius } => {
-                    let mut co = ClipObject::sphere(*center, *radius);
-                    co.colour = overlay;
-                    co
-                }
+                ActiveClip::Sphere { center, radius } => ClipObject::sphere(*center, *radius),
                 ActiveClip::Cylinder {
                     center,
                     axis_yaw,
@@ -511,12 +510,48 @@ impl App {
                     let (sy, cy) = axis_yaw.to_radians().sin_cos();
                     let (sp, cp) = axis_pitch.to_radians().sin_cos();
                     let axis = [cp * cy, cp * sy, sp];
-                    let mut co = ClipObject::cylinder(*center, axis, *radius, *half_length);
-                    co.colour = overlay;
-                    co
+                    ClipObject::cylinder(*center, axis, *radius, *half_length)
                 }
             })
             .collect()
+    }
+
+    /// Translucent fill mesh items for every enabled clip plane. The unit quad
+    /// (`fill_mesh_id`) is placed onto each plane and tagged `ignore_clip` so it
+    /// stays visible where the scene is cut.
+    fn clip_plane_fill_items(&self) -> Vec<SceneRenderItem> {
+        let Some(mesh_id) = self.clipvol_state.fill_mesh_id else {
+            return Vec::new();
+        };
+        if !self.clipvol_state.show_overlay {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for co in self.make_clip_objects().iter().filter(|c| c.enabled) {
+            if let vpl::ClipShape::Plane {
+                normal, distance, ..
+            } = co.shape
+            {
+                let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
+                let model = vpl::clip_plane::visual::plane_fill_transform(center, normal, co.extent);
+                let mut material = Material::from_colour(CLIP_COLOUR);
+                material.alpha_mode = AlphaMode::Blend;
+                material.backface_policy = BackfacePolicy::Identical;
+                let mut settings = ItemSettings::default();
+                settings.unlit = true;
+                settings.opacity = 0.15;
+                settings.ignore_clip = true;
+                settings.cast_shadows = false;
+                settings.receive_shadows = false;
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = mesh_id;
+                item.model = model;
+                item.material = material;
+                item.settings = settings;
+                out.push(item);
+            }
+        }
+        out
     }
 }
 
@@ -527,7 +562,7 @@ impl App {
 pub(crate) fn clipvol_collect_scene_items(
     app: &mut App,
 ) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
-    let items = if app.clipvol_state.scene_mode == SceneMode::Mesh {
+    let mut items = if app.clipvol_state.scene_mode == SceneMode::Mesh {
         let mut items = app
             .clipvol_state
             .scene
@@ -539,6 +574,9 @@ pub(crate) fn clipvol_collect_scene_items(
     } else {
         Vec::new()
     };
+    // Translucent plane-fill quads (both scene modes; they only clip the scene, so
+    // they read the same over the mesh and the volume).
+    items.extend(app.clip_plane_fill_items());
     let sg = app.clipvol_state.scene.version();
     let lighting = {
         let mut _t = LightingSettings::default();
@@ -562,7 +600,20 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
     if !app.clipvol_state.built {
         return;
     }
-    fd.effects.clip.objects.extend(app.make_clip_objects());
+    let clip_objects = app.make_clip_objects();
+    // Outline for every enabled clip (border + normal handle for the plane, edges
+    // or rings for the volumes). Each is `ignore_clip`, so it stays visible where
+    // the scene is cut. The plane's translucent fill is submitted as a scene mesh
+    // in `clipvol_collect_scene_items`.
+    if app.clipvol_state.show_overlay {
+        let colour = [CLIP_COLOUR[0], CLIP_COLOUR[1], CLIP_COLOUR[2], 1.0];
+        for co in clip_objects.iter().filter(|c| c.enabled) {
+            fd.scene
+                .polylines
+                .push(vpl::clip_plane::visual::outline(&co.shape, co.extent, colour));
+        }
+    }
+    fd.effects.clip.objects.extend(clip_objects);
     if app.clipvol_state.scene_mode == SceneMode::Volume {
         if let Some(vol) = app.make_clipvol_volume_item() {
             fd.scene.volumes.push(vol);

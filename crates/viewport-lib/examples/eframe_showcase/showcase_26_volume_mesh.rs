@@ -1010,8 +1010,6 @@ impl App {
             cap_colour: None,
             display_center: None,
         };
-        clip.colour = None;
-        clip.edge_colour = Some([0.75, 0.85, 1.0, 1.0]);
         // In transparent mode, no opaque CPU-clipped mesh is drawn, so the GPU
         // clip plane must be active to cull the projected-tet fragments.
         // In opaque mode, CPU extraction already handles clipping and enabling
@@ -1210,5 +1208,15 @@ pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
 pub(crate) fn vm_configure_frame(app: &App, fd: &mut FrameData) {
     fd.viewport.wireframe_mode = app.vm_state.wireframe;
     fd.effects.clip.cap_fill_enabled = false;
-    fd.effects.clip.objects.extend(app.vm_clip_objects());
+    let clip_objects = app.vm_clip_objects();
+    // Section-plane edge indicator, drawn as a clip-exempt world-space polyline so
+    // it stays visible across the cut.
+    for co in clip_objects.iter().filter(|c| c.enabled) {
+        fd.scene.polylines.push(vpl::clip_plane::visual::outline(
+            &co.shape,
+            co.extent,
+            [0.75, 0.85, 1.0, 1.0],
+        ));
+    }
+    fd.effects.clip.objects.extend(clip_objects);
 }

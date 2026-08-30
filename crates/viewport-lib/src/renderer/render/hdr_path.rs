@@ -4645,30 +4645,6 @@ impl ViewportRenderer {
                     }
                 }
 
-                if !slot.clip_plane_fill_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.guides.overlay_pipeline);
-                    overlay_pass.set_bind_group(0, camera_bg, &[]);
-                    for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_fill_buffers {
-                        overlay_pass.set_bind_group(1, bg, &[]);
-                        overlay_pass.set_vertex_buffer(0, vbuf.slice(..));
-                        overlay_pass
-                            .set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
-                        overlay_pass.draw_indexed(0..*idx_count, 0, 0..1);
-                    }
-                }
-
-                if !slot.clip_plane_line_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.guides.overlay_line_pipeline);
-                    overlay_pass.set_bind_group(0, camera_bg, &[]);
-                    for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_line_buffers {
-                        overlay_pass.set_bind_group(1, bg, &[]);
-                        overlay_pass.set_vertex_buffer(0, vbuf.slice(..));
-                        overlay_pass
-                            .set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
-                        overlay_pass.draw_indexed(0..*idx_count, 0, 0..1);
-                    }
-                }
-
                 if !slot.xray_object_buffers.is_empty() {
                     overlay_pass.set_pipeline(&self.resources.outline.xray_pipeline);
                     overlay_pass.set_bind_group(0, camera_bg, &[]);

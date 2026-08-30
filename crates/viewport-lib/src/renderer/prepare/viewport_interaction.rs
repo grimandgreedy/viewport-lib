@@ -1308,160 +1308,12 @@ impl ViewportRenderer {
             constraint_line_buffers.push(self.resources.create_constraint_overlay(device, overlay));
         }
 
-        // Clip plane overlays : generated automatically from clip_objects with a colour set.
-        let mut clip_plane_fill_buffers = Vec::new();
-        let mut clip_plane_line_buffers = Vec::new();
-        for obj in viewport_fx.clip.objects.iter().filter(|o| o.enabled) {
-            // Skip if neither fill nor edge colour is set.
-            if obj.colour.is_none() && obj.edge_colour.is_none() {
-                continue;
-            }
-            if let ClipShape::Plane {
-                normal,
-                distance,
-                display_center,
-                ..
-            } = obj.shape
-            {
-                let n = glam::Vec3::from(normal);
-                // Use the caller-supplied display_center when available so that
-                // lateral translations (tangent to the plane) are reflected in
-                // the overlay quad position.  Fall back to the foot-of-normal
-                // from the world origin when none is set.
-                let center = display_center
-                    .map(glam::Vec3::from)
-                    .unwrap_or_else(|| n * (-distance));
-                let active = obj.active;
-                let hovered = obj.hovered || active;
-
-                // Fill quad: derived from `colour`; transparent if not set.
-                let fill_colour = if let Some(base_colour) = obj.colour {
-                    if active {
-                        [
-                            base_colour[0] * 0.5,
-                            base_colour[1] * 0.5,
-                            base_colour[2] * 0.5,
-                            base_colour[3] * 0.5,
-                        ]
-                    } else if hovered {
-                        [
-                            base_colour[0] * 0.8,
-                            base_colour[1] * 0.8,
-                            base_colour[2] * 0.8,
-                            base_colour[3] * 0.6,
-                        ]
-                    } else {
-                        [
-                            base_colour[0] * 0.5,
-                            base_colour[1] * 0.5,
-                            base_colour[2] * 0.5,
-                            base_colour[3] * 0.3,
-                        ]
-                    }
-                } else {
-                    [0.0, 0.0, 0.0, 0.0]
-                };
-
-                // Border edge: use `edge_colour` when set, otherwise derive from `colour`.
-                let border_base = obj
-                    .edge_colour
-                    .or(obj.colour)
-                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-                let border_colour = if active {
-                    [border_base[0], border_base[1], border_base[2], 0.9]
-                } else if hovered {
-                    [border_base[0], border_base[1], border_base[2], 0.8]
-                } else {
-                    [
-                        border_base[0] * 0.9,
-                        border_base[1] * 0.9,
-                        border_base[2] * 0.9,
-                        0.6,
-                    ]
-                };
-
-                let overlay = crate::interaction::clip_plane::ClipPlaneOverlay {
-                    center,
-                    normal: n,
-                    extent: obj.extent,
-                    fill_colour,
-                    border_colour,
-                    _hovered: hovered,
-                    _active: active,
-                };
-                if obj.colour.is_some() {
-                    clip_plane_fill_buffers.push(
-                        self.resources
-                            .create_clip_plane_fill_overlay(device, &overlay),
-                    );
-                }
-                clip_plane_line_buffers.push(
-                    self.resources
-                        .create_clip_plane_line_overlay(device, &overlay),
-                );
-            } else {
-                // Box/Sphere/Cylinder: generate wireframe polyline overlay.
-                // These use the clip-exempt pipeline so the outline is always fully visible,
-                // even when multiple clip volumes are active (the user needs to see where each
-                // clip is positioned to understand the combined result).
-                let base_colour = obj.colour.unwrap_or([1.0, 1.0, 1.0, 1.0]);
-                self.resources.ensure_polyline_no_clip_pipeline(device);
-                match obj.shape {
-                    ClipShape::Box {
-                        center,
-                        half_extents,
-                        orientation,
-                    } => {
-                        let polyline = crate::interaction::clip_plane::visual::box_outline(
-                            center,
-                            half_extents,
-                            orientation,
-                            base_colour,
-                        );
-                        let vp_size = frame.camera.viewport_size;
-                        let mut gpu = self
-                            .resources
-                            .upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                        gpu.skip_clip = true;
-                        self.polyline_gpu_data.push(gpu);
-                    }
-                    ClipShape::Sphere { center, radius } => {
-                        let polyline = crate::interaction::clip_plane::visual::sphere_outline(
-                            center,
-                            radius,
-                            base_colour,
-                        );
-                        let vp_size = frame.camera.viewport_size;
-                        let mut gpu = self
-                            .resources
-                            .upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                        gpu.skip_clip = true;
-                        self.polyline_gpu_data.push(gpu);
-                    }
-                    ClipShape::Cylinder {
-                        center,
-                        axis,
-                        radius,
-                        half_length,
-                    } => {
-                        let polyline = crate::interaction::clip_plane::visual::cylinder_outline(
-                            center,
-                            axis,
-                            radius,
-                            half_length,
-                            base_colour,
-                        );
-                        let vp_size = frame.camera.viewport_size;
-                        let mut gpu = self
-                            .resources
-                            .upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                        gpu.skip_clip = true;
-                        self.polyline_gpu_data.push(gpu);
-                    }
-                    _ => {}
-                }
-            }
-        }
+        // Clip-object visuals (outlines and the plane fill) are no longer drawn by
+        // the renderer. The host builds them from `clip_plane::visual` and submits
+        // them as ordinary scene primitives (polyline outlines and a translucent
+        // fill mesh), tagged `ItemSettings::ignore_clip` so they stay visible where
+        // the scene is clipped. The renderer only performs the clip operation and
+        // the section cap fill below.
 
         // Cap geometry for section-view cross-section fill.
         let mut cap_buffers = Vec::new();
@@ -1541,8 +1393,6 @@ impl ViewportRenderer {
             slot.mc_outline_data = mc_outline_data;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
-            slot.clip_plane_fill_buffers = clip_plane_fill_buffers;
-            slot.clip_plane_line_buffers = clip_plane_line_buffers;
             slot.cap_buffers = cap_buffers;
 
             // Axes: resize buffer if needed, then upload.

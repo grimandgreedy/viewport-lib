@@ -909,33 +909,6 @@ macro_rules! emit_draw_calls {
             }
         }
 
-        // Clip plane handle fill pass (semi-transparent quad fills, alpha blended).
-        if let Some(slot) = _vp_slot {
-            if !slot.clip_plane_fill_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.guides.overlay_pipeline);
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_fill_buffers {
-                    render_pass.set_bind_group(1, bg, &[]);
-                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                    render_pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..*idx_count, 0, 0..1);
-                }
-            }
-        }
-
-        // Clip plane handle border and normal indicator pass (line list).
-        if let Some(slot) = _vp_slot {
-            if !slot.clip_plane_line_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.guides.overlay_line_pipeline);
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for (vbuf, ibuf, idx_count, _ubuf, bg) in &slot.clip_plane_line_buffers {
-                    render_pass.set_bind_group(1, bg, &[]);
-                    render_pass.set_vertex_buffer(0, vbuf.slice(..));
-                    render_pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..*idx_count, 0, 0..1);
-                }
-            }
-        }
 
         // X-ray pass: render selected objects as semi-transparent overlay through geometry.
         if let Some(slot) = _vp_slot {

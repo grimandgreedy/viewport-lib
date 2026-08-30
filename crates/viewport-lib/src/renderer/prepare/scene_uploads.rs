@@ -345,6 +345,11 @@ impl ViewportRenderer {
         let vp_size = frame.camera.viewport_size;
         if !frame.scene.polylines.is_empty() {
             resources.ensure_polyline_pipeline(device);
+            // Clip-exempt polylines (ItemSettings::ignore_clip, e.g. clip-object
+            // outlines) draw through the no-clip pipeline; create it on demand.
+            if frame.scene.polylines.iter().any(|p| p.settings.ignore_clip) {
+                resources.ensure_polyline_no_clip_pipeline(device);
+            }
             for item in &frame.scene.polylines {
                 if item.settings.hidden || item.positions.is_empty() {
                     continue;
