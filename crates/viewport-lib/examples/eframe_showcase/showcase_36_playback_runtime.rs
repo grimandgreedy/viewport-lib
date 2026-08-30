@@ -121,7 +121,7 @@ pub(crate) fn rebuild_pb_static_scene(app: &mut App) {
     let n = app.pb_state.instance_count;
     let per_row = (n as f32).sqrt().ceil() as usize;
     let spacing = 2.5_f32;
-    let mat = Material::from_colour([0.4, 0.55, 0.85]);
+    let mat = Material::from_colour([0.10, 0.26, 0.68]);
     for i in 0..n {
         let col = i % per_row;
         let row = i / per_row;
@@ -144,7 +144,7 @@ pub(crate) fn pb_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
     if let Some(mid) = app.pb_state.mesh_id {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mid;
-        let mut mat = Material::from_colour([0.9, 0.55, 0.2]);
+        let mut mat = Material::from_colour([0.75, 0.28, 0.05]);
         mat.backface_policy = BackfacePolicy::Identical;
         item.material = mat;
         item.model = glam::Mat4::IDENTITY.to_cols_array_2d();

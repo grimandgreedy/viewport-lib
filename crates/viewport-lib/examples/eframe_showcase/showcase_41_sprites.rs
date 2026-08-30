@@ -1525,7 +1525,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             // opaque geometry the soft-particle fade is measured against.
             let mut item = SceneRenderItem::default();
             item.mesh_id = app.sprite_state.sphere_id;
-            item.material.base_colour = [0.3, 0.45, 0.7];
+            item.material.base_colour = [0.10, 0.26, 0.68];
             item.material.specular = 0.2;
             vec![item]
         }

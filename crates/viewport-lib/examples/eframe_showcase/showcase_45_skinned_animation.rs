@@ -113,7 +113,8 @@ const DEFAULT_CROWD_PICK_PADDING: f32 = 0.35;
 /// Path the glTF character demo looks for. Drop a `.glb` (or `.gltf` with its
 /// buffers/textures next to it) at this path to enable the demo. See the
 /// in-app help text for details.
-pub(crate) const GLTF_DEMO_PATH: &str = "examples/eframe_showcase/assets/character.glb";
+pub(crate) const GLTF_DEMO_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/examples/eframe_showcase/assets/character.glb");
 
 use crate::App;
 
@@ -525,7 +526,7 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
     // Add the arm if needed and not already present.
     if arm_demos && state.arm_node.is_none() {
         if let Some(mesh_id) = state.mesh_id {
-            let mut mat = Material::from_colour([0.6, 0.75, 0.9]);
+            let mut mat = Material::from_colour([0.10, 0.26, 0.68]);
             mat.backface_policy = BackfacePolicy::Tint(0.4);
             state.arm_node = Some(state.scene.add(Some(mesh_id), glam::Mat4::IDENTITY, mat));
         }
@@ -824,12 +825,12 @@ fn try_load_gltf_character(path: &std::path::Path) -> Option<GltfCharacterAsset>
     // Convert every mesh part that targets this skeleton. Assign each a
     // distinct colour so the rig is readable on screen.
     const PART_COLOURS: [[f32; 3]; 6] = [
-        [0.85, 0.7, 0.55],
-        [0.70, 0.55, 0.45],
-        [0.55, 0.65, 0.80],
-        [0.80, 0.55, 0.55],
-        [0.55, 0.75, 0.55],
-        [0.75, 0.75, 0.55],
+        [0.70, 0.45, 0.22],
+        [0.55, 0.32, 0.18],
+        [0.15, 0.30, 0.65],
+        [0.62, 0.15, 0.15],
+        [0.15, 0.55, 0.18],
+        [0.62, 0.55, 0.10],
     ];
     let mut parts = Vec::new();
     for io_mesh in scene.meshes.iter() {

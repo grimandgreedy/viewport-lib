@@ -92,9 +92,9 @@ impl Showcase for OverlaysShowcase {
             .upload_mesh_data(ctx.device, &primitives::cube(1.0))
             .unwrap();
         for (pos, colour) in [
-            (PEAK, [0.30, 0.80, 0.45]),
-            (TROUGH, [0.90, 0.40, 0.30]),
-            (ORIGIN, [0.85, 0.85, 0.88]),
+            (PEAK, [0.12, 0.52, 0.20]),
+            (TROUGH, [0.65, 0.16, 0.10]),
+            (ORIGIN, [0.35, 0.35, 0.38]),
         ] {
             ctx.session.scene_mut().add(
                 Some(cube),

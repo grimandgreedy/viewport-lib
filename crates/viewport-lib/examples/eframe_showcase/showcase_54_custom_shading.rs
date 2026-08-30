@@ -107,7 +107,7 @@ impl Default for CustomShadingState {
             tint_a: [1.0, 1.0, 1.0],
             bands_b: 6.0,
             tint_b: [1.0, 0.62, 0.25],
-            rim_colour: [0.2, 0.5, 1.0],
+            rim_colour: [0.10, 0.26, 0.68],
             rim_power: 3.0,
             detail_tiling: 6.0,
             detail_strength: 0.8,

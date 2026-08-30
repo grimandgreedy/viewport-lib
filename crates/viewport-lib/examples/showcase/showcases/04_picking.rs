@@ -328,7 +328,7 @@ impl PickingShowcase {
         // GPU implicit: two smooth-blended spheres.
         {
             let centers = [[10.3_f32, 5.0, 0.0], [11.7, 5.0, 0.0]];
-            let colours = [[0.9_f32, 0.4, 0.2, 1.0], [0.2, 0.5, 1.0, 1.0]];
+            let colours = [[0.68_f32, 0.22, 0.06, 1.0], [0.12, 0.28, 0.68, 1.0]];
             let mut item = GpuImplicitItem::default();
             for i in 0..2 {
                 let mut prim = ImplicitPrimitive::zeroed();
@@ -424,8 +424,8 @@ impl Showcase for PickingShowcase {
         // Meshes. A scene node's pick_id is its node id, so key by the node id.
         let cube_pos = Vec3::new(-11.0, -5.0, 0.7);
         let sphere_pos = Vec3::new(-5.5, 0.0, 0.9);
-        let cube_node = add_mesh(ctx, cube, cube_pos, [0.85, 0.4, 0.35]);
-        let sphere_node = add_mesh(ctx, sphere, sphere_pos, [0.4, 0.55, 0.85]);
+        let cube_node = add_mesh(ctx, cube, cube_pos, [0.62, 0.18, 0.14]);
+        let sphere_node = add_mesh(ctx, sphere, sphere_pos, [0.16, 0.26, 0.60]);
         self.labels
             .insert(cube_node, ("Cube".into(), Some(cube_node)));
         self.labels

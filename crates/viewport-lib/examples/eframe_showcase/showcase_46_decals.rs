@@ -82,9 +82,9 @@ fn make_wet_texture(size: u32) -> Vec<u8> {
             let d = (dx * dx + dy * dy).sqrt();
             let alpha = ((r - d) / (r * 0.1)).clamp(0.0, 1.0);
             let idx = ((y * size + x) * 4) as usize;
-            buf[idx] = 180;
-            buf[idx + 1] = 195;
-            buf[idx + 2] = 210;
+            buf[idx] = 50;
+            buf[idx + 1] = 95;
+            buf[idx + 2] = 205;
             buf[idx + 3] = (alpha * 200.0) as u8;
         }
     }
@@ -135,8 +135,8 @@ fn make_footprint_texture(size: u32) -> Vec<u8> {
             let alpha = ((1.0 - d) / 0.08).clamp(0.0, 1.0);
             if alpha > 0.0 {
                 let idx = ((y * size + x) * 4) as usize;
-                buf[idx] = 55;
-                buf[idx + 1] = 32;
+                buf[idx] = 12;
+                buf[idx + 1] = 12;
                 buf[idx + 2] = 12;
                 buf[idx + 3] = (alpha * 210.0) as u8;
             }
@@ -170,9 +170,9 @@ fn make_blood_texture(size: u32) -> Vec<u8> {
             }
             if alpha > 0.0 {
                 let idx = ((y * size + x) * 4) as usize;
-                buf[idx] = 175;
-                buf[idx + 1] = 12;
-                buf[idx + 2] = 12;
+                buf[idx] = 85;
+                buf[idx + 1] = 3;
+                buf[idx + 2] = 3;
                 buf[idx + 3] = (alpha * 230.0) as u8;
             }
         }
@@ -296,13 +296,13 @@ fn make_checker_texture(size: u32) -> Vec<u8> {
             let dark = (tx + ty) % 2 == 0;
             let idx = ((y * size + x) * 4) as usize;
             if dark {
-                buf[idx] = 40;
-                buf[idx + 1] = 40;
-                buf[idx + 2] = 140;
+                buf[idx] = 30;
+                buf[idx + 1] = 30;
+                buf[idx + 2] = 175;
             } else {
-                buf[idx] = 210;
-                buf[idx + 1] = 200;
-                buf[idx + 2] = 230;
+                buf[idx] = 225;
+                buf[idx + 1] = 210;
+                buf[idx + 2] = 245;
             }
             buf[idx + 3] = 220;
         }
@@ -677,7 +677,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     let wall_obstacle_node = scene.add(
         Some(wall_obstacle_id),
         glam::Mat4::from_translation(glam::Vec3::new(-1.5, 0.125, 2.0)),
-        Material::from_colour([1.0, 0.45, 0.1]),
+        Material::from_colour([0.75, 0.28, 0.05]),
     );
     scene.set_receives_decals(wall_obstacle_node, false);
     app.decal46_state.wall_obstacle_node = Some(wall_obstacle_node);
@@ -889,9 +889,9 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             let mut item = DecalItem::default();
             item.transform = transform;
             item.texture_id = fp;
-            item.roughness = 0.9;
+            item.roughness = 1.0;
             item.metallic = 0.0;
-            item.alpha = 0.88;
+            item.alpha = 1.0;
             fd.scene.decals.push(item);
         }
     }
@@ -908,9 +908,9 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             let mut item = DecalItem::default();
             item.transform = transform;
             item.texture_id = bl;
-            item.roughness = 0.6;
+            item.roughness = 1.0;
             item.metallic = 0.0;
-            item.alpha = 0.9;
+            item.alpha = 1.0;
             fd.scene.decals.push(item);
         }
     }

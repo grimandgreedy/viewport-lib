@@ -137,7 +137,7 @@ impl App {
         self.clipvol_state
             .scene
             .add_named("Torus", Some(torus_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_colour([0.82, 0.42, 0.18]);
+                let mut m = Material::from_colour([0.72, 0.30, 0.06]);
                 m.roughness = 0.35;
                 m.metallic = 0.15;
                 m
@@ -153,7 +153,7 @@ impl App {
         self.clipvol_state
             .scene
             .add_named("Capsule", Some(capsule_id), glam::Mat4::IDENTITY, {
-                let mut m = Material::from_colour([0.28, 0.58, 0.92]);
+                let mut m = Material::from_colour([0.12, 0.34, 0.78]);
                 m.roughness = 0.25;
                 m.metallic = 0.35;
                 m
@@ -612,9 +612,11 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
     if app.clipvol_state.show_overlay {
         let colour = [CLIP_COLOUR[0], CLIP_COLOUR[1], CLIP_COLOUR[2], 1.0];
         for co in clip_objects.iter().filter(|c| c.enabled) {
-            fd.scene
-                .polylines
-                .push(vpl::clip_plane::visual::outline(&co.shape, PLANE_EXTENT, colour));
+            fd.scene.polylines.push(vpl::clip_plane::visual::outline(
+                &co.shape,
+                PLANE_EXTENT,
+                colour,
+            ));
         }
     }
     fd.effects.clip.objects.extend(clip_objects);

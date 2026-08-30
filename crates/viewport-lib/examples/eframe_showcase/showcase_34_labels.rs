@@ -72,7 +72,7 @@ const PARTS: &[GearboxPart] = &[
         pos: [-0.8, 0.4, 0.0],
         explode_y: 1.8,
         size: [0.6, 0.3, 0.6],
-        colour: [0.9, 0.75, 0.2],
+        colour: [0.60, 0.50, 0.05],
         label_colour: [1.0, 0.9, 0.3, 1.0],
     },
     GearboxPart {
@@ -81,7 +81,7 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.8, 0.4, 0.0],
         explode_y: 1.8,
         size: [1.2, 0.3, 1.2],
-        colour: [0.85, 0.70, 0.15],
+        colour: [0.58, 0.47, 0.05],
         label_colour: [1.0, 0.9, 0.3, 1.0],
     },
     GearboxPart {
@@ -90,7 +90,7 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.0, -0.3, 0.0],
         explode_y: -1.8,
         size: [0.8, 0.25, 0.8],
-        colour: [0.80, 0.65, 0.10],
+        colour: [0.55, 0.44, 0.05],
         label_colour: [1.0, 0.9, 0.3, 1.0],
     },
     GearboxPart {
@@ -99,7 +99,7 @@ const PARTS: &[GearboxPart] = &[
         pos: [-0.8, 1.2, 0.0],
         explode_y: 2.5,
         size: [0.45, 0.18, 0.45],
-        colour: [0.3, 0.65, 0.9],
+        colour: [0.10, 0.26, 0.68],
         label_colour: [0.4, 0.75, 1.0, 1.0],
     },
     GearboxPart {
@@ -108,7 +108,7 @@ const PARTS: &[GearboxPart] = &[
         pos: [0.8, 1.2, 0.0],
         explode_y: 2.5,
         size: [0.45, 0.18, 0.45],
-        colour: [0.3, 0.65, 0.9],
+        colour: [0.10, 0.26, 0.68],
         label_colour: [0.4, 0.75, 1.0, 1.0],
     },
     GearboxPart {

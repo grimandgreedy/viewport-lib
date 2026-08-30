@@ -64,9 +64,9 @@ impl App {
 
         // Three spheres in a row along X.
         let positions: [(f32, &str, [f32; 3]); 3] = [
-            (-3.5, "Left", [0.8, 0.3, 0.3]),
-            (0.0, "Centre", [0.3, 0.7, 0.3]),
-            (3.5, "Right", [0.3, 0.4, 0.8]),
+            (-3.5, "Left", [0.65, 0.09, 0.07]),
+            (0.0, "Centre", [0.10, 0.52, 0.18]),
+            (3.5, "Right", [0.10, 0.26, 0.68]),
         ];
 
         for (x, name, colour) in positions {

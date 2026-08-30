@@ -249,7 +249,7 @@ pub(crate) fn submesh_scene_items(app: &App) -> Vec<SceneRenderItem> {
     item.model = glam::Mat4::from_rotation_z(s.angle).to_cols_array_2d();
     // The single-material fallback look, and the whole look when per-range
     // materials are toggled off.
-    item.material.base_colour = [0.6, 0.6, 0.65];
+    item.material.base_colour = [0.4, 0.4, 0.45];
     item.material.roughness = 0.5;
     if s.per_range {
         item.submesh_materials = Some(s.range_ids.iter().map(|&id| material_for(s, id)).collect());

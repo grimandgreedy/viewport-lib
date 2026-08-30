@@ -1720,7 +1720,7 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 58] = [
+        const SHOWCASE_MODES: [ShowcaseMode; 59] = [
             ShowcaseMode::Basic,
             ShowcaseMode::SceneGraph,
             ShowcaseMode::GroundPlane,
@@ -1779,6 +1779,7 @@ impl App {
             ShowcaseMode::SubmeshMaterials,
             ShowcaseMode::PhotometricLighting,
             ShowcaseMode::PhysicallyBasedSurfaces,
+            ShowcaseMode::VectorArt,
         ];
 
         let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
@@ -2817,7 +2818,7 @@ impl App {
                             _t.kind = LightKind::Directional {
                                 direction: [0.5, 0.3, 1.0],
                             };
-                            _t.intensity = 2.5;
+                            _t.intensity = 0.4;
                             _t
                         },
                         {
@@ -3040,9 +3041,9 @@ impl App {
                 let sg = self.texture_state.scene.version();
                 let lighting = {
                     let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 1.5;
+                    _t.hemisphere_intensity = 0.5;
                     _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.8, 0.8, 0.8];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
                 (items, None, lighting, sg, 0)
@@ -3335,7 +3336,7 @@ impl App {
                     let mut _t = LightingSettings::default();
                     _t.hemisphere_intensity = 0.6;
                     _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.8, 0.8, 0.8];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
                 let items = showcase_39_tensor_glyphs::beam_scene_items(self);
@@ -3380,7 +3381,7 @@ impl App {
                     let mut _t = LightingSettings::default();
                     _t.hemisphere_intensity = 0.5;
                     _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.7, 0.7, 0.7];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
                 let sg = self.rt_state.scene.version();
@@ -3397,7 +3398,7 @@ impl App {
                     let mut _t = LightingSettings::default();
                     _t.hemisphere_intensity = 0.5;
                     _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.7, 0.7, 0.7];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
                 let sg = self.dbg_draw_state.scene.version();
@@ -3421,7 +3422,7 @@ impl App {
                     let mut _t = LightingSettings::default();
                     _t.hemisphere_intensity = 0.85;
                     _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.7, 0.7, 0.7];
+                    _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
                 let sg = self.skin_state.scene.version();
@@ -3436,7 +3437,7 @@ impl App {
                 };
                 let lighting = {
                     let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.65;
+                    _t.hemisphere_intensity = 0.5;
                     _t.sky_colour = [1.0, 1.0, 1.0];
                     _t.ground_colour = [0.6, 0.6, 0.6];
                     _t
@@ -3496,7 +3497,7 @@ impl App {
                     let mut t = LightingSettings::default();
                     t.hemisphere_intensity = 0.4;
                     t.sky_colour = [1.0, 1.0, 1.0];
-                    t.ground_colour = [0.5, 0.5, 0.55];
+                    t.ground_colour = [1.0, 1.0, 1.0];
                     t
                 };
                 let generation = self.lod_state.generation;

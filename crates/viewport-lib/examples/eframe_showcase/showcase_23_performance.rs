@@ -87,12 +87,12 @@ pub(crate) fn build_perf_scene_threaded(
 ) -> (Scene, PickAccelerator) {
     let spacing = 2.5_f32;
     let colours: [[f32; 3]; 6] = [
-        [0.9, 0.3, 0.3],
-        [0.3, 0.9, 0.3],
-        [0.3, 0.3, 0.9],
-        [0.9, 0.9, 0.3],
-        [0.9, 0.5, 0.2],
-        [0.5, 0.3, 0.9],
+        [0.65, 0.09, 0.07],
+        [0.10, 0.52, 0.18],
+        [0.10, 0.26, 0.68],
+        [0.60, 0.50, 0.05],
+        [0.75, 0.28, 0.05],
+        [0.38, 0.12, 0.62],
     ];
 
     let mut scene = Scene::new();
@@ -178,8 +178,8 @@ pub(crate) fn make_box_texture(index: usize) -> (u32, Vec<u8>) {
     let n = TEXTURE_POOL_SIZE.max(1) as f32;
     // Golden-ratio hue stride keeps successive slots far apart on the wheel.
     let hue = (index as f32 / n + 0.618_034 * index as f32).fract();
-    let c0 = hsv_to_rgb(hue, 0.65, 0.95);
-    let c1 = hsv_to_rgb((hue + 0.5).fract(), 0.70, 0.55);
+    let c0 = hsv_to_rgb(hue, 0.90, 0.78);
+    let c1 = hsv_to_rgb((hue + 0.5).fract(), 0.85, 0.40);
     let pattern = index % 4;
 
     let mut data = vec![0u8; (SIZE * SIZE * 4) as usize];

@@ -172,10 +172,10 @@ pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut vpl::ViewportRe
         (-0.8, -1.2, 1.5),
     ];
     let colours: [[f32; 3]; 4] = [
-        [0.85, 0.35, 0.3],
-        [0.3, 0.7, 0.9],
-        [0.5, 0.85, 0.4],
-        [0.9, 0.7, 0.2],
+        [0.65, 0.09, 0.07],
+        [0.05, 0.35, 0.65],
+        [0.15, 0.55, 0.12],
+        [0.72, 0.42, 0.04],
     ];
 
     let mut physics = PhysicsLitePlugin::new().with_gravity(glam::Vec3::new(0.0, 0.0, -9.81));

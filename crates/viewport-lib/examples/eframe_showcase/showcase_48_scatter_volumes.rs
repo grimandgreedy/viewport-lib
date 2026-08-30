@@ -298,7 +298,7 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &pillar)
             .expect("svol pillar upload");
-        let pillar_mat = Material::from_colour([0.78, 0.74, 0.66]);
+        let pillar_mat = Material::from_colour([0.55, 0.50, 0.42]);
         for i in 0..6 {
             let x = -6.0 + i as f32 * 2.5;
             for side in [-1.0_f32, 1.0] {

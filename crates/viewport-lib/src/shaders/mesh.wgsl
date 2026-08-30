@@ -392,10 +392,10 @@ fn sample_point_shadow(light: SingleLight, world_pos: vec3<f32>) -> f32 {
 // mode: 1=checker, 2=grid, 3=localcheck (polar checker), 4=localrad (concentric rings).
 // scale: tile frequency multiplier applied to uv before pattern evaluation.
 fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
-    let col_a      = vec3<f32>(0.85, 0.85, 0.85);
-    let col_b      = vec3<f32>(0.2,  0.2,  0.2);
-    let line_col   = vec3<f32>(0.1,  0.1,  0.1);
-    let bg_col     = vec3<f32>(0.85, 0.85, 0.85);
+    let col_a      = vec3<f32>(1.0,  1.0,  1.0);
+    let col_b      = vec3<f32>(0.0,  0.0,  0.0);
+    let line_col   = vec3<f32>(0.0,  0.0,  0.0);
+    let bg_col     = vec3<f32>(1.0,  1.0,  1.0);
     let line_width = 0.05f;
     let su = uv.x * scale;
     let sv = uv.y * scale;

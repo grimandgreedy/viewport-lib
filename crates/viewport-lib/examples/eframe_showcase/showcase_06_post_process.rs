@@ -33,7 +33,7 @@ impl Default for PostProcessState {
             scene: Scene::new(),
             shadow_pcss: true,
             point_light_on: true,
-            dir_intensity: 2.0,
+            dir_intensity: 0.4,
             dof_enabled: false,
             dof_focal_dist: 5.0,
             dof_focal_range: 1.0,
@@ -68,7 +68,7 @@ impl App {
             "Gold (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(-1.2, -1.2, 0.0)),
-            Material::pbr([1.0, 0.78, 0.2], 0.95, 0.05),
+            Material::pbr([1.0, 0.72, 0.06], 0.95, 0.05),
         );
 
         let m = self.upload_box(renderer);
@@ -92,7 +92,7 @@ impl App {
             "Ceramic (PBR)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(1.2, 1.2, 0.0)),
-            Material::pbr([0.85, 0.7, 0.6], 0.0, 0.9),
+            Material::pbr([0.82, 0.58, 0.42], 0.0, 0.9),
         );
 
         let sphere = make_uv_sphere(32, 16, 0.6);
@@ -104,7 +104,7 @@ impl App {
             "Sphere Test",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(3.0, 0.0, 0.1)),
-            Material::pbr([0.85, 0.45, 0.35], 0.0, 0.55),
+            Material::pbr([0.75, 0.28, 0.05], 0.0, 0.55),
         );
 
         let m = self.upload_box(renderer);
@@ -116,7 +116,7 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 0.0, 1.0),
             ),
-            Material::pbr([0.7, 0.7, 0.75], 0.1, 0.7),
+            Material::pbr([0.4, 0.4, 0.45], 0.1, 0.7),
         );
 
         self.pp_state.built = true;

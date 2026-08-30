@@ -94,7 +94,7 @@ impl App {
                 glam::Quat::IDENTITY,
                 glam::Vec3::new(0.0, 3.5, 0.25),
             ),
-            Material::from_colour([0.55, 0.55, 0.55]),
+            Material::from_colour([0.35, 0.35, 0.35]),
         );
 
         let m = self.upload_box(renderer);
@@ -102,7 +102,7 @@ impl App {
             "Hidden Magenta (x-ray target)",
             Some(m),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, 5.5, 0.0)),
-            Material::from_colour([0.9, 0.3, 0.7]),
+            Material::from_colour([0.65, 0.06, 0.45]),
         );
 
         self.materials_visibility_state.built = true;

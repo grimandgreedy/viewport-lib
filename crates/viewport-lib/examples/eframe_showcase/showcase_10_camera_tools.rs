@@ -39,11 +39,11 @@ impl App {
         self.ct_state.scene = Scene::new();
 
         let objects: &[(&str, glam::Vec3, [f32; 3])] = &[
-            ("Origin", glam::Vec3::ZERO, [0.70, 0.70, 0.70]),
+            ("Origin", glam::Vec3::ZERO, [0.40, 0.40, 0.40]),
             (
                 "+X Right",
                 glam::Vec3::new(4.0, 0.0, 0.0),
-                [0.85, 0.22, 0.22],
+                [0.65, 0.09, 0.07],
             ),
             (
                 "-X Left",
@@ -53,14 +53,14 @@ impl App {
             (
                 "+Y Front",
                 glam::Vec3::new(0.0, 4.0, 0.0),
-                [0.22, 0.78, 0.22],
+                [0.10, 0.52, 0.18],
             ),
             (
                 "-Y Back",
                 glam::Vec3::new(0.0, -4.0, 0.0),
                 [0.10, 0.40, 0.10],
             ),
-            ("+Z Up", glam::Vec3::new(0.0, 0.0, 4.0), [0.25, 0.50, 0.90]),
+            ("+Z Up", glam::Vec3::new(0.0, 0.0, 4.0), [0.10, 0.26, 0.68]),
         ];
 
         for (name, pos, colour) in objects {

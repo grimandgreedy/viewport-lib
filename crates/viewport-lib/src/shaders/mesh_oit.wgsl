@@ -293,10 +293,10 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
 // UV parameterization visualization : procedural RGB colour from UV coordinates.
 // Matches the implementation in mesh.wgsl exactly.
 fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
-    let col_a      = vec3<f32>(0.85, 0.85, 0.85);
-    let col_b      = vec3<f32>(0.2,  0.2,  0.2);
-    let line_col   = vec3<f32>(0.1,  0.1,  0.1);
-    let bg_col     = vec3<f32>(0.85, 0.85, 0.85);
+    let col_a      = vec3<f32>(1.0,  1.0,  1.0);
+    let col_b      = vec3<f32>(0.0,  0.0,  0.0);
+    let line_col   = vec3<f32>(0.0,  0.0,  0.0);
+    let bg_col     = vec3<f32>(1.0,  1.0,  1.0);
     let line_width = 0.05f;
     let su = uv.x * scale;
     let sv = uv.y * scale;

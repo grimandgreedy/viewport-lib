@@ -106,7 +106,7 @@ impl App {
             "Unlit Sphere",
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -6.0, 0.6)),
-            Material::from_colour([0.2, 0.7, 1.0]),
+            Material::from_colour([0.12, 0.38, 0.82]),
         );
         {
             let mut a = vpl::ItemSettings::default();
@@ -118,7 +118,7 @@ impl App {
             Some(sphere_id),
             glam::Mat4::from_translation(glam::Vec3::new(6.0, -2.0, 0.6)),
             {
-                let mut m = Material::from_colour([0.2, 0.7, 1.0]);
+                let mut m = Material::from_colour([0.12, 0.38, 0.82]);
                 m.roughness = 0.35;
                 m
             },

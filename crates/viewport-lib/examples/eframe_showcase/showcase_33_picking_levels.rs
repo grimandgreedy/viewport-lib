@@ -524,25 +524,25 @@ impl App {
                 "Cube A",
                 cube_id,
                 glam::vec3(-4.5, 0.0, 0.0),
-                [0.35, 0.55, 0.95],
+                [0.10, 0.26, 0.68],
             ),
             (
                 "Hemi A",
                 hemi_id,
                 glam::vec3(-1.5, 0.0, 0.0),
-                [0.35, 0.80, 0.50],
+                [0.10, 0.52, 0.18],
             ),
             (
                 "Hemi B",
                 hemi_id,
                 glam::vec3(1.5, 0.0, 0.0),
-                [0.95, 0.60, 0.30],
+                [0.75, 0.28, 0.05],
             ),
             (
                 "Cube B",
                 cube_id,
                 glam::vec3(4.5, 0.0, 0.0),
-                [0.75, 0.40, 0.90],
+                [0.38, 0.12, 0.62],
             ),
         ];
 
@@ -1768,7 +1768,7 @@ pub(crate) fn pl_collect_scene_items(
         tvm_item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
         tvm_item.settings.pick_id = PickId(11);
         tvm_item.settings.selected = app.pl_state.selection.contains(11);
-        tvm_item.material = Material::flat([0.8, 0.45, 0.2]);
+        tvm_item.material = Material::flat([0.72, 0.42, 0.04]);
         tvm_item.settings.unlit = false;
         items.push(tvm_item);
     }
@@ -1815,7 +1815,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut pc = PointCloudItem::default();
         pc.positions = app.pl_state.pc_positions.clone();
         pc.point_size = 18.0;
-        pc.default_colour = [0.5, 0.8, 1.0, 1.0];
+        pc.default_colour = [0.10, 0.26, 0.68, 1.0];
         pc.settings.pick_id = PickId(100);
         pc.settings.selected = app.pl_state.selection.contains(100);
         pc.settings.unlit = false;
@@ -2003,7 +2003,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         vol.scalar_range = (0.0, 1.0);
         vol.threshold_min = 0.15;
         vol.threshold_max = 1.0;
-        vol.opacity_scale = 0.6;
+        vol.opacity_scale = 0.85;
         vol.enable_shading = false;
         vol.settings.unlit = false;
         vol.settings.selected = app.pl_state.selection.contains(20);
@@ -2090,7 +2090,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         st.positions = app.pl_state.streamtube_positions.clone();
         st.strip_lengths = app.pl_state.streamtube_strip_lengths.clone();
         st.radius = 0.12;
-        st.colour = [0.3, 0.8, 0.55, 1.0];
+        st.colour = [0.10, 0.52, 0.18, 1.0];
         st.settings.pick_id = PickId(40);
         st.settings.selected = app.pl_state.selection.contains(40);
         st.settings.unlit = false;
@@ -2102,7 +2102,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tb.positions = app.pl_state.tube_positions.clone();
         tb.strip_lengths = app.pl_state.tube_strip_lengths.clone();
         tb.radius = 0.15;
-        tb.colour = [0.85, 0.4, 0.2, 1.0];
+        tb.colour = [0.75, 0.28, 0.05, 1.0];
         tb.settings.pick_id = PickId(41);
         tb.settings.selected = app.pl_state.selection.contains(41);
         tb.settings.unlit = false;
@@ -2168,7 +2168,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     // GPU implicit (pick_id=53): two smooth-blended spheres.
     {
         let centers: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
-        let colours: [[f32; 4]; 2] = [[0.9, 0.4, 0.2, 1.0], [0.2, 0.5, 1.0, 1.0]];
+        let colours: [[f32; 4]; 2] = [[0.75, 0.28, 0.05, 1.0], [0.10, 0.26, 0.68, 1.0]];
         let mut item = GpuImplicitItem::default();
         for i in 0..2 {
             let mut prim = ImplicitPrimitive::zeroed();
@@ -2195,7 +2195,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     }
     // GPU marching cubes (pick_id=54): gyroid surface.
     if let Some(mc_vol_id) = app.pl_state.mc_volume_id {
-        let mut mat = Material::flat([0.5, 0.8, 0.55]);
+        let mut mat = Material::flat([0.10, 0.52, 0.18]);
         mat.roughness = 0.4;
         let mut mc_settings = ItemSettings::default();
         mc_settings.unlit = false;

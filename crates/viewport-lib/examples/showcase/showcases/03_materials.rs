@@ -388,9 +388,9 @@ fn shading_family(matcaps: &[(MatcapId, &'static str)]) -> Vec<Material> {
     let mut matcap = Material::from_colour([0.8, 0.8, 0.8]);
     matcap.shading_model = ShadingModel::Matcap(jade);
     vec![
-        Material::from_colour([0.85, 0.35, 0.35]), // Phong (default model)
+        Material::from_colour([0.62, 0.14, 0.12]), // Phong (default model)
         Material::pbr([0.25, 0.5, 0.85], 0.0, 0.35),
-        Material::pbr([0.95, 0.78, 0.4], 1.0, 0.25),
+        Material::pbr([0.72, 0.48, 0.06], 1.0, 0.25),
         matcap,
         Material::flat([0.5, 0.78, 0.45]),
     ]

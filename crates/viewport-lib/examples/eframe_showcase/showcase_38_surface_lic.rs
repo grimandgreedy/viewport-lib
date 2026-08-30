@@ -275,12 +275,12 @@ fn build_sphere(lon: usize, lat: usize, r: f32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>
 // Upload helpers
 // ---------------------------------------------------------------------------
 
-// Mid-tone colours (linear 0..1) so LIC can both darken and brighten visibly.
-// White surfaces clip brightening; these sit around 0.4-0.5 for symmetric contrast.
+// Saturated colours (linear 0..1) kept around 0.35-0.4 luminance so LIC can
+// both darken and brighten visibly without clipping to black or white.
 const ROW_COLOURS: [[f32; 3]; 3] = [
-    [0.28, 0.48, 0.72], // steel blue -- tori
-    [0.35, 0.55, 0.28], // sage green -- terrain
-    [0.65, 0.36, 0.22], // terracotta -- spheres
+    [0.12, 0.38, 0.80], // steel blue -- tori
+    [0.12, 0.55, 0.20], // sage green -- terrain
+    [0.75, 0.30, 0.08], // terracotta -- spheres
 ];
 
 fn make_material(row: usize) -> Material {

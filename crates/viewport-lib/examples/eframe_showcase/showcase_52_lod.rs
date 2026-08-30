@@ -127,7 +127,7 @@ pub(crate) fn lod_scene_items(app: &App) -> Vec<SceneRenderItem> {
             let mut item = SceneRenderItem::default();
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
-            item.material = Material::from_colour([0.6, 0.65, 0.8]);
+            item.material = Material::from_colour([0.22, 0.28, 0.55]);
             item.settings.pick_id = PickId(1000 + i as u64);
             if st.lod_enabled {
                 item.lod_group = Some(group);
@@ -165,7 +165,7 @@ pub(crate) fn submit_lod_items(app: &mut App, fd: &mut FrameData) {
                 let size = projected_screen_size(&st.aabb, &model, &camera);
                 level_tint(level_for_size(&st.thresholds, size))
             } else {
-                [0.74, 0.74, 0.78, 1.0]
+                [0.45, 0.45, 0.50, 1.0]
             };
 
             transforms.push(model.to_cols_array_2d());
@@ -272,8 +272,8 @@ fn level_for_size(thresholds: &[f32], size: f32) -> usize {
 
 fn level_tint(level: usize) -> [f32; 4] {
     match level {
-        0 => [0.32, 0.78, 0.36, 1.0],
-        1 => [0.92, 0.80, 0.22, 1.0],
-        _ => [0.86, 0.32, 0.28, 1.0],
+        0 => [0.10, 0.55, 0.20, 1.0],
+        1 => [0.65, 0.50, 0.05, 1.0],
+        _ => [0.65, 0.10, 0.08, 1.0],
     }
 }

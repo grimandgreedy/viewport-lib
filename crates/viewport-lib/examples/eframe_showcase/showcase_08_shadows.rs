@@ -72,22 +72,22 @@ impl App {
             (
                 "Sphere Near",
                 glam::Vec3::new(-1.5, 1.0, 0.5),
-                [0.85, 0.35, 0.25],
+                [0.75, 0.28, 0.05],
             ),
             (
                 "Box Near",
                 glam::Vec3::new(1.5, 1.0, 0.5),
-                [0.25, 0.55, 0.85],
+                [0.10, 0.26, 0.68],
             ),
             (
                 "Sphere Mid",
                 glam::Vec3::new(-3.0, -3.0, 0.5),
-                [0.8, 0.7, 0.3],
+                [0.60, 0.50, 0.05],
             ),
             (
                 "Box Mid",
                 glam::Vec3::new(3.0, -3.0, 0.5),
-                [0.35, 0.75, 0.45],
+                [0.10, 0.52, 0.18],
             ),
         ];
         for (name, pos, colour) in object_data {
@@ -115,7 +115,7 @@ impl App {
             "Tall Pillar",
             Some(pillar_id),
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -6.0, 1.5)),
-            Material::pbr([0.65, 0.65, 0.70], 0.0, 0.6),
+            Material::pbr([0.35, 0.35, 0.40], 0.0, 0.6),
         );
 
         self.shd_state.built = true;

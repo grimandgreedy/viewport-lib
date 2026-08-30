@@ -64,9 +64,9 @@ fn blob_colour(p: Vec3) -> [u8; 4] {
     let d1 = (p - Vec3::new(1.8, 0.0, 0.0)).length() - 1.3;
     let d2 = (p - Vec3::new(0.0, 1.8, 0.0)).length() - 1.3;
 
-    const C0: [f32; 3] = [0.90, 0.35, 0.25]; // red-orange
-    const C1: [f32; 3] = [0.25, 0.55, 1.00]; // blue
-    const C2: [f32; 3] = [0.25, 0.85, 0.45]; // green
+    const C0: [f32; 3] = [0.75, 0.28, 0.05]; // red-orange
+    const C1: [f32; 3] = [0.10, 0.26, 0.68]; // blue
+    const C2: [f32; 3] = [0.10, 0.52, 0.18]; // green
 
     // Bias by the smin blend radius so weights are non-zero on the isosurface
     // (at d_i = 0, weight = 0.9 rather than 0, which would produce black).
@@ -298,7 +298,7 @@ impl App {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 4.5)).to_cols_array_2d();
             item.material = {
-                let mut m = Material::from_colour([0.25, 0.55, 1.0]);
+                let mut m = Material::from_colour([0.10, 0.26, 0.68]);
                 m.roughness = 0.35;
                 m
             };
@@ -312,7 +312,7 @@ impl App {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -3.5)).to_cols_array_2d();
             item.material = {
-                let mut m = Material::from_colour([1.0, 0.48, 0.12]);
+                let mut m = Material::from_colour([0.75, 0.28, 0.05]);
                 m.roughness = 0.35;
                 m
             };
@@ -326,7 +326,7 @@ impl App {
                 item.mesh_id = mc_id;
                 item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
                 item.material = {
-                    let mut m = Material::from_colour([0.80, 0.75, 0.70]);
+                    let mut m = Material::from_colour([0.55, 0.50, 0.45]);
                     m.roughness = 0.5;
                     m
                 };
@@ -381,11 +381,11 @@ impl App {
                 let d = d0.min(d1).min(d2);
                 // Each sphere keeps its own flat colour.
                 let colour = if d0 <= d1 && d0 <= d2 {
-                    [230u8, 90, 65, 255] // red-orange
+                    [191u8, 71, 13, 255] // red-orange
                 } else if d1 <= d2 {
-                    [65, 140, 255, 255] // blue
+                    [26, 66, 173, 255] // blue
                 } else {
-                    [65, 218, 115, 255] // green
+                    [26, 133, 46, 255] // green
                 };
                 (d, colour)
             }),
@@ -416,9 +416,9 @@ impl App {
         // Centers and radius matching blob_sdf / blob_colour.
         const CENTERS: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
         const COLOURS: [[f32; 4]; 3] = [
-            [0.90, 0.35, 0.25, 1.0], // red-orange
-            [0.25, 0.55, 1.00, 1.0], // blue
-            [0.25, 0.85, 0.45, 1.0], // green
+            [0.75, 0.28, 0.05, 1.0], // red-orange
+            [0.10, 0.26, 0.68, 1.0], // blue
+            [0.10, 0.52, 0.18, 1.0], // green
         ];
 
         let mut primitives = Vec::with_capacity(3);
@@ -458,7 +458,7 @@ impl App {
             return;
         };
 
-        let mut mat = Material::from_colour([0.75, 0.80, 0.85]);
+        let mut mat = Material::from_colour([0.45, 0.48, 0.52]);
         mat.roughness = 0.4;
 
         fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {

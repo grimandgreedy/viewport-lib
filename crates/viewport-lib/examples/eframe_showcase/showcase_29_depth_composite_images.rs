@@ -152,9 +152,9 @@ impl App {
 
         // Three spheres: same mesh, different translations and colours.
         let spheres = [
-            (glam::Vec3::new(-3.5, 0.0, 4.5), [0.15f32, 0.85, 0.2]), // green  - near
-            (glam::Vec3::new(0.0, 0.0, 0.0), [0.25, 0.50, 1.0]),     // blue   - mid
-            (glam::Vec3::new(3.5, 0.0, -5.0), [1.0, 0.45, 0.1]),     // orange - far
+            (glam::Vec3::new(-3.5, 0.0, 4.5), [0.10f32, 0.52, 0.18]), // green  - near
+            (glam::Vec3::new(0.0, 0.0, 0.0), [0.10, 0.26, 0.68]),     // blue   - mid
+            (glam::Vec3::new(3.5, 0.0, -5.0), [0.75, 0.28, 0.05]),    // orange - far
         ];
 
         spheres

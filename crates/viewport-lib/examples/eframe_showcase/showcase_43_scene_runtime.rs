@@ -143,11 +143,11 @@ fn populate_orbit(app: &mut App) {
         return;
     };
     let colours: [[f32; 3]; 5] = [
-        [0.9, 0.35, 0.3],
-        [0.3, 0.75, 0.9],
-        [0.5, 0.9, 0.4],
-        [0.9, 0.75, 0.2],
-        [0.75, 0.4, 0.9],
+        [0.65, 0.09, 0.07],
+        [0.05, 0.35, 0.65],
+        [0.15, 0.55, 0.12],
+        [0.72, 0.42, 0.04],
+        [0.38, 0.12, 0.62],
     ];
     for colour in &colours {
         app.rt_state.scene.add(
@@ -176,11 +176,11 @@ fn populate_simulation(app: &mut App) {
     let scene = &mut app.rt_state.scene;
 
     let body_colours: [[f32; 3]; 5] = [
-        [0.9, 0.3, 0.3],
-        [0.3, 0.75, 0.9],
-        [0.5, 0.9, 0.4],
-        [0.9, 0.75, 0.2],
-        [0.75, 0.35, 0.9],
+        [0.65, 0.09, 0.07],
+        [0.05, 0.35, 0.65],
+        [0.15, 0.55, 0.12],
+        [0.72, 0.42, 0.04],
+        [0.38, 0.12, 0.62],
     ];
     let body_starts: [(f32, f32, f32); 5] = [
         (0.0, 0.0, 5.0),
@@ -226,7 +226,7 @@ fn populate_simulation(app: &mut App) {
     let anim_id = app.rt_state.scene.add(
         Some(mesh_id),
         glam::Mat4::IDENTITY,
-        Material::from_colour([0.95, 0.95, 0.95]),
+        Material::from_colour([0.55, 0.55, 0.55]),
     );
     app.rt_state.anim_node_id = Some(anim_id);
 
