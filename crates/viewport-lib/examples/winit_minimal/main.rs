@@ -42,17 +42,17 @@ fn main() {
         scene.add(
             Some(sphere),
             glam::Mat4::from_translation(glam::Vec3::new(-2.5, 0.0, 0.0)),
-            Material::from_colour([0.9, 0.5, 0.2]),
+            Material::from_colour([0.75, 0.28, 0.05]),
         );
         let cube_node = scene.add(
             Some(cube),
             glam::Mat4::IDENTITY,
-            Material::from_colour([0.4, 0.6, 0.9]),
+            Material::from_colour([0.12, 0.3, 0.7]),
         );
         scene.add(
             Some(torus),
             glam::Mat4::from_translation(glam::Vec3::new(2.5, 0.0, 0.0)),
-            Material::from_colour([0.3, 0.8, 0.4]),
+            Material::from_colour([0.1, 0.55, 0.2]),
         );
         setup_id.set(Some(cube_node));
 
