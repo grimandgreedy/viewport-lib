@@ -352,6 +352,7 @@ impl ViewportRenderer {
                 let mut gpu_data =
                     resources.upload_polyline_per_frame(device, queue, item, vp_size);
                 gpu_data.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
+                gpu_data.skip_clip = item.settings.ignore_clip;
                 if frame.interaction.outline_selected && item.settings.selected {
                     polyline_selected_gpu_indices.push(polyline_gpu_data.len());
                 }

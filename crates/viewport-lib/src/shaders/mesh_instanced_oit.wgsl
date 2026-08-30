@@ -74,7 +74,8 @@ struct InstanceData {
     _pad_emissive: f32,
     has_light_probe: u32,                 // 1 = sample light_probe_sh for indirect diffuse
     light_probe_index: u32,               // base block index into light_probe_sh
-    _pad_lp: vec2<u32>,
+    ignore_clip: u32,                     // 1 = exempt from clip planes/volumes
+    _pad_lp: u32,
 };
 
 struct ClipVolumeEntry {
@@ -328,11 +329,13 @@ fn compute_surface(in: VertexOut) -> Surface {
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
 
-    for (var i = 0u; i < clip_planes.count; i++) {
-        let plane = clip_planes.planes[i];
-        if dot(in.world_pos, plane.xyz) + plane.w < 0.0 { discard; }
+    if instances[in.instance_idx].ignore_clip == 0u {
+        for (var i = 0u; i < clip_planes.count; i++) {
+            let plane = clip_planes.planes[i];
+            if dot(in.world_pos, plane.xyz) + plane.w < 0.0 { discard; }
+        }
+        if !clip_volume_test(in.world_pos) { discard; }
     }
-    if !clip_volume_test(in.world_pos) { discard; }
 
     let mat_uv = in.uv * inst.uv_transform.zw + inst.uv_transform.xy;
     out.mat_uv = mat_uv;

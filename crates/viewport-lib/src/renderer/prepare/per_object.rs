@@ -215,7 +215,8 @@ pub(super) fn build_object_uniform(
             .get(item.mesh_id)
             .and_then(|mesh| mesh.lightmap.as_ref())
             .map_or(0, |lm| lm.is_shadowmask as u32),
-        _pad_ls: [0; 2],
+        ignore_clip: item.settings.ignore_clip as u32,
+        _pad_ls: 0,
     }
 }
 
@@ -465,7 +466,8 @@ impl ViewportRenderer {
                         lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
                         lightmap_index: 0,
                         has_shadowmask: 0,
-                        _pad_ls: [0; 2],
+                        ignore_clip: item.settings.ignore_clip as u32,
+                        _pad_ls: 0,
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(

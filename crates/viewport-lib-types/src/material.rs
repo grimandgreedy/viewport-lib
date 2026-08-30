@@ -42,6 +42,15 @@ pub struct ItemSettings {
     /// mesh-family items; non-mesh items currently do not sample shadow maps and
     /// treat this flag as a no-op.
     pub receive_shadows: bool,
+    /// Whether this item is exempt from the global clip objects. Default `false`
+    /// (the item is clipped like the rest of the scene).
+    ///
+    /// Set to `true` for annotations and manipulator visuals that must stay fully
+    /// visible even where clip planes / box / sphere / cylinder volumes cut the
+    /// scene (clip-object outlines, section-plane indicators, debug guides).
+    /// Honoured by item types whose shader samples the clip uniform; types that
+    /// do not sample it treat this flag as a no-op.
+    pub ignore_clip: bool,
 }
 
 impl Default for ItemSettings {
@@ -55,6 +64,7 @@ impl Default for ItemSettings {
             selected: false,
             cast_shadows: true,
             receive_shadows: true,
+            ignore_clip: false,
         }
     }
 }

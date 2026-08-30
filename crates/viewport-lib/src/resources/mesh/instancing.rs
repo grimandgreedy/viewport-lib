@@ -1280,7 +1280,8 @@ impl DeviceResources {
             _pad_emissive: f32,
             has_light_probe: u32,
             light_probe_index: u32,
-            _pad_lp: [u32; 2],
+            ignore_clip: u32,
+            _pad_lp: u32,
         }
 
         // Layout matches the WGSL `InstanceData` (and the `InstanceData` Rust
@@ -1326,7 +1327,8 @@ impl DeviceResources {
                 _pad_emissive: 0.0,
                 has_light_probe: 0,
                 light_probe_index: 0,
-                _pad_lp: [0, 0],
+                ignore_clip: item.settings.ignore_clip as u32,
+                _pad_lp: 0,
             }
         };
         let instances: Vec<GpuInstanceData> = match indices {
@@ -1552,8 +1554,13 @@ pub(crate) struct ObjectUniform {
     /// atlas): the lit shaders combine its baked static-occluder visibility with
     /// each light's realtime shadow. Mutually exclusive with `lightmap_directional`.
     pub(crate) has_shadowmask: u32, //   4 bytes, offset 356
+    /// 1 = exempt this object from the global clip volumes (the fragment shader
+    /// skips the clip discard). Drives `ItemSettings::ignore_clip`; used by
+    /// clip-object indicator meshes and any annotation that must stay visible
+    /// where the scene is clipped. Default 0. Offset 360.
+    pub(crate) ignore_clip: u32, //   4 bytes, offset 360
     /// Pads the struct to a 16-byte multiple (368) for the uniform layout.
-    pub(crate) _pad_ls: [u32; 2], //   8 bytes, offset 360
+    pub(crate) _pad_ls: u32, //   4 bytes, offset 364
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
@@ -1610,7 +1617,10 @@ pub(crate) struct InstanceData {
     pub(crate) has_light_probe: u32, //   4 bytes, offset 192
     /// Base block index into the shared light-probe SH buffer (group 0 binding 18).
     pub(crate) light_probe_index: u32, //   4 bytes, offset 196
-    pub(crate) _pad_lp: [u32; 2],    //   8 bytes, offset 200 (struct stride to 16B)
+    /// 1 = exempt from the global clip planes/volumes. Mirrors
+    /// `ObjectUniform::ignore_clip` / `ItemSettings::ignore_clip`. Offset 200.
+    pub(crate) ignore_clip: u32, //   4 bytes, offset 200
+    pub(crate) _pad_lp: u32,         //   4 bytes, offset 204 (struct stride to 16B)
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 208);

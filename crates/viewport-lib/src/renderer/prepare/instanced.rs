@@ -177,7 +177,8 @@ impl ViewportRenderer {
                                 _pad_emissive: 0.0,
                                 has_light_probe: probe.map_or(0, |_| 1),
                                 light_probe_index: probe.unwrap_or(0),
-                                _pad_lp: [0, 0],
+                                ignore_clip: item.settings.ignore_clip as u32,
+                                _pad_lp: 0,
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);

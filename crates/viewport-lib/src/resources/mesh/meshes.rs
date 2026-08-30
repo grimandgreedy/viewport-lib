@@ -2841,7 +2841,8 @@ impl DeviceResources {
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
             lightmap_index: 0,
             has_shadowmask: 0,
-            _pad_ls: [0; 2],
+            ignore_clip: 0,
+            _pad_ls: 0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2999,7 +3000,8 @@ impl DeviceResources {
             lightmap_scale_bias: [1.0, 1.0, 0.0, 0.0],
             lightmap_index: 0,
             has_shadowmask: 0,
-            _pad_ls: [0; 2],
+            ignore_clip: 0,
+            _pad_ls: 0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

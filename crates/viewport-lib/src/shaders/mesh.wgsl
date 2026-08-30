@@ -121,8 +121,9 @@ struct Object {
     lightmap_scale_bias: vec4<f32>,        // offset 336 : lm_uv = uv1 * .xy + .zw (scene atlas sub-rect)
     lightmap_index: u32,                   // offset 352 : base atlas layer, added to the per-vertex page
     has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
-    // The vec4 above makes the struct 16-aligned, so WGSL rounds its size up to
-    // 368 to match the Rust ObjectUniform (which pads with a trailing [u32; 2]).
+    ignore_clip: u32,                      // offset 360 : 1 = exempt from clip planes/volumes
+    // The vec4 higher up keeps the struct 16-aligned, so WGSL rounds its size up
+    // to 368 to match the Rust ObjectUniform (ignore_clip + a trailing u32 pad).
 };
 
 struct ClipVolumeEntry {
@@ -523,14 +524,17 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     let d_wn_dx = dpdx(in.world_normal);
     let d_wn_dy = dpdy(in.world_normal);
 
-    // Section view: discard fragment if it falls on the clipped side of any plane.
-    for (var i = 0u; i < clip_planes.count; i++) {
-        let plane = clip_planes.planes[i];
-        if dot(in.world_pos, plane.xyz) + plane.w < 0.0 {
-            discard;
+    // Section view: discard fragment if it falls on the clipped side of any plane
+    // or outside any clip volume. Items with ignore_clip stay fully visible.
+    if objects[in.obj_idx].ignore_clip == 0u {
+        for (var i = 0u; i < clip_planes.count; i++) {
+            let plane = clip_planes.planes[i];
+            if dot(in.world_pos, plane.xyz) + plane.w < 0.0 {
+                discard;
+            }
         }
+        if !clip_volume_test(in.world_pos) { discard; }
     }
-    if !clip_volume_test(in.world_pos) { discard; }
 
     // Wireframe mode: override colour to gray, no lighting.
     if object.wireframe != 0u {
