@@ -1412,8 +1412,12 @@ impl ViewportRenderer {
                         half_extents,
                         orientation,
                     } => {
-                        let polyline =
-                            clip_box_outline(center, half_extents, orientation, base_colour);
+                        let polyline = crate::interaction::clip_plane::visual::box_outline(
+                            center,
+                            half_extents,
+                            orientation,
+                            base_colour,
+                        );
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
@@ -1422,7 +1426,11 @@ impl ViewportRenderer {
                         self.polyline_gpu_data.push(gpu);
                     }
                     ClipShape::Sphere { center, radius } => {
-                        let polyline = clip_sphere_outline(center, radius, base_colour);
+                        let polyline = crate::interaction::clip_plane::visual::sphere_outline(
+                            center,
+                            radius,
+                            base_colour,
+                        );
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources
@@ -1436,8 +1444,13 @@ impl ViewportRenderer {
                         radius,
                         half_length,
                     } => {
-                        let polyline =
-                            clip_cylinder_outline(center, axis, radius, half_length, base_colour);
+                        let polyline = crate::interaction::clip_plane::visual::cylinder_outline(
+                            center,
+                            axis,
+                            radius,
+                            half_length,
+                            base_colour,
+                        );
                         let vp_size = frame.camera.viewport_size;
                         let mut gpu = self
                             .resources

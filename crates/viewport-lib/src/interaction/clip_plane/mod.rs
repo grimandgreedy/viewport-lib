@@ -42,6 +42,9 @@ use crate::interaction::input::{Action, ActionFrame};
 use crate::interaction::query::snap::snap_value;
 use crate::renderer::{ClipObject, ClipShape};
 
+/// World-space visual builders for the clip shapes (outlines + plane fill).
+pub mod visual;
+
 // ---------------------------------------------------------------------------
 // Solver functions
 // ---------------------------------------------------------------------------
