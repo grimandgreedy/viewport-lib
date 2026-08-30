@@ -1,6 +1,7 @@
 //! Gizmo math helpers for showcases 4 and 18.
 
-use viewport_lib::{Gizmo, GizmoSpace, scene::Scene, selection::Selection};
+use viewport_lib as vpl;
+use vpl::{Gizmo, GizmoSpace, scene::Scene, selection::Selection};
 
 use crate::App;
 

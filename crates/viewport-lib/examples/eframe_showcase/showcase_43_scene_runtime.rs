@@ -14,7 +14,8 @@
 //! choppy fixed-step rendering.
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Aabb, CameraFollow, FixedTimestep, Material, MeshId, RuntimeFrameContext, RuntimePlugin,
     RuntimeStepContext, SceneRenderItem, ViewportRuntime,
     camera::Camera,
@@ -260,8 +261,8 @@ fn populate_simulation(app: &mut App) {
 // Scene construction (called once when the showcase is first loaded)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_rt_demo_scene(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
-    let sphere = viewport_lib::primitives::sphere(0.5, 20, 14);
+pub(crate) fn build_rt_demo_scene(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
+    let sphere = vpl::primitives::sphere(0.5, 20, 14);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&app.device, &sphere)
@@ -349,7 +350,7 @@ fn step_simulation(app: &mut App, dt: f32) {
     if app.rt_state.camera_follow {
         if let Some(target) = output
             .events
-            .read::<viewport_lib::runtime::CameraFollowTarget>()
+            .read::<vpl::runtime::CameraFollowTarget>()
             .next()
         {
             app.camera.center = target.0;

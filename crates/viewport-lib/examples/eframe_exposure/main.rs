@@ -28,8 +28,9 @@
 //! repaint request a control change would otherwise be dropped.
 
 use eframe::{egui, wgpu};
-use viewport_lib::input::adapters::from_egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::input::adapters::from_egui;
+use vpl::{
     AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings, Lumen,
     Lux, Material, Modifiers, OrbitCameraController, ViewportContext, ViewportEvent,
     ViewportInstance, primitives,
@@ -55,14 +56,12 @@ fn main() -> eframe::Result {
                             let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
                                 wgpu::Limits::downlevel_webgl2_defaults()
                             } else {
-                                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+                                vpl::ViewportRenderer::recommended_device_limits(adapter)
                             };
                             wgpu::DeviceDescriptor {
                                 label: Some("viewport-lib exposure device"),
                                 required_features:
-                                    viewport_lib::ViewportRenderer::recommended_device_features(
-                                        adapter,
-                                    ),
+                                    vpl::ViewportRenderer::recommended_device_features(adapter),
                                 required_limits: wgpu::Limits {
                                     max_texture_dimension_2d: 8192,
                                     ..base_limits

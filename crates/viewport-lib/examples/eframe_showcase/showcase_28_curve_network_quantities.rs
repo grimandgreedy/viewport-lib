@@ -13,7 +13,8 @@
 use crate::App;
 use eframe::egui;
 use std::f32::consts::TAU;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
 };
 

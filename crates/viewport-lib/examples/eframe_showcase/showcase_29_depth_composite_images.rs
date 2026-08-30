@@ -15,7 +15,8 @@
 
 use crate::{App, MeshId};
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AnchorX, AnchorY, Camera, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
     ScreenImageItem, ViewportRenderer,
 };
@@ -62,7 +63,7 @@ impl Default for DcState {
 impl App {
     pub(crate) fn build_dc_scene(&mut self, renderer: &mut ViewportRenderer) {
         // One sphere mesh reused at three positions via the model matrix.
-        let mesh = viewport_lib::primitives::sphere(SPHERE_RADIUS, 32, 16);
+        let mesh = vpl::primitives::sphere(SPHERE_RADIUS, 32, 16);
         self.dc_state.mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh)
@@ -172,7 +173,7 @@ impl App {
             .collect()
     }
 
-    pub(crate) fn dc_push_screen_image(&self, fd: &mut viewport_lib::FrameData) {
+    pub(crate) fn dc_push_screen_image(&self, fd: &mut vpl::FrameData) {
         if !self.dc_state.built {
             return;
         }

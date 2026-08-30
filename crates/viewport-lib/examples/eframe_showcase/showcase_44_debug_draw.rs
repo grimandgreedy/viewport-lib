@@ -14,7 +14,8 @@
 //! - Pause/Resume: freeze the simulation.
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, RuntimeFrameContext,
     RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,
     plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin},
@@ -83,7 +84,7 @@ impl RuntimePlugin for DebugOverlayPlugin {
         for contact in ctx
             .output
             .events
-            .read::<viewport_lib::plugins::physics_lite::ContactEvent>()
+            .read::<vpl::plugins::physics_lite::ContactEvent>()
         {
             let cp = contact.contact_point;
             let normal_tip = cp + contact.world_normal * 0.5;
@@ -142,9 +143,9 @@ impl Default for DbgDrawState {
 // Scene construction
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
+pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     let sphere_r = 0.35_f32;
-    let sphere = viewport_lib::primitives::sphere(sphere_r, 16, 12);
+    let sphere = vpl::primitives::sphere(sphere_r, 16, 12);
     let mesh_id = renderer
         .resources_mut()
         .upload_mesh_data(&app.device, &sphere)
@@ -244,7 +245,7 @@ pub(crate) fn update_dbg_draw(app: &mut App, dt: f32) {
 
     app.dbg_draw_state.contact_count = output
         .events
-        .read::<viewport_lib::plugins::physics_lite::ContactEvent>()
+        .read::<vpl::plugins::physics_lite::ContactEvent>()
         .count();
 }
 
@@ -263,7 +264,7 @@ pub(crate) fn dbg_draw_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
 // ---------------------------------------------------------------------------
 
 /// Push debug draw polylines, point cloud, and labels into the frame data.
-pub(crate) fn submit_dbg_draw_items(app: &App, fd: &mut viewport_lib::FrameData) {
+pub(crate) fn submit_dbg_draw_items(app: &App, fd: &mut vpl::FrameData) {
     let Some(dd) = app.dbg_draw_state.runtime.resources().get::<DebugDraw>() else {
         return;
     };

@@ -22,12 +22,14 @@
 /// Params window layout for [`DetailLayerPlugin`]:
 /// `[0] = (tiling, strength, attr_mask, 0)`. `attr_mask` 0..1 fades between
 /// applying the detail everywhere and gating it by `surf.attr.x`.
+use viewport_lib as vpl;
+
 pub fn detail_params(
     tiling: f32,
     strength: f32,
     attr_mask: f32,
-) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-    let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
+) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    let mut p = [[0.0; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S];
     p[0] = [tiling, strength, attr_mask, 0.0];
     p
 }
@@ -36,7 +38,7 @@ pub fn detail_params(
 /// the per-vertex extension attribute.
 pub struct DetailLayerPlugin;
 
-impl viewport_lib::MaterialPlugin for DetailLayerPlugin {
+impl vpl::MaterialPlugin for DetailLayerPlugin {
     fn name(&self) -> &'static str {
         "example_detail"
     }
@@ -72,7 +74,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
 "#
         .to_string()
     }
-    fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    fn initial_params(&self) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
         detail_params(6.0, 0.8, 0.0)
     }
 }
@@ -82,8 +84,8 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
 pub fn parallax_params(
     height_scale: f32,
     tiling: f32,
-) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-    let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
+) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    let mut p = [[0.0; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S];
     p[0] = [height_scale, tiling, 0.0, 0.0];
     p
 }
@@ -93,7 +95,7 @@ pub fn parallax_params(
 /// Texture slots: 0 = height (R channel, 1 = raised), 1 = albedo.
 pub struct ParallaxPlugin;
 
-impl viewport_lib::MaterialPlugin for ParallaxPlugin {
+impl vpl::MaterialPlugin for ParallaxPlugin {
     fn name(&self) -> &'static str {
         "example_parallax"
     }
@@ -159,7 +161,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 "#
         .to_string()
     }
-    fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    fn initial_params(&self) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
         parallax_params(0.06, 3.0)
     }
 }
@@ -171,8 +173,8 @@ pub fn dissolve_params(
     edge_width: f32,
     tiling: f32,
     edge_colour: [f32; 3],
-) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-    let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
+) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    let mut p = [[0.0; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S];
     p[0] = [threshold, edge_width, tiling, 0.0];
     p[1] = [edge_colour[0], edge_colour[1], edge_colour[2], 0.0];
     p
@@ -187,7 +189,7 @@ pub fn dissolve_params(
 /// ignore the alpha and only show the glow.
 pub struct DissolvePlugin;
 
-impl viewport_lib::MaterialPlugin for DissolvePlugin {
+impl vpl::MaterialPlugin for DissolvePlugin {
     fn name(&self) -> &'static str {
         "example_dissolve"
     }
@@ -217,7 +219,7 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
 "#
         .to_string()
     }
-    fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    fn initial_params(&self) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
         dissolve_params(0.0, 0.15, 1.0, [2.5, 1.2, 0.3])
     }
 }

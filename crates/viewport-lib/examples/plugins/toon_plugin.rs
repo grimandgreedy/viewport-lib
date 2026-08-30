@@ -17,13 +17,15 @@
 
 /// Params window layout for [`ToonPlugin`]:
 /// `[0] = (bands, ambient, uv_tiling, 0)`, `[1] = (tint rgb, 0)`.
+use viewport_lib as vpl;
+
 pub fn toon_params(
     bands: f32,
     ambient: f32,
     tiling: f32,
     tint: [f32; 3],
-) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-    let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
+) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    let mut p = [[0.0; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S];
     p[0] = [bands, ambient, tiling, 0.0];
     p[1] = [tint[0], tint[1], tint[2], 0.0];
     p
@@ -32,7 +34,7 @@ pub fn toon_params(
 /// Banded-diffuse toon shading with a tint and an albedo texture slot.
 pub struct ToonPlugin;
 
-impl viewport_lib::MaterialPlugin for ToonPlugin {
+impl vpl::MaterialPlugin for ToonPlugin {
     fn name(&self) -> &'static str {
         "example_toon"
     }
@@ -65,7 +67,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 "#
         .to_string()
     }
-    fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
+    fn initial_params(&self) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
         toon_params(3.0, 0.25, 1.0, [1.0, 1.0, 1.0])
     }
 }
@@ -75,7 +77,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 /// Params window: `[0] = (rim rgb, rim power)`.
 pub struct RimPlugin;
 
-impl viewport_lib::MaterialPlugin for RimPlugin {
+impl vpl::MaterialPlugin for RimPlugin {
     fn name(&self) -> &'static str {
         "example_rim"
     }
@@ -91,8 +93,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
 "#
         .to_string()
     }
-    fn initial_params(&self) -> [[f32; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S] {
-        let mut p = [[0.0; 4]; viewport_lib::MATERIAL_PLUGIN_PARAM_VEC4S];
+    fn initial_params(&self) -> [[f32; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S] {
+        let mut p = [[0.0; 4]; vpl::MATERIAL_PLUGIN_PARAM_VEC4S];
         p[0] = [0.2, 0.5, 1.0, 3.0];
         p
     }

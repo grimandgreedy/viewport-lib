@@ -1,7 +1,8 @@
 //! Feature showcase for `viewport-lib` using `eframe` / `egui`.
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera, CameraAnimator,
     CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo, GizmoMode, GroundPlane,
     GroundPlaneMode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
@@ -101,14 +102,12 @@ fn main() -> eframe::Result {
                             let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
                                 wgpu::Limits::downlevel_webgl2_defaults()
                             } else {
-                                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+                                vpl::ViewportRenderer::recommended_device_limits(adapter)
                             };
                             wgpu::DeviceDescriptor {
                                 label: Some("viewport-lib showcase device"),
                                 required_features:
-                                    viewport_lib::ViewportRenderer::recommended_device_features(
-                                        adapter,
-                                    ),
+                                    vpl::ViewportRenderer::recommended_device_features(adapter),
                                 required_limits: wgpu::Limits {
                                     max_texture_dimension_2d: 8192,
                                     ..base_limits
@@ -148,7 +147,7 @@ fn main() -> eframe::Result {
                 .callback_resources
                 .insert(renderer);
 
-            let box_mesh = viewport_lib::primitives::cube(1.0);
+            let box_mesh = vpl::primitives::cube(1.0);
 
             Ok(Box::new(App {
                 device,
@@ -583,7 +582,7 @@ pub(crate) struct App {
 
     /// Latest cluster build stats pulled from the renderer, surfaced by the
     /// scene-lights controls panel.
-    pub(crate) last_cluster_stats: Option<viewport_lib::resources::gpu::clustered::ClusterStats>,
+    pub(crate) last_cluster_stats: Option<vpl::resources::gpu::clustered::ClusterStats>,
 }
 
 // ---------------------------------------------------------------------------
@@ -843,7 +842,7 @@ impl eframe::App for App {
                 // Translate egui events -> ViewportEvents.
                 let manip_active_for_text = self.interact_state.manip.is_active();
                 ui.input(|i| {
-                    let mods = viewport_lib::Modifiers {
+                    let mods = vpl::Modifiers {
                         alt: i.modifiers.alt,
                         shift: i.modifiers.shift,
                         ctrl: i.modifiers.command,
@@ -892,13 +891,9 @@ impl eframe::App for App {
                                 ..
                             } => {
                                 let vp_button = match button {
-                                    egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
-                                    egui::PointerButton::Secondary => {
-                                        viewport_lib::MouseButton::Right
-                                    }
-                                    egui::PointerButton::Middle => {
-                                        viewport_lib::MouseButton::Middle
-                                    }
+                                    egui::PointerButton::Primary => vpl::MouseButton::Left,
+                                    egui::PointerButton::Secondary => vpl::MouseButton::Right,
+                                    egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                     _ => continue,
                                 };
 
@@ -927,12 +922,11 @@ impl eframe::App for App {
                                         let w = rect.width();
                                         let h = rect.height();
                                         let vp_inv = self.camera.view_proj_matrix().inverse();
-                                        let (ray_origin, ray_dir) =
-                                            viewport_lib::picking::screen_to_ray(
-                                                local,
-                                                glam::Vec2::new(w, h),
-                                                vp_inv,
-                                            );
+                                        let (ray_origin, ray_dir) = vpl::picking::screen_to_ray(
+                                            local,
+                                            glam::Vec2::new(w, h),
+                                            vp_inv,
+                                        );
                                         let orient = self.clipvol_gizmo_orient();
                                         let hit = self.clipvol_state.gizmo.hit_test_oriented(
                                             ray_origin,
@@ -1085,7 +1079,7 @@ impl eframe::App for App {
                                 if self.aux_state.track_t > self.aux_state.track.duration() {
                                     self.aux_state.track_t = 0.0;
                                 }
-                                let target = viewport_lib::interpolate_camera(
+                                let target = vpl::interpolate_camera(
                                     &self.aux_state.track,
                                     self.aux_state.track_t,
                                 );
@@ -1250,7 +1244,7 @@ impl eframe::App for App {
                     let render_cam =
                         CameraFrame::from_camera(&self.camera, [rect.width(), rect.height()])
                             .render_camera;
-                    let widget_ctx = viewport_lib::WidgetContext {
+                    let widget_ctx = vpl::WidgetContext {
                         camera: render_cam,
                         viewport_size: glam::Vec2::new(rect.width(), rect.height()),
                         cursor_viewport: self.interact_state.last_cursor_viewport,
@@ -1267,7 +1261,7 @@ impl eframe::App for App {
                     let render_cam =
                         CameraFrame::from_camera(&self.camera, [rect.width(), rect.height()])
                             .render_camera;
-                    let widget_ctx = viewport_lib::WidgetContext {
+                    let widget_ctx = vpl::WidgetContext {
                         camera: render_cam,
                         viewport_size: glam::Vec2::new(rect.width(), rect.height()),
                         cursor_viewport: self.interact_state.last_cursor_viewport,
@@ -1415,9 +1409,9 @@ impl eframe::App for App {
                 if self.mode == ShowcaseMode::Interaction {
                     if let Some(ms) = self.interact_state.manip.state() {
                         let kind_label = match ms.kind {
-                            viewport_lib::ManipulationKind::Move => "Move",
-                            viewport_lib::ManipulationKind::Rotate => "Rotate",
-                            viewport_lib::ManipulationKind::Scale => "Scale",
+                            vpl::ManipulationKind::Move => "Move",
+                            vpl::ManipulationKind::Rotate => "Rotate",
+                            vpl::ManipulationKind::Scale => "Scale",
                         };
                         let axis_label = match ms.axis {
                             Some(GizmoAxis::X) => {
@@ -1893,8 +1887,7 @@ impl App {
                 // main thread (requires GPU access). Each box in the grid picks
                 // one shape, so the grid still shares a handful of meshes.
                 let shapes = showcase_23_performance::shape_meshes();
-                let mut meshes: Vec<(MeshId, Option<viewport_lib::Aabb>)> =
-                    Vec::with_capacity(shapes.len());
+                let mut meshes: Vec<(MeshId, Option<vpl::Aabb>)> = Vec::with_capacity(shapes.len());
                 let mut pick_geometry = Vec::with_capacity(shapes.len());
                 for data in &shapes {
                     let id = renderer
@@ -1917,7 +1910,7 @@ impl App {
                 // Upload the random texture pool on the main thread (GPU access),
                 // then hand the ids to the background build so each box can pick
                 // one. Each distinct texture is one instanced batch.
-                let texture_pool: Vec<viewport_lib::TextureId> = (0
+                let texture_pool: Vec<vpl::TextureId> = (0
                     ..showcase_23_performance::TEXTURE_POOL_SIZE)
                     .map(|i| {
                         let (size, rgba) = showcase_23_performance::make_box_texture(i);
@@ -2184,22 +2177,22 @@ impl App {
             }
             ShowcaseMode::SparseVolumeGrid => {
                 self.build_svg_scene(renderer);
-                self.camera = viewport_lib::Camera {
+                self.camera = vpl::Camera {
                     center: glam::Vec3::ZERO,
                     distance: 28.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(0.8),
-                    ..viewport_lib::Camera::default()
+                    ..vpl::Camera::default()
                 };
             }
             ShowcaseMode::ExtendedQuantities => {
                 self.build_eq_scene(renderer);
-                self.camera = viewport_lib::Camera {
+                self.camera = vpl::Camera {
                     center: glam::Vec3::ZERO,
                     distance: 18.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(0.8),
-                    ..viewport_lib::Camera::default()
+                    ..vpl::Camera::default()
                 };
             }
             ShowcaseMode::PickLevels => {
@@ -2912,16 +2905,16 @@ impl App {
                     .scalar_state
                     .scene
                     .collect_render_items(&self.scalar_state.selection);
-                let colourmap_id = viewport_lib::ColourmapId(self.scalar_state.colourmap as usize);
+                let colourmap_id = vpl::ColourmapId(self.scalar_state.colourmap as usize);
                 let active_node_id = self.scalar_state.node_ids[self.scalar_state.active_object];
                 let wave_node_id = self.scalar_state.node_ids[1];
                 if let Some(item) = items
                     .iter_mut()
                     .find(|item| item.settings.pick_id == PickId(active_node_id))
                 {
-                    item.active_attribute = Some(viewport_lib::AttributeRef {
+                    item.active_attribute = Some(vpl::AttributeRef {
                         name: ATTR_NAMES[self.scalar_state.active_object].to_string(),
-                        kind: viewport_lib::AttributeKind::Vertex,
+                        kind: vpl::AttributeKind::Vertex,
                     });
                     item.colourmap_id = Some(colourmap_id);
                     item.scalar_range = if self.scalar_state.range_auto {
@@ -3782,7 +3775,7 @@ impl App {
                 }
             }
             ShowcaseMode::Shadows => {
-                fd.effects.display.mode = viewport_lib::PipelineMode::Direct;
+                fd.effects.display.mode = vpl::PipelineMode::Direct;
                 fd.effects.post_process = {
                     let mut _t = PostProcessSettings::default();
                     _t.contact_shadows.enabled = self.shd_state.contact_on;
@@ -3799,7 +3792,7 @@ impl App {
                 fd.camera.render_camera = rc;
             }
             ShowcaseMode::NormalMaps => {
-                fd.effects.display.mode = viewport_lib::PipelineMode::Direct;
+                fd.effects.display.mode = vpl::PipelineMode::Direct;
                 // Cap far plane for better cascade distribution, but track orbit
                 // distance so the scene doesn't disappear when zooming out.
                 let mut rc = RenderCamera::from_camera(&self.camera);
@@ -3861,13 +3854,13 @@ impl App {
             // Decals require the full HDR pipeline so the decal pass (which reads
             // scene depth as a texture) runs via render_frame_internal.
             ShowcaseMode::Decals => {
-                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+                fd.effects.display.mode = vpl::PipelineMode::Hdr;
             }
             // HiZ occlusion culling builds its depth pyramid in the HDR scene
             // pass, so the HDR pipeline must be active when occlusion is on.
             ShowcaseMode::Performance => {
                 if self.perf_state.occlusion_culling {
-                    fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+                    fd.effects.display.mode = vpl::PipelineMode::Hdr;
                 }
             }
             ShowcaseMode::Foreground => {
@@ -3891,7 +3884,7 @@ impl App {
             // Enable HDR callback path so the renderer owns the encoder and can
             // run backdrop blur passes.
             if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
-                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+                fd.effects.display.mode = vpl::PipelineMode::Hdr;
             }
             fd.overlays.shapes = shapes;
             fd.overlays.labels = labels;
@@ -3947,14 +3940,13 @@ impl App {
         // must be active (display.mode = PipelineMode::Hdr).
         if self.mode == ShowcaseMode::SurfaceLIC && self.lic_state.built {
             showcase_38_surface_lic::submit_lic_items(self, &mut fd);
-            let has_lic =
-                if let viewport_lib::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
-                    items.iter().any(|i| i.lic.is_some())
-                } else {
-                    false
-                };
+            let has_lic = if let vpl::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
+                items.iter().any(|i| i.lic.is_some())
+            } else {
+                false
+            };
             if has_lic {
-                fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+                fd.effects.display.mode = vpl::PipelineMode::Hdr;
             }
         }
 
@@ -4001,14 +3993,13 @@ impl App {
 impl App {
     fn handle_click_select(&mut self, pos: glam::Vec2, w: f32, h: f32) {
         let vp_inv = self.camera.view_proj_matrix().inverse();
-        let (ray_origin, ray_dir) =
-            viewport_lib::picking::screen_to_ray(pos, glam::Vec2::new(w, h), vp_inv);
+        let (ray_origin, ray_dir) = vpl::picking::screen_to_ray(pos, glam::Vec2::new(w, h), vp_inv);
 
         match self.mode {
             ShowcaseMode::SceneGraph => {
                 let mut mesh_lookup = std::collections::HashMap::new();
                 for node in self.sg_state.scene.nodes() {
-                    if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
+                    if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
                         mesh_lookup.entry(mid).or_insert_with(|| {
                             (
                                 self.box_mesh_data.positions.clone(),
@@ -4017,7 +4008,7 @@ impl App {
                         });
                     }
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let hit = vpl::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.sg_state.scene,
@@ -4036,12 +4027,7 @@ impl App {
                     mesh_lookup.insert(*mid, (positions.clone(), indices.clone()));
                 }
                 let hit = if let Some(ref mut accel) = self.perf_state.pick_accelerator {
-                    viewport_lib::bvh::pick_scene_accelerated_cpu(
-                        ray_origin,
-                        ray_dir,
-                        accel,
-                        &mesh_lookup,
-                    )
+                    vpl::bvh::pick_scene_accelerated_cpu(ray_origin, ray_dir, accel, &mesh_lookup)
                 } else {
                     None
                 };
@@ -4055,7 +4041,7 @@ impl App {
             ShowcaseMode::Interaction => {
                 let mut mesh_lookup = std::collections::HashMap::new();
                 for node in self.interact_state.scene.nodes() {
-                    if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
+                    if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
                         mesh_lookup.entry(mid).or_insert_with(|| {
                             (
                                 self.box_mesh_data.positions.clone(),
@@ -4064,7 +4050,7 @@ impl App {
                         });
                     }
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let hit = vpl::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.interact_state.scene,
@@ -4080,7 +4066,7 @@ impl App {
             ShowcaseMode::MaterialsVisibility => {
                 let mut mesh_lookup = std::collections::HashMap::new();
                 for node in self.materials_visibility_state.scene.nodes() {
-                    if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
+                    if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
                         mesh_lookup.entry(mid).or_insert_with(|| {
                             (
                                 self.box_mesh_data.positions.clone(),
@@ -4089,7 +4075,7 @@ impl App {
                         });
                     }
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let hit = vpl::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.materials_visibility_state.scene,
@@ -4113,7 +4099,7 @@ impl App {
                         ),
                     );
                 }
-                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let hit = vpl::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.scalar_state.scene,

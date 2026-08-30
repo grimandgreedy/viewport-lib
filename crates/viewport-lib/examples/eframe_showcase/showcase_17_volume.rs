@@ -17,7 +17,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, ImageSliceItem, LightingSettings, Material, MeshData,
     MeshId, SceneRenderItem, SliceAxis, VolumeData, VolumeId, VolumeItem, VolumeSurfaceSliceItem,
     extract_isosurface,
@@ -118,7 +119,7 @@ impl App {
     ///
     /// Generates a 64^3 scalar field (sum of Gaussian blobs), uploads it to the
     /// GPU as a volume texture, and runs an initial isosurface extraction.
-    pub(crate) fn build_volume_scene(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
+    pub(crate) fn build_volume_scene(&mut self, renderer: &mut vpl::ViewportRenderer) {
         let field = make_gaussian_field(64);
 
         // Upload the 3D texture.
@@ -145,7 +146,7 @@ impl App {
     }
 
     /// Re-extract and re-upload the isosurface after an isovalue change.
-    pub(crate) fn rebuild_isosurface(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
+    pub(crate) fn rebuild_isosurface(&mut self, renderer: &mut vpl::ViewportRenderer) {
         let iso_mesh = extract_isosurface(&self.vol_state.field, self.vol_state.isovalue);
         if iso_mesh.positions.is_empty() {
             // No surface at this isovalue : clear the index so nothing is drawn.
@@ -221,10 +222,7 @@ impl App {
     }
 
     /// Upload a saddle-shaped mesh for the surface slice demo if not already done.
-    pub(crate) fn ensure_surface_slice_mesh(
-        &mut self,
-        renderer: &mut viewport_lib::ViewportRenderer,
-    ) {
+    pub(crate) fn ensure_surface_slice_mesh(&mut self, renderer: &mut vpl::ViewportRenderer) {
         if self.vol_state.surface_slice_mesh_id.is_some() {
             return;
         }
@@ -254,10 +252,10 @@ impl App {
     }
 
     /// Build a `SceneRenderItem` for the isosurface mesh.
-    pub(crate) fn make_iso_surface_item(&self) -> Option<viewport_lib::SceneRenderItem> {
+    pub(crate) fn make_iso_surface_item(&self) -> Option<vpl::SceneRenderItem> {
         let s = &self.vol_state;
         let mesh_id = s.iso_mesh_index?;
-        let mut item = viewport_lib::SceneRenderItem::default();
+        let mut item = vpl::SceneRenderItem::default();
         item.mesh_id = mesh_id;
         item.material = s.iso_material;
         // Slight transparency in Both mode so the volume is visible through the surface.
@@ -304,10 +302,7 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
     if need_rebuild {
         let rs = frame.wgpu_render_state().expect("wgpu required");
         let mut guard = rs.renderer.write();
-        if let Some(renderer) = guard
-            .callback_resources
-            .get_mut::<viewport_lib::ViewportRenderer>()
-        {
+        if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
             app.rebuild_isosurface(renderer);
         }
     }

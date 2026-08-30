@@ -9,7 +9,8 @@
 //! render pass, then blitted in `paint`. When post-processing is off, draw
 //! calls go directly into the egui render pass (LDR path).
 
-use viewport_lib::{FrameData, ViewportId, ViewportRenderer};
+use viewport_lib as vpl;
+use vpl::{FrameData, ViewportId, ViewportRenderer};
 
 /// Paint callback that renders four viewports sharing one scene.
 pub struct MultiViewportCallback {

@@ -24,7 +24,8 @@
 mod viewport_callback;
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
     BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, ComputeFilterItem,
     ComputeFilterKind, FrameData, LightKind, LightSource, LightingSettings, MatcapId, Material,
@@ -107,14 +108,12 @@ fn main() -> eframe::Result {
                             let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
                                 wgpu::Limits::downlevel_webgl2_defaults()
                             } else {
-                                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+                                vpl::ViewportRenderer::recommended_device_limits(adapter)
                             };
                             wgpu::DeviceDescriptor {
                                 label: Some("viewport-lib render-paths device"),
                                 required_features:
-                                    viewport_lib::ViewportRenderer::recommended_device_features(
-                                        adapter,
-                                    ),
+                                    vpl::ViewportRenderer::recommended_device_features(adapter),
                                 required_limits: wgpu::Limits {
                                     max_texture_dimension_2d: 8192,
                                     ..base_limits
@@ -637,13 +636,12 @@ impl eframe::App for App {
             });
 
             ui.input(|i| {
-                self.controller.push_event(ViewportEvent::ModifiersChanged(
-                    viewport_lib::Modifiers {
+                self.controller
+                    .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                         alt: i.modifiers.alt,
                         shift: i.modifiers.shift,
                         ctrl: i.modifiers.command,
-                    },
-                ));
+                    }));
                 if let Some(p) = i.pointer.interact_pos() {
                     let local = glam::Vec2::new(p.x - rect.left(), p.y - rect.top());
                     self.last_cursor = local;
@@ -667,8 +665,8 @@ impl eframe::App for App {
                                 continue;
                             }
                             let vp_button = match button {
-                                egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
-                                egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
+                                egui::PointerButton::Secondary => vpl::MouseButton::Right,
+                                egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                 _ => continue,
                             };
                             self.controller.push_event(ViewportEvent::MouseButton {
@@ -774,9 +772,9 @@ impl eframe::App for App {
             fd.scene.compute_filter_items = filters;
             // HDR path (post-process + OIT transparency) vs LDR inline path.
             fd.effects.display.mode = if self.hdr {
-                viewport_lib::PipelineMode::Hdr
+                vpl::PipelineMode::Hdr
             } else {
-                viewport_lib::PipelineMode::Direct
+                vpl::PipelineMode::Direct
             };
             fd.viewport.wireframe_mode = self.wireframe;
             fd.viewport.show_axes_indicator = true;

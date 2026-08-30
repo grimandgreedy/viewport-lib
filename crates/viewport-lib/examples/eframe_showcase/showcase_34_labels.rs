@@ -3,7 +3,8 @@
 
 use crate::App;
 use crate::geometry::make_box_with_uvs;
-use viewport_lib::{LabelAnchor, LabelItem, Material, ViewportRenderer};
+use viewport_lib as vpl;
+use vpl::{LabelAnchor, LabelItem, Material, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
 // Gearbox parts definition
@@ -130,9 +131,9 @@ const PARTS: &[GearboxPart] = &[
 // ---------------------------------------------------------------------------
 
 pub(crate) struct LblState {
-    pub scene: viewport_lib::scene::Scene,
+    pub scene: vpl::scene::Scene,
     pub built: bool,
-    pub labels: Vec<viewport_lib::LabelItem>,
+    pub labels: Vec<vpl::LabelItem>,
     pub show_part_labels: bool,
     pub show_hud_labels: bool,
     pub show_feature_demos: bool,
@@ -141,7 +142,7 @@ pub(crate) struct LblState {
 impl Default for LblState {
     fn default() -> Self {
         Self {
-            scene: viewport_lib::scene::Scene::new(),
+            scene: vpl::scene::Scene::new(),
             built: false,
             labels: Vec::new(),
             show_part_labels: true,
@@ -153,7 +154,7 @@ impl Default for LblState {
 
 impl App {
     pub(crate) fn build_labels_scene(&mut self, renderer: &mut ViewportRenderer) {
-        use viewport_lib::scene::Scene;
+        use vpl::scene::Scene;
 
         self.lbl_state.scene = Scene::new();
         self.lbl_state.labels = Vec::new();

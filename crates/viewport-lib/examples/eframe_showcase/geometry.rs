@@ -1,6 +1,7 @@
 //! Procedural geometry helper functions shared across showcase scenes.
 
-use viewport_lib::MeshData;
+use viewport_lib as vpl;
+use vpl::MeshData;
 
 /// Generate a UV sphere with positions, normals, UVs, and triangulated indices.
 pub fn make_uv_sphere(lon_segs: usize, lat_segs: usize, radius: f32) -> MeshData {

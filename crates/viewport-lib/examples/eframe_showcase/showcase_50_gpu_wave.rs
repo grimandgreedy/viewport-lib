@@ -24,7 +24,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem, ViewportRenderer,
     runtime::GpuPlugin,
 };
@@ -66,7 +67,7 @@ pub(crate) struct WaveState {
     pub plane_id: Option<MeshId>,
     /// External instance set drawing one sphere per buoy centre out of
     /// `BuoyPlugin`'s output buffer.
-    pub buoy_set: Option<viewport_lib::ExternalInstanceSetId>,
+    pub buoy_set: Option<vpl::ExternalInstanceSetId>,
     /// Boxed so the showcase state stays Sized when the plugin is absent.
     pub plugin: Option<Box<WavePlugin>>,
     pub buoy_plugin: Option<Box<BuoyPlugin>>,
@@ -144,7 +145,7 @@ impl App {
         // in the smoothed-ms readout. Push the slider higher (up to 800) to
         // make the CPU path start dropping frames.
         let dim = app_grid_dim(self);
-        let plane = viewport_lib::primitives::grid_plane(8.0, 8.0, dim, dim);
+        let plane = vpl::primitives::grid_plane(8.0, 8.0, dim, dim);
         // Capture rest positions before move; the override protocol expects a
         // flat `[x, y, z, x, y, z, ...]` layout, which matches `MeshData`.
         let mut rest_flat: Vec<f32> = Vec::with_capacity(plane.positions.len() * 3);
@@ -221,17 +222,14 @@ impl App {
             .resources_mut()
             .upload_mesh_data(
                 &self.device,
-                &viewport_lib::primitives::sphere(BUOY_SPHERE_RADIUS, 12, 8),
+                &vpl::primitives::sphere(BUOY_SPHERE_RADIUS, 12, 8),
             )
             .expect("upload buoy sphere mesh");
         let buoy_set = renderer
             .resources_mut()
             .create_external_instance_set(
                 &self.device,
-                &viewport_lib::ExternalInstanceSetConfig::new(
-                    buoy_sphere_id,
-                    buoy_plugin.output_buffer(),
-                ),
+                &vpl::ExternalInstanceSetConfig::new(buoy_sphere_id, buoy_plugin.output_buffer()),
             )
             .expect("create buoy instance set");
 
@@ -269,7 +267,7 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
     // wave crests catch specular highlights.
     item.material = {
         let mut m = Material::pbr([0.18, 0.42, 0.65], 0.0, 0.35);
-        m.backface_policy = viewport_lib::BackfacePolicy::Identical;
+        m.backface_policy = vpl::BackfacePolicy::Identical;
         m
     };
     item.settings.selected = app.wave_state.select_surface;
@@ -313,7 +311,7 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
 
 pub(crate) fn submit_wave_items(
     app: &mut App,
-    fd: &mut viewport_lib::FrameData,
+    fd: &mut vpl::FrameData,
     renderer: &mut ViewportRenderer,
 ) {
     let dt = if app.wave_state.paused {
@@ -331,7 +329,7 @@ pub(crate) fn submit_wave_items(
         && app.wave_state.mode == DeformMode::Gpu
         && let Some(set) = app.wave_state.buoy_set
     {
-        let mut item = viewport_lib::ExternalInstancesItem::new(
+        let mut item = vpl::ExternalInstancesItem::new(
             set,
             app.wave_state
                 .shown_buoys
@@ -401,7 +399,7 @@ fn run_gpu_path(app: &mut App, dt: f32) {
     // wave plugin writes its position buffer; the buoy plugin reads that same
     // buffer and writes its own. Two separate queue.submit calls would also
     // work; bundling them in one keeps the chained-compute story tight.
-    let ctx = viewport_lib::runtime::GpuFrameContext::new(
+    let ctx = vpl::runtime::GpuFrameContext::new(
         &app.camera,
         app.wave_state.viewport_size,
         dt,

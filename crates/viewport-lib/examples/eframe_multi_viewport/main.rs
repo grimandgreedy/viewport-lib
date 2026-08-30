@@ -30,7 +30,8 @@ mod multi_viewport_callback;
 
 use eframe::egui;
 use std::collections::HashMap;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Action, BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
     GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult, ManipulationContext,
     ManipulationController, Material, MeshId, Modifiers, MouseButton, OrbitCameraController,
@@ -255,7 +256,7 @@ impl App {
         }
     }
 
-    fn apply_delta(&mut self, delta: viewport_lib::TransformDelta) {
+    fn apply_delta(&mut self, delta: vpl::TransformDelta) {
         let Some(center) = self.gizmo_center else {
             return;
         };
@@ -633,7 +634,7 @@ impl eframe::App for App {
                         SceneFrame::from_surface_items(scene_items.clone()),
                     );
                     fd.effects.lighting = LightingSettings::default();
-                    fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+                    fd.effects.display.mode = vpl::PipelineMode::Hdr;
                     fd.viewport.show_grid = true;
                     fd.viewport.show_axes_indicator = true;
                     fd.interaction.outline_selected = has_selection;
@@ -703,9 +704,9 @@ impl eframe::App for App {
                 // Manipulation status in the active quad.
                 if let Some(ms) = self.manip.state() {
                     let kind = match ms.kind {
-                        viewport_lib::ManipulationKind::Move => "Move",
-                        viewport_lib::ManipulationKind::Rotate => "Rotate",
-                        viewport_lib::ManipulationKind::Scale => "Scale",
+                        vpl::ManipulationKind::Move => "Move",
+                        vpl::ManipulationKind::Rotate => "Rotate",
+                        vpl::ManipulationKind::Scale => "Scale",
                     };
                     let axis = match ms.axis {
                         Some(GizmoAxis::X) => {

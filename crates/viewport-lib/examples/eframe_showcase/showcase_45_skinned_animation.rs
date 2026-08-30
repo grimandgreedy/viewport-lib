@@ -17,7 +17,8 @@
 //! - Speed slider: how fast the arm bends
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BuiltinMatcap, MatcapId, Material, MeshData, MeshId, PickAccelerator, RuntimeFrameContext,
     RuntimePlugin, RuntimeStepContext, ViewportRuntime,
     plugins::skeleton::{
@@ -286,9 +287,9 @@ pub(crate) struct Skin47State {
     /// Scene node IDs currently present for each demo. Populated lazily when
     /// a demo becomes active and dropped when it deactivates so the user only
     /// sees the meshes belonging to the selected demo.
-    pub arm_node: Option<viewport_lib::NodeId>,
-    pub gltf_nodes: Vec<viewport_lib::NodeId>,
-    pub crowd_nodes: Vec<viewport_lib::NodeId>,
+    pub arm_node: Option<vpl::NodeId>,
+    pub gltf_nodes: Vec<vpl::NodeId>,
+    pub crowd_nodes: Vec<vpl::NodeId>,
     /// Per-actor uploaded mesh IDs for the crowd demo. Outer Vec indexes the
     /// actor; inner Vec is one MeshId per part. Empty until the crowd demo
     /// has been activated at least once.
@@ -358,7 +359,7 @@ pub(crate) struct Skin47State {
     /// picks, then cleared.
     pub crowd_pick_deformed_positions: std::collections::HashMap<MeshId, Vec<[f32; 3]>>,
     /// Most recent pick result: (clicked node id, actor index, strategy used).
-    pub crowd_last_pick: Option<(viewport_lib::NodeId, u32, CrowdPickStrategy)>,
+    pub crowd_last_pick: Option<(vpl::NodeId, u32, CrowdPickStrategy)>,
 
     /// Set when the path switches CPU -> GPU. The CPU path writes deformed
     /// positions/normals directly into the bind-pose vertex buffer; without
@@ -368,7 +369,7 @@ pub(crate) struct Skin47State {
     pub needs_bind_pose_restore: bool,
     /// Handle to the GPU skinning deformer. `Some` after `build_skin47_scene`
     /// installs the plugin.
-    pub skinning: Option<viewport_lib::plugins::skinning::SkinningPlugin>,
+    pub skinning: Option<vpl::plugins::skinning::SkinningPlugin>,
 }
 
 impl Default for Skin47State {
@@ -427,13 +428,11 @@ impl Default for Skin47State {
 // Scene construction
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
+pub(crate) fn build_skin47_scene(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     // GPU skinning is opt-in: install once before uploading any skin data.
-    let skinning = viewport_lib::plugins::skinning::SkinningPlugin::install(
-        renderer.resources_mut(),
-        &app.device,
-    )
-    .expect("install skinning");
+    let skinning =
+        vpl::plugins::skinning::SkinningPlugin::install(renderer.resources_mut(), &app.device)
+            .expect("install skinning");
     app.skin_state.skinning = Some(skinning);
 
     let (positions, normals, indices, skin_weights) = build_arm_mesh();
@@ -576,7 +575,7 @@ fn populate_scene_for_demo(state: &mut Skin47State) {
 fn ensure_crowd_uploads(
     state: &mut Skin47State,
     device: &wgpu::Device,
-    renderer: &mut viewport_lib::ViewportRenderer,
+    renderer: &mut vpl::ViewportRenderer,
     desired: usize,
 ) {
     let Some(asset) = state.gltf_asset.as_ref() else {
@@ -1090,7 +1089,7 @@ pub(crate) fn update_skin47(
 /// Apply the current appearance toggles to every scene node belonging to the
 /// active demo. Re-stamps each frame only when the appearance version bumps,
 /// so unchanged frames pay no cost.
-fn apply_skin47_appearance(state: &mut Skin47State, renderer: &viewport_lib::ViewportRenderer) {
+fn apply_skin47_appearance(state: &mut Skin47State, renderer: &vpl::ViewportRenderer) {
     if state.appearance_version == state.applied_appearance_version {
         return;
     }
@@ -1106,7 +1105,7 @@ fn apply_skin47_appearance(state: &mut Skin47State, renderer: &viewport_lib::Vie
     // colour set by build_skin47_scene / populate_scene_for_demo survives the
     // re-stamp. Read the colour back off the existing material so a future
     // edit to the base palette doesn't have to come back to this function.
-    let mut nodes: Vec<viewport_lib::NodeId> = Vec::new();
+    let mut nodes: Vec<vpl::NodeId> = Vec::new();
     if let Some(arm) = state.arm_node {
         nodes.push(arm);
     }
@@ -1120,11 +1119,11 @@ fn apply_skin47_appearance(state: &mut Skin47State, renderer: &viewport_lib::Vie
         let base_colour = node.material().base_colour;
         let mut mat = Material::from_colour(base_colour);
         mat.shading_model = if let Some(id) = matcap_id {
-            viewport_lib::ShadingModel::Matcap(id)
+            vpl::ShadingModel::Matcap(id)
         } else if state.use_pbr {
-            viewport_lib::ShadingModel::Pbr
+            vpl::ShadingModel::Pbr
         } else {
-            viewport_lib::ShadingModel::Phong
+            vpl::ShadingModel::Phong
         };
         mat.backface_policy = if state.two_sided {
             BackfacePolicy::Tint(0.4)
@@ -1133,7 +1132,7 @@ fn apply_skin47_appearance(state: &mut Skin47State, renderer: &viewport_lib::Vie
         };
         state.scene.set_material(node_id, mat);
 
-        let mut app = viewport_lib::scene::material::ItemSettings::default();
+        let mut app = vpl::scene::material::ItemSettings::default();
         app.opacity = state.opacity;
         app.wireframe = state.per_item_wireframe;
         state.scene.set_appearance(node_id, app);
@@ -1272,7 +1271,7 @@ pub(crate) fn pick_crowd(
     selection: &mut Selection,
     cursor: glam::Vec2,
     viewport_size: glam::Vec2,
-    camera: &viewport_lib::Camera,
+    camera: &vpl::Camera,
 ) {
     if state.crowd_pick_strategy == CrowdPickStrategy::Off {
         return;
@@ -1321,11 +1320,11 @@ pub(crate) fn pick_crowd(
     }
 
     let inv = camera.view_proj_matrix().inverse();
-    let (ray_origin, ray_dir) = viewport_lib::picking::screen_to_ray(cursor, viewport_size, inv);
-    let hit = viewport_lib::bvh::pick_scene_accelerated_cpu(ray_origin, ray_dir, acc, &mesh_lookup);
+    let (ray_origin, ray_dir) = vpl::picking::screen_to_ray(cursor, viewport_size, inv);
+    let hit = vpl::bvh::pick_scene_accelerated_cpu(ray_origin, ray_dir, acc, &mesh_lookup);
 
     if let Some(hit) = hit {
-        let node_id: viewport_lib::NodeId = hit.id;
+        let node_id: vpl::NodeId = hit.id;
         let actor_idx = state
             .scene
             .node(node_id)
@@ -1365,7 +1364,7 @@ pub(crate) fn pick_crowd(
 fn restore_bind_pose_buffers(
     state: &mut Skin47State,
     queue: &wgpu::Queue,
-    renderer: &mut viewport_lib::ViewportRenderer,
+    renderer: &mut vpl::ViewportRenderer,
 ) {
     // Arm mesh.
     if let Some(mid) = state.mesh_id {
@@ -1404,7 +1403,7 @@ fn restore_bind_pose_buffers(
 ///
 /// Also performs deferred uploads + runtime rebuilds for the crowd demo, since
 /// this is the only per-frame hook that has both `device` and `renderer`.
-pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
+pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     // Crowd: respond to slider changes by uploading extra mesh copies (if
     // needed) and rebuilding the runtime + scene at the new actor count.
     if app.skin_state.demo == Skin47Demo::Crowd
@@ -1532,7 +1531,7 @@ fn weights_for_mesh(state: &Skin47State, mesh_id: MeshId) -> Option<SkinWeights>
 // Scene items
 // ---------------------------------------------------------------------------
 
-pub(crate) fn skin47_scene_items(app: &mut App) -> Vec<viewport_lib::SceneRenderItem> {
+pub(crate) fn skin47_scene_items(app: &mut App) -> Vec<vpl::SceneRenderItem> {
     app.skin_state
         .scene
         .collect_render_items(&app.skin_state.selection)

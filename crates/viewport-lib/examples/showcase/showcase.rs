@@ -5,7 +5,8 @@
 //! self-contained in one file.
 
 use eframe::{egui, wgpu};
-use viewport_lib::{ViewportContext, ViewportInstance};
+use viewport_lib as vpl;
+use vpl::{ViewportContext, ViewportInstance};
 
 use crate::camera::{CameraRig, MoveKeys};
 
@@ -156,6 +157,6 @@ pub fn reset_session(session: &mut ViewportInstance) {
     // Persistent viewport chrome (grid, background, wireframe) and clip objects
     // are retained on the session, so reset them or one showcase's settings leak
     // into the next. Each showcase re-sets what it needs in `setup`.
-    *session.viewport_frame_mut() = viewport_lib::ViewportFrame::default();
+    *session.viewport_frame_mut() = vpl::ViewportFrame::default();
     session.effects_mut().clip.objects.clear();
 }

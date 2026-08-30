@@ -14,7 +14,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BackfacePolicy, BuiltinColourmap, ColourmapId, FrameData, GlyphItem, LightingSettings,
     MeshData, MeshId, SceneRenderItem,
     quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
@@ -96,8 +97,8 @@ impl App {
     // -------------------------------------------------------------------------
 
     /// Upload render meshes (once) and generate initial glyph data.
-    pub(crate) fn build_sv_scene(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
-        use viewport_lib::geometry::primitives;
+    pub(crate) fn build_sv_scene(&mut self, renderer: &mut vpl::ViewportRenderer) {
+        use vpl::geometry::primitives;
 
         // Upload render meshes at a fixed resolution (independent of glyph density).
         let sphere = primitives::sphere(1.0, 48, 24);
@@ -135,7 +136,7 @@ impl App {
     /// vectors) at the current `sv_state.density`. Called on first build and
     /// whenever the density slider changes.
     pub(crate) fn rebuild_sv_glyph_data(&mut self) {
-        use viewport_lib::geometry::primitives;
+        use vpl::geometry::primitives;
 
         let d = self.sv_state.density;
 
@@ -316,7 +317,7 @@ pub(crate) fn controls_surface_vectors(app: &mut App, ui: &mut egui::Ui) {
 /// will use internally (when `tangents` is `None`), so the encoded `(u, v)`
 /// round-trips correctly through `vertex_intrinsic_to_glyphs`.
 fn make_sphere_vortex_intrinsic(_positions: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 2]> {
-    use viewport_lib::quantities::tangent_frames::gram_schmidt_tangent;
+    use vpl::quantities::tangent_frames::gram_schmidt_tangent;
 
     let up = glam::Vec3::Z;
     normals
@@ -396,7 +397,7 @@ fn make_torus(major_r: f32, minor_r: f32, major_segs: usize, minor_segs: usize) 
 /// (tube-circle) direction at each triangle's centroid.
 fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
     use glam::Vec3;
-    use viewport_lib::quantities::compute_face_tangent_frames;
+    use vpl::quantities::compute_face_tangent_frames;
 
     let num_tris = torus.indices.len() / 3;
     let frames = compute_face_tangent_frames(&torus.positions, &torus.indices);

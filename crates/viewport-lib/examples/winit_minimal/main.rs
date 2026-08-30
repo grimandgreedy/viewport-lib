@@ -9,7 +9,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use viewport_lib::{AppConfig, Material, NodeId, ViewportApp, primitives};
+use viewport_lib as vpl;
+use vpl::{AppConfig, Material, NodeId, ViewportApp, primitives};
 
 fn main() {
     // The setup closure and the per-frame closure share the animated node's id.

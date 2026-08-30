@@ -16,9 +16,10 @@
 //!   - Wireframe toggle in the side panel (on by default)
 
 use std::collections::HashMap;
+use viewport_lib as vpl;
 
 use eframe::egui;
-use viewport_lib::{
+use vpl::{
     AnchorX, AnchorY, BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem,
     FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
     GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive,
@@ -288,8 +289,8 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
                 vi(top, 0),
                 vi(top, 1 + s),
                 vi(top, 1 + s_next),
-                viewport_lib::CELL_SENTINEL,
-                viewport_lib::CELL_SENTINEL,
+                vpl::CELL_SENTINEL,
+                vpl::CELL_SENTINEL,
             ]);
             let t = (layer as f32 + 0.5) / N_LAYERS as f32;
             let u = (s as f32 + 0.5) / N_SECTORS as f32;
@@ -313,9 +314,9 @@ fn make_pl_tvm_tet_data() -> VolumeMeshData {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PlState {
-    pub scene: viewport_lib::scene::Scene,
-    pub selection: viewport_lib::Selection,
-    pub sub_selection: viewport_lib::SubSelection,
+    pub scene: vpl::scene::Scene,
+    pub selection: vpl::Selection,
+    pub sub_selection: vpl::SubSelection,
     pub built: bool,
     /// Which section is active: true = unified API, false = per-type reference.
     pub unified_mode: bool,
@@ -336,8 +337,8 @@ pub(crate) struct PlState {
     pub hit_marker: Option<glam::Vec3>,
     pub show_hit_marker: bool,
     pub pc_positions: Vec<[f32; 3]>,
-    pub volume_id: Option<viewport_lib::VolumeId>,
-    pub volume_data: Option<viewport_lib::VolumeData>,
+    pub volume_id: Option<vpl::VolumeId>,
+    pub volume_data: Option<vpl::VolumeData>,
     /// Local-space positions of the Gaussian splat grid.
     pub splat_positions: Vec<[f32; 3]>,
     /// GPU handle for the uploaded Gaussian splat data.
@@ -351,7 +352,7 @@ pub(crate) struct PlState {
     /// Projected-tet handle for the transparent tet mesh (pick_id=12). Held
     /// separately from the `VolumeMeshItem` it lives on so the per-frame
     /// submission stays readable.
-    pub tvm_tet_id: Option<viewport_lib::resources::ProjectedTetId>,
+    pub tvm_tet_id: Option<vpl::resources::ProjectedTetId>,
     /// Opaque boundary mesh for the hex cylinder so it renders on the LDR path.
     pub tvm_tet_mesh_id: Option<MeshId>,
     /// CPU-side tet mesh data for unified CELL picking and sub-selection highlighting.
@@ -400,7 +401,7 @@ pub(crate) struct PlState {
     /// GPU volume handle for the GpuMarchingCubesJob (pick_id=54).
     pub mc_volume_id: Option<McVolumeId>,
     /// CPU-side copy of the MC volume data, retained for CPU picking.
-    pub mc_volume_data: Option<std::sync::Arc<viewport_lib::VolumeData>>,
+    pub mc_volume_data: Option<std::sync::Arc<vpl::VolumeData>>,
     /// Texture handle for the target sticker shared by the demo decals
     /// (pick_id 60 and 61).
     pub decal_texture_id: Option<TextureId>,
@@ -409,9 +410,9 @@ pub(crate) struct PlState {
 impl Default for PlState {
     fn default() -> Self {
         Self {
-            scene: viewport_lib::scene::Scene::new(),
-            selection: viewport_lib::Selection::new(),
-            sub_selection: viewport_lib::SubSelection::new(),
+            scene: vpl::scene::Scene::new(),
+            selection: vpl::Selection::new(),
+            sub_selection: vpl::SubSelection::new(),
             built: false,
             unified_mode: true,
             unified_mask: PlUnifiedMask::default(),
@@ -488,13 +489,13 @@ impl PlState {
 
 impl App {
     pub(crate) fn build_pl_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.pl_state.scene = viewport_lib::scene::Scene::new();
+        self.pl_state.scene = vpl::scene::Scene::new();
         self.pl_state.node_names.clear();
         self.pl_state.mesh_lookup.clear();
         self.pl_state.clear_selection();
 
         // --- Cube mesh ---
-        let cube_mesh = viewport_lib::primitives::cube(2.0);
+        let cube_mesh = vpl::primitives::cube(2.0);
         let cube_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &cube_mesh)
@@ -506,7 +507,7 @@ impl App {
         );
 
         // --- Hemisphere mesh ---
-        let hemi_mesh = viewport_lib::primitives::hemisphere(1.5, 20, 8);
+        let hemi_mesh = vpl::primitives::hemisphere(1.5, 20, 8);
         let hemi_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &hemi_mesh)
@@ -602,7 +603,7 @@ impl App {
         // --- Surface slice mesh: flat XZ-plane inside the volume bbox (pick_id=51) ---
         // The plane is 3.6x3.6, centered at (0, 1, -4) so it sits within the
         // volume's world bbox of (-2,-1,-6) to (2,3,-2).
-        let plane_mesh = viewport_lib::primitives::plane(3.6, 3.6);
+        let plane_mesh = vpl::primitives::plane(3.6, 3.6);
         if let Ok(plane_id) = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &plane_mesh)
@@ -894,7 +895,7 @@ impl App {
         let vp_size = glam::Vec2::new(w, h);
         let view_proj = self.camera.view_proj_matrix();
         let vp_inv = view_proj.inverse();
-        let (ray_origin, ray_dir) = viewport_lib::picking::screen_to_ray(pos, vp_size, vp_inv);
+        let (ray_origin, ray_dir) = vpl::picking::screen_to_ray(pos, vp_size, vp_inv);
 
         let mesh_lookup = self.pl_pick_mesh_lookup();
 
@@ -927,7 +928,7 @@ impl App {
 
         match self.pl_state.level {
             PlPickLevel::Object => {
-                let mesh_hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let mesh_hit = vpl::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.pl_state.scene,
@@ -981,7 +982,7 @@ impl App {
             }
 
             PlPickLevel::Face => {
-                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let hit = vpl::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.pl_state.scene,
@@ -1005,7 +1006,7 @@ impl App {
             }
 
             PlPickLevel::Vertex => {
-                let hit = viewport_lib::picking::pick_scene_nodes_cpu(
+                let hit = vpl::picking::pick_scene_nodes_cpu(
                     ray_origin,
                     ray_dir,
                     &self.pl_state.scene,
@@ -1015,7 +1016,7 @@ impl App {
                     let vertex_sub = self.pl_node_mesh_key(hit.id).and_then(|key| {
                         let (positions, indices) = self.pl_state.mesh_lookup.get(&key)?;
                         let model = self.pl_node_model_matrix(hit.id);
-                        viewport_lib::nearest_vertex_on_hit(&hit, positions, indices, model)
+                        vpl::nearest_vertex_on_hit(&hit, positions, indices, model)
                     });
                     if let Some(sub) = vertex_sub {
                         select_sub!(hit.id, sub);
@@ -1042,7 +1043,7 @@ impl App {
                     .volume_id
                     .zip(self.pl_state.volume_data.as_ref())
                     .and_then(|(vol_id, vol_data)| {
-                        let mut item = viewport_lib::VolumeItem::default();
+                        let mut item = vpl::VolumeItem::default();
                         item.volume_id = vol_id;
                         item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                             .to_cols_array_2d();
@@ -1051,7 +1052,7 @@ impl App {
                         item.scalar_range = (0.0, 1.0);
                         item.threshold_min = 0.15;
                         item.threshold_max = 1.0;
-                        viewport_lib::pick_volume_cpu(ray_origin, ray_dir, 20, &item, vol_data)
+                        vpl::pick_volume_cpu(ray_origin, ray_dir, 20, &item, vol_data)
                     });
 
                 if let Some(hit) = hit {
@@ -1071,12 +1072,10 @@ impl App {
             }
 
             PlPickLevel::Point => {
-                let mut pc_item = viewport_lib::PointCloudItem::default();
+                let mut pc_item = vpl::PointCloudItem::default();
                 pc_item.positions = self.pl_state.pc_positions.clone();
                 pc_item.settings.pick_id = PickId(100);
-                let hit = viewport_lib::pick_point_cloud_cpu(
-                    pos, 100, &pc_item, view_proj, vp_size, 20.0,
-                );
+                let hit = vpl::pick_point_cloud_cpu(pos, 100, &pc_item, view_proj, vp_size, 20.0);
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     select_sub!(100, sub);
@@ -1095,7 +1094,7 @@ impl App {
 
             PlPickLevel::Splat => {
                 let splat_model = pl_splat_model();
-                let hit = viewport_lib::pick_gaussian_splat_cpu(
+                let hit = vpl::pick_gaussian_splat_cpu(
                     pos,
                     10,
                     &self.pl_state.splat_positions,
@@ -1122,7 +1121,7 @@ impl App {
 
             PlPickLevel::Tvm => {
                 let hit = self.pl_state.tvm_data.as_ref().and_then(|data| {
-                    viewport_lib::pick_transparent_volume_mesh_cpu(
+                    vpl::pick_transparent_volume_mesh_cpu(
                         ray_origin,
                         ray_dir,
                         11,
@@ -1172,11 +1171,11 @@ impl App {
             PlPickLevel::Object => {
                 // Object-level: collect nodes whose origin projects into the rect.
                 for node in self.pl_state.scene.nodes() {
-                    if !viewport_lib::traits::ViewportObject::is_visible(node) {
+                    if !vpl::traits::ViewportObject::is_visible(node) {
                         continue;
                     }
-                    let id = viewport_lib::traits::ViewportObject::id(node);
-                    let pos = viewport_lib::traits::ViewportObject::position(node);
+                    let id = vpl::traits::ViewportObject::id(node);
+                    let pos = vpl::traits::ViewportObject::position(node);
                     let clip = view_proj * pos.extend(1.0);
                     if clip.w <= 0.0 {
                         continue;
@@ -1196,9 +1195,9 @@ impl App {
             PlPickLevel::Face => {
                 // Face-level: collect triangles whose centroid projects into the rect.
                 for node in self.pl_state.scene.nodes() {
-                    let node_id = viewport_lib::traits::ViewportObject::id(node);
-                    let model = viewport_lib::traits::ViewportObject::model_matrix(node);
-                    let Some(key) = viewport_lib::traits::ViewportObject::mesh_id(node) else {
+                    let node_id = vpl::traits::ViewportObject::id(node);
+                    let model = vpl::traits::ViewportObject::model_matrix(node);
+                    let Some(key) = vpl::traits::ViewportObject::mesh_id(node) else {
                         continue;
                     };
                     let Some((positions, indices)) = self.pl_state.mesh_lookup.get(&key) else {
@@ -1240,9 +1239,9 @@ impl App {
             PlPickLevel::Vertex => {
                 // Collect all vertices that project into the rect.
                 for node in self.pl_state.scene.nodes() {
-                    let node_id = viewport_lib::traits::ViewportObject::id(node);
-                    let mesh_key = viewport_lib::traits::ViewportObject::mesh_id(node);
-                    let model = viewport_lib::traits::ViewportObject::model_matrix(node);
+                    let node_id = vpl::traits::ViewportObject::id(node);
+                    let mesh_key = vpl::traits::ViewportObject::mesh_id(node);
+                    let model = vpl::traits::ViewportObject::model_matrix(node);
                     if let Some(key) = mesh_key {
                         if let Some((positions, _)) = self.pl_state.mesh_lookup.get(&key) {
                             for (vi, pos) in positions.iter().enumerate() {
@@ -1294,7 +1293,7 @@ impl App {
                 if let (Some(vol_id), Some(vol_data)) =
                     (self.pl_state.volume_id, self.pl_state.volume_data.as_ref())
                 {
-                    let mut item = viewport_lib::VolumeItem::default();
+                    let mut item = vpl::VolumeItem::default();
                     item.volume_id = vol_id;
                     item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                         .to_cols_array_2d();
@@ -1302,7 +1301,7 @@ impl App {
                     item.bbox_max = [4.0, 4.0, 4.0];
                     item.threshold_min = 0.15;
                     item.threshold_max = 1.0;
-                    let result = viewport_lib::pick_volume_rect(
+                    let result = vpl::pick_volume_rect(
                         r_min, r_max, 20, &item, vol_data, view_proj, vp_size,
                     );
                     for (_, subs) in &result.hits {
@@ -1315,7 +1314,7 @@ impl App {
 
             PlPickLevel::Splat => {
                 let splat_model = pl_splat_model();
-                let result = viewport_lib::pick_gaussian_splat_rect(
+                let result = vpl::pick_gaussian_splat_rect(
                     r_min,
                     r_max,
                     10,
@@ -1333,7 +1332,7 @@ impl App {
 
             PlPickLevel::Tvm => {
                 if let Some(data) = self.pl_state.tvm_data.as_ref() {
-                    let result = viewport_lib::pick_transparent_volume_mesh_rect(
+                    let result = vpl::pick_transparent_volume_mesh_rect(
                         r_min,
                         r_max,
                         11,
@@ -1528,8 +1527,8 @@ impl App {
     /// World-space model matrix for a node ID.
     pub(crate) fn pl_node_model_matrix(&self, id: NodeId) -> glam::Mat4 {
         for node in self.pl_state.scene.nodes() {
-            if viewport_lib::traits::ViewportObject::id(node) == id {
-                return viewport_lib::traits::ViewportObject::model_matrix(node);
+            if vpl::traits::ViewportObject::id(node) == id {
+                return vpl::traits::ViewportObject::model_matrix(node);
             }
         }
         glam::Mat4::IDENTITY
@@ -1538,8 +1537,8 @@ impl App {
     /// Mesh key (u64) for a node ID.
     fn pl_node_mesh_key(&self, id: NodeId) -> Option<u64> {
         for node in self.pl_state.scene.nodes() {
-            if viewport_lib::traits::ViewportObject::id(node) == id {
-                return viewport_lib::traits::ViewportObject::mesh_id(node);
+            if vpl::traits::ViewportObject::id(node) == id {
+                return vpl::traits::ViewportObject::mesh_id(node);
             }
         }
         None
@@ -1779,16 +1778,16 @@ pub(crate) fn pl_collect_scene_items(
         let mut _t = LightingSettings::default();
         _t.lights = vec![
             {
-                let mut _t = viewport_lib::LightSource::default();
-                _t.kind = viewport_lib::LightKind::Directional {
+                let mut _t = vpl::LightSource::default();
+                _t.kind = vpl::LightKind::Directional {
                     direction: [0.4, 0.3, 1.5],
                 };
                 _t.intensity = 0.7;
                 _t
             },
             {
-                let mut _t = viewport_lib::LightSource::default();
-                _t.kind = viewport_lib::LightKind::Directional {
+                let mut _t = vpl::LightSource::default();
+                _t.kind = vpl::LightKind::Directional {
                     direction: [-0.3, -0.2, -1.0],
                 };
                 _t.intensity = 0.35;
@@ -1840,11 +1839,11 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut item = VolumeMeshItem::new(tet_mesh_id, app.pl_state.tvm_tet_face_to_cell.clone());
         item.projected_tet_id = app.pl_state.tvm_tet_id;
         item.volume_mesh_data = Some(tet_data.clone());
-        item.colourmap_id = Some(viewport_lib::ColourmapId(0));
+        item.colourmap_id = Some(vpl::ColourmapId(0));
         item.settings.pick_id = PickId(12);
         item.settings.selected = app.pl_state.selection.contains(12);
         item.settings.unlit = false;
-        item.transparency = Some(viewport_lib::VolumeTransparency {
+        item.transparency = Some(vpl::VolumeTransparency {
             density: 2.0,
             ..Default::default()
         });
@@ -1865,10 +1864,10 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut mesh_lookup: HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> = HashMap::new();
         let mut model_matrices: HashMap<u64, glam::Mat4> = HashMap::new();
         for node in app.pl_state.scene.nodes() {
-            let node_id = viewport_lib::traits::ViewportObject::id(node);
-            let model = viewport_lib::traits::ViewportObject::model_matrix(node);
+            let node_id = vpl::traits::ViewportObject::id(node);
+            let model = vpl::traits::ViewportObject::model_matrix(node);
             model_matrices.insert(node_id, model);
-            if let Some(mesh_key) = viewport_lib::traits::ViewportObject::mesh_id(node) {
+            if let Some(mesh_key) = vpl::traits::ViewportObject::mesh_id(node) {
                 if let Some(data) = app.pl_state.mesh_lookup.get(&mesh_key) {
                     mesh_lookup.insert(node_id, data.clone());
                 }
@@ -1896,11 +1895,11 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         if !app.pl_state.xo_sprite_positions.is_empty() {
             instance_lookup.insert(34, app.pl_state.xo_sprite_positions.clone());
         }
-        let mut voxel_lookup: HashMap<u64, viewport_lib::VolumeSelectionInfo> = HashMap::new();
+        let mut voxel_lookup: HashMap<u64, vpl::VolumeSelectionInfo> = HashMap::new();
         if app.pl_state.volume_id.is_some() {
             voxel_lookup.insert(
                 20,
-                viewport_lib::VolumeSelectionInfo {
+                vpl::VolumeSelectionInfo {
                     dims: [16, 16, 16],
                     bbox_min: [0.0, 0.0, 0.0],
                     bbox_max: [4.0, 4.0, 4.0],
@@ -1996,7 +1995,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     }
     // Volume (pick_id=20).
     if let Some(vol_id) = app.pl_state.volume_id {
-        let mut vol = viewport_lib::VolumeItem::default();
+        let mut vol = vpl::VolumeItem::default();
         vol.volume_id = vol_id;
         vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
         vol.bbox_min = [0.0, 0.0, 0.0];

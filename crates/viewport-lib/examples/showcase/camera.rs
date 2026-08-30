@@ -7,7 +7,8 @@
 
 use eframe::egui;
 use glam::Vec3;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Action, FirstPersonCameraController, OrbitCameraController, ViewportContext, ViewportInstance,
 };
 

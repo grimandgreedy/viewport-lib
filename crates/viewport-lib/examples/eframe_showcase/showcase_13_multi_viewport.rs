@@ -20,7 +20,8 @@
 use crate::App;
 use crate::multi_viewport_callback::MultiViewportCallback;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Action, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode,
     GizmoSpace, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
     Material, Modifiers, MouseButton, NodeId, OrbitCameraController, Projection, SceneFrame,
@@ -35,11 +36,11 @@ use viewport_lib::{
 // ---------------------------------------------------------------------------
 
 pub(crate) struct MvState {
-    pub scene: viewport_lib::scene::Scene,
+    pub scene: vpl::scene::Scene,
     pub selection: Selection,
     pub cameras: [Camera; 4],
     pub controllers: [OrbitCameraController; 4],
-    pub viewports: Option<[viewport_lib::ViewportId; 4]>,
+    pub viewports: Option<[vpl::ViewportId; 4]>,
     pub built: bool,
     pub gizmo: Gizmo,
     pub hovered_quad: usize,
@@ -54,7 +55,7 @@ pub(crate) struct MvState {
 impl Default for MvState {
     fn default() -> Self {
         Self {
-            scene: viewport_lib::scene::Scene::new(),
+            scene: vpl::scene::Scene::new(),
             selection: Selection::new(),
             cameras: [
                 Camera {
@@ -116,7 +117,7 @@ const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
 impl App {
     /// Build the shared scene for showcase 13.
     pub(crate) fn build_mv_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.mv_state.scene = viewport_lib::scene::Scene::new();
+        self.mv_state.scene = vpl::scene::Scene::new();
         self.mv_state.selection = Selection::new();
 
         let positions: [[f32; 3]; 6] = [
@@ -663,7 +664,7 @@ impl App {
 
         let mut mesh_lookup = std::collections::HashMap::new();
         for node in self.mv_state.scene.nodes() {
-            if let Some(mid) = viewport_lib::traits::ViewportObject::mesh_id(node) {
+            if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
                 mesh_lookup.entry(mid).or_insert_with(|| {
                     (
                         self.box_mesh_data.positions.clone(),
@@ -688,7 +689,7 @@ impl App {
 
 impl crate::App {
     /// Apply a [`viewport_lib::TransformDelta`] to all selected mv scene nodes.
-    pub(crate) fn apply_mv_delta(&mut self, delta: viewport_lib::TransformDelta, hq: usize) {
+    pub(crate) fn apply_mv_delta(&mut self, delta: vpl::TransformDelta, hq: usize) {
         let Some(center) = self.mv_state.gizmo_center else {
             return;
         };
@@ -768,8 +769,8 @@ impl crate::App {
 /// Gizmo orientation: identity for World space; first selected node's rotation for Local.
 fn mv_gizmo_orientation(
     space: GizmoSpace,
-    selection: &viewport_lib::Selection,
-    scene: &viewport_lib::scene::Scene,
+    selection: &vpl::Selection,
+    scene: &vpl::scene::Scene,
 ) -> glam::Quat {
     match space {
         GizmoSpace::World => glam::Quat::IDENTITY,

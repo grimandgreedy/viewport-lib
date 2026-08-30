@@ -13,7 +13,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Material, NodeId, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{Material, NodeId, ViewportRenderer, scene::Scene};
 
 // Percy photo : pre-converted to raw RGBA (2203 x 2009).
 const PERCY_WIDTH: u32 = 2203;
@@ -61,10 +62,8 @@ impl App {
             )
             .expect("percy texture upload");
 
-        let plane = viewport_lib::geometry::primitives::plane(
-            4.5,
-            4.5 * PERCY_HEIGHT as f32 / PERCY_WIDTH as f32,
-        );
+        let plane =
+            vpl::geometry::primitives::plane(4.5, 4.5 * PERCY_HEIGHT as f32 / PERCY_WIDTH as f32);
         let plane_id = res
             .upload_mesh_data(&self.device, &plane)
             .expect("plane mesh upload");
@@ -90,7 +89,7 @@ impl App {
             .upload_texture(&self.device, &self.queue, 256, 256, &checker)
             .expect("checker texture upload");
 
-        let sphere = viewport_lib::geometry::primitives::sphere(1.8, 48, 24);
+        let sphere = vpl::geometry::primitives::sphere(1.8, 48, 24);
         let sphere_id = res
             .upload_mesh_data(&self.device, &sphere)
             .expect("sphere mesh upload");
@@ -116,7 +115,7 @@ impl App {
             .upload_texture(&self.device, &self.queue, 256, 256, &gradient)
             .expect("gradient texture upload");
 
-        let cube = viewport_lib::geometry::primitives::cube(3.0);
+        let cube = vpl::geometry::primitives::cube(3.0);
         let cube_id = res
             .upload_mesh_data(&self.device, &cube)
             .expect("cube mesh upload");
@@ -140,7 +139,7 @@ impl App {
             .upload_texture(&self.device, &self.queue, 256, 256, &stripes)
             .expect("stripes texture upload");
 
-        let torus = viewport_lib::geometry::primitives::torus(1.5, 0.5, 48, 24);
+        let torus = vpl::geometry::primitives::torus(1.5, 0.5, 48, 24);
         let torus_id = res
             .upload_mesh_data(&self.device, &torus)
             .expect("torus mesh upload");

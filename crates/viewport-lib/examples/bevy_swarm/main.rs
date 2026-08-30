@@ -32,9 +32,10 @@ use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::PrimaryWindow;
+use viewport_lib as vpl;
 
 use glam::{Mat4, Vec2, Vec3};
-use viewport_lib::{
+use vpl::{
     ButtonState, Camera as VplCamera, CameraFrame, FrameData, LightingSettings, Material, MeshId,
     OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
     ViewportContext, ViewportEvent, ViewportRenderer, primitives,
@@ -496,9 +497,9 @@ fn camera_input(
     });
 
     for (bevy_btn, vpl_btn) in [
-        (MouseButton::Left, viewport_lib::MouseButton::Left),
-        (MouseButton::Middle, viewport_lib::MouseButton::Middle),
-        (MouseButton::Right, viewport_lib::MouseButton::Right),
+        (MouseButton::Left, vpl::MouseButton::Left),
+        (MouseButton::Middle, vpl::MouseButton::Middle),
+        (MouseButton::Right, vpl::MouseButton::Right),
     ] {
         if buttons.just_pressed(bevy_btn) {
             cam.controller.push_event(ViewportEvent::MouseButton {

@@ -11,7 +11,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Material, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State
@@ -55,7 +56,7 @@ impl App {
     pub(crate) fn build_ground_plane_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.gp_state.scene = Scene::new();
 
-        let sphere = viewport_lib::geometry::primitives::sphere(1.0, 32, 16);
+        let sphere = vpl::geometry::primitives::sphere(1.0, 32, 16);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)

@@ -14,7 +14,8 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AutoExposure, EnvironmentSettings, ExposureMode, ExposureSettings, LightKind, LightSource,
     LightingSettings, Lux, Material, ShadingModel, ViewportRenderer, scene::Scene,
 };
@@ -252,22 +253,22 @@ impl App {
         match self.surfaces_state.sub {
             SurfacesSub::Parity => {
                 self.build_parity_scene(renderer);
-                self.camera = viewport_lib::Camera {
+                self.camera = vpl::Camera {
                     center: glam::Vec3::new(5.2, 0.0, 0.6),
                     distance: 16.0,
                     orientation: glam::Quat::from_rotation_z(0.5)
                         * glam::Quat::from_rotation_x(1.15),
-                    ..viewport_lib::Camera::default()
+                    ..vpl::Camera::default()
                 };
             }
             SurfacesSub::EmissiveIbl => {
                 self.build_emissive_scene(renderer);
-                self.camera = viewport_lib::Camera {
+                self.camera = vpl::Camera {
                     center: glam::Vec3::new(4.8, 0.5, 0.8),
                     distance: 17.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(1.2),
-                    ..viewport_lib::Camera::default()
+                    ..vpl::Camera::default()
                 };
             }
         }
@@ -294,7 +295,7 @@ impl App {
             },
         );
 
-        let sphere_mesh = viewport_lib::primitives::sphere(0.7, 48, 24);
+        let sphere_mesh = vpl::primitives::sphere(0.7, 48, 24);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
@@ -373,7 +374,7 @@ impl App {
             },
         );
 
-        let sphere_mesh = viewport_lib::primitives::sphere(0.8, 48, 24);
+        let sphere_mesh = vpl::primitives::sphere(0.8, 48, 24);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)

@@ -25,8 +25,9 @@
 //!   Scroll                    : zoom
 
 use eframe::{egui, wgpu};
-use viewport_lib::input::adapters::from_egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::input::adapters::from_egui;
+use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
     DebugQuantity, DebugVis, DisplaySettings, EnvironmentSettings, ExposureMode, ExposureReadback,
     ExposureSettings, LightKind, LightSource, LightingSettings, Lumen, Lux, MatcapId, Material,
@@ -63,14 +64,12 @@ fn main() -> eframe::Result {
                             let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
                                 wgpu::Limits::downlevel_webgl2_defaults()
                             } else {
-                                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+                                vpl::ViewportRenderer::recommended_device_limits(adapter)
                             };
                             wgpu::DeviceDescriptor {
                                 label: Some("viewport-lib lighting device"),
                                 required_features:
-                                    viewport_lib::ViewportRenderer::recommended_device_features(
-                                        adapter,
-                                    ),
+                                    vpl::ViewportRenderer::recommended_device_features(adapter),
                                 required_limits: wgpu::Limits {
                                     max_texture_dimension_2d: 8192,
                                     ..base_limits
@@ -249,7 +248,7 @@ struct App {
     m_rough: MeshId,
     m_cube2: MeshId,
     m_percy: MeshId,
-    tex_percy: viewport_lib::TextureId,
+    tex_percy: vpl::TextureId,
     matcap_clay: MatcapId,
     matcap_ceramic: MatcapId,
 
@@ -376,7 +375,7 @@ impl App {
         m_rough: MeshId,
         m_cube2: MeshId,
         m_percy: MeshId,
-        tex_percy: viewport_lib::TextureId,
+        tex_percy: vpl::TextureId,
         matcap_clay: MatcapId,
         matcap_ceramic: MatcapId,
     ) -> Self {
@@ -632,12 +631,12 @@ impl App {
     /// Matcap materials keep their matcap; PBR and Phong swap.
     fn apply_pbr_toggle(&self, m: &mut Material) {
         match m.shading_model {
-            viewport_lib::ShadingModel::Matcap(_) => {}
+            vpl::ShadingModel::Matcap(_) => {}
             _ => {
                 m.shading_model = if self.pbr_enabled {
-                    viewport_lib::ShadingModel::Pbr
+                    vpl::ShadingModel::Pbr
                 } else {
-                    viewport_lib::ShadingModel::Phong
+                    vpl::ShadingModel::Phong
                 };
             }
         }
@@ -710,7 +709,7 @@ impl App {
         clay.model =
             glam::Mat4::from_translation(glam::Vec3::new(-4.5, 2.5, 0.7)).to_cols_array_2d();
         clay.material = Material::from_colour([0.92, 0.90, 0.88]);
-        clay.material.shading_model = viewport_lib::ShadingModel::Matcap(self.matcap_clay);
+        clay.material.shading_model = vpl::ShadingModel::Matcap(self.matcap_clay);
         items.push(clay);
 
         // Ceramic matcap sphere (static): white base, high-contrast sheen.
@@ -720,7 +719,7 @@ impl App {
         ceramic.model =
             glam::Mat4::from_translation(glam::Vec3::new(-1.5, 2.5, 0.7)).to_cols_array_2d();
         ceramic.material = Material::from_colour([1.0, 1.0, 1.0]);
-        ceramic.material.shading_model = viewport_lib::ShadingModel::Matcap(self.matcap_ceramic);
+        ceramic.material.shading_model = vpl::ShadingModel::Matcap(self.matcap_ceramic);
         items.push(ceramic);
 
         // PBR metallic sphere: near-white, very smooth. Specular response reveals shadow
@@ -1251,25 +1250,25 @@ impl App {
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
                         if ui.small_button("Atlas UV").clicked() {
-                            self.debug_vis_r = viewport_lib::DebugQuantity::AtlasUvX;
-                            self.debug_vis_g = viewport_lib::DebugQuantity::AtlasUvY;
-                            self.debug_vis_b = viewport_lib::DebugQuantity::Zero;
+                            self.debug_vis_r = vpl::DebugQuantity::AtlasUvX;
+                            self.debug_vis_g = vpl::DebugQuantity::AtlasUvY;
+                            self.debug_vis_b = vpl::DebugQuantity::Zero;
                         }
                         if ui.small_button("Depth compare").clicked() {
-                            self.debug_vis_r = viewport_lib::DebugQuantity::BiasedDepth;
-                            self.debug_vis_g = viewport_lib::DebugQuantity::SurfaceDepth;
-                            self.debug_vis_b = viewport_lib::DebugQuantity::NdotL;
+                            self.debug_vis_r = vpl::DebugQuantity::BiasedDepth;
+                            self.debug_vis_g = vpl::DebugQuantity::SurfaceDepth;
+                            self.debug_vis_b = vpl::DebugQuantity::NdotL;
                         }
                         if ui.small_button("Direct light").clicked() {
-                            self.debug_vis_r = viewport_lib::DebugQuantity::DirectLightLuminance;
-                            self.debug_vis_g = viewport_lib::DebugQuantity::AmbientLuminance;
-                            self.debug_vis_b = viewport_lib::DebugQuantity::Zero;
+                            self.debug_vis_r = vpl::DebugQuantity::DirectLightLuminance;
+                            self.debug_vis_g = vpl::DebugQuantity::AmbientLuminance;
+                            self.debug_vis_b = vpl::DebugQuantity::Zero;
                             self.debug_vis_scale = 1.0;
                         }
                         if ui.small_button("IBL split").clicked() {
-                            self.debug_vis_r = viewport_lib::DebugQuantity::IblDiffuseLuminance;
-                            self.debug_vis_g = viewport_lib::DebugQuantity::IblSpecularLuminance;
-                            self.debug_vis_b = viewport_lib::DebugQuantity::Zero;
+                            self.debug_vis_r = vpl::DebugQuantity::IblDiffuseLuminance;
+                            self.debug_vis_g = vpl::DebugQuantity::IblSpecularLuminance;
+                            self.debug_vis_b = vpl::DebugQuantity::Zero;
                             self.debug_vis_scale = 1.0;
                         }
                     });

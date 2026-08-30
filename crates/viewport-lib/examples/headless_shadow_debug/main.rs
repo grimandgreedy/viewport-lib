@@ -7,7 +7,8 @@
 //! Writes <out_prefix>_normal.ppm, _shadowfactor.ppm, _ndotl.ppm,
 //! _cascade.ppm, and _atlas.ppm to the current directory.
 
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AtlasViewerCorner, BackfacePolicy, Camera, CameraFrame, DebugOutputMode, DebugQuantity,
     DebugVis, FrameData, LightKind, LightSource, LightingSettings, Material, SceneFrame,
     SceneRenderItem, ShadowFilter, ViewportRenderer, primitives,
@@ -42,7 +43,7 @@ fn main() {
     .expect("adapter");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("headless-shadow-debug"),
-        required_limits: viewport_lib::ViewportRenderer::recommended_device_limits(&adapter),
+        required_limits: vpl::ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .expect("device");

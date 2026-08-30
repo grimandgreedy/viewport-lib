@@ -10,7 +10,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo, LightKind,
     LightSource, LightingSettings, Material, SceneRenderItem, ViewportRenderer, VolumeId,
     VolumeItem, scene::Scene, selection::Selection,
@@ -119,7 +120,7 @@ impl App {
         self.clipvol_state.scene = Scene::new();
 
         // Torus lying in the XY plane. High segment count makes clip cross-sections smooth.
-        let torus_mesh = viewport_lib::primitives::torus(2.2, 0.65, 64, 32);
+        let torus_mesh = vpl::primitives::torus(2.2, 0.65, 64, 32);
         let torus_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &torus_mesh)
@@ -135,7 +136,7 @@ impl App {
 
         // Capsule standing upright through the torus hole.
         // Torus hole radius = major - minor = 2.2 - 0.65 = 1.55; capsule radius 0.75 fits easily.
-        let capsule_mesh = viewport_lib::primitives::capsule(0.75, 2.8, 32, 12);
+        let capsule_mesh = vpl::primitives::capsule(0.75, 2.8, 32, 12);
         let capsule_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &capsule_mesh)

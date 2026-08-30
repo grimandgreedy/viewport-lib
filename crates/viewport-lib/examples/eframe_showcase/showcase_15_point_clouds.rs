@@ -12,7 +12,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, GlyphItem, GlyphType, LightingSettings,
     PointCloudItem, PostProcessSettings, SceneRenderItem,
 };

@@ -10,10 +10,11 @@
 //! assembly resets the overlay frame (including its animation clock) each frame.
 
 use std::f32::consts::{PI, TAU};
+use viewport_lib as vpl;
 
 use eframe::egui;
 use glam::{Mat4, Vec3};
-use viewport_lib::{
+use vpl::{
     AnimTrack, BorderMode, FontHandle, GlyphRunItem, GradientStop, LabelAnchor, LabelItem, LineCap,
     Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PolylineCap,

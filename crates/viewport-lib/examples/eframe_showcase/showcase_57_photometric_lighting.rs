@@ -17,7 +17,8 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings, Lumen,
     Lux, Material, ViewportRenderer, scene::Scene,
 };
@@ -470,33 +471,33 @@ impl App {
         match self.lighting_state.sub {
             LightingSub::Presets => {
                 self.build_presets_scene(renderer);
-                self.camera = viewport_lib::Camera {
+                self.camera = vpl::Camera {
                     center: glam::Vec3::new(4.8, 0.4, 0.7),
                     distance: 16.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(1.2),
-                    ..viewport_lib::Camera::default()
+                    ..vpl::Camera::default()
                 };
             }
             LightingSub::Falloff => {
                 self.build_falloff_scene(renderer);
                 // Frame the row from the side so the near-to-far dimming reads.
-                self.camera = viewport_lib::Camera {
+                self.camera = vpl::Camera {
                     center: glam::Vec3::new(9.0, 0.0, 0.5),
                     distance: 22.0,
                     orientation: glam::Quat::from_rotation_z(0.5)
                         * glam::Quat::from_rotation_x(1.15),
-                    ..viewport_lib::Camera::default()
+                    ..vpl::Camera::default()
                 };
             }
             LightingSub::Exposure => {
                 self.build_exposure_scene(renderer);
-                self.camera = viewport_lib::Camera {
+                self.camera = vpl::Camera {
                     center: glam::Vec3::new(6.0, 0.4, 0.7),
                     distance: 17.0,
                     orientation: glam::Quat::from_rotation_z(0.4)
                         * glam::Quat::from_rotation_x(1.2),
-                    ..viewport_lib::Camera::default()
+                    ..vpl::Camera::default()
                 };
             }
         }
@@ -522,7 +523,7 @@ impl App {
             },
         );
 
-        let sphere_mesh = viewport_lib::primitives::sphere(0.8, 48, 24);
+        let sphere_mesh = vpl::primitives::sphere(0.8, 48, 24);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
@@ -566,7 +567,7 @@ impl App {
             },
         );
 
-        let sphere_mesh = viewport_lib::primitives::sphere(0.6, 32, 16);
+        let sphere_mesh = vpl::primitives::sphere(0.6, 32, 16);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
@@ -608,7 +609,7 @@ impl App {
             },
         );
 
-        let sphere_mesh = viewport_lib::primitives::sphere(0.8, 48, 24);
+        let sphere_mesh = vpl::primitives::sphere(0.8, 48, 24);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)

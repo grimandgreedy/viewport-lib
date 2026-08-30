@@ -26,7 +26,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CELL_SENTINEL, ClipObject,
     ClipShape, ColourmapId, FrameData, LightingSettings, SceneRenderItem, ViewportRenderer,
     VolumeMeshData, VolumeMeshItem, VolumeTransparency,
@@ -1155,7 +1156,7 @@ pub(crate) fn vm_collect_scene_items(
                             &data,
                             &clip_planes,
                         ) {
-                            item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+                            item.material.backface_policy = vpl::BackfacePolicy::Identical;
                             app.vm_state.clipped_item = Some(item);
                         }
                     }
@@ -1200,7 +1201,7 @@ pub(crate) fn vm_collect_scene_items(
 pub(crate) fn submit_vm_items(app: &mut App, fd: &mut FrameData) {
     if let Some(item) = app.vm_active_volume_item() {
         if item.transparency.is_some() {
-            fd.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+            fd.effects.display.mode = vpl::PipelineMode::Hdr;
         }
         fd.scene.volume_meshes.push(item);
     }

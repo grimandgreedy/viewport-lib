@@ -21,8 +21,9 @@
 use crate::App;
 use eframe::egui;
 use std::collections::HashMap;
+use viewport_lib as vpl;
 
-use viewport_lib::{
+use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourmapId,
     FrameData, MeshId, PickId, PickMask, SceneRenderItem, SubObjectRef, SubSelection,
     SubSelectionRef, TensorGlyphItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,

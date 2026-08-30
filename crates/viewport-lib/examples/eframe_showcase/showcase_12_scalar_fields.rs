@@ -7,7 +7,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeData, BuiltinColourmap, Material, MeshData, MeshId, NodeId, Selection,
     ViewportRenderer, scene::Scene,
 };
@@ -88,7 +89,7 @@ impl App {
         self.scalar_state.scene = Scene::new();
 
         // ---- Object 0: Sphere with height (z) scalar ----
-        let mut sphere = viewport_lib::primitives::sphere(3.0, 48, 24);
+        let mut sphere = vpl::primitives::sphere(3.0, 48, 24);
         let height_scalars: Vec<f32> = sphere
             .positions
             .iter()
@@ -287,7 +288,7 @@ fn make_wave_grid(cols: u32, rows: u32, size: f32) -> (MeshData, Vec<f32>) {
 /// Build a box mesh (cuboid) with per-vertex "distance" scalar.
 /// Values below 0.4 (normalized) are set to NaN to demonstrate `nan_colour`.
 fn make_box_with_distance_scalar() -> (MeshData, Vec<f32>) {
-    let mut mesh = viewport_lib::primitives::cuboid(2.5, 2.5, 2.5);
+    let mut mesh = vpl::primitives::cuboid(2.5, 2.5, 2.5);
     let scalars: Vec<f32> = mesh
         .positions
         .iter()

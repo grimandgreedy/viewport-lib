@@ -20,7 +20,8 @@
 use crate::App;
 use eframe::egui;
 use glam::Mat4;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BackfacePattern, BackfacePolicy, ClipObject, LightSource, LightingSettings, Material,
     PatternConfig, SceneRenderItem, ViewportRenderer, scene::Scene,
 };
@@ -110,7 +111,7 @@ impl App {
     // -------------------------------------------------------------------------
 
     pub(crate) fn build_sa_scene(&mut self, renderer: &mut ViewportRenderer) {
-        use viewport_lib::geometry::primitives;
+        use vpl::geometry::primitives;
 
         self.sa_state.scene = Scene::new();
         let policies = policies();
@@ -213,7 +214,7 @@ impl App {
     pub(crate) fn sa_scene_items(&mut self) -> Vec<SceneRenderItem> {
         self.sa_state
             .scene
-            .collect_render_items(&viewport_lib::Selection::new())
+            .collect_render_items(&vpl::Selection::new())
     }
 
     pub(crate) fn sa_clip_objects(&self) -> Vec<ClipObject> {
@@ -322,8 +323,8 @@ impl App {
         {
             let mut _t = LightingSettings::default();
             _t.lights = vec![LightSource::default(), {
-                let mut _t = viewport_lib::LightSource::default();
-                _t.kind = viewport_lib::LightKind::Directional {
+                let mut _t = vpl::LightSource::default();
+                _t.kind = vpl::LightKind::Directional {
                     direction: [-0.5, -0.3, 0.8],
                 };
                 _t.intensity = 0.8;

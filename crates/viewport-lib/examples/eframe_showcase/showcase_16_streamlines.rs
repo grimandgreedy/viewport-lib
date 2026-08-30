@@ -8,7 +8,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, RibbonItem,
     SceneRenderItem, SpriteBlend, StreamtubeItem, StrokePattern, TubeItem,
 };

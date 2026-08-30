@@ -1,4 +1,5 @@
-use viewport_lib::{FrameData, MeshId, ViewportRenderer, plugins::skinning::SkinningPlugin};
+use viewport_lib as vpl;
+use vpl::{FrameData, MeshId, ViewportRenderer, plugins::skinning::SkinningPlugin};
 
 /// Per-frame data handed from the egui update to the wgpu paint callback.
 ///

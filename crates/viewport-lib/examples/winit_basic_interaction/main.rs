@@ -22,8 +22,9 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use viewport_lib as vpl;
 
-use viewport_lib::{
+use vpl::{
     AppConfig, LabelAnchor, LabelItem, Material, OrbitCameraController, OverlayFill, OverlayShape,
     OverlayShapeItem, PickMask, ViewportApp, ViewportContext, ViewportEvent, primitives,
 };

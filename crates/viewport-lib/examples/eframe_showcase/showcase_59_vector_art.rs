@@ -10,7 +10,8 @@
 //! `map_rule` match below, not a dependency between the two crates.
 
 use eframe::egui;
-use viewport_lib::{FillRule, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
+use viewport_lib as vpl;
+use vpl::{FillRule, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
 
 use crate::App;
 

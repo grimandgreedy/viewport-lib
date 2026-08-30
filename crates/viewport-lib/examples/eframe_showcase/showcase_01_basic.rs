@@ -2,7 +2,8 @@
 
 use crate::{App, MeshId};
 use eframe::egui;
-use viewport_lib::{Projection, SceneRenderItem, ViewportRenderer};
+use viewport_lib as vpl;
+use vpl::{Projection, SceneRenderItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
 // State
@@ -28,7 +29,7 @@ impl Default for BasicState {
 
 impl App {
     pub(crate) fn build_basic_scene(&mut self, renderer: &mut ViewportRenderer) {
-        let mesh = viewport_lib::primitives::cube(1.0);
+        let mesh = vpl::primitives::cube(1.0);
         self.basic_state.mesh_id = Some(
             renderer
                 .resources_mut()

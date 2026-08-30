@@ -1,4 +1,5 @@
-use viewport_lib::{FrameData, ViewportId, ViewportRenderer};
+use viewport_lib as vpl;
+use vpl::{FrameData, ViewportId, ViewportRenderer};
 
 pub struct MultiViewportCallback {
     pub frames: [FrameData; 4],

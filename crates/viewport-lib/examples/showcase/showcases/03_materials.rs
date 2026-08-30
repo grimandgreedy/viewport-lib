@@ -7,10 +7,11 @@
 //! `resources_mut()`, and `effects_mut()`.
 
 use std::f32::consts::TAU;
+use viewport_lib as vpl;
 
 use eframe::egui;
 use glam::{Mat4, Vec3};
-use viewport_lib::{
+use vpl::{
     AlphaMode, BackfacePattern, BackfacePolicy, BuiltinMatcap, ClipObject, ItemSettings, LightKind,
     LightSource, MatcapId, Material, MeshData, MeshId, NodeId, ParamVis, ParamVisMode,
     PatternConfig, ShadingModel, TextureId, ViewportInstance, primitives,
@@ -74,7 +75,7 @@ impl MaterialsShowcase {
     }
 
     /// Clear the current grid and lay out the active set, one row per family.
-    fn rebuild(&mut self, scene: &mut viewport_lib::Scene) {
+    fn rebuild(&mut self, scene: &mut vpl::Scene) {
         if !self.nodes.is_empty() {
             let ids = std::mem::take(&mut self.nodes);
             scene.remove_many(&ids);

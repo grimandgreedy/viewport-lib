@@ -13,8 +13,9 @@
 //! Press B to toggle bloom, F to toggle FXAA, S to toggle SSAO.
 
 use std::sync::Arc;
+use viewport_lib as vpl;
 
-use viewport_lib::{
+use vpl::{
     ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, LightingSettings, Material, MeshId,
     OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem, PostProcessSettings,
     SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
@@ -194,7 +195,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::ModifiersChanged(mods) => {
-                let mut m = viewport_lib::Modifiers::default();
+                let mut m = vpl::Modifiers::default();
                 m.shift = mods.state().shift_key();
                 m.ctrl = mods.state().control_key();
                 m.alt = mods.state().alt_key();
@@ -209,9 +210,9 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 let vp_button = match button {
-                    MouseButton::Left => viewport_lib::MouseButton::Left,
-                    MouseButton::Middle => viewport_lib::MouseButton::Middle,
-                    MouseButton::Right => viewport_lib::MouseButton::Right,
+                    MouseButton::Left => vpl::MouseButton::Left,
+                    MouseButton::Middle => vpl::MouseButton::Middle,
+                    MouseButton::Right => vpl::MouseButton::Right,
                     _ => return,
                 };
                 let vp_state = if btn_state == ElementState::Pressed {

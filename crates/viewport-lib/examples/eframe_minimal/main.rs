@@ -15,8 +15,9 @@
 //! Navigation: left/middle drag orbit, right drag pan, scroll zoom.
 
 use eframe::{egui, wgpu};
-use viewport_lib::input::adapters::from_egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::input::adapters::from_egui;
+use vpl::{
     Material, Modifiers, NodeId, OrbitCameraController, ViewportContext, ViewportEvent,
     ViewportInstance, primitives,
 };

@@ -8,7 +8,8 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{LightKind, LightSource, Material, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{LightKind, LightSource, Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State
@@ -73,7 +74,7 @@ impl App {
         );
 
         // 3x3 grid of lit spheres.
-        let sphere_mesh = viewport_lib::primitives::sphere(0.6, 32, 16);
+        let sphere_mesh = vpl::primitives::sphere(0.6, 32, 16);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
@@ -108,7 +109,7 @@ impl App {
             Material::from_colour([0.2, 0.7, 1.0]),
         );
         {
-            let mut a = viewport_lib::ItemSettings::default();
+            let mut a = vpl::ItemSettings::default();
             a.unlit = true;
             self.lights_state.scene.set_appearance(unlit_id, a);
         }

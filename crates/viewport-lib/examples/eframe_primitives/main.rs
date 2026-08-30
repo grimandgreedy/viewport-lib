@@ -8,7 +8,8 @@
 mod viewport_callback;
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
     Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits,
     ViewportContext, ViewportEvent, ViewportRenderer, primitives,
@@ -87,7 +88,7 @@ fn main() -> eframe::Result {
                 s.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)).to_cols_array_2d();
                 s.material = Material::from_colour(colour);
-                s.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+                s.material.backface_policy = vpl::BackfacePolicy::Identical;
                 s
             };
 
@@ -164,13 +165,12 @@ impl eframe::App for App {
                 });
 
                 ui.input(|i| {
-                    self.controller.push_event(ViewportEvent::ModifiersChanged(
-                        viewport_lib::Modifiers {
+                    self.controller
+                        .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                             alt: i.modifiers.alt,
                             shift: i.modifiers.shift,
                             ctrl: i.modifiers.command,
-                        },
-                    ));
+                        }));
 
                     if let Some(pos) = i.pointer.interact_pos() {
                         self.controller.push_event(ViewportEvent::PointerMoved {
@@ -184,13 +184,9 @@ impl eframe::App for App {
                                 button, pressed, ..
                             } => {
                                 let vp_button = match button {
-                                    egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
-                                    egui::PointerButton::Secondary => {
-                                        viewport_lib::MouseButton::Right
-                                    }
-                                    egui::PointerButton::Middle => {
-                                        viewport_lib::MouseButton::Middle
-                                    }
+                                    egui::PointerButton::Primary => vpl::MouseButton::Left,
+                                    egui::PointerButton::Secondary => vpl::MouseButton::Right,
+                                    egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                     _ => continue,
                                 };
                                 self.controller.push_event(ViewportEvent::MouseButton {

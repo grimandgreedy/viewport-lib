@@ -18,7 +18,8 @@
 use crate::{App, MeshId};
 use eframe::egui;
 use glam::Vec3;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
     ImplicitPrimitive, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
     VolumeData, extract_isosurface,
@@ -94,7 +95,7 @@ pub(crate) struct IsState {
     pub depth_composite: bool,
     pub resolution_div: u32,
     pub sdf_variant: IsSdfVariant,
-    pub gmc_volume_id: Option<viewport_lib::McVolumeId>,
+    pub gmc_volume_id: Option<vpl::McVolumeId>,
     pub gmc_isovalue: f32,
 }
 
@@ -119,7 +120,7 @@ impl Default for IsState {
 
 impl App {
     /// Build the showcase: upload reference spheres, the CPU MC mesh, and the GPU MC volume.
-    pub(crate) fn build_implicit_scene(&mut self, renderer: &mut viewport_lib::ViewportRenderer) {
+    pub(crate) fn build_implicit_scene(&mut self, renderer: &mut vpl::ViewportRenderer) {
         // Small sphere mesh used for the near/far depth-compositing reference objects.
         let sphere = primitives::sphere(0.8, 24, 12);
         self.is_state.mesh_id = renderer
@@ -342,7 +343,7 @@ impl App {
     /// Called every frame so the image tracks camera movement.
     pub(crate) fn push_implicit_screen_image(
         &self,
-        fd: &mut viewport_lib::FrameData,
+        fd: &mut vpl::FrameData,
         viewport_w: u32,
         viewport_h: u32,
     ) {
@@ -407,7 +408,7 @@ impl App {
     /// Only active when `is_sdf_variant == GpuImplicit`. The three sphere
     /// primitives match the CPU-path blob SDF so the two paths are visually
     /// identical (modulo shading differences).
-    pub(crate) fn push_gpu_implicit(&self, fd: &mut viewport_lib::FrameData) {
+    pub(crate) fn push_gpu_implicit(&self, fd: &mut vpl::FrameData) {
         if !self.is_state.built || self.is_state.sdf_variant != IsSdfVariant::GpuImplicit {
             return;
         }
@@ -449,7 +450,7 @@ impl App {
     /// Submit a GPU marching cubes job for the gyroid field.
     ///
     /// Only active when `is_sdf_variant == GpuMarchingCubes`.
-    pub(crate) fn push_gpu_mc_job(&self, fd: &mut viewport_lib::FrameData) {
+    pub(crate) fn push_gpu_mc_job(&self, fd: &mut vpl::FrameData) {
         if !self.is_state.built || self.is_state.sdf_variant != IsSdfVariant::GpuMarchingCubes {
             return;
         }

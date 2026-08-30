@@ -3,7 +3,8 @@
 use crate::App;
 use eframe::egui;
 use std::collections::HashMap;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     CameraAnimator, CameraFrame, Easing, FrameData, Gizmo, GizmoMode, GizmoSpace, LightingSettings,
     ManipulationController, Material, NodeId, SceneRenderItem, ViewPreset, ViewportRenderer,
     scene::Scene, selection::Selection,
@@ -24,7 +25,7 @@ pub(crate) struct InteractState {
     pub built: bool,
     pub gizmo_center: Option<glam::Vec3>,
     pub gizmo_scale: f32,
-    pub spline: viewport_lib::SplineWidget,
+    pub spline: vpl::SplineWidget,
     pub last_cursor_viewport: glam::Vec2,
 }
 
@@ -41,7 +42,7 @@ impl Default for InteractState {
             built: false,
             gizmo_center: None,
             gizmo_scale: 1.0,
-            spline: viewport_lib::SplineWidget::new(vec![
+            spline: vpl::SplineWidget::new(vec![
                 glam::Vec3::new(-2.0, 0.0, 1.5),
                 glam::Vec3::new(-0.5, 1.5, 1.5),
                 glam::Vec3::new(0.5, -1.5, 1.5),
@@ -106,7 +107,7 @@ impl App {
     /// is restored first and the override applied relative to it. Whether numeric
     /// input reads as relative or absolute is an app-side choice: this reference
     /// applies it relative to the drag-start transform.
-    pub(crate) fn apply_interact_delta(&mut self, delta: viewport_lib::TransformDelta) {
+    pub(crate) fn apply_interact_delta(&mut self, delta: vpl::TransformDelta) {
         let Some(center) = self.interact_state.gizmo_center else {
             return;
         };
@@ -232,7 +233,7 @@ impl App {
         }
 
         if any {
-            let aabb = viewport_lib::Aabb { min, max };
+            let aabb = vpl::Aabb { min, max };
             let target = self.camera.fit_aabb_target(&aabb);
             self.interact_state.animator.fly_to(
                 &self.camera,
@@ -372,7 +373,7 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
         .polylines
         .push(app.interact_state.spline.polyline_item(9900));
     let render_cam = CameraFrame::from_camera(&app.camera, [w, h]).render_camera;
-    let spline_ctx = viewport_lib::WidgetContext {
+    let spline_ctx = vpl::WidgetContext {
         camera: render_cam,
         viewport_size: glam::Vec2::new(w, h),
         cursor_viewport: app.interact_state.last_cursor_viewport,

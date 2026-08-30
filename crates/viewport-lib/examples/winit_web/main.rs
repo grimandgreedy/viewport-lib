@@ -32,8 +32,9 @@
 //!   # WebGPU-capable browser (recent Chrome/Edge, or Safari/Firefox nightly).
 
 use std::sync::Arc;
+use viewport_lib as vpl;
 
-use viewport_lib::{
+use vpl::{
     ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, Material, MeshId,
     OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
     ViewportContext, ViewportEvent, ViewportRenderer, primitives,
@@ -164,9 +165,9 @@ impl ApplicationHandler<State> for App {
                 ..
             } => {
                 let vp_button = match button {
-                    MouseButton::Left => viewport_lib::MouseButton::Left,
-                    MouseButton::Middle => viewport_lib::MouseButton::Middle,
-                    MouseButton::Right => viewport_lib::MouseButton::Right,
+                    MouseButton::Left => vpl::MouseButton::Left,
+                    MouseButton::Middle => vpl::MouseButton::Middle,
+                    MouseButton::Right => vpl::MouseButton::Right,
                     _ => return,
                 };
                 let vp_state = if btn_state == ElementState::Pressed {

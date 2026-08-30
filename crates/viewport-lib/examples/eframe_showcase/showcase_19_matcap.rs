@@ -8,7 +8,8 @@
 use crate::App;
 use crate::geometry::make_uv_sphere;
 use eframe::egui;
-use viewport_lib::{BuiltinMatcap, MatcapId, Material, NodeId, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{BuiltinMatcap, MatcapId, Material, NodeId, ViewportRenderer, scene::Scene};
 
 /// All eight built-in presets with their display name and blendable flag.
 pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
@@ -96,7 +97,7 @@ impl App {
             let matcap_id = renderer.resources().builtin_matcap_id(*preset);
             let mat = {
                 let mut m = Material::from_colour(self.matcap_state.blendable_colour);
-                m.shading_model = viewport_lib::ShadingModel::Matcap(matcap_id);
+                m.shading_model = vpl::ShadingModel::Matcap(matcap_id);
                 m
             };
             let node_id = self.matcap_state.scene.add_named(
@@ -123,7 +124,7 @@ impl App {
             glam::Mat4::from_translation(glam::Vec3::new(0.0, -3.5, 0.0)),
             {
                 let mut m = Material::default();
-                m.shading_model = viewport_lib::ShadingModel::Matcap(custom_id);
+                m.shading_model = vpl::ShadingModel::Matcap(custom_id);
                 m
             },
         );
@@ -143,7 +144,7 @@ impl App {
         if let Some(node_id) = self.matcap_state.custom_node {
             self.matcap_state.scene.set_material(node_id, {
                 let mut m = Material::default();
-                m.shading_model = viewport_lib::ShadingModel::Matcap(id);
+                m.shading_model = vpl::ShadingModel::Matcap(id);
                 m
             });
         }
@@ -160,7 +161,7 @@ impl App {
                 .scene
                 .set_material(self.matcap_state.builtin_node_ids[i], {
                     let mut m = Material::from_colour(self.matcap_state.blendable_colour);
-                    m.shading_model = viewport_lib::ShadingModel::Matcap(matcap_id);
+                    m.shading_model = vpl::ShadingModel::Matcap(matcap_id);
                     m
                 });
         }

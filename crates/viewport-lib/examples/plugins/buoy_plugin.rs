@@ -18,7 +18,8 @@
 //! priority) so the buoy compute sees fresh wave data.
 
 use bytemuck::{Pod, Zeroable};
-use viewport_lib::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
+use viewport_lib as vpl;
+use vpl::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]

@@ -27,18 +27,19 @@
 
 use eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
-use viewport_lib::bake::{TexelGeometry, rasterize_texel_gbuffer};
-use viewport_lib::raytrace::{
-    RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap_directional,
-};
-use viewport_lib::resources::{LightmapData, LightmapMode, TextureId};
-use viewport_lib::{
-    BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MeshData, MeshId, NodeId,
-    ShadowFilter, primitives,
-};
+use viewport_lib as vpl;
 use viewport_lib_lightbake::denoise::{DenoiseParams, denoise, dilate};
 use viewport_lib_lightbake::encode::{Encoding, encode};
 use viewport_lib_lightbake::stitch::{StitchGeometry, StitchParams, stitch};
+use vpl::bake::{TexelGeometry, rasterize_texel_gbuffer};
+use vpl::raytrace::{
+    RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap_directional,
+};
+use vpl::resources::{LightmapData, LightmapMode, TextureId};
+use vpl::{
+    BackfacePolicy, ItemSettings, LightKind, LightSource, Material, MeshData, MeshId, NodeId,
+    ShadowFilter, primitives,
+};
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -656,7 +657,7 @@ impl LightmapBakeShowcase {
     }
 
     /// Build (or rebuild) the scene nodes for the current mode.
-    fn rebuild(&mut self, session: &mut viewport_lib::ViewportInstance) {
+    fn rebuild(&mut self, session: &mut vpl::ViewportInstance) {
         if !self.nodes.is_empty() {
             let ids = std::mem::take(&mut self.nodes);
             session.scene_mut().remove_many(&ids);

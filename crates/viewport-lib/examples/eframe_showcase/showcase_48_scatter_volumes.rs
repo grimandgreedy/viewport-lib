@@ -10,7 +10,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BuiltinColourmap, ColourSource, DensityRemap, Emission, EmissionCurve, Material, NoiseDriver,
     RefractionParams, ScatterQuality, ScatterVolume, ScatterVolumeItem, ViewportRenderer,
     scene::{Scene, aabb::Aabb},
@@ -54,7 +55,7 @@ pub(crate) struct SvolState {
     pub sphere_radius: f32,
     pub sphere_anisotropy: f32,
     pub sphere_use_texture: bool,
-    pub sphere_texture_id: Option<viewport_lib::VolumeId>,
+    pub sphere_texture_id: Option<vpl::VolumeId>,
 
     pub fire_enabled: bool,
     pub fire_density: f32,
@@ -63,7 +64,7 @@ pub(crate) struct SvolState {
     pub fire_emission: f32,
     pub fire_falloff: f32,
     pub fire_use_ramp: bool,
-    pub fire_ramp_id: viewport_lib::ColourmapId,
+    pub fire_ramp_id: vpl::ColourmapId,
     pub fire_animate: bool,
     pub fire_noise_scale: f32,
     pub fire_noise_octaves: u32,
@@ -242,7 +243,7 @@ impl Default for SvolState {
             fire_emission: 4.0,
             fire_falloff: 1.2,
             fire_use_ramp: true,
-            fire_ramp_id: viewport_lib::ColourmapId(0),
+            fire_ramp_id: vpl::ColourmapId(0),
             fire_animate: true,
             fire_noise_scale: 2.5,
             fire_noise_octaves: 4,
@@ -277,7 +278,7 @@ impl App {
         self.svol_state.scene = Scene::new();
 
         // Floor plane and two walls forming a short corridor centred on the origin.
-        let floor = viewport_lib::geometry::primitives::cuboid(20.0, 20.0, 0.2);
+        let floor = vpl::geometry::primitives::cuboid(20.0, 20.0, 0.2);
         let floor_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &floor)
@@ -292,7 +293,7 @@ impl App {
         );
 
         // Tall pillars marching down +X to give depth-cueing reference points.
-        let pillar = viewport_lib::geometry::primitives::cuboid(0.6, 0.6, 3.0);
+        let pillar = vpl::geometry::primitives::cuboid(0.6, 0.6, 3.0);
         let pillar_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &pillar)
@@ -311,7 +312,7 @@ impl App {
         }
 
         // A bright sphere mid-corridor as a colour reference (gets veiled by fog).
-        let sphere = viewport_lib::geometry::primitives::sphere(0.8, 32, 16);
+        let sphere = vpl::geometry::primitives::sphere(0.8, 32, 16);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere)
@@ -361,7 +362,7 @@ impl App {
     }
 
     /// Push scatter volumes onto the frame based on UI state.
-    pub(crate) fn submit_svol_volumes(&self, fd: &mut viewport_lib::FrameData) {
+    pub(crate) fn submit_svol_volumes(&self, fd: &mut vpl::FrameData) {
         let s = &self.svol_state;
         if s.global_enabled {
             let mut v = ScatterVolume::box_uniform(

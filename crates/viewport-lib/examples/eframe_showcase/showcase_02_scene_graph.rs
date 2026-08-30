@@ -2,7 +2,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Material, ViewportRenderer, scene::Scene, selection::Selection};
+use viewport_lib as vpl;
+use vpl::{Material, ViewportRenderer, scene::Scene, selection::Selection};
 
 // ---------------------------------------------------------------------------
 // State
@@ -14,7 +15,7 @@ pub(crate) struct SgState {
     pub material_cycle: usize,
     pub bg_cycle: usize,
     pub outline_width: f32,
-    pub layer_b: Option<viewport_lib::scene::LayerId>,
+    pub layer_b: Option<vpl::scene::LayerId>,
     pub layer_b_visible: bool,
     pub built: bool,
 }
@@ -134,7 +135,7 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
             let mut guard = rs.renderer.write();
             let renderer = guard
                 .callback_resources
-                .get_mut::<viewport_lib::ViewportRenderer>()
+                .get_mut::<vpl::ViewportRenderer>()
                 .unwrap();
             let mesh = app.upload_box(renderer);
             let local = glam::Mat4::from_scale_rotation_translation(
@@ -199,8 +200,8 @@ pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &efr
 // Material and background presets
 // ---------------------------------------------------------------------------
 
-pub(crate) fn material_preset(index: usize) -> (Material, viewport_lib::ItemSettings) {
-    let default_app = viewport_lib::ItemSettings::default();
+pub(crate) fn material_preset(index: usize) -> (Material, vpl::ItemSettings) {
+    let default_app = vpl::ItemSettings::default();
     match index % 4 {
         0 => (Material::default(), default_app),
         1 => {

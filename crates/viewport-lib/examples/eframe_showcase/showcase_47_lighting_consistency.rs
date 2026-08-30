@@ -22,7 +22,8 @@
 //! showcases 5, 6, 7, 19.
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     ColourmapId, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem,
     GlyphType, GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
     ItemSettings, LightSource, LightingSettings, Material, MeshId, PointCloudItem, PolylineItem,
@@ -39,7 +40,7 @@ use crate::App;
 
 pub(crate) struct LcState {
     pub built: bool,
-    pub scene: viewport_lib::scene::Scene,
+    pub scene: vpl::scene::Scene,
     pub box_mesh_id: Option<MeshId>,
     pub disk_mesh_id: Option<MeshId>,
     pub splat_id: Option<GaussianSplatId>,
@@ -75,7 +76,7 @@ impl Default for LcState {
     fn default() -> Self {
         Self {
             built: false,
-            scene: viewport_lib::scene::Scene::new(),
+            scene: vpl::scene::Scene::new(),
             box_mesh_id: None,
             disk_mesh_id: None,
             splat_id: None,
@@ -138,7 +139,7 @@ fn broadcast(state: &LcState, base: &mut ItemSettings) {
 
 impl App {
     pub(crate) fn build_lc_scene(&mut self, renderer: &mut ViewportRenderer) {
-        self.lc_state.scene = viewport_lib::scene::Scene::new();
+        self.lc_state.scene = vpl::scene::Scene::new();
 
         let box_mesh = self.upload_box(renderer);
         self.lc_state.box_mesh_id = Some(box_mesh);
@@ -206,7 +207,7 @@ impl App {
 
         // --- Small disk mesh for the volume surface slice ---
         {
-            let disk = viewport_lib::primitives::plane(1.6, 1.6);
+            let disk = vpl::primitives::plane(1.6, 1.6);
             if let Ok(mid) = renderer
                 .resources_mut()
                 .upload_mesh_data(&self.device, &disk)
@@ -220,7 +221,7 @@ impl App {
         // TVM carries no model matrix, so the tet is uploaded at its grid-cell
         // world position (row 2, col 2) by translating the vertices here.
         {
-            use viewport_lib::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+            use vpl::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
             let p = cell(2, 2);
             let mut data = VolumeMeshData::default();
             data.positions = vec![
@@ -348,7 +349,7 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
     ];
     let mut lights = vec![{
         let mut l = LightSource::default();
-        l.kind = viewport_lib::LightKind::Directional { direction: dir };
+        l.kind = vpl::LightKind::Directional { direction: dir };
         l.intensity = state.light_intensity;
         l
     }];
@@ -364,7 +365,7 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
         };
         let dir2 = [yaw2.cos(), yaw2.sin(), 0.4];
         let mut l = LightSource::default();
-        l.kind = viewport_lib::LightKind::Directional { direction: dir2 };
+        l.kind = vpl::LightKind::Directional { direction: dir2 };
         l.intensity = state.second_light_intensity;
         l.colour = [1.0, 0.9, 0.7];
         lights.push(l);
@@ -393,7 +394,7 @@ pub(crate) fn lc_collect_scene_items(
     let mut items = app
         .lc_state
         .scene
-        .collect_render_items(&viewport_lib::Selection::new());
+        .collect_render_items(&vpl::Selection::new());
     for it in items.iter_mut() {
         broadcast(&app.lc_state, &mut it.settings);
     }

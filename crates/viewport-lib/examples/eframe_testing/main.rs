@@ -14,7 +14,8 @@
 mod viewport_callback;
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
     LightingSettings, Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem,
     ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
@@ -335,13 +336,12 @@ impl eframe::App for App {
                     self.log_next_frame = true;
                 }
 
-                self.controller.push_event(ViewportEvent::ModifiersChanged(
-                    viewport_lib::Modifiers {
+                self.controller
+                    .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                         alt: i.modifiers.alt,
                         shift: i.modifiers.shift,
                         ctrl: i.modifiers.command,
-                    },
-                ));
+                    }));
 
                 let local_pos = i
                     .pointer
@@ -358,9 +358,9 @@ impl eframe::App for App {
                             button, pressed, ..
                         } => {
                             let vp_btn = match button {
-                                egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
-                                egui::PointerButton::Secondary => viewport_lib::MouseButton::Right,
-                                egui::PointerButton::Middle => viewport_lib::MouseButton::Middle,
+                                egui::PointerButton::Primary => vpl::MouseButton::Left,
+                                egui::PointerButton::Secondary => vpl::MouseButton::Right,
+                                egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                 _ => continue,
                             };
                             self.controller.push_event(ViewportEvent::MouseButton {

@@ -13,7 +13,8 @@ use crate::geometry::{
     make_tile_normal_map, make_uv_sphere,
 };
 use eframe::egui;
-use viewport_lib::{BackfacePolicy, Material, NodeId, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{BackfacePolicy, Material, NodeId, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State
@@ -23,7 +24,7 @@ pub(crate) struct NormalMapsState {
     pub built: bool,
     pub scene: Scene,
     /// (node_id, normal_map_id, ao_map_id) for every mapped object.
-    pub mapped_nodes: Vec<(NodeId, viewport_lib::TextureId, viewport_lib::TextureId)>,
+    pub mapped_nodes: Vec<(NodeId, vpl::TextureId, vpl::TextureId)>,
     pub normal_on: bool,
     /// Scales the tangent-space normal XY before the TBN transform
     /// (`Material::normal_strength`, glTF `normalScale`). 1.0 is the authored

@@ -4,16 +4,16 @@
 
 pub(crate) struct OvlState {
     pub start_time: std::time::Instant,
-    pub colourmap: viewport_lib::BuiltinColourmap,
+    pub colourmap: vpl::BuiltinColourmap,
     pub show_labels: bool,
     pub show_shapes: bool,
     pub shape_corner_radius: f32,
     pub shape_border_width: f32,
     pub backdrop_blur_radius: f32,
     pub show_tex_shapes: bool,
-    pub tex_id: Option<viewport_lib::OverlayTextureId>,
-    pub carlgauss_tex_id: Option<viewport_lib::OverlayTextureId>,
-    pub nine_slice_tex_id: Option<viewport_lib::OverlayTextureId>,
+    pub tex_id: Option<vpl::OverlayTextureId>,
+    pub carlgauss_tex_id: Option<vpl::OverlayTextureId>,
+    pub nine_slice_tex_id: Option<vpl::OverlayTextureId>,
     pub cloud_positions: Vec<[f32; 3]>,
     pub cloud_scalars: Vec<f32>,
     pub cloud_built: bool,
@@ -28,7 +28,7 @@ impl Default for OvlState {
     fn default() -> Self {
         Self {
             start_time: std::time::Instant::now(),
-            colourmap: viewport_lib::BuiltinColourmap::Viridis,
+            colourmap: vpl::BuiltinColourmap::Viridis,
             show_labels: true,
             show_shapes: true,
             shape_corner_radius: 8.0,
@@ -52,7 +52,8 @@ impl Default for OvlState {
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BorderMode, BuiltinColourmap, FontHandle, GlyphRunItem, LabelAnchor, LabelItem, LineCap,
     OverlayAnimation, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph,
     TriangleDirection,
@@ -433,7 +434,7 @@ pub(crate) fn build_overlay_frame(
 ) -> (
     Vec<OverlayShapeItem>,
     Vec<LabelItem>,
-    Vec<viewport_lib::OverlayPolylineItem>,
+    Vec<vpl::OverlayPolylineItem>,
 ) {
     let mut labels = Vec::new();
     if app.ovl_state.show_labels {
@@ -464,7 +465,7 @@ pub(crate) fn build_overlay_frame(
     // SDF overlay shapes: a row of five shapes, vertically centred on a
     // common midline with equal spacing between them.
     let mut shapes = Vec::new();
-    let mut polylines: Vec<viewport_lib::OverlayPolylineItem> = Vec::new();
+    let mut polylines: Vec<vpl::OverlayPolylineItem> = Vec::new();
 
     if app.ovl_state.show_shapes {
         // Rows stack top to bottom from a single cursor: reserve each band in
@@ -666,7 +667,7 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
                 .with_border([1.0, 1.0, 1.0, 0.9], bw2)
                 .with_texture(tid)
-                .with_texture_transform(viewport_lib::TextureTransform {
+                .with_texture_transform(vpl::TextureTransform {
                     rotation: t * 0.5,
                     ..Default::default()
                 }),
@@ -686,9 +687,9 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
             .with_border([1.0, 1.0, 1.0, 0.9], bw2)
             .with_texture(tid)
-            .with_texture_transform(viewport_lib::TextureTransform {
+            .with_texture_transform(vpl::TextureTransform {
                 scale: [3.0, 3.0],
-                tile_mode: viewport_lib::TileMode::Tile,
+                tile_mode: vpl::TileMode::Tile,
                 ..Default::default()
             }),
         );
@@ -857,10 +858,10 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         )
         .with_fill(OverlayFill::LinearGradientMulti {
             stops: vec![
-                viewport_lib::GradientStop::new(0.0, [0.05, 0.05, 0.20, 1.0]),
-                viewport_lib::GradientStop::new(0.4, [0.55, 0.10, 0.45, 1.0]),
-                viewport_lib::GradientStop::new(0.75, [0.95, 0.45, 0.20, 1.0]),
-                viewport_lib::GradientStop::new(1.0, [1.0, 0.95, 0.55, 1.0]),
+                vpl::GradientStop::new(0.0, [0.05, 0.05, 0.20, 1.0]),
+                vpl::GradientStop::new(0.4, [0.55, 0.10, 0.45, 1.0]),
+                vpl::GradientStop::new(0.75, [0.95, 0.45, 0.20, 1.0]),
+                vpl::GradientStop::new(1.0, [1.0, 0.95, 0.55, 1.0]),
             ],
             angle: 0.0,
         })
@@ -878,10 +879,10 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         )
         .with_fill(OverlayFill::ConicalGradientMulti {
             stops: vec![
-                viewport_lib::GradientStop::new(0.0, [0.95, 0.2, 0.2, 1.0]),
-                viewport_lib::GradientStop::new(0.25, [1.0, 0.85, 0.2, 1.0]),
-                viewport_lib::GradientStop::new(0.6, [0.2, 0.85, 0.45, 1.0]),
-                viewport_lib::GradientStop::new(1.0, [0.3, 0.5, 1.0, 1.0]),
+                vpl::GradientStop::new(0.0, [0.95, 0.2, 0.2, 1.0]),
+                vpl::GradientStop::new(0.25, [1.0, 0.85, 0.2, 1.0]),
+                vpl::GradientStop::new(0.6, [0.2, 0.85, 0.45, 1.0]),
+                vpl::GradientStop::new(1.0, [0.3, 0.5, 1.0, 1.0]),
             ],
             offset_angle: 0.0,
         })
@@ -976,7 +977,7 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
 fn row_anim(
     app: &App,
     shapes: &mut Vec<OverlayShapeItem>,
-    polylines: &mut Vec<viewport_lib::OverlayPolylineItem>,
+    polylines: &mut Vec<vpl::OverlayPolylineItem>,
     top: f32,
 ) {
     let cr = app.ovl_state.shape_corner_radius;
@@ -1068,11 +1069,11 @@ fn row_anim(
         )
         .with_fill(OverlayFill::ConicalGradientMulti {
             stops: vec![
-                viewport_lib::GradientStop::new(0.0, [0.27, 0.0, 0.33, 1.0]),
-                viewport_lib::GradientStop::new(0.25, [0.13, 0.32, 0.55, 1.0]),
-                viewport_lib::GradientStop::new(0.5, [0.12, 0.62, 0.50, 1.0]),
-                viewport_lib::GradientStop::new(0.75, [0.78, 0.79, 0.21, 1.0]),
-                viewport_lib::GradientStop::new(1.0, [0.99, 0.91, 0.14, 1.0]),
+                vpl::GradientStop::new(0.0, [0.27, 0.0, 0.33, 1.0]),
+                vpl::GradientStop::new(0.25, [0.13, 0.32, 0.55, 1.0]),
+                vpl::GradientStop::new(0.5, [0.12, 0.62, 0.50, 1.0]),
+                vpl::GradientStop::new(0.75, [0.78, 0.79, 0.21, 1.0]),
+                vpl::GradientStop::new(1.0, [0.99, 0.91, 0.14, 1.0]),
             ],
             offset_angle: 0.0,
         })
@@ -1110,16 +1111,16 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]))
         .with_border([1.0, 0.85, 0.4, 0.9], bw)
-        .with_animations(viewport_lib::OverlayAnimations::default().with_position(
-            viewport_lib::AnimTrack {
+        .with_animations(
+            vpl::OverlayAnimations::default().with_position(vpl::AnimTrack {
                 start_time: 0.0,
                 duration: 1.8,
                 from: [base_x, y5_mid - 14.0],
                 to: [base_x + 50.0, y5_mid - 14.0],
-                easing: viewport_lib::OverlayEasing::EaseInOut,
-                repeat: viewport_lib::RepeatMode::PingPong,
-            },
-        )),
+                easing: vpl::OverlayEasing::EaseInOut,
+                repeat: vpl::RepeatMode::PingPong,
+            }),
+        ),
     );
     x5 += 100.0 + gap;
 
@@ -1135,24 +1136,24 @@ fn row_anim(
         .with_fill(OverlayFill::Solid([0.45, 0.85, 1.0, 0.95]))
         .with_border([0.7, 0.95, 1.0, 0.9], bw)
         .with_animations(
-            viewport_lib::OverlayAnimations::default()
-                .with_size(viewport_lib::AnimTrack {
+            vpl::OverlayAnimations::default()
+                .with_size(vpl::AnimTrack {
                     start_time: 0.0,
                     duration: 1.4,
                     from: [44.0, 44.0],
                     to: [64.0, 64.0],
-                    easing: viewport_lib::OverlayEasing::Pulse,
-                    repeat: viewport_lib::RepeatMode::Loop,
+                    easing: vpl::OverlayEasing::Pulse,
+                    repeat: vpl::RepeatMode::Loop,
                 })
-                .with_position(viewport_lib::AnimTrack {
+                .with_position(vpl::AnimTrack {
                     // Recentre while the size grows so the circle pulses
                     // about its centre rather than drifting south-east.
                     start_time: 0.0,
                     duration: 1.4,
                     from: [pulse_cx - 22.0, pulse_cy - 22.0],
                     to: [pulse_cx - 32.0, pulse_cy - 32.0],
-                    easing: viewport_lib::OverlayEasing::Pulse,
-                    repeat: viewport_lib::RepeatMode::Loop,
+                    easing: vpl::OverlayEasing::Pulse,
+                    repeat: vpl::RepeatMode::Loop,
                 }),
         ),
     );
@@ -1168,16 +1169,14 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid([0.95, 0.25, 0.5, 0.95]))
         .with_border([1.0, 1.0, 1.0, 0.7], bw)
-        .with_animations(viewport_lib::OverlayAnimations::default().with_fill(
-            viewport_lib::AnimTrack {
-                start_time: 0.0,
-                duration: 1.6,
-                from: [0.95, 0.25, 0.5, 0.95],
-                to: [0.25, 0.55, 0.95, 0.95],
-                easing: viewport_lib::OverlayEasing::EaseInOut,
-                repeat: viewport_lib::RepeatMode::PingPong,
-            },
-        )),
+        .with_animations(vpl::OverlayAnimations::default().with_fill(vpl::AnimTrack {
+            start_time: 0.0,
+            duration: 1.6,
+            from: [0.95, 0.25, 0.5, 0.95],
+            to: [0.25, 0.55, 0.95, 0.95],
+            easing: vpl::OverlayEasing::EaseInOut,
+            repeat: vpl::RepeatMode::PingPong,
+        })),
     );
     x5 += 70.0 + gap;
 
@@ -1194,16 +1193,16 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid([0.95, 0.9, 0.3, 0.95]))
         .with_border([1.0, 0.95, 0.5, 0.9], bw)
-        .with_animations(viewport_lib::OverlayAnimations::default().with_rotation(
-            viewport_lib::AnimTrack {
+        .with_animations(
+            vpl::OverlayAnimations::default().with_rotation(vpl::AnimTrack {
                 start_time: 0.0,
                 duration: 4.0,
                 from: 0.0,
                 to: std::f32::consts::TAU,
-                easing: viewport_lib::OverlayEasing::Linear,
-                repeat: viewport_lib::RepeatMode::Loop,
-            },
-        )),
+                easing: vpl::OverlayEasing::Linear,
+                repeat: vpl::RepeatMode::Loop,
+            }),
+        ),
     );
     x5 += row5_h + gap;
 
@@ -1215,14 +1214,14 @@ fn row_anim(
         let cy = y5_mid;
         let dot_size = 22.0_f32;
 
-        let path = viewport_lib::PathTrack::<[f32; 2]>::new(0.0, 4.5, move |t| {
+        let path = vpl::PathTrack::<[f32; 2]>::new(0.0, 4.5, move |t| {
             let p = infinity_bezier_point(t, cx, cy);
             [p[0] - dot_size * 0.5, p[1] - dot_size * 0.5]
         })
-        .with_repeat(viewport_lib::RepeatMode::Loop);
+        .with_repeat(vpl::RepeatMode::Loop);
 
         // Sample the same Bezier closure into the polyline trace.
-        let trace = viewport_lib::OverlayPolylineItem::from_path(
+        let trace = vpl::OverlayPolylineItem::from_path(
             |t| infinity_bezier_point(t, cx, cy),
             160,
             2.0,
@@ -1238,7 +1237,7 @@ fn row_anim(
             )
             .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]))
             .with_border([1.0, 0.7, 0.95, 0.9], bw)
-            .with_animations(viewport_lib::OverlayAnimations::default().with_position_path(path)),
+            .with_animations(vpl::OverlayAnimations::default().with_position_path(path)),
         );
         x5 += 260.0 + gap;
     }
@@ -1375,7 +1374,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
 fn row_masks_and_polylines(
     app: &App,
     shapes: &mut Vec<OverlayShapeItem>,
-    polylines: &mut Vec<viewport_lib::OverlayPolylineItem>,
+    polylines: &mut Vec<vpl::OverlayPolylineItem>,
     top: f32,
 ) {
     let bw = app.ovl_state.shape_border_width;
@@ -1455,10 +1454,10 @@ fn row_masks_and_polylines(
             )
             .with_texture(tid)
             .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
-            .with_nine_slice(viewport_lib::NineSlice {
+            .with_nine_slice(vpl::NineSlice {
                 insets_px: [10.0, 10.0, 10.0, 10.0],
-                centre_mode: viewport_lib::TileMode::Stretch,
-                edge_mode: viewport_lib::TileMode::Stretch,
+                centre_mode: vpl::TileMode::Stretch,
+                edge_mode: vpl::TileMode::Stretch,
             }),
         );
     }
@@ -1471,7 +1470,7 @@ fn row_masks_and_polylines(
         let y_poly = py + 35.0;
 
         polylines.push(
-            viewport_lib::OverlayPolylineItem::new(vec![
+            vpl::OverlayPolylineItem::new(vec![
                 [x_poly, y_poly - 30.0],
                 [x_poly + 48.0, y_poly - 12.0],
                 [x_poly + 42.0, y_poly + 28.0],
@@ -1512,7 +1511,7 @@ fn row_masks_and_polylines(
                 .map(|p| [(p[0] - (tx - 36.0)) / 72.0, (p[1] - (y_poly - 36.0)) / 72.0])
                 .collect::<Vec<_>>();
             polylines.push(
-                viewport_lib::OverlayPolylineItem::new(heart_points)
+                vpl::OverlayPolylineItem::new(heart_points)
                     .with_thickness(2.0)
                     .with_colour([1.0, 0.78, 0.9, 0.9])
                     .with_closed(true)
@@ -1530,7 +1529,7 @@ fn row_masks_and_polylines(
             let x_stroke = x_poly + 128.0 + 64.0;
 
             polylines.push(
-                viewport_lib::OverlayPolylineItem::new(vec![
+                vpl::OverlayPolylineItem::new(vec![
                     [x_stroke, y_poly - 28.0],
                     [x_stroke + 64.0, y_poly - 28.0],
                     [x_stroke + 64.0, y_poly + 28.0],
@@ -1539,7 +1538,7 @@ fn row_masks_and_polylines(
                 .with_thickness(2.0)
                 .with_colour([1.0, 1.0, 1.0, 0.85])
                 .with_closed(true)
-                .with_stroke_pattern(viewport_lib::StrokePattern::Dashed {
+                .with_stroke_pattern(vpl::StrokePattern::Dashed {
                     dash_length: 8.0,
                     gap_length: 6.0,
                     offset: t * 20.0,
@@ -1549,7 +1548,7 @@ fn row_masks_and_polylines(
 
             let x_wave = x_stroke + 64.0 + 28.0;
             polylines.push(
-                viewport_lib::OverlayPolylineItem::new(
+                vpl::OverlayPolylineItem::new(
                     (0..=40)
                         .map(|i| {
                             let f = i as f32 / 40.0;
@@ -1562,8 +1561,8 @@ fn row_masks_and_polylines(
                 )
                 .with_thickness(5.0)
                 .with_colour([0.3, 0.9, 0.6, 0.9])
-                .with_cap(viewport_lib::PolylineCap::Round)
-                .with_stroke_pattern(viewport_lib::StrokePattern::Dashed {
+                .with_cap(vpl::PolylineCap::Round)
+                .with_stroke_pattern(vpl::StrokePattern::Dashed {
                     dash_length: 18.0,
                     gap_length: 9.0,
                     offset: 0.0,
@@ -1573,7 +1572,7 @@ fn row_masks_and_polylines(
 
             let x_dot = x_wave + 90.0 + 44.0;
             polylines.push(
-                viewport_lib::OverlayPolylineItem::new(
+                vpl::OverlayPolylineItem::new(
                     (0..48)
                         .map(|i| {
                             let a = i as f32 / 48.0 * std::f32::consts::TAU;
@@ -1584,7 +1583,7 @@ fn row_masks_and_polylines(
                 .with_thickness(4.0)
                 .with_colour([1.0, 0.75, 0.3, 0.9])
                 .with_closed(true)
-                .with_stroke_pattern(viewport_lib::StrokePattern::Dotted {
+                .with_stroke_pattern(vpl::StrokePattern::Dotted {
                     spacing: 10.0,
                     offset: 0.0,
                 })
@@ -1608,7 +1607,7 @@ fn row_masks_and_polylines(
                 let r = 28.0 + 6.0 * (a * 3.0 + t * 2.0).sin();
                 [x_blob + a.cos() * r, y_poly + a.sin() * r]
             };
-            let mut blob = viewport_lib::OverlayPolylineItem::closed_from_path(
+            let mut blob = vpl::OverlayPolylineItem::closed_from_path(
                 blob_path,
                 64,
                 Some(OverlayFill::RadialGradient {
@@ -1626,7 +1625,7 @@ fn row_masks_and_polylines(
 
             if let Some(tid) = app.ovl_state.carlgauss_tex_id {
                 let x_tex = x_blob + 90.0;
-                let mut textured = viewport_lib::OverlayPolylineItem::closed_from_path(
+                let mut textured = vpl::OverlayPolylineItem::closed_from_path(
                     |u| {
                         let a = u * std::f32::consts::TAU;
                         // Rounded pentagon.
@@ -1672,10 +1671,10 @@ fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         .with_fill(OverlayFill::Solid([0.16, 0.17, 0.22, 1.0]))
         .with_border([0.7, 0.72, 0.8, 0.9], 1.0)
         .with_shadows(vec![
-            viewport_lib::ShadowLayer::new([0.95, 0.25, 0.2, 0.85], 20.0, [16.0, 14.0]),
-            viewport_lib::ShadowLayer::new([0.2, 0.5, 1.0, 0.85], 20.0, [-16.0, -14.0]),
+            vpl::ShadowLayer::new([0.95, 0.25, 0.2, 0.85], 20.0, [16.0, 14.0]),
+            vpl::ShadowLayer::new([0.2, 0.5, 1.0, 0.85], 20.0, [-16.0, -14.0]),
         ])
-        .with_inner_shadows(vec![viewport_lib::ShadowLayer::new(
+        .with_inner_shadows(vec![vpl::ShadowLayer::new(
             [0.0, 0.0, 0.0, 0.55],
             14.0,
             [0.0, 5.0],

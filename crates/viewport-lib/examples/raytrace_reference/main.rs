@@ -13,21 +13,15 @@
 //! rt_reference.ppm (256 spp) to the current directory.
 
 use glam::{Mat4, Vec3};
-use viewport_lib::primitives;
-use viewport_lib::raytrace::{
-    RtCamera, RtLight, RtMaterial, RtScene, RtSettings, pick_backend, trace,
-};
+use viewport_lib as vpl;
+use vpl::primitives;
+use vpl::raytrace::{RtCamera, RtLight, RtMaterial, RtScene, RtSettings, pick_backend, trace};
 
 const W: u32 = 640;
 const H: u32 = 400;
 
 /// Add a `MeshData` primitive to the scene, translated to `origin`.
-fn add_primitive(
-    scene: &mut RtScene,
-    mesh: &viewport_lib::MeshData,
-    origin: Vec3,
-    material: RtMaterial,
-) {
+fn add_primitive(scene: &mut RtScene, mesh: &vpl::MeshData, origin: Vec3, material: RtMaterial) {
     let positions: Vec<Vec3> = mesh
         .positions
         .iter()
@@ -90,17 +84,15 @@ fn to_ppm(rgba: &[f32], w: u32, h: u32) -> Vec<u8> {
 }
 
 fn main() {
-    let instance = viewport_lib::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &viewport_lib::gpu::RequestAdapterOptions {
-            power_preference: viewport_lib::gpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        },
-    ))
+    let instance = vpl::gpu::default_instance();
+    let adapter = pollster::block_on(instance.request_adapter(&vpl::gpu::RequestAdapterOptions {
+        power_preference: vpl::gpu::PowerPreference::HighPerformance,
+        force_fallback_adapter: false,
+        compatible_surface: None,
+    }))
     .expect("no GPU adapter");
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&viewport_lib::gpu::DeviceDescriptor::default()))
+        pollster::block_on(adapter.request_device(&vpl::gpu::DeviceDescriptor::default()))
             .expect("no device");
 
     println!("traversal backend: {:?}", pick_backend(&device));

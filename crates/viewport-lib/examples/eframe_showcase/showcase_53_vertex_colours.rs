@@ -21,7 +21,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BackfacePolicy, LightKind, LightSource, LightingSettings, MeshId, SceneRenderItem,
     ViewportRenderer, primitives,
 };
@@ -213,7 +214,7 @@ pub(crate) fn vcol_paint(
     view_proj: glam::Mat4,
 ) {
     let vp_inv = view_proj.inverse();
-    let (ro, rd) = viewport_lib::picking::screen_to_ray(cursor, glam::Vec2::new(w, h), vp_inv);
+    let (ro, rd) = vpl::picking::screen_to_ray(cursor, glam::Vec2::new(w, h), vp_inv);
     // Model is a pure translation, so local space is just the ray shifted by the
     // mesh origin.
     let lo = ro - state.paint_origin;

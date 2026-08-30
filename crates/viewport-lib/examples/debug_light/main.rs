@@ -21,7 +21,8 @@
 mod viewport_callback;
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
     MeshData, MeshId, Modifiers, MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem,
     ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,

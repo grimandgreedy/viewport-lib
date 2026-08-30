@@ -15,12 +15,13 @@
 //! which wires the same three pieces by hand across two frame hooks.
 
 use glam::{Affine3A, Vec3};
-use viewport_lib::plugins::skeleton::{
+use viewport_lib as vpl;
+use vpl::plugins::skeleton::{
     Joint, Pose, Skeleton, SkeletonPlugin, SkinnedMeshFeature, SkinningPath,
 };
-use viewport_lib::plugins::skinning::SkinWeights;
-use viewport_lib::wgpu;
-use viewport_lib::{MeshData, MeshId, ViewportRenderer, ViewportRuntime, install_plugin};
+use vpl::plugins::skinning::SkinWeights;
+use vpl::wgpu;
+use vpl::{MeshData, MeshId, ViewportRenderer, ViewportRuntime, install_plugin};
 
 const ARM_LENGTH: f32 = 4.0;
 const ARM_RADIUS: f32 = 0.5;
@@ -109,15 +110,15 @@ fn main() {
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("skinned-feature"),
-        required_limits: viewport_lib::ViewportRenderer::recommended_device_limits(&adapter),
+        required_limits: vpl::ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .expect("device");
 
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
     let mut runtime = ViewportRuntime::new();
-    let mut scene = viewport_lib::scene::scene::Scene::new();
-    let mut selection = viewport_lib::interaction::select::selection::Selection::new();
+    let mut scene = vpl::scene::scene::Scene::new();
+    let mut selection = vpl::interaction::select::selection::Selection::new();
 
     // Upload the mesh the host would draw.
     let (positions, normals, indices, skin_weights) = build_arm_mesh();
@@ -161,7 +162,7 @@ fn main() {
         let angle = (frame as f32) * 0.15;
         runtime.resources_mut().insert(bent_pose(angle));
 
-        let mut frame_ctx = viewport_lib::runtime::RuntimeFrameContext::default();
+        let mut frame_ctx = vpl::runtime::RuntimeFrameContext::default();
         frame_ctx.dt = 1.0 / 60.0;
         let mut output = runtime.step(&mut scene, &mut selection, &frame_ctx);
 

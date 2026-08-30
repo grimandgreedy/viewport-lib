@@ -1,7 +1,8 @@
 //! Shared helpers used across multiple showcase modules.
 
 use eframe::egui;
-use viewport_lib::{Camera, KeyCode, MeshId, ViewportRenderer};
+use viewport_lib as vpl;
+use vpl::{Camera, KeyCode, MeshId, ViewportRenderer};
 
 use crate::{App, ShowcaseMode};
 

@@ -25,14 +25,13 @@
 
 use eframe::egui;
 use glam::{Mat3, Mat4, Vec2, Vec3};
-use viewport_lib::bake::{TexelGeometry, rasterize_texel_gbuffer};
-use viewport_lib::raytrace::{
-    RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap,
-};
-use viewport_lib::resources::{
+use viewport_lib as vpl;
+use vpl::bake::{TexelGeometry, rasterize_texel_gbuffer};
+use vpl::raytrace::{RtLight, RtMaterial, RtScene, RtSettings, TexelSurfaces, bake_lightmap};
+use vpl::resources::{
     LightProbe, LightProbeSet, LightmapData, LightmapMode, SHCoefficients, TextureId,
 };
-use viewport_lib::{
+use vpl::{
     Aabb, BackfacePolicy, EnvironmentMapId, EnvironmentSettings, EnvironmentZone,
     IndirectLightSource, LightKind, LightSource, Material, MeshId, NodeId, primitives,
 };
@@ -335,7 +334,7 @@ fn add_world_mesh(scene: &mut RtScene, geo: &Geo, xf: Mat4, albedo: [f32; 3]) {
 /// Pack a baked irradiance atlas into an sRGB RGBA8 lightmap texture. Incident
 /// irradiance is turned into diffuse radiosity (`albedo * E / pi`), tonemapped,
 /// and gamma-encoded; empty texels go black.
-fn irradiance_to_texture(img: &viewport_lib::raytrace::RtImage, albedo: [f32; 3]) -> Vec<u8> {
+fn irradiance_to_texture(img: &vpl::raytrace::RtImage, albedo: [f32; 3]) -> Vec<u8> {
     const EXPOSURE: f32 = 1.25;
     let inv_pi = 1.0 / std::f32::consts::PI;
     let mut out = vec![0u8; (img.width * img.height * 4) as usize];
@@ -529,7 +528,7 @@ impl IndirectLightingShowcase {
 
     /// Tear down the current scene nodes and build the active mode's geometry,
     /// leaving the renderer indirect-light state to be (re)applied in `update`.
-    fn rebuild(&mut self, session: &mut viewport_lib::ViewportInstance) {
+    fn rebuild(&mut self, session: &mut vpl::ViewportInstance) {
         if !self.nodes.is_empty() {
             let ids = std::mem::take(&mut self.nodes);
             session.scene_mut().remove_many(&ids);

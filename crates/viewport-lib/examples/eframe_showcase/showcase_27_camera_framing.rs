@@ -17,7 +17,8 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AnchorX, AnchorY, CameraTarget, CameraTrack, LightKind, LightSource, LightingSettings,
     Material, PolylineItem, ScreenImageItem, TurntableController, ViewportRenderer,
     interpolate_camera,
@@ -100,7 +101,7 @@ pub(crate) fn frustum_to_polyline(f: &FrustumData) -> PolylineItem {
 }
 
 /// Compute a CameraTarget for "look through this camera" fly-to.
-pub(crate) fn frustum_view_target(f: &FrustumData) -> viewport_lib::CameraTarget {
+pub(crate) fn frustum_view_target(f: &FrustumData) -> vpl::CameraTarget {
     let mat = glam::Mat4::from_cols_array_2d(&f.pose);
     let eye = mat.transform_point3(glam::Vec3::ZERO);
     let rot = glam::Mat3::from_cols(
@@ -111,7 +112,7 @@ pub(crate) fn frustum_view_target(f: &FrustumData) -> viewport_lib::CameraTarget
     let orientation = glam::Quat::from_mat3(&rot).normalize();
     let distance = (f.near * 0.5_f32).max(0.01);
     let center = eye + orientation * (-glam::Vec3::Z) * distance;
-    viewport_lib::CameraTarget {
+    vpl::CameraTarget {
         center,
         distance,
         orientation,
@@ -143,7 +144,7 @@ fn build_demo_track(frustums: &[FrustumData]) -> CameraTrack {
 
 pub(crate) struct AuxState {
     pub built: bool,
-    pub scene: viewport_lib::scene::Scene,
+    pub scene: vpl::scene::Scene,
     pub frustums: Vec<FrustumData>,
     pub img_alpha: f32,
     pub img_scale: f32,
@@ -160,7 +161,7 @@ impl Default for AuxState {
     fn default() -> Self {
         Self {
             built: false,
-            scene: viewport_lib::scene::Scene::new(),
+            scene: vpl::scene::Scene::new(),
             frustums: Vec::new(),
             img_alpha: 1.0,
             img_scale: 1.0,
@@ -177,7 +178,7 @@ impl Default for AuxState {
 
 impl App {
     pub(crate) fn build_aux_scene(&mut self, renderer: &mut ViewportRenderer) {
-        use viewport_lib::scene::Scene;
+        use vpl::scene::Scene;
         self.aux_state.scene = Scene::new();
         let up = glam::Vec3::Z;
 
@@ -216,7 +217,7 @@ impl App {
         // Shared sphere + box meshes.
         let sphere_id = renderer
             .resources_mut()
-            .upload_mesh_data(&self.device, &viewport_lib::primitives::sphere(0.6, 24, 12))
+            .upload_mesh_data(&self.device, &vpl::primitives::sphere(0.6, 24, 12))
             .expect("aux sphere");
         let box_id = renderer
             .resources_mut()
@@ -606,7 +607,7 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
 }
 
 impl App {
-    pub(crate) fn aux_push_screen_images(&self, fd: &mut viewport_lib::FrameData) {
+    pub(crate) fn aux_push_screen_images(&self, fd: &mut vpl::FrameData) {
         // HUD overlay only shown in Framing mode.
         if self.aux_state.sub_mode != AuxSubMode::Framing {
             return;

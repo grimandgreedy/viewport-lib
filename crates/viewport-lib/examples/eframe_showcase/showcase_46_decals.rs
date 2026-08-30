@@ -7,7 +7,8 @@
 //! Static footprints and blood splatters are pre-placed on the ground.
 
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BuiltinMatcap, CylindricalFacing, DecalAnimation, DecalBlendMode, DecalHandle, DecalItem,
     DecalProjection, Material, MeshId, SceneRenderItem, scene::Scene, selection::Selection,
 };
@@ -411,12 +412,12 @@ pub(crate) struct Decal46State {
     pub ground_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
     pub column_cpu_mesh: Option<(Vec<[f32; 3]>, Vec<u32>)>,
 
-    pub albedo_tex: Option<viewport_lib::TextureId>,
-    pub normal_tex: Option<viewport_lib::TextureId>,
-    pub wet_tex: Option<viewport_lib::TextureId>,
-    pub stripe_tex: Option<viewport_lib::TextureId>,
-    pub footprint_tex: Option<viewport_lib::TextureId>,
-    pub blood_tex: Option<viewport_lib::TextureId>,
+    pub albedo_tex: Option<vpl::TextureId>,
+    pub normal_tex: Option<vpl::TextureId>,
+    pub wet_tex: Option<vpl::TextureId>,
+    pub stripe_tex: Option<vpl::TextureId>,
+    pub footprint_tex: Option<vpl::TextureId>,
+    pub blood_tex: Option<vpl::TextureId>,
 
     // D1/D2/D3: manually placed gunshot decals
     pub decals: Vec<PlacedDecal>,
@@ -440,12 +441,12 @@ pub(crate) struct Decal46State {
     pub scroll_handle: Option<DecalHandle>,
 
     // D5
-    pub wall_obstacle_node: Option<viewport_lib::interaction::select::selection::NodeId>,
+    pub wall_obstacle_node: Option<vpl::interaction::select::selection::NodeId>,
     pub show_obstacle: bool,
 
     // D6
-    pub rune_tex: Option<viewport_lib::TextureId>,
-    pub spark_tex: Option<viewport_lib::TextureId>,
+    pub rune_tex: Option<vpl::TextureId>,
+    pub spark_tex: Option<vpl::TextureId>,
     pub show_rune: bool,
     pub rune_emissive: f32,
     pub show_spark: bool,
@@ -456,19 +457,19 @@ pub(crate) struct Decal46State {
     pub apply_edge_fade: bool,
 
     // D8
-    pub checker_tex: Option<viewport_lib::TextureId>,
+    pub checker_tex: Option<vpl::TextureId>,
     pub show_corner_decal: bool,
     pub use_tri_planar: bool,
     pub tri_blend_sharpness: f32,
 
     // D9
     pub column_mesh: Option<MeshId>,
-    pub column_node: Option<viewport_lib::interaction::select::selection::NodeId>,
-    pub label_tex: Option<viewport_lib::TextureId>,
+    pub column_node: Option<vpl::interaction::select::selection::NodeId>,
+    pub label_tex: Option<vpl::TextureId>,
     pub cyl_facing: CylindricalFacing,
 
     // D10
-    pub fire_tex: Option<viewport_lib::TextureId>,
+    pub fire_tex: Option<vpl::TextureId>,
     pub show_fire: bool,
     pub fire_alpha: f32,
 }
@@ -534,7 +535,7 @@ impl Default for Decal46State {
 // Scene construction
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::ViewportRenderer) {
+pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
     app.decal46_state.scene = Scene::new();
 
     let res = renderer.resources_mut();
@@ -607,7 +608,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     app.decal46_state.fire_tex = Some(fire_id);
 
     // Vertical wall: 6 wide (X), 0.2 thick (Y), 4 tall (Z).
-    let wall_data = viewport_lib::primitives::cuboid(6.0, 0.2, 4.0);
+    let wall_data = vpl::primitives::cuboid(6.0, 0.2, 4.0);
     app.decal46_state.wall_cpu_mesh =
         Some((wall_data.positions.clone(), wall_data.indices.clone()));
     let wall_id = res
@@ -616,7 +617,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     app.decal46_state.wall_mesh = Some(wall_id);
 
     // Ground floor: 8 wide (X), 6 deep (Y), 0.2 thick (Z).
-    let ground_data = viewport_lib::primitives::cuboid(8.0, 6.0, 0.2);
+    let ground_data = vpl::primitives::cuboid(8.0, 6.0, 0.2);
     app.decal46_state.ground_cpu_mesh =
         Some((ground_data.positions.clone(), ground_data.indices.clone()));
     let ground_id = res
@@ -627,7 +628,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     // D9: column (cylinder) standing on the ground, right side.
     // radius=0.3, height=3.0, center at (2.5, 0.5, 1.5).
     res.ensure_matcaps_initialized(&app.device, &app.queue);
-    let column_data = viewport_lib::primitives::cylinder(0.3, 3.0, 24);
+    let column_data = vpl::primitives::cylinder(0.3, 3.0, 24);
     app.decal46_state.column_cpu_mesh =
         Some((column_data.positions.clone(), column_data.indices.clone()));
     let column_id = res
@@ -637,7 +638,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
 
     // D5: non-receiver box mounted on the wall face.
     // cuboid(0.6, 0.25, 0.6): sticks 0.25 out from the wall, center y = 0.125.
-    let wall_obstacle_data = viewport_lib::primitives::cuboid(0.6, 0.25, 0.6);
+    let wall_obstacle_data = vpl::primitives::cuboid(0.6, 0.25, 0.6);
     let wall_obstacle_id = res
         .upload_mesh_data(&app.device, &wall_obstacle_data)
         .expect("wall obstacle mesh upload");
@@ -661,8 +662,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut viewport_lib::Vi
     // D9: column standing on the ground, right side. Wax matcap with black base colour.
     let column_mat = {
         let mut m = Material::from_colour([0.0, 0.0, 0.0]);
-        m.shading_model =
-            viewport_lib::ShadingModel::Matcap(res.builtin_matcap_id(BuiltinMatcap::Wax));
+        m.shading_model = vpl::ShadingModel::Matcap(res.builtin_matcap_id(BuiltinMatcap::Wax));
         m
     };
     let column_node = scene.add(
@@ -712,11 +712,11 @@ pub(crate) fn decal46_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Ve
         return;
     }
     let vp_inv = app.camera.view_proj_matrix().inverse();
-    let (ro, rd) = viewport_lib::picking::screen_to_ray(cursor, vp_size, vp_inv);
+    let (ro, rd) = vpl::picking::screen_to_ray(cursor, vp_size, vp_inv);
 
     let mesh_lookup = decal46_mesh_lookup(&app.decal46_state);
     let Some(pick) =
-        viewport_lib::picking::pick_scene_nodes_cpu(ro, rd, &app.decal46_state.scene, &mesh_lookup)
+        vpl::picking::pick_scene_nodes_cpu(ro, rd, &app.decal46_state.scene, &mesh_lookup)
     else {
         return;
     };
@@ -842,7 +842,7 @@ pub(crate) fn decal46_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
 }
 
 /// Push all active decals into `fd.scene.decals`.
-pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) {
+pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
     let st = &app.decal46_state;
 
     // D3: wet patch on the left side of the ground floor.
@@ -993,11 +993,11 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut viewport_lib::FrameData) 
             item.alpha = 0.9;
             item.edge_fade = 0.05;
             item.projection = if st.use_tri_planar {
-                viewport_lib::DecalProjection::TriPlanar {
+                vpl::DecalProjection::TriPlanar {
                     blend_sharpness: st.tri_blend_sharpness,
                 }
             } else {
-                viewport_lib::DecalProjection::Planar
+                vpl::DecalProjection::Planar
             };
             fd.scene.decals.push(item);
         }

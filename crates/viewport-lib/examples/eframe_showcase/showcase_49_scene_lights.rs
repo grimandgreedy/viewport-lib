@@ -14,7 +14,8 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     LightKind, LightSource, LightingSettings, Material, SceneRenderItem, Selection,
     ViewportRenderer,
     scene::{Scene, build_light_glyphs},
@@ -189,7 +190,7 @@ impl App {
             },
         );
 
-        let sphere_mesh = viewport_lib::primitives::sphere(0.7, 32, 16);
+        let sphere_mesh = vpl::primitives::sphere(0.7, 32, 16);
         let sphere_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &sphere_mesh)
@@ -332,14 +333,14 @@ fn rebuild_stress_lights(state: &mut SlState) {
 // Per-frame submission
 // ---------------------------------------------------------------------------
 
-pub(crate) fn submit_sl_items(app: &mut App, fd: &mut viewport_lib::FrameData) {
+pub(crate) fn submit_sl_items(app: &mut App, fd: &mut vpl::FrameData) {
     match app.sl_state.active_tab {
         SlTab::Basics => submit_basics(app, fd),
         SlTab::Stress => submit_stress(app, fd),
     }
 }
 
-fn submit_basics(app: &mut App, fd: &mut viewport_lib::FrameData) {
+fn submit_basics(app: &mut App, fd: &mut vpl::FrameData) {
     if app.sl_state.animate {
         app.sl_state.time += 0.016;
     }
@@ -387,7 +388,7 @@ fn submit_basics(app: &mut App, fd: &mut viewport_lib::FrameData) {
     }
 }
 
-fn submit_stress(app: &mut App, fd: &mut viewport_lib::FrameData) {
+fn submit_stress(app: &mut App, fd: &mut vpl::FrameData) {
     if app.sl_state.stress_animate {
         app.sl_state.time += 0.012;
     }

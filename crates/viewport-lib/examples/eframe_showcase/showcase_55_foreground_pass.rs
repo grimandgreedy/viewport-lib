@@ -25,7 +25,8 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     CameraTarget, CameraTrack, ForegroundPass, ForegroundProjection, LightKind, LightSource,
     LightingSettings, Material, PostProcessSettings, RenderCamera, SceneRenderItem, Selection,
     ViewportRenderer, interpolate_camera, scene::Scene,
@@ -47,7 +48,7 @@ const CUBE_COLOURS: [[f32; 3]; 3] = [[0.95, 0.35, 0.30], [0.35, 0.80, 0.45], [0.
 pub(crate) struct ForegroundState {
     pub built: bool,
     pub scene: Scene,
-    pub cube_mesh: viewport_lib::MeshId,
+    pub cube_mesh: vpl::MeshId,
     pub track: CameraTrack,
     pub track_t: f64,
     pub playing: bool,
@@ -73,7 +74,7 @@ impl Default for ForegroundState {
         Self {
             built: false,
             scene: Scene::new(),
-            cube_mesh: viewport_lib::MeshId::INVALID,
+            cube_mesh: vpl::MeshId::INVALID,
             track: CameraTrack::new(),
             track_t: 0.0,
             playing: true,
@@ -144,7 +145,7 @@ impl App {
             .expect("fg pillar");
         let sphere = renderer
             .resources_mut()
-            .upload_mesh_data(&self.device, &viewport_lib::primitives::sphere(0.9, 24, 12))
+            .upload_mesh_data(&self.device, &vpl::primitives::sphere(0.9, 24, 12))
             .expect("fg sphere");
 
         // (x, y, height-scale, is_sphere, colour)
@@ -256,7 +257,7 @@ pub(crate) fn update_foreground(app: &mut App, dt: f32) {
 }
 
 /// Set the camera, post-process (DoF), and foreground pass + items for the frame.
-pub(crate) fn configure_frame(app: &App, fd: &mut viewport_lib::FrameData) {
+pub(crate) fn configure_frame(app: &App, fd: &mut vpl::FrameData) {
     // Cap the far plane so cascades and the depth range stay useful.
     let mut rc = RenderCamera::from_camera(&app.camera);
     rc.far = (app.camera.distance * 3.0).max(60.0);

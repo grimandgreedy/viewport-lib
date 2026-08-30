@@ -34,7 +34,8 @@
 use crate::App;
 use eframe::egui;
 use std::f32::consts::PI;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, LightingSettings, MeshId,
     SceneRenderItem, SparseVolumeGridData, ViewportRenderer,
 };
@@ -479,8 +480,7 @@ impl App {
             return;
         }
         let vp_inv = self.camera.view_proj_matrix().inverse();
-        let (ray_o, ray_d) =
-            viewport_lib::picking::screen_to_ray(pos, glam::Vec2::new(w, h), vp_inv);
+        let (ray_o, ray_d) = vpl::picking::screen_to_ray(pos, glam::Vec2::new(w, h), vp_inv);
 
         let data = &self.svg_state.paint_data;
         let offset = glam::Vec3::from(PAINT_OFFSET);

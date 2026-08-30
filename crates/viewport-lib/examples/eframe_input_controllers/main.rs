@@ -21,9 +21,10 @@
 mod viewport_callback;
 
 use std::sync::{Arc, Mutex};
+use viewport_lib as vpl;
 
 use eframe::egui;
-use viewport_lib::{
+use vpl::{
     Action, ButtonState, Camera, CameraFrame, FirstPersonCameraController, FrameData, Gizmo,
     GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult,
     ManipulationContext, ManipulationController, ManipulationKind, Material, MeshId,
@@ -264,7 +265,7 @@ impl App {
     /// When `position_override` or `scale_override` is set (numeric input mode),
     /// the snapshot is restored first so the override is an absolute offset from
     /// the pre-session state rather than accumulated on top of previous deltas.
-    fn apply_delta(&mut self, delta: viewport_lib::TransformDelta) {
+    fn apply_delta(&mut self, delta: vpl::TransformDelta) {
         let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
         let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
 
@@ -499,7 +500,7 @@ impl eframe::App for App {
                 ui.input(|i| {
                     self.shift_held = i.modifiers.shift;
 
-                    vp_events.push(ViewportEvent::ModifiersChanged(viewport_lib::Modifiers {
+                    vp_events.push(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                         alt: i.modifiers.alt,
                         shift: i.modifiers.shift,
                         ctrl: i.modifiers.command,
@@ -551,13 +552,9 @@ impl eframe::App for App {
                                 button, pressed, ..
                             } => {
                                 let vp_button = match button {
-                                    egui::PointerButton::Primary => viewport_lib::MouseButton::Left,
-                                    egui::PointerButton::Secondary => {
-                                        viewport_lib::MouseButton::Right
-                                    }
-                                    egui::PointerButton::Middle => {
-                                        viewport_lib::MouseButton::Middle
-                                    }
+                                    egui::PointerButton::Primary => vpl::MouseButton::Left,
+                                    egui::PointerButton::Secondary => vpl::MouseButton::Right,
+                                    egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                     _ => continue,
                                 };
                                 vp_events.push(ViewportEvent::MouseButton {
@@ -851,7 +848,7 @@ impl eframe::App for App {
 
                         // Recompute gizmo scale each frame so it stays screen-size-stable.
                         if let Some(center) = self.gizmo_center {
-                            self.gizmo_scale = viewport_lib::gizmo::compute_gizmo_scale(
+                            self.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
                                 center,
                                 self.camera.eye_position(),
                                 self.camera.fov_y,

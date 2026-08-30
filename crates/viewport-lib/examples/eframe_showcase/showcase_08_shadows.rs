@@ -3,7 +3,8 @@
 use crate::App;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
 use eframe::egui;
-use viewport_lib::{Material, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State

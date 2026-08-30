@@ -14,10 +14,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use viewport_lib as vpl;
 
 use eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
-use viewport_lib::{
+use vpl::{
     AnchorX, AnchorY, BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem,
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
@@ -189,7 +190,7 @@ impl PickingShowcase {
 
     /// Clear every selection channel (object outline, injected-item selected
     /// flags, sub-object set).
-    fn clear_selection(&mut self, session: &mut viewport_lib::ViewportInstance) {
+    fn clear_selection(&mut self, session: &mut vpl::ViewportInstance) {
         session.selection_mut().clear();
         self.selected_objects.clear();
         self.sub.clear();
@@ -197,12 +198,7 @@ impl PickingShowcase {
 
     /// Record a hit: sub-object hits go to the SubSelection; object hits outline
     /// the mesh (via the session selection) or flag the injected item.
-    fn record(
-        &mut self,
-        session: &mut viewport_lib::ViewportInstance,
-        id: u64,
-        sub: Option<SubObjectRef>,
-    ) {
+    fn record(&mut self, session: &mut vpl::ViewportInstance, id: u64, sub: Option<SubObjectRef>) {
         match sub {
             Some(s) => self.sub.add(id, s),
             None => match self.labels.get(&id).and_then(|(_, n)| *n) {
@@ -216,7 +212,7 @@ impl PickingShowcase {
 
     /// Push every injected (non-scene-node) item into the frame, flagging the
     /// selected ones. They must be in the frame for both rendering and picking.
-    fn inject_items(&self, session: &mut viewport_lib::ViewportInstance) {
+    fn inject_items(&self, session: &mut vpl::ViewportInstance) {
         let sel = |id: u64| self.selected_objects.contains(&id);
         let fd = session.frame_data_mut();
 

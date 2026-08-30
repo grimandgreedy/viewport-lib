@@ -17,9 +17,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
+use viewport_lib as vpl;
 
 use slint::wgpu_29::{self, wgpu};
-use viewport_lib::{
+use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material, MouseButton,
     OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
     ViewportEvent, ViewportRenderer, primitives,
@@ -124,7 +125,7 @@ fn main() -> Result<(), slint::PlatformError> {
         item.mesh_id = mesh_id;
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
         item.material = Material::from_colour(colour);
-        item.material.backface_policy = viewport_lib::BackfacePolicy::Identical;
+        item.material.backface_policy = vpl::BackfacePolicy::Identical;
         item
     };
 

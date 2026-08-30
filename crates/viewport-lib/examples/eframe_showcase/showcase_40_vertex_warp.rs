@@ -16,7 +16,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeData, BackfacePolicy, LightKind, LightSource, LightingSettings, MeshId,
     SceneRenderItem, ViewportRenderer, primitives,
 };

@@ -8,7 +8,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Easing, Material, Projection, ViewPreset, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{Easing, Material, Projection, ViewPreset, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State

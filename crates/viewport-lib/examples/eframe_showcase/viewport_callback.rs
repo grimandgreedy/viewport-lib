@@ -1,6 +1,7 @@
 //! egui wgpu paint callback : thin adapter that delegates to `ViewportRenderer`.
 
-use viewport_lib::{FrameData, ViewportRenderer};
+use viewport_lib as vpl;
+use vpl::{FrameData, ViewportRenderer};
 
 pub struct ViewportCallback {
     pub frame: FrameData,

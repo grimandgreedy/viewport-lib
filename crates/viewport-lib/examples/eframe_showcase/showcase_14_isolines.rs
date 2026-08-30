@@ -8,7 +8,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, ColourmapId,
     FrameData, LightingSettings, Material, MeshData, MeshId, SceneRenderItem, ViewportRenderer,
     geometry::isoline::IsolineItem, scene::Scene,
@@ -207,7 +208,7 @@ pub(crate) fn iso_collect_scene_items(
     let mut items = app
         .iso_state
         .scene
-        .collect_render_items(&viewport_lib::selection::Selection::new());
+        .collect_render_items(&vpl::selection::Selection::new());
     if app.iso_state.show_surface_colour {
         for item in items.iter_mut() {
             item.active_attribute = Some(AttributeRef {

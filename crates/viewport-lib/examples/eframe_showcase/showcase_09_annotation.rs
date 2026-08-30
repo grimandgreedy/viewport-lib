@@ -6,7 +6,8 @@
 use crate::App;
 use crate::geometry::make_box_with_uvs;
 use eframe::egui;
-use viewport_lib::{Camera, LabelItem, Material, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{Camera, LabelItem, Material, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State
@@ -99,7 +100,7 @@ pub(crate) fn controls_annotation(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Labels render natively via OverlayFrame.");
     ui.separator();
     for (i, label) in app.ann_state.labels.iter().enumerate() {
-        let status = if let viewport_lib::OverlayAnchor::World(wa) = label.anchor {
+        let status = if let vpl::OverlayAnchor::World(wa) = label.anchor {
             let view = app.camera.view_matrix();
             let proj = app.camera.proj_matrix();
             let pos = glam::Vec3::from(wa);

@@ -4,11 +4,12 @@
 //! can translate Iced events directly into orbit, pan, and zoom changes.
 
 use std::collections::HashMap;
+use viewport_lib as vpl;
 
 use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Rectangle, mouse};
-use viewport_lib::{
+use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshId, Modifiers, MouseButton,
     OrbitCameraController, RenderCamera, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
     ViewportEvent, ViewportRenderer, primitives,

@@ -14,8 +14,9 @@
 
 // The library's re-export of the wgpu it was built against. Every wgpu type
 // below comes from here, not from a directly-depended `wgpu` crate.
-use viewport_lib::wgpu;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::wgpu;
+use vpl::{
     Camera, CameraFrame, FrameData, GpuContext, Material, SceneFrame, SceneRenderItem,
     ViewportRenderer, primitives,
 };
@@ -36,7 +37,7 @@ fn main() {
     .expect("no wgpu adapter");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("leg-agnostic"),
-        required_limits: viewport_lib::ViewportRenderer::recommended_device_limits(&adapter),
+        required_limits: vpl::ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .expect("no wgpu device");

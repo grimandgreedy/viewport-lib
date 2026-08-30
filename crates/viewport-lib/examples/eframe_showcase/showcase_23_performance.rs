@@ -9,9 +9,10 @@
 //! - BVH-accelerated picking: click to select objects
 
 use std::sync::atomic::{AtomicU32, Ordering};
+use viewport_lib as vpl;
 
 use eframe::egui;
-use viewport_lib::{
+use vpl::{
     Aabb, FrameStats, ItemSettings, Material, MeshId, PickAccelerator, SceneRenderItem,
     scene::Scene, selection::Selection,
 };
@@ -81,7 +82,7 @@ impl Default for PerfState {
 /// display a live loading bar.
 pub(crate) fn build_perf_scene_threaded(
     meshes: Vec<(MeshId, Option<Aabb>)>,
-    texture_pool: Vec<viewport_lib::TextureId>,
+    texture_pool: Vec<vpl::TextureId>,
     progress: &AtomicU32,
 ) -> (Scene, PickAccelerator) {
     let spacing = 2.5_f32;
@@ -141,8 +142,8 @@ pub(crate) fn build_perf_scene_threaded(
 
 /// The shapes the box grid cycles through, each sized to fit a 1x1x1 box
 /// (diameter 1, height 1, centred on the origin).
-pub(crate) fn shape_meshes() -> Vec<viewport_lib::resources::MeshData> {
-    use viewport_lib::primitives;
+pub(crate) fn shape_meshes() -> Vec<vpl::resources::MeshData> {
+    use vpl::primitives;
     // Spring: solve coil-tube radius so the total height is exactly 1, then set
     // the helix radius so the outer diameter is exactly 1.
     let turns = 3.0_f32;

@@ -17,7 +17,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeData, BuiltinColourmap, Material, MeshId, NodeId, ViewportRenderer, scene::Scene,
 };
 
@@ -59,7 +60,7 @@ impl App {
         // Low-poly sphere so flat facets are clearly visible.
         // Build a reference copy to derive scalar data, then make three
         // independent meshes (MeshData is not Clone).
-        let ref_sphere = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let ref_sphere = vpl::primitives::sphere(2.0, 48, 24);
         let n_tris = ref_sphere.indices.len() / 3;
 
         // ---- Scalar data: raw Z coordinates (not pre-normalised) ----
@@ -120,7 +121,7 @@ impl App {
         };
 
         // ---- Mesh 0: Vertex attribute (interpolated) ----
-        let mut mesh0 = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let mut mesh0 = vpl::primitives::sphere(2.0, 48, 24);
         mesh0
             .attributes
             .insert("scalar".to_string(), AttributeData::Vertex(vertex_scalars));
@@ -136,7 +137,7 @@ impl App {
         );
 
         // ---- Mesh 1: Face attribute (flat per-triangle) ----
-        let mut mesh1 = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let mut mesh1 = vpl::primitives::sphere(2.0, 48, 24);
         mesh1
             .attributes
             .insert("scalar".to_string(), AttributeData::Face(face_scalars));
@@ -152,7 +153,7 @@ impl App {
         );
 
         // ---- Mesh 2: FaceColour attribute (direct RGBA, no colourmap) ----
-        let mut mesh2 = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let mut mesh2 = vpl::primitives::sphere(2.0, 48, 24);
         mesh2.attributes.insert(
             "colour".to_string(),
             AttributeData::FaceColour(face_colours),

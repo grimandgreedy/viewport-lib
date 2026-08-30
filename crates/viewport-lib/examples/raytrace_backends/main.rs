@@ -19,12 +19,11 @@
 //!       --features raytrace,raytrace-hardware
 
 use std::sync::Arc;
+use viewport_lib as vpl;
 
 use glam::{Mat4, Vec3};
-use viewport_lib::primitives;
-use viewport_lib::raytrace::{
-    RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, Tracer,
-};
+use vpl::primitives;
+use vpl::raytrace::{RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, Tracer};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -131,16 +130,15 @@ fn build_scene() -> RtScene {
     let sun_dir = Vec3::new(0.3, -0.4, 0.85);
     scene.set_environment(&procedural_env(512, 256, sun_dir), 512, 256);
 
-    let add =
-        |scene: &mut RtScene, mesh: &viewport_lib::MeshData, origin: Vec3, mat: RtMaterial| {
-            let positions: Vec<Vec3> = mesh
-                .positions
-                .iter()
-                .map(|p| Vec3::from(*p) + origin)
-                .collect();
-            let normals: Vec<Vec3> = mesh.normals.iter().map(|n| Vec3::from(*n)).collect();
-            scene.add_mesh(&positions, &mesh.indices, Some(&normals), mat);
-        };
+    let add = |scene: &mut RtScene, mesh: &vpl::MeshData, origin: Vec3, mat: RtMaterial| {
+        let positions: Vec<Vec3> = mesh
+            .positions
+            .iter()
+            .map(|p| Vec3::from(*p) + origin)
+            .collect();
+        let normals: Vec<Vec3> = mesh.normals.iter().map(|n| Vec3::from(*n)).collect();
+        scene.add_mesh(&positions, &mesh.indices, Some(&normals), mat);
+    };
 
     let ground = primitives::cuboid(24.0, 24.0, 0.4);
     add(
@@ -320,7 +318,7 @@ impl AppState {
     }
 
     /// Tone-map the traced HDR image and upload it as the blit texture.
-    fn upload(&mut self, img: &viewport_lib::raytrace::RtImage, tw: u32, th: u32) {
+    fn upload(&mut self, img: &vpl::raytrace::RtImage, tw: u32, th: u32) {
         // Reinhard tone map to linear 8-bit; the sRGB surface applies gamma.
         let mut bytes = vec![0u8; (tw * th * 4) as usize];
         for (i, px) in img.rgba.chunks_exact(4).enumerate() {

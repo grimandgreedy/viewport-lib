@@ -20,7 +20,8 @@
 use crate::App;
 use eframe::egui;
 use std::f32::consts::PI;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, LightingSettings,
     SceneRenderItem, ShDegree, ViewportRenderer,
 };

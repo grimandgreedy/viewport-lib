@@ -15,7 +15,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     BoxWidget, CameraFrame, CylinderWidget, DiskWidget, FrameData, LightingSettings,
     LineProbeWidget, PlaneWidget, PointCloudItem, PolylineWidget, SceneRenderItem, SphereWidget,
     ViewportRenderer, WidgetContext, WidgetResult, scene::Scene,
@@ -486,7 +487,7 @@ pub(crate) fn pw_collect_scene_items(
     let items = app
         .pw_state
         .scene
-        .collect_render_items(&viewport_lib::selection::Selection::new());
+        .collect_render_items(&vpl::selection::Selection::new());
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.6;

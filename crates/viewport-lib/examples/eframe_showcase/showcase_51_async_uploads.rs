@@ -17,9 +17,10 @@
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+use viewport_lib as vpl;
 
 use eframe::egui;
-use viewport_lib::{
+use vpl::{
     ColourmapId, GaussianSplatData, GaussianSplatId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId,
     LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, OverlayTextureId,
     PointCloudId, PointCloudItem, PointCloudRefItem, PolylineId, PolylineItem, PolylineRefItem,
@@ -73,7 +74,7 @@ pub(crate) enum PayloadSize {
 pub(crate) struct AsyncUploadsState {
     /// Handle to the GPU skinning deformer. `Some` after `build_async_uploads_scene`
     /// installs the plugin.
-    pub skinning: Option<viewport_lib::plugins::skinning::SkinningPlugin>,
+    pub skinning: Option<vpl::plugins::skinning::SkinningPlugin>,
     /// When true, button clicks call the synchronous upload path. Useful
     /// for showing the difference in frame pacing.
     pub use_sync: bool,
@@ -152,7 +153,7 @@ pub(crate) struct AsyncUploadsState {
     pub sprite_instance_set_state: AssetState,
 
     pub loaded_mesh_id: Option<MeshId>,
-    pub loaded_texture_id: Option<viewport_lib::TextureId>,
+    pub loaded_texture_id: Option<vpl::TextureId>,
     pub loaded_polyline_id: Option<PolylineId>,
     pub loaded_streamtube_id: Option<StreamtubeId>,
     pub loaded_tube_id: Option<TubeId>,
@@ -240,14 +241,11 @@ impl App {
     pub(crate) fn build_async_uploads_scene(&mut self, renderer: &mut ViewportRenderer) {
         // GPU skinning is opt-in: install once before uploading any skin data.
         self.async_uploads_state.skinning = Some(
-            viewport_lib::plugins::skinning::SkinningPlugin::install(
-                renderer.resources_mut(),
-                &self.device,
-            )
-            .expect("install skinning"),
+            vpl::plugins::skinning::SkinningPlugin::install(renderer.resources_mut(), &self.device)
+                .expect("install skinning"),
         );
 
-        let plane_mesh = viewport_lib::primitives::sphere(0.7, 24, 18);
+        let plane_mesh = vpl::primitives::sphere(0.7, 24, 18);
         self.async_uploads_state.base_mesh_id = Some(
             renderer
                 .resources_mut()
@@ -255,7 +253,7 @@ impl App {
                 .expect("base mesh"),
         );
         // A second sphere serves as the target for async skin weights.
-        let skin_mesh = viewport_lib::primitives::sphere(0.5, 16, 12);
+        let skin_mesh = vpl::primitives::sphere(0.5, 16, 12);
         self.async_uploads_state.skin_target_vertex_count = skin_mesh.positions.len();
         self.async_uploads_state.skin_target_mesh_id = Some(
             renderer
@@ -1189,7 +1187,7 @@ fn demo_mesh(size: PayloadSize) -> MeshData {
         PayloadSize::Light => 3,
         PayloadSize::Heavy => 8,
     };
-    viewport_lib::primitives::icosphere(0.6, subdivisions)
+    vpl::primitives::icosphere(0.6, subdivisions)
 }
 
 fn unit_skin_weights(vertex_count: usize) -> SkinWeights {
@@ -1955,7 +1953,7 @@ impl App {
 // Pushes per-frame reference items for any pre-uploaded curves into the
 // scene frame. Each curve is positioned in front of the camera, fanned out
 // horizontally so all four can be loaded at once.
-pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut viewport_lib::FrameData) {
+pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::FrameData) {
     if !app.async_uploads_state.built {
         return;
     }

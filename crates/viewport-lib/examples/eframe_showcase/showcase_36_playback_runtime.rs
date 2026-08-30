@@ -8,9 +8,10 @@
 //! - Stats: live FrameStats readout with 60-frame sparkline
 
 use std::collections::VecDeque;
+use viewport_lib as vpl;
 
 use eframe::egui;
-use viewport_lib::{
+use vpl::{
     BackfacePolicy, FrameStats, Material, MeshData, MeshId, PerformancePolicy, QualityPreset,
     RuntimeMode, SceneRenderItem, ViewportRenderer, scene::Scene, selection::Selection,
 };

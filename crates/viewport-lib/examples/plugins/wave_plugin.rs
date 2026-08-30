@@ -18,7 +18,8 @@
 //! `GpuPlugin` implementation rather than production cloth/water code.
 
 use bytemuck::{Pod, Zeroable};
-use viewport_lib::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
+use viewport_lib as vpl;
+use vpl::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -207,16 +208,16 @@ impl WavePlugin {
 
     /// Window of the pool holding the displaced positions, for
     /// `set_position_override_buffer_sliced`.
-    pub fn position_slice(&self) -> viewport_lib::OverrideBufferSlice {
-        viewport_lib::OverrideBufferSlice::new(0, self.vertex_count)
+    pub fn position_slice(&self) -> vpl::OverrideBufferSlice {
+        vpl::OverrideBufferSlice::new(0, self.vertex_count)
     }
 
     /// Window of the pool holding the analytic normals, for
     /// `set_normal_override_buffer_sliced`. The base element is the vertex
     /// count, which is generally not 256-byte aligned; the slice needs no
     /// alignment.
-    pub fn normal_slice(&self) -> viewport_lib::OverrideBufferSlice {
-        viewport_lib::OverrideBufferSlice::new(self.vertex_count, self.vertex_count)
+    pub fn normal_slice(&self) -> vpl::OverrideBufferSlice {
+        vpl::OverrideBufferSlice::new(self.vertex_count, self.vertex_count)
     }
 
     /// Live-tunable amplitude. Wired to a UI slider in the showcase.

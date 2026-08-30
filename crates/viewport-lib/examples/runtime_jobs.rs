@@ -21,8 +21,9 @@
 
 use std::thread;
 use std::time::Duration;
+use viewport_lib as vpl;
 
-use viewport_lib::{
+use vpl::{
     camera::camera::Camera,
     interaction::input::ActionFrame,
     interaction::select::selection::Selection,

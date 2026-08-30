@@ -21,9 +21,10 @@
 //! whichever quadrant the cursor is currently in.
 
 use std::sync::Arc;
+use viewport_lib as vpl;
 
-use viewport_lib::{ButtonState, Modifiers, MouseButton, PostProcessSettings, ScrollUnits};
-use viewport_lib::{
+use vpl::{ButtonState, Modifiers, MouseButton, PostProcessSettings, ScrollUnits};
+use vpl::{
     Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, Projection,
     SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId, ViewportRenderer,
     primitives,

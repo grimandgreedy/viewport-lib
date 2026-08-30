@@ -16,7 +16,8 @@
 use crate::App;
 use crate::geometry::{make_box_with_uvs, make_uv_sphere};
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Material, MeshData, MeshId, NodeId, ParamVis, ParamVisMode, ViewportRenderer,
     scene::{Scene, material::BackfacePolicy},
 };
@@ -79,10 +80,10 @@ impl App {
     pub(crate) fn build_param_vis_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.param_vis_state.scene = Scene::new();
 
-        let torus_data = viewport_lib::primitives::torus(1.1, 0.45, 48, 24);
+        let torus_data = vpl::primitives::torus(1.1, 0.45, 48, 24);
         let sphere_data = make_uv_sphere(48, 24, 1.0);
         let cube_data = make_box_with_uvs(1.6, 1.6, 1.6);
-        let plane_data = viewport_lib::primitives::plane(2.8, 2.8);
+        let plane_data = vpl::primitives::plane(2.8, 2.8);
 
         let upload_mesh = |renderer: &mut ViewportRenderer, data: &MeshData| -> MeshId {
             renderer

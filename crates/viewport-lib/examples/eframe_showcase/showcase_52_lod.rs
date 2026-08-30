@@ -14,7 +14,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     Aabb, FrameData, FrameStats, LodGroupId, Material, MeshId, MeshInstanceItem, PickId,
     RenderCamera, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
     projected_screen_size,

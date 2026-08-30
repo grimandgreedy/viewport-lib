@@ -27,7 +27,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     LightKind, LightSource, LightingSettings, Material, MaterialPluginId,
     MaterialPluginParamsHandle, MeshId, SceneRenderItem, ViewportRenderer,
 };
@@ -155,7 +156,7 @@ pub(crate) fn prewarm_custom_shading_plugins(
 
 impl App {
     pub(crate) fn build_custom_shading_scene(&mut self, renderer: &mut ViewportRenderer) {
-        let mesh = viewport_lib::primitives::sphere(1.0, 48, 24);
+        let mesh = vpl::primitives::sphere(1.0, 48, 24);
         let mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &mesh)
@@ -164,7 +165,7 @@ impl App {
         // The detail sphere carries a per-vertex mask in the extension
         // attribute channel: 1 toward the top pole fading to 0 below the
         // equator, so the detail layer visibly follows painted vertex data.
-        let mut detail_mesh = viewport_lib::primitives::sphere(1.0, 48, 24);
+        let mut detail_mesh = vpl::primitives::sphere(1.0, 48, 24);
         detail_mesh.extension_attributes = Some(
             detail_mesh
                 .positions
@@ -395,7 +396,7 @@ pub(crate) fn custom_shading_items(app: &App) -> Vec<SceneRenderItem> {
             // The dissolve sphere runs on a Mask material so the hook's
             // alpha output discards fragments below the cutoff.
             if *plugin == s.dissolve && plugin.is_some() {
-                item.material.alpha_mode = viewport_lib::material::AlphaMode::Mask(0.5);
+                item.material.alpha_mode = vpl::material::AlphaMode::Mask(0.5);
             }
             item
         })

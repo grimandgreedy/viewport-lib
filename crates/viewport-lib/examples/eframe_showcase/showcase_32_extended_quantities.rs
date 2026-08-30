@@ -15,7 +15,8 @@
 
 use crate::{App, MeshId};
 use eframe::egui;
-use viewport_lib::{
+use viewport_lib as vpl;
+use vpl::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, CELL_SENTINEL, ColourmapId,
     FrameData, GlyphItem, LightingSettings, PointCloudItem, SceneRenderItem, ViewportRenderer,
     VolumeMeshData, volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
@@ -168,7 +169,7 @@ pub(crate) struct EqState {
     pub sub_mode: EqSubMode,
     pub edge_mesh_ids: [MeshId; 3],
     pub vm_mesh_id: MeshId,
-    pub vm_data: viewport_lib::VolumeMeshData,
+    pub vm_data: vpl::VolumeMeshData,
     pub pc_positions: Vec<[f32; 3]>,
     pub pc_scalars: Vec<f32>,
     pub pc_radii: Vec<f32>,
@@ -184,7 +185,7 @@ impl Default for EqState {
             sub_mode: EqSubMode::EdgeCornerScalars,
             edge_mesh_ids: [MeshId::INVALID; 3],
             vm_mesh_id: MeshId::INVALID,
-            vm_data: viewport_lib::VolumeMeshData::default(),
+            vm_data: vpl::VolumeMeshData::default(),
             pc_positions: Vec::new(),
             pc_scalars: Vec::new(),
             pc_radii: Vec::new(),
@@ -201,11 +202,11 @@ impl Default for EqState {
 
 impl App {
     pub(crate) fn build_eq_scene(&mut self, renderer: &mut ViewportRenderer) {
-        let sphere = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let sphere = vpl::primitives::sphere(2.0, 48, 24);
         let ev = edge_scalars(&sphere.positions, &sphere.indices);
         let cv = corner_index_scalars(&sphere.indices);
 
-        let mut em = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let mut em = vpl::primitives::sphere(2.0, 48, 24);
         em.attributes
             .insert("edge_z".into(), AttributeData::Edge(ev));
         self.eq_state.edge_mesh_ids[0] = renderer
@@ -213,7 +214,7 @@ impl App {
             .upload_mesh_data(&self.device, &em)
             .expect("edge mesh");
 
-        let mut hm = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let mut hm = vpl::primitives::sphere(2.0, 48, 24);
         hm.attributes
             .insert("halfedge_z".into(), AttributeData::Halfedge(cv.clone()));
         self.eq_state.edge_mesh_ids[1] = renderer
@@ -221,7 +222,7 @@ impl App {
             .upload_mesh_data(&self.device, &hm)
             .expect("halfedge mesh");
 
-        let mut cm = viewport_lib::primitives::sphere(2.0, 48, 24);
+        let mut cm = vpl::primitives::sphere(2.0, 48, 24);
         cm.attributes
             .insert("corner_z".into(), AttributeData::Corner(cv));
         self.eq_state.edge_mesh_ids[2] = renderer
@@ -245,7 +246,7 @@ impl App {
 
         // Opaque background sphere slightly smaller than the point-cloud shell (r=2.0).
         // Placed in the middle so back-facing points are occluded.
-        let bg_sphere = viewport_lib::primitives::sphere(1.75, 32, 16);
+        let bg_sphere = vpl::primitives::sphere(1.75, 32, 16);
         self.eq_state.pc_bg_mesh_id = renderer
             .resources_mut()
             .upload_mesh_data(&self.device, &bg_sphere)

@@ -19,11 +19,12 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::Selection;
+use viewport_lib as vpl;
+use vpl::Selection;
 #[allow(unused_imports)]
-use viewport_lib::renderer::{SpriteLitParams, SpriteNormalMode};
-use viewport_lib::scene::{Scene, build_light_glyphs};
-use viewport_lib::{
+use vpl::renderer::{SpriteLitParams, SpriteNormalMode};
+use vpl::scene::{Scene, build_light_glyphs};
+use vpl::{
     BackfacePolicy, ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId,
     GpuParticleSystemItem, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
     ParticleMeshAlign, ParticleRender, PolylineItem, RibbonItem, SceneRenderItem, SpawnShape,
@@ -126,16 +127,16 @@ pub(crate) struct SpriteState {
 
     // Mode A
     pub sphere_id: MeshId,
-    pub sprite_tex: viewport_lib::TextureId,
+    pub sprite_tex: vpl::TextureId,
     pub placed_positions: Vec<[f32; 3]>,
 
     // Mode B
     pub particles: Vec<Particle>,
-    pub glow_tex: viewport_lib::TextureId,
+    pub glow_tex: vpl::TextureId,
     pub rings: [Ring; 2],
 
     // Mode C
-    pub atlas_tex: viewport_lib::TextureId,
+    pub atlas_tex: vpl::TextureId,
     pub atlas_positions: Vec<[f32; 3]>,
     pub atlas_frame: u32,
     pub atlas_time: f32,
@@ -149,15 +150,15 @@ pub(crate) struct SpriteState {
     // Streak texture: a procedural noisy lengthwise stripe used to demonstrate
     // ribbon texturing in the Trails sub-mode (toggle below) and the
     // velocity-stretched rain in the Orientations sub-mode.
-    pub streak_tex: viewport_lib::TextureId,
+    pub streak_tex: vpl::TextureId,
     pub trail_streak_enabled: bool,
     /// Flame texture: tall taper with hot inner gradient. Used by the
     /// axis-locked candle flames in the Orientations sub-mode.
-    pub flame_tex: viewport_lib::TextureId,
+    pub flame_tex: vpl::TextureId,
     /// Shockwave ring texture: a thin ring whose R/G channels encode outward
     /// displacement (heat-haze direction). Drives the refractive sprite in
     /// the Distortion sub-mode.
-    pub shockwave_tex: viewport_lib::TextureId,
+    pub shockwave_tex: vpl::TextureId,
     /// Flat plane mesh used as the three corner walls in the Distortion
     /// sub-mode.
     pub wall_id: MeshId,
@@ -223,10 +224,10 @@ impl Default for SpriteState {
             built: false,
             sub_mode: SpriteSubMode::Particles,
             sphere_id: MeshId::INVALID,
-            sprite_tex: viewport_lib::TextureId::INVALID,
+            sprite_tex: vpl::TextureId::INVALID,
             placed_positions: Vec::new(),
             particles: Vec::new(),
-            glow_tex: viewport_lib::TextureId::INVALID,
+            glow_tex: vpl::TextureId::INVALID,
             rings: [
                 Ring {
                     spin: 0.0,
@@ -251,7 +252,7 @@ impl Default for SpriteState {
                     particle_perturb: Vec::new(),
                 },
             ],
-            atlas_tex: viewport_lib::TextureId::INVALID,
+            atlas_tex: vpl::TextureId::INVALID,
             atlas_positions: Vec::new(),
             atlas_frame: 0,
             atlas_time: 0.0,
@@ -261,10 +262,10 @@ impl Default for SpriteState {
             trail_length: 80,
             trail_width: 0.18,
             trail_blend: SpriteBlend::Additive,
-            streak_tex: viewport_lib::TextureId::INVALID,
+            streak_tex: vpl::TextureId::INVALID,
             trail_streak_enabled: false,
-            flame_tex: viewport_lib::TextureId::INVALID,
-            shockwave_tex: viewport_lib::TextureId::INVALID,
+            flame_tex: vpl::TextureId::INVALID,
+            shockwave_tex: vpl::TextureId::INVALID,
             wall_id: MeshId::INVALID,
             distortion_strength: 60.0,
             lit_angle: 0.0,

@@ -4,7 +4,8 @@
 
 use eframe::egui;
 use glam::{Mat4, Vec3};
-use viewport_lib::{ManipResult, Material, NodeId, PickMask, primitives};
+use viewport_lib as vpl;
+use vpl::{ManipResult, Material, NodeId, PickMask, primitives};
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
 

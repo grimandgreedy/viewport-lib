@@ -2,7 +2,8 @@
 
 use crate::App;
 use eframe::egui;
-use viewport_lib::{Material, Selection, ViewportRenderer, scene::Scene};
+use viewport_lib as vpl;
+use vpl::{Material, Selection, ViewportRenderer, scene::Scene};
 
 // ---------------------------------------------------------------------------
 // State

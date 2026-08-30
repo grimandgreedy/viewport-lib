@@ -14,10 +14,9 @@ mod showcases;
 mod ui;
 
 use eframe::{egui, wgpu};
-use viewport_lib::input::adapters::from_egui;
-use viewport_lib::{
-    ManipulationController, Modifiers, ViewportContext, ViewportEvent, ViewportInstance,
-};
+use viewport_lib as vpl;
+use vpl::input::adapters::from_egui;
+use vpl::{ManipulationController, Modifiers, ViewportContext, ViewportEvent, ViewportInstance};
 
 use showcase::{SetupCtx, Showcase, ShowcaseCtx};
 
@@ -36,11 +35,12 @@ fn main() -> eframe::Result {
                     eframe::egui_wgpu::WgpuSetupCreateNew {
                         device_descriptor: std::sync::Arc::new(|adapter| wgpu::DeviceDescriptor {
                             label: Some("viewport-lib showcase device"),
-                            required_features:
-                                viewport_lib::ViewportRenderer::recommended_device_features(adapter),
+                            required_features: vpl::ViewportRenderer::recommended_device_features(
+                                adapter,
+                            ),
                             required_limits: wgpu::Limits {
                                 max_texture_dimension_2d: 8192,
-                                ..viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+                                ..vpl::ViewportRenderer::recommended_device_limits(adapter)
                             },
                             ..Default::default()
                         }),
