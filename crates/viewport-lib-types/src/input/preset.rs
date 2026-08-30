@@ -24,11 +24,11 @@ pub enum BindingPreset {
     /// Full binding set: camera navigation plus all keyboard shortcuts (normal
     /// mode, fly mode, manipulation mode, global).
     ///
-    /// Differs from [`ViewportPrimitives`]: left drag is **not** bound to orbit
+    /// Differs from [`ViewportPrimitives`](Self::ViewportPrimitives): left drag is **not** bound to orbit
     /// because it is reserved for box selection and gizmo dragging. Orbit is
     /// available via Ctrl+Scroll.
     ///
-    /// Use this preset to replace [`crate::InputSystem`] entirely.
+    /// Use this preset to replace `InputSystem` entirely.
     ViewportAll,
 }
 
@@ -101,7 +101,8 @@ pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
 ///
 /// Consumers are responsible for applying mode awareness : key bindings for
 /// fly mode and manipulation mode are always present in the resolved
-/// [`crate::ActionFrame`], so callers should gate on the current [`crate::InputMode`].
+/// [`ActionFrame`](crate::input::action_frame::ActionFrame), so callers should
+/// gate on the current [`InputMode`](crate::input::mode::InputMode).
 pub fn viewport_all_bindings() -> Vec<ViewportBinding> {
     let none = ModifiersMatch::Exact(Modifiers::NONE);
     let any = ModifiersMatch::Any;

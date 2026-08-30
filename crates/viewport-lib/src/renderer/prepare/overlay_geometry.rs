@@ -96,6 +96,8 @@ pub(super) fn sample_overlay_fill(
             let a = (p[1] - centre[1]).atan2(p[0] - centre[0]) - offset_angle;
             sample_stops(stops, ((a / std::f32::consts::TAU) % 1.0 + 1.0) % 1.0)
         }
+        // OverlayFill is non_exhaustive; opaque white for fills not handled here.
+        _ => [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -570,10 +572,8 @@ pub(super) fn emit_polyline_stroke(
             // disappearing or looping forever. The 0.25 px floor bounds the
             // sub-path count on long paths.
             if dash_length <= 0.0 || gap_length <= 0.0 {
-                let solid = crate::renderer::types::OverlayPolylineItem {
-                    stroke_pattern: StrokePattern::Solid,
-                    ..poly.clone()
-                };
+                let mut solid = poly.clone();
+                solid.stroke_pattern = StrokePattern::Solid;
                 emit_polyline_stroke(verts, &solid, colour, vp_w, vp_h);
                 return;
             }
@@ -853,13 +853,12 @@ mod stroke_tests {
     const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
     fn line_item(pattern: StrokePattern, cap: PolylineCap) -> OverlayPolylineItem {
-        OverlayPolylineItem {
-            points: vec![[0.0, 0.0], [100.0, 0.0]],
-            thickness: 4.0,
-            stroke_pattern: pattern,
-            cap,
-            ..Default::default()
-        }
+        let mut item = OverlayPolylineItem::default();
+        item.points = vec![[0.0, 0.0], [100.0, 0.0]];
+        item.thickness = 4.0;
+        item.stroke_pattern = pattern;
+        item.cap = cap;
+        item
     }
 
     #[test]

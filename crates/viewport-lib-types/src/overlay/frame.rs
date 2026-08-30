@@ -1,4 +1,4 @@
-use crate::renderer::types::*;
+use crate::overlay::*;
 
 /// Screen-space overlays rendered after post-processing: shapes, labels, glyph
 /// runs, and polylines.
@@ -33,7 +33,8 @@ impl OverlayFrame {
     /// at the default `0`, the renderer keeps its fixed family draw order and
     /// skips building the cross-family ordering list, so the common case pays
     /// nothing for the feature.
-    pub(crate) fn uses_nonzero_z_order(&self) -> bool {
+    #[doc(hidden)]
+    pub fn uses_nonzero_z_order(&self) -> bool {
         self.shapes.iter().any(|i| i.z_order != 0)
             || self.labels.iter().any(|i| i.z_order != 0)
             || self.glyph_runs.iter().any(|i| i.z_order != 0)

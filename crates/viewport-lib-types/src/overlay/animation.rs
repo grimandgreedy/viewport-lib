@@ -106,7 +106,7 @@ impl<T: Copy + Default> Default for AnimTrack<T> {
     }
 }
 
-/// Multi-channel animation tracks attached to an [`OverlayShapeItem`].
+/// Multi-channel animation tracks attached to an [`OverlayShapeItem`](crate::overlay::OverlayShapeItem).
 ///
 /// Each `Some` track replaces the matching field on the item for the frame.
 /// Tracks are independent: a shape can simultaneously translate, scale,
@@ -118,7 +118,7 @@ impl<T: Copy + Default> Default for AnimTrack<T> {
 #[non_exhaustive]
 pub struct OverlayAnimations {
     /// Drives the item's overall opacity multiplier. Takes precedence over
-    /// the legacy [`OverlayShapeItem::animation`] field when both are set.
+    /// the legacy `OverlayShapeItem::animation` field when both are set.
     pub opacity: Option<AnimTrack<f32>>,
     /// Drives `position`, the screen-pixel nudge layered on the resolved anchor.
     pub position: Option<AnimTrack<[f32; 2]>>,

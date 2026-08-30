@@ -17,8 +17,8 @@ pub enum ResolvedActionState {
 
 /// Resolved navigation actions for one frame.
 ///
-/// Produced by [`super::viewport_input::ViewportInput`] after processing all
-/// events for a frame. Non-zero fields indicate active input in that direction.
+/// Produced by `ViewportInput` after processing all events for a frame.
+/// Non-zero fields indicate active input in that direction.
 #[derive(Debug, Clone, Default)]
 pub struct NavigationActions {
     /// Orbit delta in radians (x = yaw, y = pitch). Zero if no orbit input.
@@ -35,9 +35,9 @@ pub struct NavigationActions {
 /// Pointer and click state resolved for one frame.
 ///
 /// Carries the cursor position, the per-frame pointer movement, and click-vs-drag
-/// flags that manipulation and picking need. Filled by
-/// [`super::viewport_input::ViewportInput::resolve`] from state it already tracks,
-/// so consumers no longer hand-roll a click-vs-drag threshold.
+/// flags that manipulation and picking need. Filled by `ViewportInput::resolve`
+/// from state it already tracks, so consumers no longer hand-roll a
+/// click-vs-drag threshold.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PointerFrame {
@@ -56,8 +56,8 @@ pub struct PointerFrame {
 
 /// Per-frame resolved action output.
 ///
-/// Returned by [`crate::camera::controllers::orbit::OrbitCameraController::apply_to_camera`] and
-/// available from [`super::viewport_input::ViewportInput`] after a frame.
+/// Returned by `OrbitCameraController::apply_to_camera` and available from
+/// `ViewportInput` after a frame.
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct ActionFrame {

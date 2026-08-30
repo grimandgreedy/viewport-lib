@@ -14,7 +14,7 @@ pub struct PositionedGlyph {
     /// position before the glyph's own bitmap bearing, which the draw path adds,
     /// matching how [`LabelItem`] places glyphs.
     ///
-    /// [`LabelItem`]: crate::renderer::types::LabelItem
+    /// [`LabelItem`]: crate::overlay::LabelItem
     pub x: f32,
     /// Vertical pen position in logical pixels, relative to the run origin.
     pub y: f32,
@@ -42,12 +42,12 @@ impl PositionedGlyph {
 /// a baseline, one per font. Glyph positions are relative to the resolved
 /// `anchor` origin, so moving a whole run is a change to `anchor` / `position`.
 ///
-/// [`LabelItem`]: crate::renderer::types::LabelItem
+/// [`LabelItem`]: crate::overlay::LabelItem
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct GlyphRunItem {
     /// Font the glyph ids index into. `None` uses the built-in default font.
-    pub font: Option<crate::resources::overlay::font::FontHandle>,
+    pub font: Option<crate::overlay::font::FontHandle>,
 
     /// Font size in logical pixels. Sizes the rasterized glyph bitmaps; the glyph
     /// positions themselves come from `glyphs`.
@@ -55,7 +55,7 @@ pub struct GlyphRunItem {
 
     /// Origin the run hangs from: a viewport corner (default top-left) or a
     /// projected world point. Each glyph's `(x, y)` is relative to this.
-    pub anchor: crate::renderer::types::OverlayAnchor,
+    pub anchor: crate::overlay::OverlayAnchor,
 
     /// Placement in logical pixels relative to the resolved `anchor` origin.
     /// With the default anchor and alignment this is the run's screen position
@@ -64,11 +64,11 @@ pub struct GlyphRunItem {
 
     /// How the run's glyph-extent box sits horizontally on `anchor` + `position`.
     /// Default `Left` leaves the glyph positions as authored.
-    pub align_x: crate::renderer::types::AnchorX,
+    pub align_x: crate::overlay::AnchorX,
 
     /// How the run's glyph-extent box sits vertically on `anchor` + `position`.
     /// Default `Top` leaves the glyph positions as authored.
-    pub align_y: crate::renderer::types::AnchorY,
+    pub align_y: crate::overlay::AnchorY,
 
     /// Positioned glyphs, in draw order.
     pub glyphs: Vec<PositionedGlyph>,
@@ -95,7 +95,7 @@ pub struct GlyphRunItem {
     /// matches this value, the same clip model [`LabelItem`] uses. `None` (the
     /// default) draws the run unclipped.
     ///
-    /// [`LabelItem`]: crate::renderer::types::LabelItem
+    /// [`LabelItem`]: crate::overlay::LabelItem
     pub clip_id: Option<u32>,
 }
 
@@ -104,10 +104,10 @@ impl Default for GlyphRunItem {
         Self {
             font: None,
             font_size: 14.0,
-            anchor: crate::renderer::types::OverlayAnchor::default(),
+            anchor: crate::overlay::OverlayAnchor::default(),
             position: [0.0, 0.0],
-            align_x: crate::renderer::types::AnchorX::Left,
-            align_y: crate::renderer::types::AnchorY::Top,
+            align_x: crate::overlay::AnchorX::Left,
+            align_y: crate::overlay::AnchorY::Top,
             glyphs: Vec::new(),
             colour: [1.0, 1.0, 1.0, 1.0],
             colours: Vec::new(),
@@ -130,7 +130,7 @@ impl GlyphRunItem {
 
     /// Set the font the glyph ids index into. Without this the built-in default
     /// font is used.
-    pub fn with_font(mut self, font: crate::resources::overlay::font::FontHandle) -> Self {
+    pub fn with_font(mut self, font: crate::overlay::font::FontHandle) -> Self {
         self.font = Some(font);
         self
     }
@@ -142,7 +142,7 @@ impl GlyphRunItem {
     }
 
     /// Set the origin the run hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: crate::renderer::types::OverlayAnchor) -> Self {
+    pub fn with_anchor(mut self, anchor: crate::overlay::OverlayAnchor) -> Self {
         self.anchor = anchor;
         self
     }
@@ -150,7 +150,7 @@ impl GlyphRunItem {
     /// Pin the run to a world-space position, reprojected each frame. Sugar for
     /// `with_anchor(OverlayAnchor::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = crate::renderer::types::OverlayAnchor::World(pos);
+        self.anchor = crate::overlay::OverlayAnchor::World(pos);
         self
     }
 
@@ -165,8 +165,8 @@ impl GlyphRunItem {
     /// Set how the run's glyph-extent box aligns onto the resolved anchor origin.
     pub fn with_align(
         mut self,
-        align_x: crate::renderer::types::AnchorX,
-        align_y: crate::renderer::types::AnchorY,
+        align_x: crate::overlay::AnchorX,
+        align_y: crate::overlay::AnchorY,
     ) -> Self {
         self.align_x = align_x;
         self.align_y = align_y;
@@ -209,7 +209,7 @@ impl GlyphRunItem {
     /// [`OverlayShapeItem::with_clip_mask`]). Fragments outside the mask are
     /// discarded.
     ///
-    /// [`OverlayShapeItem::with_clip_mask`]: crate::renderer::types::OverlayShapeItem::with_clip_mask
+    /// [`OverlayShapeItem::with_clip_mask`]: crate::overlay::OverlayShapeItem::with_clip_mask
     pub fn with_clip(mut self, clip_id: u32) -> Self {
         self.clip_id = Some(clip_id);
         self

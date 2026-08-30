@@ -25,8 +25,8 @@ pub enum ScrollUnits {
 /// An event delivered to the viewport input pipeline.
 ///
 /// Host applications translate their native windowing events into
-/// `ViewportEvent` values and push them to [`crate::camera::controllers::orbit::OrbitCameraController`]
-/// (or [`super::viewport_input::ViewportInput`] for direct input handling).
+/// `ViewportEvent` values and push them to the `OrbitCameraController`
+/// (or `ViewportInput` for direct input handling).
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ViewportEvent {

@@ -18,7 +18,7 @@ use super::anchor::{AnchorX, AnchorY, OverlayAnchor};
 /// # Examples
 ///
 /// ```rust
-/// # use viewport_lib::LabelItem;
+/// # use viewport_lib_types::overlay::LabelItem;
 /// let label = LabelItem::new("Peak Pressure: 101.3 kPa")
 ///     .with_world_anchor([2.0, 3.0, 0.0])
 ///     .with_leader_line(true);
@@ -41,7 +41,7 @@ pub struct LabelItem {
     pub font_size: f32,
 
     /// Font to use.  `None` uses the built-in default font.
-    pub font: Option<crate::resources::overlay::font::FontHandle>,
+    pub font: Option<crate::overlay::font::FontHandle>,
 
     /// Draw a filled rectangle behind the text.
     pub background: bool,
@@ -183,7 +183,7 @@ impl LabelItem {
     }
 
     /// Set the font. Without this the built-in default font is used.
-    pub fn with_font(mut self, font: crate::resources::overlay::font::FontHandle) -> Self {
+    pub fn with_font(mut self, font: crate::overlay::font::FontHandle) -> Self {
         self.font = Some(font);
         self
     }
@@ -277,7 +277,7 @@ impl LabelItem {
     }
 
     /// Clip the label to the mask shape with this id (registered via
-    /// [`OverlayShapeItem::with_clip_mask`]). Fragments outside the mask are
+    /// [`OverlayShapeItem::with_clip_mask`](crate::overlay::OverlayShapeItem::with_clip_mask)). Fragments outside the mask are
     /// discarded, so text scrolled inside a region is contained.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
         self.clip_id = Some(clip_id);

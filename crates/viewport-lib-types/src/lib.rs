@@ -20,5 +20,7 @@ pub mod data;
 pub mod effects;
 pub mod error;
 pub mod ids;
+pub mod input;
 pub mod material;
+pub mod overlay;
 pub mod scene;

@@ -1,7 +1,7 @@
 //! Per-frame viewport context for the new input pipeline.
 
-/// Per-frame viewport context passed to [`crate::camera::controllers::orbit::OrbitCameraController::begin_frame`]
-/// (and [`super::viewport_input::ViewportInput::begin_frame`]).
+/// Per-frame viewport context passed to `OrbitCameraController::begin_frame`
+/// (and `ViewportInput::begin_frame`).
 ///
 /// Carries the hover, focus, and size state needed to interpret viewport input.
 #[derive(Debug, Clone, Copy)]

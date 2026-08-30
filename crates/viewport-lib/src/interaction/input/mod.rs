@@ -20,30 +20,18 @@
 // here; suppress the deprecation lint for their in-module use.
 #![allow(deprecated)]
 
-/// Semantic action enum.
-pub mod action;
-/// Binding, trigger, and modifier types.
-pub mod binding;
-/// Default key/mouse bindings for the viewport.
-pub mod defaults;
-/// Input mode enum (Normal, FlyMode, Manipulating).
-pub mod mode;
+// The input vocabulary (actions, events, bindings, modes, presets) now lives in
+// `viewport-lib-types`. Re-export the modules so `crate::interaction::input::<mod>`
+// paths, and the `super::<mod>` paths in the pipeline files below, keep resolving.
+pub use viewport_lib_types::input::{
+    action, action_frame, binding, context, defaults, event, mode, preset, viewport_binding,
+};
+
 /// Per-frame input snapshot and action-state query evaluation.
 pub mod query;
 
-// New input pipeline modules
-/// Per-frame resolved action output.
-pub mod action_frame;
 /// Native-event translation adapters (feature-gated per framework).
 pub mod adapters;
-/// Per-frame viewport context.
-pub mod context;
-/// Framework-agnostic viewport events.
-pub mod event;
-/// Named control presets.
-pub mod preset;
-/// Viewport gesture and binding types.
-pub mod viewport_binding;
 /// Stateful viewport input accumulator and resolver.
 pub mod viewport_input;
 

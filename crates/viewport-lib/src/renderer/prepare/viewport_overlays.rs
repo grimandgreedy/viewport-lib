@@ -105,6 +105,8 @@ fn encode_overlay_shape(
         // encoder. Callers skip Vector shapes before reaching here. Used as a
         // clip mask it degrades to its bounding box.
         OverlayShape::Vector { .. } => (0.0, [0.0; 4]),
+        // OverlayShape is non_exhaustive; no special edge/radius for shapes not handled here.
+        _ => (0.0, [0.0; 4]),
     }
 }
 
@@ -429,14 +431,13 @@ impl ViewportRenderer {
                     {
                         poly
                     } else {
-                        translated_storage = crate::renderer::types::OverlayPolylineItem {
-                            points: poly
-                                .points
-                                .iter()
-                                .map(|p| [p[0] + offset[0], p[1] + offset[1]])
-                                .collect(),
-                            ..poly.clone()
-                        };
+                        let mut ts = poly.clone();
+                        ts.points = poly
+                            .points
+                            .iter()
+                            .map(|p| [p[0] + offset[0], p[1] + offset[1]])
+                            .collect();
+                        translated_storage = ts;
                         &translated_storage
                     };
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
@@ -1071,6 +1072,8 @@ impl ViewportRenderer {
                         // Skipped earlier in the loop; this keeps the match
                         // exhaustive without drawing the vector shape as a rect.
                         crate::renderer::types::OverlayShape::Vector { .. } => (0.0, [0.0; 4]),
+                        // OverlayShape is non_exhaustive; encode unknown shapes as a plain rect.
+                        _ => (0.0, [0.0; 4]),
                     };
 
                     // Resolve the fill into four colour stops + positions +
@@ -1133,6 +1136,11 @@ impl ViewportRenderer {
                         } => {
                             stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
                             [3.0_f32, *offset_angle]
+                        }
+                        // OverlayFill is non_exhaustive; render unknown fills as a flat no-op gradient.
+                        _ => {
+                            stop_count = 0.0;
+                            [0.0_f32, 0.0]
                         }
                     };
                     let start_colour = stop_colours[0];
@@ -1431,14 +1439,13 @@ impl ViewportRenderer {
                     {
                         poly
                     } else {
-                        translated_storage = crate::renderer::types::OverlayPolylineItem {
-                            points: poly
-                                .points
-                                .iter()
-                                .map(|p| [p[0] + offset[0], p[1] + offset[1]])
-                                .collect(),
-                            ..poly.clone()
-                        };
+                        let mut ts = poly.clone();
+                        ts.points = poly
+                            .points
+                            .iter()
+                            .map(|p| [p[0] + offset[0], p[1] + offset[1]])
+                            .collect();
+                        translated_storage = ts;
                         &translated_storage
                     };
                     let Some((min, max)) = polyline_bounds(&poly.points) else {

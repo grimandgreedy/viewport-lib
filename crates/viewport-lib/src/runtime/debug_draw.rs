@@ -672,14 +672,13 @@ impl DebugDraw {
                 ..
             } = prim
             {
-                out.push(LabelItem {
-                    anchor: crate::renderer::OverlayAnchor::World((*position).into()),
-                    text: text.clone(),
-                    colour: *colour,
-                    leader_line: true,
-                    font_size: 12.0,
-                    ..LabelItem::default()
-                });
+                let mut label = LabelItem::default();
+                label.anchor = crate::renderer::OverlayAnchor::World((*position).into());
+                label.text = text.clone();
+                label.colour = *colour;
+                label.leader_line = true;
+                label.font_size = 12.0;
+                out.push(label);
             }
         }
         out

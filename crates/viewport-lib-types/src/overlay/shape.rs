@@ -1,4 +1,4 @@
-use crate::renderer::types::*;
+use crate::overlay::*;
 
 /// Shape type for an `OverlayShapeItem`.
 ///
@@ -182,7 +182,7 @@ impl Default for OverlayShape {
 /// # Examples
 ///
 /// ```rust
-/// # use viewport_lib::{OverlayShapeItem, OverlayShape, OverlayFill};
+/// # use viewport_lib_types::overlay::{OverlayShapeItem, OverlayShape, OverlayFill};
 /// // Rounded-rect panel background.
 /// let panel = OverlayShapeItem::new(
 ///     OverlayShape::Rect { corner_radius: 8.0 },

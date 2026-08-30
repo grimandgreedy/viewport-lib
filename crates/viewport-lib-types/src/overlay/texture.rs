@@ -25,7 +25,7 @@ impl OverlayTextureId {
     }
 }
 
-impl crate::resources::handle::ContentHandle for OverlayTextureId {
+impl crate::ids::ContentHandle for OverlayTextureId {
     const INVALID: Self = OverlayTextureId(u64::MAX);
 
     fn index(&self) -> usize {

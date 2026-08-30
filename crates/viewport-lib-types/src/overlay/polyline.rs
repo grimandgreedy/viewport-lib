@@ -1,4 +1,4 @@
-use crate::renderer::types::*;
+use crate::overlay::*;
 
 /// How an [`OverlayPolylineItem`] handles each joint between segments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -34,7 +34,7 @@ pub enum PolylineCap {
 /// Dash and dot placement is measured in accumulated arc length along the
 /// path. The unit depends on the item: logical pixels for the screen-space
 /// [`OverlayPolylineItem`], world-space units for the 3-D
-/// [`PolylineItem`](crate::renderer::types::PolylineItem) (measured along the
+/// [`OverlayPolylineItem`](crate::overlay::OverlayPolylineItem) (measured along the
 /// line in its input space). On closed overlay polylines the pattern continues
 /// across the final-to-first segment.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

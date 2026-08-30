@@ -16,13 +16,10 @@ const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../../fonts/Inter-Regular.ttf"
 // FontHandle : public opaque identifier
 // ---------------------------------------------------------------------------
 
-/// Opaque handle to a font uploaded via
-/// [`DeviceResources::upload_font`](super::DeviceResources::upload_font).
-///
-/// Pass `None` (or omit the field) on overlay items to use the built-in default
-/// font.  Pass `Some(handle)` to use a user-supplied TTF font.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FontHandle(pub usize);
+// The handle a consumer names on an overlay item lives in `viewport-lib-types`;
+// the font store and rasterization below stay here. Re-exported so the existing
+// `crate::resources::overlay::font::FontHandle` path keeps resolving.
+pub use viewport_lib_types::overlay::font::FontHandle;
 
 // ---------------------------------------------------------------------------
 // GlyphKey / GlyphEntry : atlas bookkeeping

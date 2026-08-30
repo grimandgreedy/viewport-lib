@@ -1,4 +1,4 @@
-/// Fill style for an [`OverlayShapeItem`].
+/// Fill style for an [`OverlayShapeItem`](crate::overlay::OverlayShapeItem).
 ///
 /// `Solid` is the default and matches the previous single-colour behaviour.
 /// `LinearGradient`, `RadialGradient`, and `ConicalGradient` interpolate

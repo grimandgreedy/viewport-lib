@@ -13,7 +13,7 @@ pub enum InputMode {
 
 /// How the camera responds to orbit drag input.
 ///
-/// Set on [`crate::camera::controllers::orbit::OrbitCameraController`] to switch between the
+/// Set on the `OrbitCameraController` to switch between the
 /// four navigation styles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -40,7 +40,7 @@ pub enum NavigationMode {
     /// Free-fly through the scene.
     ///
     /// Mouse drag acts as mouselook (yaw + pitch with the eye held fixed).
-    /// WASD / Q / E translate the camera position at [`crate::camera::controllers::orbit::OrbitCameraController::fly_speed`]
+    /// WASD / Q / E translate the camera position at the `OrbitCameraController` fly speed
     /// units per frame. The `ViewportAll` binding preset must be active for
     /// the movement keys to be resolved.
     ///

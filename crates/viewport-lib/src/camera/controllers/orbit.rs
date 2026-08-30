@@ -271,6 +271,9 @@ impl OrbitCameraController {
                 // Translate center (and thus eye) without changing orientation or distance.
                 camera.center += move_delta;
             }
+
+            // NavigationMode is non_exhaustive; no-op for modes not handled here.
+            _ => {}
         }
     }
 }

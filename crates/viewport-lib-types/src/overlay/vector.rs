@@ -1,4 +1,4 @@
-//! Geometry for [`OverlayShape::Vector`](crate::renderer::types::OverlayShape):
+//! Geometry for [`OverlayShape::Vector`](crate::overlay::OverlayShape):
 //! an arbitrary vector shape built from subpaths of line and Bezier segments,
 //! combined by a fill rule. This is the authoring representation; the renderer
 //! flattens and tessellates it to triangles when it draws the shape.
@@ -111,7 +111,7 @@ pub enum FillRule {
 
 /// Number of straight segments a curve is subdivided into for the CPU
 /// point-in-path test. This is only used for hit-testing
-/// ([`OverlayShapeItem::contains`](crate::renderer::types::OverlayShapeItem::contains));
+/// ([`OverlayShapeItem::contains`](crate::overlay::OverlayShapeItem::contains));
 /// the GPU fill uses a tolerance-driven tessellator instead.
 const CONTAINS_CURVE_STEPS: usize = 24;
 
@@ -171,7 +171,8 @@ fn flatten_subpath(sp: &SubPath) -> Vec<[f32; 2]> {
 /// Flatten every subpath to a polyline of points, subdividing curves at a
 /// fixed step count. Used for stroking a vector shape's outline and for the
 /// point-in-path test; the GPU fill uses a tolerance-driven tessellator.
-pub(crate) fn flatten_contours(subpaths: &[SubPath]) -> Vec<Vec<[f32; 2]>> {
+#[doc(hidden)]
+pub fn flatten_contours(subpaths: &[SubPath]) -> Vec<Vec<[f32; 2]>> {
     subpaths.iter().map(flatten_subpath).collect()
 }
 

@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use super::action::Action;
-use super::action_frame::{ActionFrame, NavigationActions, ResolvedActionState};
+use super::action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 use super::binding::{KeyCode, Modifiers, MouseButton};
 use super::context::ViewportContext;
 use super::event::{ButtonState, ScrollUnits, ViewportEvent};
@@ -234,6 +234,8 @@ impl ViewportInput {
                     self.rotate_gesture += angle;
                 }
             }
+            // ViewportEvent is non_exhaustive; ignore events this pipeline does not handle.
+            _ => {}
         }
     }
 
@@ -350,23 +352,26 @@ impl ViewportInput {
             }
         }
 
-        ActionFrame {
-            navigation: NavigationActions {
-                orbit,
-                pan,
-                zoom,
-                twist: self.rotate_gesture,
-            },
-            actions,
-            typed_chars: self.typed_chars.clone(),
-            pointer: super::action_frame::PointerFrame {
-                cursor: self.pointer_pos,
-                delta: self.pointer_delta,
-                clicked: self.left_clicked,
-                drag_started: self.left_drag_started,
-                dragging: self.button_held[button_index(MouseButton::Left)],
-            },
-        }
+        // ActionFrame and PointerFrame are non_exhaustive (built here, read by
+        // consumers), so populate them through Default rather than a literal.
+        let mut pointer = PointerFrame::default();
+        pointer.cursor = self.pointer_pos;
+        pointer.delta = self.pointer_delta;
+        pointer.clicked = self.left_clicked;
+        pointer.drag_started = self.left_drag_started;
+        pointer.dragging = self.button_held[button_index(MouseButton::Left)];
+
+        let mut frame = ActionFrame::default();
+        frame.navigation = NavigationActions {
+            orbit,
+            pan,
+            zoom,
+            twist: self.rotate_gesture,
+        };
+        frame.actions = actions;
+        frame.typed_chars = self.typed_chars.clone();
+        frame.pointer = pointer;
+        frame
     }
 
     /// Current modifier state.
