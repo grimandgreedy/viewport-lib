@@ -3761,21 +3761,21 @@ impl ViewportRenderer {
         // Runs after the HDR scene pass (which has depth+stencil) in a separate
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
-        if !slot.outline_object_buffers.is_empty()
-            || !slot.splat_outline_buffers.is_empty()
-            || !slot.streamtube_outline_items.is_empty()
-            || !slot.tube_outline_items.is_empty()
-            || !slot.ribbon_outline_items.is_empty()
-            || !slot.polyline_outline_indices.is_empty()
-            || !slot.volume_outline_indices.is_empty()
-            || !slot.glyph_outline_indices.is_empty()
-            || !slot.tensor_glyph_outline_indices.is_empty()
-            || !slot.sprite_outline_indices.is_empty()
-            || !slot.raw_geom_outline_buffers.is_empty()
-            || !slot.screen_rect_outline_buffers.is_empty()
-            || !slot.implicit_outline_indices.is_empty()
-            || !slot.mc_outline_data.is_empty()
-            || slot.plugin_outline_present
+        if !slot.selection_outlines.outline_object_buffers.is_empty()
+            || !slot.selection_outlines.splat_outline_buffers.is_empty()
+            || !slot.selection_outlines.streamtube_outline_items.is_empty()
+            || !slot.selection_outlines.tube_outline_items.is_empty()
+            || !slot.selection_outlines.ribbon_outline_items.is_empty()
+            || !slot.selection_outlines.polyline_outline_indices.is_empty()
+            || !slot.selection_outlines.volume_outline_indices.is_empty()
+            || !slot.selection_outlines.glyph_outline_indices.is_empty()
+            || !slot.selection_outlines.tensor_glyph_outline_indices.is_empty()
+            || !slot.selection_outlines.sprite_outline_indices.is_empty()
+            || !slot.selection_outlines.raw_geom_outline_buffers.is_empty()
+            || !slot.selection_outlines.screen_rect_outline_buffers.is_empty()
+            || !slot.selection_outlines.implicit_outline_indices.is_empty()
+            || !slot.selection_outlines.mc_outline_data.is_empty()
+            || slot.selection_outlines.plugin_outline_present
         {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.
             let hdr_pipeline = self

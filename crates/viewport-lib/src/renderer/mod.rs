@@ -115,6 +115,49 @@ use crate::resources::{
     ShadowAtlasUniform, SingleLightUniform, SplatOutlineMaskUniform,
 };
 
+/// Per-frame selection-outline state for one viewport, one entry per scene-item
+/// kind, rebuilt in prepare(). Each kind either owns dedicated outline buffers or
+/// records indices into that kind's `*_gpu_data`; the outline mask/edge passes and
+/// the composite walk these. Grouped so `ViewportSlot` carries one field instead of
+/// a dozen parallel ones.
+#[derive(Default)]
+pub(crate) struct SelectionOutlines {
+    /// Per-frame outline buffers for selected objects.
+    pub outline_object_buffers: Vec<OutlineObjectBuffers>,
+    /// Per-frame outline buffers for selected Gaussian splat sets.
+    pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
+    /// Indices into `volume_gpu_data` for selected volumes.
+    pub volume_outline_indices: Vec<usize>,
+    /// Indices into `glyph_gpu_data` for selected glyph sets. Each entry is
+    /// (gpu_data_index, instance_filter): None draws all instances, Some(indices)
+    /// draws only those specific instance indices.
+    pub glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
+    /// Indices into `tensor_glyph_gpu_data` for selected tensor glyph sets.
+    pub tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
+    /// Indices into `sprite_gpu_data` for selected sprite sets.
+    pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
+    /// Per-frame inline quad outline buffers for selected image slices.
+    pub raw_geom_outline_buffers: Vec<crate::resources::RawGeomOutlineBuffers>,
+    /// Per-frame NDC rect outline buffers for selected screen images.
+    pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
+    /// Indices into `implicit_gpu_data` for selected GPU implicit items.
+    pub implicit_outline_indices: Vec<usize>,
+    /// Per-frame outline data for selected GPU marching cubes jobs.
+    pub mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>,
+    /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
+    pub streamtube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
+    /// Outline items for selected tubes.
+    pub tube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
+    /// Outline items for selected ribbons.
+    pub ribbon_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
+    /// Indices into polyline_gpu_data for selected user polylines.
+    pub polyline_outline_indices: Vec<usize>,
+    /// True when an item-type plugin drew selection coverage into the outline
+    /// mask this frame. Plugin outline coverage is not tracked in the per-kind
+    /// buffers above, so the mask/edge pass and the composite also gate on this.
+    pub plugin_outline_present: bool,
+}
+
 /// Per-viewport GPU state: uniform buffers and bind groups that differ per viewport.
 ///
 /// Each viewport slot owns its own camera, clip planes, clip volume, shadow info,
@@ -163,40 +206,8 @@ pub(crate) struct ViewportSlot {
     pub debug_frag_dims: (u32, u32),
 
     // --- Per-viewport interaction state ---
-    /// Per-frame outline buffers for selected objects, rebuilt in prepare().
-    pub outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Per-frame outline buffers for selected Gaussian splat sets, rebuilt in prepare().
-    pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
-    /// Indices into `volume_gpu_data` for selected volumes, rebuilt in prepare().
-    pub volume_outline_indices: Vec<usize>,
-    /// Indices into `glyph_gpu_data` for selected glyph sets, rebuilt in prepare().
-    /// Each entry is (gpu_data_index, instance_filter): None draws all instances,
-    /// Some(indices) draws only those specific instance indices.
-    pub glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Indices into `tensor_glyph_gpu_data` for selected tensor glyph sets, rebuilt in prepare().
-    pub tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Indices into `sprite_gpu_data` for selected sprite sets, rebuilt in prepare().
-    pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Per-frame inline quad outline buffers for selected image slices, rebuilt in prepare().
-    pub raw_geom_outline_buffers: Vec<crate::resources::RawGeomOutlineBuffers>,
-    /// Per-frame NDC rect outline buffers for selected screen images, rebuilt in prepare().
-    pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
-    /// Indices into `implicit_gpu_data` for selected GPU implicit items, rebuilt in prepare().
-    pub implicit_outline_indices: Vec<usize>,
-    /// Per-frame outline data for selected GPU marching cubes jobs, rebuilt in prepare().
-    pub mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>,
-    /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
-    pub streamtube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Outline items for selected tubes.
-    pub tube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Outline items for selected ribbons.
-    pub ribbon_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Indices into polyline_gpu_data for selected user polylines.
-    pub polyline_outline_indices: Vec<usize>,
-    /// True when an item-type plugin drew selection coverage into the outline
-    /// mask this frame. Plugin outline coverage is not tracked in the per-kind
-    /// buffers above, so the mask/edge pass and the composite also gate on this.
-    pub plugin_outline_present: bool,
+    /// Per-frame selection-outline state, one entry per scene-item kind, rebuilt in prepare().
+    pub selection_outlines: SelectionOutlines,
     /// Per-frame x-ray buffers for selected objects, rebuilt in prepare().
     pub xray_object_buffers: Vec<(
         crate::resources::mesh::mesh_store::MeshId,
@@ -2698,21 +2709,7 @@ impl ViewportRenderer {
                 cull: crate::resources::ViewportCullState::new(),
                 debug_frag_buf: None,
                 debug_frag_dims: (0, 0),
-                outline_object_buffers: Vec::new(),
-                splat_outline_buffers: Vec::new(),
-                volume_outline_indices: Vec::new(),
-                glyph_outline_indices: Vec::new(),
-                tensor_glyph_outline_indices: Vec::new(),
-                sprite_outline_indices: Vec::new(),
-                raw_geom_outline_buffers: Vec::new(),
-                screen_rect_outline_buffers: Vec::new(),
-                implicit_outline_indices: Vec::new(),
-                mc_outline_data: Vec::new(),
-                streamtube_outline_items: Vec::new(),
-                tube_outline_items: Vec::new(),
-                ribbon_outline_items: Vec::new(),
-                polyline_outline_indices: Vec::new(),
-                plugin_outline_present: false,
+                selection_outlines: SelectionOutlines::default(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),

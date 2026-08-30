@@ -946,17 +946,17 @@ macro_rules! emit_outline_composite {
         let resources = $resources;
         let render_pass = $render_pass;
         if let Some(slot) = $vp_slot {
-            if !slot.outline_object_buffers.is_empty()
-                || !slot.splat_outline_buffers.is_empty()
-                || !slot.streamtube_outline_items.is_empty()
-                || !slot.tube_outline_items.is_empty()
-                || !slot.ribbon_outline_items.is_empty()
-                || !slot.polyline_outline_indices.is_empty()
-                || !slot.volume_outline_indices.is_empty()
-                || !slot.glyph_outline_indices.is_empty()
-                || !slot.tensor_glyph_outline_indices.is_empty()
-                || !slot.sprite_outline_indices.is_empty()
-                || slot.plugin_outline_present
+            if !slot.selection_outlines.outline_object_buffers.is_empty()
+                || !slot.selection_outlines.splat_outline_buffers.is_empty()
+                || !slot.selection_outlines.streamtube_outline_items.is_empty()
+                || !slot.selection_outlines.tube_outline_items.is_empty()
+                || !slot.selection_outlines.ribbon_outline_items.is_empty()
+                || !slot.selection_outlines.polyline_outline_indices.is_empty()
+                || !slot.selection_outlines.volume_outline_indices.is_empty()
+                || !slot.selection_outlines.glyph_outline_indices.is_empty()
+                || !slot.selection_outlines.tensor_glyph_outline_indices.is_empty()
+                || !slot.selection_outlines.sprite_outline_indices.is_empty()
+                || slot.selection_outlines.plugin_outline_present
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
                 let pipeline = resources
