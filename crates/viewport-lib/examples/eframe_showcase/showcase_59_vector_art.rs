@@ -15,10 +15,14 @@ use vpl::{FillRule, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
 
 use crate::App;
 
-/// Bundled sample art (both public domain). Paths are relative to the repo root
-/// (the example is run from there).
-const TIGER: &str = "examples/eframe_showcase/assets/tiger.svg";
-const YIN_YANG: &str = "examples/eframe_showcase/assets/yin_yang.svg";
+/// Bundled sample art (both public domain). Anchored to the crate directory at
+/// compile time so the files resolve no matter the working directory the example
+/// is launched from.
+const TIGER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/eframe_showcase/assets/tiger.svg");
+const YIN_YANG: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/eframe_showcase/assets/yin_yang.svg"
+);
 
 pub(crate) struct VectorArtState {
     /// User scale, percent of the fit-to-region size.
