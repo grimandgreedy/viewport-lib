@@ -11,8 +11,8 @@ use iced::widget::shader;
 use iced::{Element, Fill, Rectangle, mouse};
 use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshId, Modifiers, MouseButton,
-    OrbitCameraController, RenderCamera, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportRenderer, primitives,
+    OffscreenViewportTarget, OrbitCameraController, RenderCamera, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
 use crate::Message;
@@ -84,51 +84,137 @@ pub struct ViewportPipeline {
     renderer: ViewportRenderer,
     /// Track which object ids have been uploaded -> mesh_index.
     uploaded: HashMap<u64, MeshId>,
-    /// Current depth texture + view (recreated on resize).
-    depth_view: wgpu::TextureView,
-    depth_w: u32,
-    depth_h: u32,
-    _target_format: wgpu::TextureFormat,
+    /// Offscreen sRGB target the scene renders into, recreated on resize. iced
+    /// hands the shader widget a non-sRGB surface view (`Bgra8Unorm` here), so
+    /// rendering straight into it would skip the tonemap's linear->sRGB encode
+    /// and come out too dark. Instead we render into this sRGB target (encode
+    /// happens on write) and blit the encoded bytes into iced's target.
+    offscreen: Option<OffscreenViewportTarget>,
+    blit_pipeline: wgpu::RenderPipeline,
+    blit_bgl: wgpu::BindGroupLayout,
+    blit_sampler: wgpu::Sampler,
+    /// Bind group over the offscreen sample view, rebuilt when it is recreated.
+    blit_bind: Option<wgpu::BindGroup>,
+    /// The format iced renders to (the blit's output target format).
+    target_format: wgpu::TextureFormat,
 }
 
-impl ViewportPipeline {
-    fn ensure_depth(
-        device: &wgpu::Device,
-        w: u32,
-        h: u32,
-        format: wgpu::TextureFormat,
-    ) -> wgpu::TextureView {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("iced_viewport_depth"),
-            size: wgpu::Extent3d {
-                width: w.max(1),
-                height: h.max(1),
-                depth_or_array_layers: 1,
+/// Fullscreen-triangle blit: samples the offscreen (non-sRGB view, so the
+/// sRGB-encoded bytes are read verbatim) and writes them to iced's target.
+const BLIT_WGSL: &str = r#"
+@group(0) @binding(0) var src_tex: texture_2d<f32>;
+@group(0) @binding(1) var src_smp: sampler;
+
+struct VOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> VOut {
+    var xy = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0),
+    );
+    let p = xy[vi];
+    var out: VOut;
+    out.pos = vec4<f32>(p, 0.0, 1.0);
+    out.uv = vec2<f32>((p.x + 1.0) * 0.5, (1.0 - p.y) * 0.5);
+    return out;
+}
+
+@fragment
+fn fs(in: VOut) -> @location(0) vec4<f32> {
+    return textureSample(src_tex, src_smp, in.uv);
+}
+"#;
+
+fn create_blit(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::Sampler) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("iced_viewport_blit_shader"),
+        source: wgpu::ShaderSource::Wgsl(BLIT_WGSL.into()),
+    });
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("iced_viewport_blit_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        tex.create_view(&wgpu::TextureViewDescriptor::default())
-    }
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("iced_viewport_blit_layout"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("iced_viewport_blit_pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("iced_viewport_blit_sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    (pipeline, bgl, sampler)
 }
 
 impl shader::Pipeline for ViewportPipeline {
     fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let renderer = ViewportRenderer::new(device, format);
-        let depth_view =
-            Self::ensure_depth(device, 256, 256, wgpu::TextureFormat::Depth24PlusStencil8);
+        // Render into an sRGB target so the tonemap encode happens; iced's own
+        // target (`format`) is non-sRGB and receives the encoded bytes via blit.
+        let renderer =
+            ViewportRenderer::new(device, OffscreenViewportTarget::render_format(format));
+        let (blit_pipeline, blit_bgl, blit_sampler) = create_blit(device, format);
 
         Self {
             renderer,
             uploaded: HashMap::new(),
-            depth_view,
-            depth_w: 256,
-            depth_h: 256,
-            _target_format: format,
+            offscreen: None,
+            blit_pipeline,
+            blit_bgl,
+            blit_sampler,
+            blit_bind: None,
+            target_format: format,
         }
     }
 }
@@ -148,18 +234,20 @@ impl shader::Primitive for ViewportPrimitive {
         bounds: &Rectangle,
         viewport: &shader::Viewport,
     ) {
-        let w = viewport.physical_width();
-        let h = viewport.physical_height();
-
-        if w != pipeline.depth_w || h != pipeline.depth_h {
-            pipeline.depth_view = ViewportPipeline::ensure_depth(
+        let scale = viewport.scale_factor() as f32;
+        // Size the offscreen to the widget's physical pixels (the blit maps it
+        // across the same rect). Recreate on resize and drop the stale bind group.
+        let size = [
+            (bounds.width * scale).round().max(1.0) as u32,
+            (bounds.height * scale).round().max(1.0) as u32,
+        ];
+        if pipeline.offscreen.as_ref().map(|o| o.size()) != Some(size) {
+            pipeline.offscreen = Some(OffscreenViewportTarget::new(
                 device,
-                w,
-                h,
-                wgpu::TextureFormat::Depth24PlusStencil8,
-            );
-            pipeline.depth_w = w;
-            pipeline.depth_h = h;
+                pipeline.target_format,
+                size,
+            ));
+            pipeline.blit_bind = None;
         }
 
         for obj in &self.objects {
@@ -199,11 +287,35 @@ impl shader::Primitive for ViewportPrimitive {
         frame_data.viewport.grid_z = -0.5;
         frame_data.viewport.show_axes_indicator = true;
 
-        // prepare_callback encodes HDR pre-pass work when display.mode is PipelineMode::Hdr
-        // and returns a CommandBuffer that must be submitted before the render pass.
-        let pre_cmds = pipeline.renderer.pass().prepare(device, queue, &frame_data);
-        if !pre_cmds.is_empty() {
-            queue.submit(pre_cmds.into_iter());
+        // Render the whole frame (prepare + paint, depth managed internally) into
+        // the offscreen sRGB target. `render` then just blits the result.
+        let offscreen = pipeline
+            .offscreen
+            .as_ref()
+            .expect("offscreen created above");
+        pipeline
+            .renderer
+            .render_to_texture(device, queue, offscreen.render_view(), &frame_data);
+
+        // Build the blit bind group once per offscreen texture (its sample view
+        // is stable until the next resize).
+        if pipeline.blit_bind.is_none() {
+            let offscreen = pipeline.offscreen.as_ref().unwrap();
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("iced_viewport_blit_bind"),
+                layout: &pipeline.blit_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(offscreen.sample_view()),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&pipeline.blit_sampler),
+                    },
+                ],
+            });
+            pipeline.blit_bind = Some(bind);
         }
     }
 
@@ -214,55 +326,25 @@ impl shader::Primitive for ViewportPrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let scene_items: Vec<SceneRenderItem> = self
-            .objects
-            .iter()
-            .filter_map(|obj| {
-                let mesh_id = *pipeline.uploaded.get(&obj.id)?;
-                let model = glam::Mat4::from_translation(glam::Vec3::from(obj.position));
-                let mut item = SceneRenderItem::default();
-                item.mesh_id = mesh_id;
-                item.model = model.to_cols_array_2d();
-                Some(item)
-            })
-            .collect();
-
-        let mut frame_data = FrameData::new(
-            CameraFrame::new(
-                self.camera_snapshot.render_camera.clone(),
-                [clip_bounds.width as f32, clip_bounds.height as f32],
-            ),
-            SceneFrame::from_surface_items(scene_items),
-        );
-        frame_data.effects.lighting = LightingSettings::default();
-        frame_data.viewport.show_grid = true;
-        frame_data.viewport.grid_z = -0.5;
-        frame_data.viewport.show_axes_indicator = true;
+        // The scene was rendered into the offscreen target in `prepare`; here we
+        // just blit its (sRGB-encoded) bytes into iced's target over the widget
+        // rect. The blit covers every pixel it touches, so a Load is fine.
+        let Some(bind) = pipeline.blit_bind.as_ref() else {
+            return;
+        };
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("iced_viewport_render_pass"),
+            label: Some("iced_viewport_blit_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.1,
-                        g: 0.1,
-                        b: 0.12,
-                        a: 1.0,
-                    }),
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &pipeline.depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Discard,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
         });
@@ -275,13 +357,15 @@ impl shader::Primitive for ViewportPrimitive {
             0.0,
             1.0,
         );
-
-        // pass_view().paint() delegates to paint_callback, which blits the HDR result when
-        // HDR was staged in prepare, or draws LDR directly otherwise.
-        pipeline
-            .renderer
-            .pass_view()
-            .paint(&mut render_pass, &frame_data);
+        render_pass.set_scissor_rect(
+            clip_bounds.x,
+            clip_bounds.y,
+            clip_bounds.width,
+            clip_bounds.height,
+        );
+        render_pass.set_pipeline(&pipeline.blit_pipeline);
+        render_pass.set_bind_group(0, bind, &[]);
+        render_pass.draw(0..3, 0..1);
     }
 }
 
