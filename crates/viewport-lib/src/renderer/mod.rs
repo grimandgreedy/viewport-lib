@@ -230,11 +230,6 @@ pub(crate) struct ViewportSlot {
         crate::gpu::Buffer,
         crate::gpu::BindGroup,
     )>,
-    /// Vertex buffer for axes indicator geometry (rebuilt each frame).
-    pub axes_vertex_buffer: crate::gpu::Buffer,
-    /// Number of vertices in the axes indicator buffer.
-    pub axes_vertex_count: u32,
-
     // --- Sub-object highlight (per-viewport, generation-cached) ---
     /// Per-viewport dynamic resolution intermediate render target.
     /// `None` when render_scale == 1.0 or not yet initialised.
@@ -248,25 +243,6 @@ pub(crate) struct ViewportSlot {
     /// Version of the last sub-selection snapshot that was uploaded.
     /// `u64::MAX` forces a rebuild on the first frame.
     pub sub_highlight_generation: u64,
-}
-
-impl ViewportSlot {
-    /// Draw the axes orientation indicator into an already-begun render pass.
-    ///
-    /// Shared by the LDR and HDR paths; both draw it last in screen space so it
-    /// sits on top. Does nothing when the indicator is disabled or empty.
-    pub(crate) fn draw_axes_indicator(
-        &self,
-        render_pass: &mut crate::gpu::RenderPass<'_>,
-        resources: &DeviceResources,
-        show_axes_indicator: bool,
-    ) {
-        if show_axes_indicator && self.axes_vertex_count > 0 {
-            render_pass.set_pipeline(&resources.guides.axes_pipeline);
-            render_pass.set_vertex_buffer(0, self.axes_vertex_buffer.slice(..));
-            render_pass.draw(0..self.axes_vertex_count, 0..1);
-        }
-    }
 }
 
 /// Retained pick state for one GPU implicit surface, built during `prepare()`.
@@ -2680,17 +2656,8 @@ impl ViewportRenderer {
                 }],
             });
 
-            // The transform gizmo now draws through the 2D overlay system, so
-            // no per-viewport gizmo geometry buffers are needed.
-
-            // Per-viewport axes vertex buffer (2048 vertices = enough for all axes geometry).
-            let axes_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("vp_axes_vertex_buf"),
-                size: (std::mem::size_of::<crate::interaction::widgets::axes_indicator::AxesVertex>(
-                ) * 2048) as u64,
-                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+            // The transform gizmo and the axes indicator now draw through the 2D
+            // overlay system, so no per-viewport geometry buffers are needed for them.
 
             self.viewport_slots.push(ViewportSlot {
                 camera_buf,
@@ -2713,8 +2680,6 @@ impl ViewportRenderer {
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
-                axes_vertex_buffer,
-                axes_vertex_count: 0,
                 sub_highlight: None,
                 sub_highlight_generation: u64::MAX,
                 dyn_res: None,

@@ -4665,39 +4665,8 @@ impl ViewportRenderer {
             }
         }
 
-        // Axes indicator pass (HDR path): draw in screen space on the final
-        // output after tone mapping / FXAA so it stays visible in PBR mode.
-        if frame.viewport.show_axes_indicator {
-            let slot = &self.viewport_slots[vp_idx];
-            if slot.axes_vertex_count > 0 {
-                let slot_hdr = slot.hdr.as_ref().unwrap();
-                let mut axes_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
-                    multiview_mask: None,
-                    label: Some("hdr_axes_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: output_view,
-                        resolve_target: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Load,
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                        view: &slot_hdr.output_depth_view,
-                        depth_ops: Some(crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Load,
-                            store: crate::gpu::StoreOp::Discard,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                slot.draw_axes_indicator(&mut axes_pass, &self.resources, true);
-            }
-        }
+        // The axes orientation indicator draws as screen-space overlay shapes in
+        // the shared overlay pass (see `axes_overlay_items`), not here.
     }
 
     fn hdr_final_overlay(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

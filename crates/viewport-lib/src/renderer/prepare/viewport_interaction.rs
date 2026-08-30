@@ -1353,24 +1353,9 @@ impl ViewportRenderer {
             }
         }
 
-        // Axes indicator geometry (built here, written to slot buffer below).
-        let axes_verts = if frame.viewport.show_axes_indicator
-            && frame.camera.viewport_size[0] > 0.0
-            && frame.camera.viewport_size[1] > 0.0
-        {
-            let verts = crate::interaction::widgets::axes_indicator::build_axes_geometry(
-                frame.camera.viewport_size[0],
-                frame.camera.viewport_size[1],
-                frame.camera.render_camera.orientation,
-            );
-            if verts.is_empty() { None } else { Some(verts) }
-        } else {
-            None
-        };
-
-        // The transform gizmo is generated as 2D overlay primitives during the
-        // overlay prepare (see `gizmo_overlay::build_gizmo_overlays`); no
-        // per-viewport mesh upload happens here anymore.
+        // The transform gizmo and the axes indicator are generated as 2D overlay
+        // primitives during the overlay prepare (see `gizmo_overlay_items` and
+        // `axes_overlay_items`); no per-viewport mesh upload happens here anymore.
 
         // ------------------------------------------------------------------
         // Assign all interaction state to the per-viewport slot.
@@ -1394,24 +1379,6 @@ impl ViewportRenderer {
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.cap_buffers = cap_buffers;
-
-            // Axes: resize buffer if needed, then upload.
-            if let Some(verts) = axes_verts {
-                let byte_size = std::mem::size_of_val(verts.as_slice()) as u64;
-                if byte_size > slot.axes_vertex_buffer.size() {
-                    slot.axes_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-                        label: Some("vp_axes_vertex_buf"),
-                        size: byte_size,
-                        usage: crate::gpu::BufferUsages::VERTEX
-                            | crate::gpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                }
-                queue.write_buffer(&slot.axes_vertex_buffer, 0, bytemuck::cast_slice(&verts));
-                slot.axes_vertex_count = verts.len() as u32;
-            } else {
-                slot.axes_vertex_count = 0;
-            }
         }
     }
 

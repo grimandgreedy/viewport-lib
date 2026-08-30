@@ -344,6 +344,26 @@ impl ViewportRenderer {
         (shapes, polylines)
     }
 
+    /// The bottom-left XYZ orientation indicator, emitted as screen-space overlay
+    /// shapes (axis lines, circles, rings, letters) into the shared shape pass.
+    /// Empty when `show_axes_indicator` is off or the viewport has no area.
+    fn axes_overlay_items(
+        &self,
+        frame: &FrameData,
+    ) -> Vec<crate::renderer::types::OverlayShapeItem> {
+        let mut shapes = Vec::new();
+        let [w, h] = frame.camera.viewport_size;
+        if frame.viewport.show_axes_indicator && w > 0.0 && h > 0.0 {
+            crate::interaction::widgets::axes_indicator::build_axes_overlays(
+                w,
+                h,
+                frame.camera.render_camera.orientation,
+                &mut shapes,
+            );
+        }
+        shapes
+    }
+
     pub(super) fn prepare_overlay_labels(
         &mut self,
         device: &crate::gpu::Device,
@@ -753,6 +773,8 @@ impl ViewportRenderer {
         // The gizmo's arrow shafts and cone heads are generated as overlay
         // shapes; they merge into the shape batch here (see `gizmo_overlay`).
         let (gizmo_shapes, _) = self.gizmo_overlay_items(frame);
+        // The bottom-left orientation indicator draws as overlay shapes too.
+        let axes_shapes = self.axes_overlay_items(frame);
         let has_textured_polyline_fill = frame
             .overlays
             .polylines
@@ -760,6 +782,7 @@ impl ViewportRenderer {
             .any(|p| p.closed && p.texture.is_some() && p.opacity > 0.0 && p.points.len() >= 3);
         if !frame.overlays.shapes.is_empty()
             || !gizmo_shapes.is_empty()
+            || !axes_shapes.is_empty()
             || has_textured_polyline_fill
         {
             let vp_w = frame.camera.viewport_size[0];
@@ -770,6 +793,7 @@ impl ViewportRenderer {
                     .shapes
                     .iter()
                     .chain(gizmo_shapes.iter())
+                    .chain(axes_shapes.iter())
                     .collect();
                 sorted.sort_by_key(|s| s.z_order);
 

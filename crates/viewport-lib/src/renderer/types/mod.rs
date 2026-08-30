@@ -925,14 +925,8 @@ macro_rules! emit_draw_calls {
             }
         }
 
-        // Axes indicator pass (screen-space, last so it draws on top).
-        if let Some(slot) = _vp_slot {
-            slot.draw_axes_indicator(
-                &mut *render_pass,
-                resources,
-                frame.viewport.show_axes_indicator,
-            );
-        }
+        // The axes orientation indicator now draws as screen-space overlay shapes
+        // in the shared overlay pass (see `axes_overlay_items`), not here.
     }};
 }
 

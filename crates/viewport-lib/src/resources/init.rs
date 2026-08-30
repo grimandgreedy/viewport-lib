@@ -1662,71 +1662,8 @@ impl DeviceResources {
             },
         );
 
-        // ------------------------------------------------------------------
-        // Axes indicator pipeline (screen-space, no camera, no depth)
-        // ------------------------------------------------------------------
-        let axes_shader = crate::resources::builders::wgsl_module(
-            device,
-            "axes_overlay_shader",
-            crate::resources::builders::wgsl_source!("axes_overlay"),
-        );
-
-        let axes_pipeline_layout =
-            crate::resources::builders::pipeline_layout(device, "axes_pipeline_layout", &[]);
-
-        let axes_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "axes_pipeline",
-                layout: &axes_pipeline_layout,
-                vertex: crate::gpu::VertexState {
-                    module: &axes_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[
-                        crate::interaction::widgets::axes_indicator::AxesVertex::buffer_layout(),
-                    ],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &axes_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: crate::gpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: crate::gpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Always,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // Pre-allocate vertex buffer (resized in prepare if needed).
-        let axes_vertex_buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("axes_vertex_buf"),
-            size: (std::mem::size_of::<crate::interaction::widgets::axes_indicator::AxesVertex>()
-                * 2048) as u64,
-            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // The axes orientation indicator draws through the shared 2D overlay
+        // shape pass, so it needs no dedicated pipeline or vertex buffer.
 
         mark("ui_pipelines");
 
@@ -2424,9 +2361,6 @@ impl DeviceResources {
                 grid_uniform_buf,
                 grid_bind_group,
                 grid_bgl,
-                axes_pipeline,
-                axes_vertex_buffer,
-                axes_vertex_count: 0,
                 constraint_lines: Vec::new(),
             },
             ground: crate::resources::ground_plane::GroundPlaneResources {
