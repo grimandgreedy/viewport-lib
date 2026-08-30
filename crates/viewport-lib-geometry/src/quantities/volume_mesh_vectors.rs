@@ -13,8 +13,8 @@
 //! One world-space vector per cell (tet or hex). Glyphs are placed at cell centroids.
 //! Use [`volume_mesh_cell_vectors_to_glyphs`].
 
-use crate::GlyphItem;
-use crate::resources::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+use crate::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+use viewport_lib_types::render_item::glyph::GlyphItem;
 
 /// Convert per-vertex world-space vectors on a volume mesh to a [`GlyphItem`].
 ///
@@ -41,12 +41,11 @@ pub fn volume_mesh_vertex_vectors_to_glyphs(
         glyph_vectors.push(vectors[i]);
     }
 
-    GlyphItem {
-        positions: glyph_positions,
-        vectors: glyph_vectors,
-        scale,
-        ..Default::default()
-    }
+    let mut g = GlyphItem::default();
+    g.positions = glyph_positions;
+    g.vectors = glyph_vectors;
+    g.scale = scale;
+    g
 }
 
 /// Convert per-cell world-space vectors on a volume mesh to a [`GlyphItem`].
@@ -100,12 +99,11 @@ pub fn volume_mesh_cell_vectors_to_glyphs(
         glyph_vectors.push(cell_vectors[c]);
     }
 
-    GlyphItem {
-        positions: glyph_positions,
-        vectors: glyph_vectors,
-        scale,
-        ..Default::default()
-    }
+    let mut g = GlyphItem::default();
+    g.positions = glyph_positions;
+    g.vectors = glyph_vectors;
+    g.scale = scale;
+    g
 }
 
 #[cfg(test)]

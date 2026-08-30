@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 /// Result of cap mesh generation: positions, indices, and flat normal.
 #[allow(dead_code)]
-pub(crate) struct CapMesh {
+pub struct CapMesh {
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub normal: [f32; 3],
@@ -295,7 +295,7 @@ fn ear_clip(pts: &[[f32; 2]]) -> Vec<[usize; 3]> {
 /// Generate cap mesh geometry for a single mesh intersected by a single clip plane.
 ///
 /// Returns `None` if the mesh doesn't intersect the plane or produces degenerate geometry.
-pub(crate) fn generate_cap_mesh(
+pub fn generate_cap_mesh(
     positions: &[[f32; 3]],
     indices: &[u32],
     model: &glam::Mat4,

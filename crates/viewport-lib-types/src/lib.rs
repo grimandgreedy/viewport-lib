@@ -23,6 +23,7 @@ pub mod ids;
 pub mod input;
 pub mod material;
 pub mod overlay;
+pub mod render_item;
 pub mod scene;
 
 pub mod prelude {
@@ -39,5 +40,5 @@ pub mod prelude {
     pub use crate::input::{Action, ActionFrame, ViewportEvent};
     pub use crate::material::Material;
     pub use crate::overlay::{LabelItem, OverlayShape, OverlayShapeItem};
-    pub use crate::scene::Aabb;
+    pub use crate::scene::{Aabb, NodeId};
 }

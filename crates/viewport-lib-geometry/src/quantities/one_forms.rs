@@ -23,7 +23,7 @@
 //! where `eij = pj - pi`, `R(v) = cross(n, v)` (90 deg rotation in the face plane),
 //! and `area` is the signed triangle area (`|n_raw| / 2`).
 
-use crate::GlyphItem;
+use viewport_lib_types::render_item::glyph::GlyphItem;
 
 /// Convert a scalar-per-directed-edge one-form to a [`GlyphItem`] via Whitney
 /// reconstruction.

@@ -10,8 +10,8 @@
 //! The tangent frame is derived from the mesh normals (and optional explicit
 //! tangents) so that the coefficients are meaningful in surface-local coordinates.
 
-use super::tangent_frames;
-use crate::GlyphItem;
+use crate::tangent_frames;
+use viewport_lib_types::render_item::glyph::GlyphItem;
 
 /// Convert vertex-indexed 2D intrinsic vectors to a [`GlyphItem`].
 ///

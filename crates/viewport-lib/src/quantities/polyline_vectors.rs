@@ -33,12 +33,11 @@ use crate::{GlyphItem, PolylineItem};
 /// `node_vectors` is empty.
 pub fn polyline_node_vectors_to_glyphs(item: &PolylineItem) -> GlyphItem {
     let n = item.positions.len().min(item.node_vectors.len());
-    GlyphItem {
-        positions: item.positions[..n].to_vec(),
-        vectors: item.node_vectors[..n].to_vec(),
-        scale: item.vector_scale,
-        ..Default::default()
-    }
+    let mut g = GlyphItem::default();
+    g.positions = item.positions[..n].to_vec();
+    g.vectors = item.node_vectors[..n].to_vec();
+    g.scale = item.vector_scale;
+    g
 }
 
 /// Convert the `edge_vectors` field of a [`PolylineItem`] into a [`GlyphItem`].
@@ -93,12 +92,11 @@ pub fn polyline_edge_vectors_to_glyphs(item: &PolylineItem) -> GlyphItem {
         }
     }
 
-    GlyphItem {
-        positions: glyph_positions,
-        vectors: glyph_vectors,
-        scale: item.vector_scale,
-        ..Default::default()
-    }
+    let mut g = GlyphItem::default();
+    g.positions = glyph_positions;
+    g.vectors = glyph_vectors;
+    g.scale = item.vector_scale;
+    g
 }
 
 #[cfg(test)]

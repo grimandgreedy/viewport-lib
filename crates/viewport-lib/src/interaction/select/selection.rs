@@ -7,7 +7,10 @@
 use std::collections::HashSet;
 
 /// Node identifier : matches `ViewportObject::id()` return type.
-pub type NodeId = u64;
+///
+/// Defined in `viewport-lib-types` (scene vocabulary); re-exported here so the
+/// established `interaction::select::selection::NodeId` path keeps resolving.
+pub use viewport_lib_types::scene::NodeId;
 
 /// A set of selected nodes with a primary (most recently selected) node.
 #[derive(Debug, Clone)]

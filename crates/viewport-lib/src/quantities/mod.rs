@@ -36,11 +36,14 @@
 //! When omitted, smooth per-vertex frames are derived from the normals via
 //! Gram-Schmidt orthogonalisation.
 
-pub mod intrinsic_vectors;
-pub mod one_forms;
 pub mod polyline_vectors;
-pub mod tangent_frames;
-pub mod volume_mesh_vectors;
+
+// The pure vector-quantity conversions and tangent-frame maths live in
+// `viewport-lib-geometry`; re-exported here so the `quantities::*` paths and the
+// functions below keep resolving. `polyline_vectors` stays (it consumes the
+// renderer-side `PolylineItem`).
+pub use viewport_lib_geometry::quantities::{intrinsic_vectors, one_forms, volume_mesh_vectors};
+pub use viewport_lib_geometry::tangent_frames;
 
 pub use intrinsic_vectors::{face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs};
 pub use one_forms::edge_one_form_to_glyphs;

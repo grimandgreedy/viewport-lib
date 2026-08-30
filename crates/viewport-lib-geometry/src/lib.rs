@@ -11,8 +11,23 @@
 //! The renderer-coupled geometry (BVH picking, implicit sphere-marching, the
 //! primitive builders) stays in `viewport-lib`.
 
+/// Ray/primitive intersection helpers.
+pub mod intersect;
 pub mod marching_cubes;
+/// Pure CPU mesh operations: tangent computation, attribute expansion, validation.
+pub mod mesh_ops;
+/// Geometry primitives: cube, sphere, plane, cylinder, cone, capsule, torus and friends.
+pub mod primitives;
+/// On-surface vector quantities: vector fields and one-forms to glyph sets.
+pub mod quantities;
+/// Per-vertex and per-face tangent-frame computation (Gram-Schmidt).
+pub mod tangent_frames;
 pub mod volume_mesh;
+
+/// Clip-plane cap mesh generation (plane-mesh contour extraction + triangulation).
+pub mod cap_geometry;
+/// Polyline construction helpers (circle loops and similar wireframe primitives).
+pub mod polyline;
 
 pub mod prelude {
     //! The geometry entry points, in one glob import:

@@ -126,20 +126,18 @@ impl SplineWidget {
     pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
         let ref_pos = self.points.first().copied().unwrap_or(glam::Vec3::ZERO);
         let radius = handle_world_radius(ref_pos, &ctx.camera, ctx.viewport_size.y, 8.0);
-        GlyphItem {
-            positions: self.points.iter().map(|p| p.to_array()).collect(),
-            glyph_type: GlyphType::Sphere,
-            scale: radius,
-            use_default_colour: true,
-            default_colour: self.handle_colour,
-
-            settings: {
-                let mut s = crate::scene::material::ItemSettings::default();
-                s.pick_id = crate::renderer::PickId(id_base);
-                s
-            },
-            ..GlyphItem::default()
-        }
+        let mut g = GlyphItem::default();
+        g.positions = self.points.iter().map(|p| p.to_array()).collect();
+        g.glyph_type = GlyphType::Sphere;
+        g.scale = radius;
+        g.use_default_colour = true;
+        g.default_colour = self.handle_colour;
+        g.settings = {
+            let mut s = crate::scene::material::ItemSettings::default();
+            s.pick_id = crate::renderer::PickId(id_base);
+            s
+        };
+        g
     }
 
     /// Evaluate the Catmull-Rom spline and return sampled world-space positions.

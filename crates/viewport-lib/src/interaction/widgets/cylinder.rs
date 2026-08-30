@@ -218,28 +218,24 @@ impl CylinderWidget {
             }
         };
 
-        GlyphItem {
-            positions: vec![self.start.to_array(), self.end.to_array(), rh.to_array()],
-            vectors: vec![[rs, 0.0, 0.0], [re, 0.0, 0.0], [rr, 0.0, 0.0]],
-            scale: 1.0,
-            scale_by_magnitude: true,
-            scalars: vec![
-                scalar(CylinderHandle::Start),
-                scalar(CylinderHandle::End),
-                scalar(CylinderHandle::Radius),
-            ],
-            scalar_range: Some((0.0, 1.0)),
-            glyph_type: GlyphType::Sphere,
-
-            settings: {
-                let mut s = crate::scene::material::ItemSettings::default();
-                s.pick_id = crate::renderer::PickId(id_base);
-                s
-            },
-            default_colour: self.handle_colour,
-            use_default_colour: self.handle_colour[3] > 0.0,
-            ..GlyphItem::default()
-        }
+        let mut g = GlyphItem::default();
+        g.positions = vec![self.start.to_array(), self.end.to_array(), rh.to_array()];
+        g.vectors = vec![[rs, 0.0, 0.0], [re, 0.0, 0.0], [rr, 0.0, 0.0]];
+        g.scalars = vec![
+            scalar(CylinderHandle::Start),
+            scalar(CylinderHandle::End),
+            scalar(CylinderHandle::Radius),
+        ];
+        g.scalar_range = Some((0.0, 1.0));
+        g.glyph_type = GlyphType::Sphere;
+        g.settings = {
+            let mut s = crate::scene::material::ItemSettings::default();
+            s.pick_id = crate::renderer::PickId(id_base);
+            s
+        };
+        g.default_colour = self.handle_colour;
+        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g
     }
 
     // -----------------------------------------------------------------------

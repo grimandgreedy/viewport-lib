@@ -1,4 +1,4 @@
-use crate::resources::MeshData;
+use viewport_lib_types::data::mesh::MeshData;
 
 /// Unit cube (side length 1, centered at the origin).
 ///

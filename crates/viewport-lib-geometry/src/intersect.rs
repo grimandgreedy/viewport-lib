@@ -3,7 +3,7 @@
 /// Compute the intersection point of a ray with a plane.
 ///
 /// The plane equation is `dot(p, normal) + distance = 0`, matching
-/// [`ClipShape::Plane`](crate::renderer::types::ClipShape::Plane).
+/// viewport-lib's `ClipShape::Plane`.
 ///
 /// Returns `Some(point)` if the ray hits the plane in front of the origin,
 /// `None` if the ray is parallel to the plane or the intersection is behind it.

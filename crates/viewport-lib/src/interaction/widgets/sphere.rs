@@ -213,24 +213,20 @@ impl SphereWidget {
             0.2
         };
 
-        GlyphItem {
-            positions: vec![self.center.to_array(), rp.to_array()],
-            vectors: vec![[r_center, 0.0, 0.0], [r_rh, 0.0, 0.0]],
-            scale: 1.0,
-            scale_by_magnitude: true,
-            scalars: vec![sc, sr],
-            scalar_range: Some((0.0, 1.0)),
-            glyph_type: GlyphType::Sphere,
-
-            settings: {
-                let mut s = crate::scene::material::ItemSettings::default();
-                s.pick_id = crate::renderer::PickId(id_base);
-                s
-            },
-            default_colour: self.handle_colour,
-            use_default_colour: self.handle_colour[3] > 0.0,
-            ..GlyphItem::default()
-        }
+        let mut g = GlyphItem::default();
+        g.positions = vec![self.center.to_array(), rp.to_array()];
+        g.vectors = vec![[r_center, 0.0, 0.0], [r_rh, 0.0, 0.0]];
+        g.scalars = vec![sc, sr];
+        g.scalar_range = Some((0.0, 1.0));
+        g.glyph_type = GlyphType::Sphere;
+        g.settings = {
+            let mut s = crate::scene::material::ItemSettings::default();
+            s.pick_id = crate::renderer::PickId(id_base);
+            s
+        };
+        g.default_colour = self.handle_colour;
+        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g
     }
 
     // -----------------------------------------------------------------------

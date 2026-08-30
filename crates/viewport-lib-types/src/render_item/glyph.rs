@@ -1,5 +1,5 @@
-use crate::resources::ColourmapId;
-use crate::scene::material::ItemSettings;
+use crate::colourmap::ColourmapId;
+use crate::material::ItemSettings;
 
 /// Glyph shape type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
