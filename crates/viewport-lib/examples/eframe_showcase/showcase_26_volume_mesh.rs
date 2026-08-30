@@ -1004,18 +1004,11 @@ impl App {
 
         let normal = self.vm_clip_normal();
         let mut clip = ClipObject::plane(normal, self.vm_state.clip_offset);
-        clip.shape = ClipShape::Plane {
-            normal,
-            distance: self.vm_state.clip_offset,
-            cap_colour: None,
-            display_center: None,
-        };
         // In transparent mode, no opaque CPU-clipped mesh is drawn, so the GPU
         // clip plane must be active to cull the projected-tet fragments.
         // In opaque mode, CPU extraction already handles clipping and enabling
         // the GPU clip on top causes floating-point noise on the section faces.
         clip.clip_geometry = self.vm_state.transparent;
-        clip.extent = 3.5;
         vec![clip]
     }
 
@@ -1212,9 +1205,11 @@ pub(crate) fn vm_configure_frame(app: &App, fd: &mut FrameData) {
     // Section-plane edge indicator, drawn as a clip-exempt world-space polyline so
     // it stays visible across the cut.
     for co in clip_objects.iter().filter(|c| c.enabled) {
+        // Half-extent of the section-plane indicator quad (world units).
+        let extent = 3.5;
         fd.scene.polylines.push(vpl::clip_plane::visual::outline(
             &co.shape,
-            co.extent,
+            extent,
             [0.75, 0.85, 1.0, 1.0],
         ));
     }

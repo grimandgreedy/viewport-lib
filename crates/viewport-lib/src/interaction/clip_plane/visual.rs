@@ -29,8 +29,8 @@ fn finish_outline(mut item: PolylineItem, colour: [f32; 4]) -> PolylineItem {
 
 /// Outline for a clip plane: the border rectangle (sized by `extent`) plus a
 /// normal-direction handle from the centre. `center` is the world point the quad
-/// is drawn around (the caller resolves `display_center` or the foot of the
-/// normal), `normal` is the plane normal.
+/// is drawn around (typically the foot of the normal, or a host-supplied lateral
+/// centre), `normal` is the plane normal.
 pub fn plane_outline(
     center: [f32; 3],
     normal: [f32; 3],
@@ -197,14 +197,13 @@ pub fn cylinder_outline(
 pub fn outline(shape: &ClipShape, extent: f32, colour: [f32; 4]) -> PolylineItem {
     match *shape {
         ClipShape::Plane {
-            normal,
-            distance,
-            display_center,
-            ..
+            normal, distance, ..
         } => {
-            let center = display_center.unwrap_or_else(|| {
-                (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array()
-            });
+            // Foot of the normal from the world origin. A host that translates the
+            // plane laterally (its own display centre) calls `plane_outline`
+            // directly with that centre instead.
+            let center =
+                (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
             plane_outline(center, normal, extent, colour)
         }
         ClipShape::Box {

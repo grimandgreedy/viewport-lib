@@ -140,18 +140,13 @@ impl SphereWidget {
     /// Push into `fd.effects.clip.objects`. `clip_geometry` is set to `false` so
     /// the sphere only renders as a visual indicator and does not clip geometry.
     pub fn clip_object(&self) -> ClipObject {
-        let edge = [self.colour[0], self.colour[1], self.colour[2], 1.0];
         ClipObject {
             shape: ClipShape::Sphere {
                 center: self.center.to_array(),
                 radius: self.radius,
             },
-            colour: Some(self.colour),
-            edge_colour: Some(edge),
             clip_geometry: false,
             enabled: true,
-            hovered: self.hovered_handle.is_some(),
-            active: self.active_handle.is_some(),
             ..ClipObject::default()
         }
     }

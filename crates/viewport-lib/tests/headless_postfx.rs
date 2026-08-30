@@ -385,10 +385,7 @@ fn foreground_item_ignores_scene_clip_planes() {
         normal: [0.0, 0.0, 1.0],
         distance: -100.0,
         cap_colour: None,
-        display_center: None,
     };
-    clip.colour = None;
-    clip.edge_colour = None;
 
     let mut frame = foreground_frame();
     frame.effects.clip.objects.push(clip);

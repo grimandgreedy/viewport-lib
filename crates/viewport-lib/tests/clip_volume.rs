@@ -43,7 +43,6 @@ fn clip_objects_construct_and_assign() {
         normal: [0.0, 1.0, 0.0],
         distance: -5.0,
         cap_colour: None,
-        display_center: None,
     };
     frame.effects.clip.objects.push(obj);
     assert!(matches!(

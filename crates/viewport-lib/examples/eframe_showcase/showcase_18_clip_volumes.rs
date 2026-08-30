@@ -20,6 +20,9 @@ use vpl::{
 /// Colour for the clip-object outlines and the plane fill.
 const CLIP_COLOUR: [f32; 3] = [0.45, 0.82, 1.0];
 
+/// Half-extent of the clip-plane indicator quad (world units).
+const PLANE_EXTENT: f32 = 4.5;
+
 // ---------------------------------------------------------------------------
 // Scene mode
 // ---------------------------------------------------------------------------
@@ -533,7 +536,8 @@ impl App {
             } = co.shape
             {
                 let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
-                let model = vpl::clip_plane::visual::plane_fill_transform(center, normal, co.extent);
+                let model =
+                    vpl::clip_plane::visual::plane_fill_transform(center, normal, PLANE_EXTENT);
                 let mut material = Material::from_colour(CLIP_COLOUR);
                 material.alpha_mode = AlphaMode::Blend;
                 material.backface_policy = BackfacePolicy::Identical;
@@ -610,7 +614,7 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
         for co in clip_objects.iter().filter(|c| c.enabled) {
             fd.scene
                 .polylines
-                .push(vpl::clip_plane::visual::outline(&co.shape, co.extent, colour));
+                .push(vpl::clip_plane::visual::outline(&co.shape, PLANE_EXTENT, colour));
         }
     }
     fd.effects.clip.objects.extend(clip_objects);

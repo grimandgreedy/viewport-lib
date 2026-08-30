@@ -17,13 +17,6 @@ pub enum ClipShape {
         distance: f32,
         /// Cap fill colour override. `None` = use the clipped mesh's base_colour.
         cap_colour: Option<[f32; 4]>,
-        /// World-space point on the plane used to position the overlay quad.
-        ///
-        /// When `None`, the renderer falls back to `normal * (-distance)`, which is
-        /// the closest point on the plane to the world origin.  Set this to the
-        /// user-facing origin (e.g. a drag handle position) so the overlay stays
-        /// centred under the gizmo when the plane is translated laterally.
-        display_center: Option<[f32; 3]>,
     },
     /// Oriented box : fragments inside the box are kept.
     Box {
@@ -67,24 +60,12 @@ pub enum ClipShape {
 /// [`PolylineItem`](crate::PolylineItem) for any shape, plus a translucent fill mesh
 /// for the plane - and submit it as an ordinary scene primitive with
 /// `ItemSettings::ignore_clip = true` so it stays visible through active clips.
-///
-/// The `colour` / `edge_colour` / `extent` / `hovered` / `active` fields are retained
-/// for now but no longer read by the renderer; they move to the module side in a
-/// later change.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClipObject {
-    /// The clipping shape (plane, box, or sphere).
+    /// The clipping shape (plane, box, sphere, or cylinder).
     pub shape: ClipShape,
-    /// RGBA fill colour for the plane quad. `None` = no fill drawn.
-    ///
-    /// When both `colour` and `edge_colour` are `None`, no visual is drawn at all.
-    pub colour: Option<[f32; 4]>,
-    /// RGBA colour for the plane border edge. `None` = derive from `colour` (original behaviour).
-    ///
-    /// Set independently to show a visible edge while keeping the fill transparent.
-    pub edge_colour: Option<[f32; 4]>,
     /// Whether this object clips rendered geometry via the GPU clip-plane uniform.
     ///
     /// Set to `false` to produce only a visual indicator without affecting geometry.
@@ -92,12 +73,6 @@ pub struct ClipObject {
     pub clip_geometry: bool,
     /// Whether this object is active. Disabled objects are ignored entirely.
     pub enabled: bool,
-    /// Visual and hit-test half-extent for `Plane` shapes (world units). Default `4.5`.
-    pub extent: f32,
-    /// Hover state : set by `ClipPlaneController`, read by renderer.
-    pub hovered: bool,
-    /// Active drag state : set by `ClipPlaneController`, read by renderer.
-    pub active: bool,
 }
 
 impl Default for ClipObject {
@@ -107,15 +82,9 @@ impl Default for ClipObject {
                 normal: [0.0, 0.0, 1.0],
                 distance: 0.0,
                 cap_colour: None,
-                display_center: None,
             },
-            colour: None,
-            edge_colour: None,
             clip_geometry: true,
             enabled: true,
-            extent: 4.5,
-            hovered: false,
-            active: false,
         }
     }
 }
@@ -128,7 +97,6 @@ impl ClipObject {
                 normal,
                 distance,
                 cap_colour: None,
-                display_center: None,
             },
             ..Default::default()
         }

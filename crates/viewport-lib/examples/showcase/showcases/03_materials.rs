@@ -109,9 +109,7 @@ impl MaterialsShowcase {
             let rows = self.sets[self.active].len() as f32;
             // y of the last row (see rebuild): -((rows - 1) / 2) * SPACING.
             let row_y = -((rows - 1.0) * 0.5) * SPACING;
-            let mut plane = ClipObject::plane([0.0, 1.0, 0.0], -row_y);
-            plane.colour = None;
-            plane.edge_colour = None;
+            let plane = ClipObject::plane([0.0, 1.0, 0.0], -row_y);
             effects.clip.objects = vec![plane];
             effects.clip.cap_fill_enabled = false;
         } else {
