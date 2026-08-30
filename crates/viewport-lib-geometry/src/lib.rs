@@ -13,3 +13,10 @@
 
 pub mod marching_cubes;
 pub mod volume_mesh;
+
+pub mod prelude {
+    //! The geometry entry points, in one glob import:
+    //! `use viewport_lib_geometry::prelude::*;`.
+    pub use crate::marching_cubes::{VolumeData, extract_isosurface};
+    pub use crate::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
+}

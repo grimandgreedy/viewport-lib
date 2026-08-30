@@ -91,6 +91,15 @@ pub mod gpu;
 /// versions stay in one place.
 pub use crate::gpu as wgpu;
 
+/// The pure-data types crate (`viewport-lib-types`), re-exported under the short
+/// `vplt` alias: `viewport_lib::vplt::overlay::OverlayShape`. Most renderer
+/// consumers can use the crate-root re-exports instead (`viewport_lib::MeshData`).
+pub use viewport_lib_types as vplt;
+
+/// The CPU geometry crate (`viewport-lib-geometry`), re-exported under the short
+/// `vplg` alias: `viewport_lib::vplg::marching_cubes::extract_isosurface`.
+pub use viewport_lib_geometry as vplg;
+
 /// Error types for the viewport library.
 pub mod error;
 

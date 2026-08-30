@@ -24,3 +24,20 @@ pub mod input;
 pub mod material;
 pub mod overlay;
 pub mod scene;
+
+pub mod prelude {
+    //! The types most code reaches for, in one glob import:
+    //! `use viewport_lib_types::prelude::*;`.
+    //!
+    //! This is the common set, not the whole surface. Reach into the individual
+    //! modules (`data`, `overlay`, `input`, `effects`, ...) for the rest.
+    pub use crate::camera::Camera;
+    pub use crate::colourmap::BuiltinColourmap;
+    pub use crate::data::{attribute::AttributeData, mesh::MeshData};
+    pub use crate::error::{ViewportError, ViewportResult};
+    pub use crate::ids::{MeshId, TextureId};
+    pub use crate::input::{Action, ActionFrame, ViewportEvent};
+    pub use crate::material::Material;
+    pub use crate::overlay::{LabelItem, OverlayShape, OverlayShapeItem};
+    pub use crate::scene::Aabb;
+}
