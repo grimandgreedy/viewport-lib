@@ -417,15 +417,17 @@ fn ray_segment_t(
 // Gizmo colours (shared by the overlay gizmo builder)
 // ---------------------------------------------------------------------------
 
-/// Axis colour definitions (per UI-SPEC).
-/// X = red, Y = green, Z = blue; brightened variants for hover.
-const X_COLOUR: [f32; 4] = [0.878, 0.322, 0.322, 1.0]; // #e05252
-const Y_COLOUR: [f32; 4] = [0.361, 0.722, 0.361, 1.0]; // #5cb85c
-const Z_COLOUR: [f32; 4] = [0.290, 0.620, 1.0, 1.0]; // #4a9eff
+// Axis colours in linear light, matching the axes orientation indicator so the
+// two agree on screen (both draw through the overlay pass, which encodes to the
+// sRGB target on write). X = red, Y = green, Z = blue; hover variants are the
+// base scaled by 1.3 and clamped.
+const X_COLOUR: [f32; 4] = [0.75, 0.06, 0.07, 1.0];
+const Y_COLOUR: [f32; 4] = [0.18, 0.55, 0.03, 1.0];
+const Z_COLOUR: [f32; 4] = [0.05, 0.27, 0.72, 1.0];
 
-const X_COLOUR_HOV: [f32; 4] = [1.0, 0.518, 0.518, 1.0]; // X * 1.3 clamped
-const Y_COLOUR_HOV: [f32; 4] = [0.469, 0.938, 0.469, 1.0]; // Y * 1.3 clamped
-const Z_COLOUR_HOV: [f32; 4] = [0.377, 0.806, 1.0, 1.0]; // Z * 1.3 clamped
+const X_COLOUR_HOV: [f32; 4] = [0.975, 0.078, 0.091, 1.0]; // X * 1.3
+const Y_COLOUR_HOV: [f32; 4] = [0.234, 0.715, 0.039, 1.0]; // Y * 1.3
+const Z_COLOUR_HOV: [f32; 4] = [0.065, 0.351, 0.936, 1.0]; // Z * 1.3
 
 const SCREEN_COLOUR: [f32; 4] = [0.9, 0.9, 0.9, 0.6];
 const SCREEN_COLOUR_HOV: [f32; 4] = [1.0, 1.0, 1.0, 0.8];
