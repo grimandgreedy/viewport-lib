@@ -24,13 +24,11 @@ exclude = ["examples/"]
 wgpu = { version = "27.0", features = ["metal", "vulkan"], optional = true }
 wgpu29 = { package = "wgpu", version = "29.0", features = ["metal", "vulkan"], optional = true }
 glam = { workspace = true }
-# The pure-data vocabulary crate. Declared now so the two-crate workspace
-# resolution and crates.io publish order are exercised; its types are moved in
-# incrementally and re-exported from here.
 viewport-lib-types = { path = "../viewport-lib-types", version = "0.1.0" }
 viewport-lib-geometry = { path = "../viewport-lib-geometry", version = "0.1.0" }
 viewport-lib-input = { path = "../viewport-lib-input", version = "0.1.0" }
 bytemuck = { version = "1.25", features = ["derive"] }
+spatial-query = "0.1"
 parry3d = "0.26"
 bitflags = "2"
 rayon = "1"

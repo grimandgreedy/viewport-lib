@@ -35,9 +35,8 @@
 //! framebuffer and therefore needs no skinning awareness here: skinned meshes
 //! pick the same way as static meshes.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-
-use rayon;
 
 use crate::interaction::select::selection::NodeId;
 use crate::resources::mesh::mesh_store::MeshId;
@@ -46,6 +45,7 @@ use crate::scene::scene::Scene;
 
 use parry3d::math::Vector;
 use parry3d::query::{Ray, RayCast};
+use spatial_query::{Aabb as SqAabb, Bvh, LeafHit, Point, QueryFilter, QueryGeometry, Ray as SqRay};
 
 use crate::renderer::SubObjectRef;
 
@@ -58,33 +58,14 @@ struct BvhEntry {
     world_transform: glam::Mat4,
 }
 
-/// BVH tree node.
-enum BvhNode {
-    Leaf {
-        entry_indices: Vec<usize>,
-        aabb: Aabb,
-    },
-    Interior {
-        aabb: Aabb,
-        left: Box<BvhNode>,
-        right: Box<BvhNode>,
-    },
-}
-
-impl BvhNode {
-    fn aabb(&self) -> &Aabb {
-        match self {
-            BvhNode::Leaf { aabb, .. } => aabb,
-            BvhNode::Interior { aabb, .. } => aabb,
-        }
-    }
-}
-
 /// BVH-accelerated picking structure with TriMesh cache.
 pub struct PickAccelerator {
     entries: Vec<BvhEntry>,
-    root: Option<BvhNode>,
-    trimesh_cache: HashMap<usize, parry3d::shape::TriMesh>,
+    bvh: Option<Bvh<3>>,
+    /// Lazily built parry `TriMesh` per mesh index. `RefCell` because the
+    /// narrow-phase [`cast_leaf`] runs behind the `&self` [`QueryGeometry::test_ray`]
+    /// during a query, and populates the cache on first touch.
+    trimesh_cache: RefCell<HashMap<usize, parry3d::shape::TriMesh>>,
 }
 
 impl PickAccelerator {
@@ -111,17 +92,24 @@ impl PickAccelerator {
             }
         }
 
-        let indices: Vec<usize> = (0..entries.len()).collect();
-        let root = if entries.is_empty() {
+        let trimesh_cache = RefCell::new(HashMap::new());
+        let bvh = if entries.is_empty() {
             None
         } else {
-            Some(build_bvh_node(&entries, indices))
+            // Build only reads leaf AABBs, so the mesh lookup is unused here.
+            let empty = HashMap::new();
+            let geom = PickGeom {
+                entries: &entries,
+                mesh_lookup: &empty,
+                cache: &trimesh_cache,
+            };
+            Some(Bvh::build(&geom))
         };
 
         Self {
             entries,
-            root,
-            trimesh_cache: HashMap::new(),
+            bvh,
+            trimesh_cache,
         }
     }
 
@@ -166,139 +154,40 @@ impl PickAccelerator {
         ray_dir: glam::Vec3,
         mesh_lookup: &HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
     ) -> Option<crate::renderer::PickHit> {
-        let root = self.root.as_ref()?;
-        let mut best: Option<(NodeId, f32, crate::renderer::PickHit)> = None;
+        let bvh = self.bvh.as_ref()?;
 
-        // Collect candidate entry indices via iterative BVH traversal (read-only).
-        let mut candidates = Vec::new();
-        let mut stack: Vec<&BvhNode> = vec![root];
-        while let Some(node) = stack.pop() {
-            if !ray_aabb_test(ray_origin, ray_dir, node.aabb()) {
-                continue;
-            }
-            match node {
-                BvhNode::Leaf { entry_indices, .. } => {
-                    candidates.extend_from_slice(entry_indices);
-                }
-                BvhNode::Interior { left, right, .. } => {
-                    stack.push(left);
-                    stack.push(right);
-                }
-            }
-        }
-
-        // Test each candidate (may mutate trimesh_cache).
-        for idx in candidates {
-            let node_id = self.entries[idx].node_id;
-            let mesh_index = self.entries[idx].mesh_index;
-            let world_transform = self.entries[idx].world_transform;
-
-            if let Some((toi, mut hit)) = self.test_entry_by_parts(
-                mesh_index,
-                &world_transform,
-                ray_origin,
-                ray_dir,
-                mesh_lookup,
-            ) {
-                if best.is_none() || toi < best.as_ref().unwrap().1 {
-                    hit.id = node_id;
-                    best = Some((node_id, toi, hit));
-                }
-            }
-        }
-
-        best.map(|(_, _, hit)| hit)
-    }
-
-    fn test_entry_by_parts(
-        &mut self,
-        mesh_index: usize,
-        world_transform: &glam::Mat4,
-        ray_origin: glam::Vec3,
-        ray_dir: glam::Vec3,
-        mesh_lookup: &HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
-    ) -> Option<(f32, crate::renderer::PickHit)> {
-        let (positions, indices) = mesh_lookup.get(&(mesh_index as u64))?;
-
-        // Lazily build and cache TriMesh.
-        if let std::collections::hash_map::Entry::Vacant(e) = self.trimesh_cache.entry(mesh_index) {
-            let verts: Vec<Vector> = positions
-                .iter()
-                .map(|p| Vector::new(p[0], p[1], p[2]))
-                .collect();
-            let tri_indices: Vec<[u32; 3]> = indices
-                .chunks(3)
-                .filter(|c| c.len() == 3)
-                .map(|c| [c[0], c[1], c[2]])
-                .collect();
-            if tri_indices.is_empty() {
-                return None;
-            }
-            match parry3d::shape::TriMesh::new(verts, tri_indices) {
-                Ok(tm) => {
-                    e.insert(tm);
-                }
-                Err(_) => return None,
-            }
-        }
-
-        let trimesh = self.trimesh_cache.get(&mesh_index)?;
-
-        // Extract scale, rotation, translation from world transform.
-        let (scale, rotation, translation) = world_transform.to_scale_rotation_translation();
-
-        // Transform ray into object's local (scaled) space.
-        let inv_rot = rotation.inverse();
-        let local_origin = inv_rot * (ray_origin - translation);
-        let local_dir = inv_rot * ray_dir;
-        let inv_scale = glam::Vec3::new(1.0 / scale.x, 1.0 / scale.y, 1.0 / scale.z);
-        let scaled_origin = local_origin * inv_scale;
-        let scaled_dir = (local_dir * inv_scale).normalize();
-
-        let ray = Ray::new(
-            Vector::new(scaled_origin.x, scaled_origin.y, scaled_origin.z),
-            Vector::new(scaled_dir.x, scaled_dir.y, scaled_dir.z),
+        // Broad phase: the spatial-query BVH walks to the nearest leaf whose
+        // triangle the ray hits. Its `test_ray` runs the same parry narrow-phase as
+        // the final hit below, so the winning leaf is the object a brute-force scan
+        // would pick.
+        let geom = PickGeom {
+            entries: &self.entries,
+            mesh_lookup,
+            cache: &self.trimesh_cache,
+        };
+        let ray = SqRay::new(
+            Point([ray_origin.x, ray_origin.y, ray_origin.z]),
+            Point([ray_dir.x, ray_dir.y, ray_dir.z]),
         );
+        let hit = bvh.raycast_nearest(&geom, &ray, f32::MAX, &QueryFilter::default())?;
 
-        trimesh
-            .cast_local_ray_and_get_normal(&ray, f32::MAX, true)
-            .map(|intersection| {
-                // Scale TOI back to world space.
-                let avg_scale = (scale.x + scale.y + scale.z) / 3.0;
-                let toi = intersection.time_of_impact * avg_scale;
-
-                let sub_object = SubObjectRef::from_feature_id(intersection.feature);
-
-                // Transform hit point to world space.
-                // scaled_origin and scaled_dir are in inv-scaled local space, so:
-                // local_hit = scaled_origin + scaled_dir * intersection.time_of_impact
-                // undo inv_scale: multiply by scale to get unscaled local coords
-                // then apply rotation and translation.
-                let local_hit_scaled = scaled_origin + scaled_dir * intersection.time_of_impact;
-                let local_hit = local_hit_scaled * scale;
-                let world_pos = rotation * local_hit + translation;
-
-                // Transform normal to world space.
-                // The normal from cast_local_ray_and_get_normal is in scaled-local space.
-                // Use inverse-transpose (scale the normal by inv_scale) then normalize.
-                let world_normal = (rotation * (intersection.normal * inv_scale)).normalize();
-
-                #[allow(deprecated)]
-                let hit = crate::renderer::PickHit {
-                    id: 0, // placeholder : caller fills in actual node_id
-                    sub_object,
-                    world_pos,
-                    normal: world_normal,
-                    scalar_value: None,
-                    sub_object_world_pos: None,
-                };
-                (toi, hit)
-            })
+        // Recover the full hit for the winning leaf: exact world position, normal,
+        // and sub-object, with the same math the narrow phase used.
+        let entry = &self.entries[hit.leaf];
+        let cast = cast_leaf(entry, ray_origin, ray_dir, mesh_lookup, &self.trimesh_cache)?;
+        Some(crate::renderer::PickHit {
+            id: entry.node_id,
+            sub_object: cast.sub_object,
+            world_pos: cast.world_pos,
+            normal: cast.normal,
+            scalar_value: None,
+            sub_object_world_pos: None,
+        })
     }
 
     /// Invalidate the TriMesh cache for a specific mesh (e.g. after re-tessellation).
     pub fn invalidate_mesh(&mut self, mesh_index: usize) {
-        self.trimesh_cache.remove(&mesh_index);
+        self.trimesh_cache.borrow_mut().remove(&mesh_index);
     }
 
     /// Drop cached `TriMesh` instances for every mesh in `skinned_mesh_ids`.
@@ -320,155 +209,160 @@ impl PickAccelerator {
         &mut self,
         skinned_mesh_ids: impl IntoIterator<Item = MeshId>,
     ) {
+        let mut cache = self.trimesh_cache.borrow_mut();
         for id in skinned_mesh_ids {
-            self.trimesh_cache.remove(&id.index());
+            cache.remove(&id.index());
         }
     }
 
     /// Clear all cached data. A full rebuild is needed.
     pub fn invalidate_all(&mut self) {
-        self.trimesh_cache.clear();
+        self.trimesh_cache.borrow_mut().clear();
         self.entries.clear();
-        self.root = None;
+        self.bvh = None;
     }
 
     /// Number of cached TriMesh instances.
     pub fn trimesh_cache_len(&self) -> usize {
-        self.trimesh_cache.len()
+        self.trimesh_cache.borrow().len()
     }
 }
 
 // ---------------------------------------------------------------------------
-// BVH construction (SAH-based binary split, parallel via rayon)
+// spatial-query provider + narrow phase
 // ---------------------------------------------------------------------------
 
-// Switch from parallel rayon::join to sequential recursion below this count.
-// At this granularity the task-spawn overhead outweighs the parallelism gain.
-const PARALLEL_THRESHOLD: usize = 1024;
+/// A [`QueryGeometry`] view over the accelerator's leaves: one leaf per visible,
+/// mesh-bearing scene node. `test_ray` runs the parry narrow-phase behind `&self`
+/// via the `RefCell` TriMesh cache.
+struct PickGeom<'a> {
+    entries: &'a [BvhEntry],
+    mesh_lookup: &'a HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
+    cache: &'a RefCell<HashMap<usize, parry3d::shape::TriMesh>>,
+}
 
-fn build_bvh_node(entries: &[BvhEntry], indices: Vec<usize>) -> BvhNode {
-    // Compute combined AABB.
-    let combined = combined_aabb(entries, &indices);
+impl QueryGeometry<3> for PickGeom<'_> {
+    type Id = NodeId;
+    // The nearest hit is chosen by time-of-impact; the sub-object is recovered for
+    // the winning leaf in `PickAccelerator::pick`, so the broad phase carries none.
+    type SubObject = ();
 
-    // Leaf threshold: 4 or fewer entries.
-    if indices.len() <= 4 {
-        return BvhNode::Leaf {
-            entry_indices: indices,
-            aabb: combined,
-        };
+    fn leaf_count(&self) -> usize {
+        self.entries.len()
     }
 
-    // Find best split axis and position using SAH.
-    let (best_axis, best_split) = find_best_split(entries, &indices, &combined);
+    fn id(&self, leaf: usize) -> NodeId {
+        self.entries[leaf].node_id
+    }
 
-    let mut left_indices = Vec::new();
-    let mut right_indices = Vec::new();
-    for &idx in &indices {
-        let center = entries[idx].aabb.center();
-        let val = match best_axis {
-            0 => center.x,
-            1 => center.y,
-            _ => center.z,
-        };
-        if val <= best_split {
-            left_indices.push(idx);
-        } else {
-            right_indices.push(idx);
+    fn world_aabb(&self, leaf: usize) -> SqAabb<3> {
+        let a = &self.entries[leaf].aabb;
+        SqAabb::new(
+            Point([a.min.x, a.min.y, a.min.z]),
+            Point([a.max.x, a.max.y, a.max.z]),
+        )
+    }
+
+    fn test_ray(&self, leaf: usize, ray: &SqRay<3>, max_toi: f32) -> Option<LeafHit<3>> {
+        let origin = glam::Vec3::new(ray.origin[0], ray.origin[1], ray.origin[2]);
+        let dir = glam::Vec3::new(ray.dir[0], ray.dir[1], ray.dir[2]);
+        let cast = cast_leaf(&self.entries[leaf], origin, dir, self.mesh_lookup, self.cache)?;
+        if cast.toi < 0.0 || cast.toi > max_toi {
+            return None;
+        }
+        Some(LeafHit::new(
+            cast.toi,
+            Point([cast.normal.x, cast.normal.y, cast.normal.z]),
+        ))
+    }
+}
+
+/// The narrow-phase result for one leaf, in world space.
+struct LeafCast {
+    toi: f32,
+    world_pos: glam::Vec3,
+    normal: glam::Vec3,
+    sub_object: Option<SubObjectRef>,
+}
+
+/// Cast the ray against one leaf's cached parry `TriMesh`: transform into the mesh's
+/// local (scaled) space, cast, and map the hit back to world. Builds and caches the
+/// `TriMesh` on first touch.
+fn cast_leaf(
+    entry: &BvhEntry,
+    ray_origin: glam::Vec3,
+    ray_dir: glam::Vec3,
+    mesh_lookup: &HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)>,
+    cache: &RefCell<HashMap<usize, parry3d::shape::TriMesh>>,
+) -> Option<LeafCast> {
+    let mesh_index = entry.mesh_index;
+    let (positions, indices) = mesh_lookup.get(&(mesh_index as u64))?;
+
+    let mut cache = cache.borrow_mut();
+    if let std::collections::hash_map::Entry::Vacant(e) = cache.entry(mesh_index) {
+        let verts: Vec<Vector> = positions
+            .iter()
+            .map(|p| Vector::new(p[0], p[1], p[2]))
+            .collect();
+        let tri_indices: Vec<[u32; 3]> = indices
+            .chunks(3)
+            .filter(|c| c.len() == 3)
+            .map(|c| [c[0], c[1], c[2]])
+            .collect();
+        if tri_indices.is_empty() {
+            return None;
+        }
+        match parry3d::shape::TriMesh::new(verts, tri_indices) {
+            Ok(tm) => {
+                e.insert(tm);
+            }
+            Err(_) => return None,
         }
     }
+    let trimesh = cache.get(&mesh_index)?;
 
-    // Fallback: if all entries ended up on one side, split in half.
-    if left_indices.is_empty() || right_indices.is_empty() {
-        let mid = indices.len() / 2;
-        left_indices = indices[..mid].to_vec();
-        right_indices = indices[mid..].to_vec();
-    }
+    // Extract scale, rotation, translation from the world transform.
+    let (scale, rotation, translation) = entry.world_transform.to_scale_rotation_translation();
 
-    // Recurse in parallel for large subtrees; fall back to sequential for small ones
-    // so we don't pay rayon task-spawn overhead on leaf-adjacent nodes.
-    let (left_node, right_node) = if indices.len() > PARALLEL_THRESHOLD {
-        rayon::join(
-            || build_bvh_node(entries, left_indices),
-            || build_bvh_node(entries, right_indices),
-        )
-    } else {
-        (
-            build_bvh_node(entries, left_indices),
-            build_bvh_node(entries, right_indices),
-        )
-    };
+    // Transform the ray into the object's local (scaled) space.
+    let inv_rot = rotation.inverse();
+    let local_origin = inv_rot * (ray_origin - translation);
+    let local_dir = inv_rot * ray_dir;
+    let inv_scale = glam::Vec3::new(1.0 / scale.x, 1.0 / scale.y, 1.0 / scale.z);
+    let scaled_origin = local_origin * inv_scale;
+    let scaled_dir = (local_dir * inv_scale).normalize();
 
-    BvhNode::Interior {
-        aabb: combined,
-        left: Box::new(left_node),
-        right: Box::new(right_node),
-    }
-}
-
-fn combined_aabb(entries: &[BvhEntry], indices: &[usize]) -> Aabb {
-    let mut min = glam::Vec3::splat(f32::INFINITY);
-    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
-    for &idx in indices {
-        min = min.min(entries[idx].aabb.min);
-        max = max.max(entries[idx].aabb.max);
-    }
-    Aabb { min, max }
-}
-
-fn find_best_split(_entries: &[BvhEntry], _indices: &[usize], parent_aabb: &Aabb) -> (usize, f32) {
-    let extents = parent_aabb.max - parent_aabb.min;
-    // Choose the longest axis.
-    let axis = if extents.x >= extents.y && extents.x >= extents.z {
-        0
-    } else if extents.y >= extents.z {
-        1
-    } else {
-        2
-    };
-
-    // Use midpoint of the longest axis as the split.
-    let split = match axis {
-        0 => (parent_aabb.min.x + parent_aabb.max.x) * 0.5,
-        1 => (parent_aabb.min.y + parent_aabb.max.y) * 0.5,
-        _ => (parent_aabb.min.z + parent_aabb.max.z) * 0.5,
-    };
-
-    (axis, split)
-}
-
-// ---------------------------------------------------------------------------
-// Ray-AABB intersection test
-// ---------------------------------------------------------------------------
-
-fn ray_aabb_test(origin: glam::Vec3, dir: glam::Vec3, aabb: &Aabb) -> bool {
-    let inv_dir = glam::Vec3::new(
-        if dir.x.abs() > 1e-10 {
-            1.0 / dir.x
-        } else {
-            f32::INFINITY * dir.x.signum()
-        },
-        if dir.y.abs() > 1e-10 {
-            1.0 / dir.y
-        } else {
-            f32::INFINITY * dir.y.signum()
-        },
-        if dir.z.abs() > 1e-10 {
-            1.0 / dir.z
-        } else {
-            f32::INFINITY * dir.z.signum()
-        },
+    let ray = Ray::new(
+        Vector::new(scaled_origin.x, scaled_origin.y, scaled_origin.z),
+        Vector::new(scaled_dir.x, scaled_dir.y, scaled_dir.z),
     );
 
-    let t1 = (aabb.min - origin) * inv_dir;
-    let t2 = (aabb.max - origin) * inv_dir;
+    trimesh
+        .cast_local_ray_and_get_normal(&ray, f32::MAX, true)
+        .map(|intersection| {
+            // Scale TOI back to world space.
+            let avg_scale = (scale.x + scale.y + scale.z) / 3.0;
+            let toi = intersection.time_of_impact * avg_scale;
 
-    let tmin = t1.min(t2);
-    let tmax = t1.max(t2);
+            let sub_object = SubObjectRef::from_feature_id(intersection.feature);
 
-    let tenter = tmin.x.max(tmin.y).max(tmin.z);
-    let texit = tmax.x.min(tmax.y).min(tmax.z);
+            // Map the local hit back to world: undo inv_scale, then rotate and
+            // translate.
+            let local_hit_scaled = scaled_origin + scaled_dir * intersection.time_of_impact;
+            let local_hit = local_hit_scaled * scale;
+            let world_pos = rotation * local_hit + translation;
 
-    texit >= tenter.max(0.0)
+            // Normal is in scaled-local space; inverse-transpose (scale by inv_scale)
+            // then rotate to world.
+            let normal = (rotation * (intersection.normal * inv_scale)).normalize();
+
+            LeafCast {
+                toi,
+                world_pos,
+                normal,
+                sub_object,
+            }
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +424,7 @@ mod tests {
 
         let accel = PickAccelerator::build_from_scene(&scene, |_| Some(unit_aabb()));
         assert_eq!(accel.entries.len(), 1);
-        assert!(accel.root.is_some());
+        assert!(accel.bvh.is_some());
     }
 
     #[test]
@@ -716,23 +610,132 @@ mod tests {
         assert_eq!(accel.trimesh_cache_len(), 0);
     }
 
+    /// Two picks over the same scene must agree: the BVH accelerator and a brute
+    /// force ray cast against every visible node. The accelerator only changes
+    /// *which* leaves get the narrow-phase test; the nearest hit is invariant, so
+    /// the two must return the same object, sub-object, and hit point on every ray.
+    ///
+    /// Transforms are translation + rotation with unit scale, so the brute path
+    /// (scale baked into vertices) and the accelerator (transform decomposed) test
+    /// identical geometry. This is a broad-phase parity check, so it stays clear of
+    /// the separate non-uniform-scale modelling difference between the two paths.
     #[test]
-    fn test_ray_aabb_hit() {
-        let aabb = unit_aabb();
-        assert!(ray_aabb_test(
-            glam::Vec3::new(0.0, 0.0, 5.0),
-            glam::Vec3::new(0.0, 0.0, -1.0),
-            &aabb,
-        ));
+    fn pick_parity_bvh_matches_brute_force() {
+        use crate::interaction::query::picking::pick_scene_nodes_cpu;
+
+        let mut scene = Scene::new();
+        let mut ids = Vec::new();
+        // A dense 7x7 grid of unit cubes in the z=0 plane.
+        for gx in -3..=3 {
+            for gy in -3..=3 {
+                let t = glam::Vec3::new(gx as f32 * 1.5, gy as f32 * 1.5, 0.0);
+                ids.push(scene.add(
+                    Some(MeshId::from_index(0)),
+                    glam::Mat4::from_translation(t),
+                    Material::default(),
+                ));
+            }
+        }
+        // A few rotated, elevated cubes (still unit scale).
+        for k in 0..6 {
+            let ang = k as f32 * 0.7;
+            let t = glam::Vec3::new((k as f32 - 3.0) * 1.5, 0.5, 3.0 + k as f32 * 0.6);
+            let m = glam::Mat4::from_rotation_translation(
+                glam::Quat::from_rotation_z(ang) * glam::Quat::from_rotation_x(ang * 0.5),
+                t,
+            );
+            ids.push(scene.add(Some(MeshId::from_index(0)), m, Material::default()));
+        }
+        // Hide two nodes; both pickers must skip them.
+        scene.set_visible(ids[3], false);
+        scene.set_visible(ids[20], false);
+        scene.update_transforms();
+
+        let (positions, indices) = unit_cube_mesh();
+        let mut mesh_lookup = HashMap::new();
+        mesh_lookup.insert(0u64, (positions, indices));
+
+        let mut accel = PickAccelerator::build_from_scene(&scene, |_| Some(unit_aabb()));
+
+        let rays = parity_ray_battery();
+        let mut hits = 0usize;
+        let mut mismatches = 0usize;
+        for (o, d) in &rays {
+            let brute = pick_scene_nodes_cpu(*o, *d, &scene, &mesh_lookup);
+            let accel_hit = accel.pick(*o, *d, &mesh_lookup);
+            if !pick_hits_agree(&brute, &accel_hit) {
+                mismatches += 1;
+                if mismatches <= 5 {
+                    eprintln!(
+                        "  mismatch: brute={:?} accel={:?}",
+                        brute.as_ref().map(|h| (h.id, h.sub_object)),
+                        accel_hit.as_ref().map(|h| (h.id, h.sub_object)),
+                    );
+                }
+            }
+            if brute.is_some() {
+                hits += 1;
+            }
+        }
+
+        eprintln!(
+            "pick parity: {} rays, {} hits, {} mismatches",
+            rays.len(),
+            hits,
+            mismatches,
+        );
+        assert_eq!(
+            mismatches, 0,
+            "accelerated pick disagreed with brute force on {mismatches} rays",
+        );
+        // Guard against a degenerate battery that barely touches the scene.
+        assert!(
+            hits > rays.len() / 10,
+            "ray battery barely hit anything ({hits} hits) - not exercising the picker",
+        );
     }
 
-    #[test]
-    fn test_ray_aabb_miss() {
-        let aabb = unit_aabb();
-        assert!(!ray_aabb_test(
-            glam::Vec3::new(100.0, 100.0, 5.0),
-            glam::Vec3::new(0.0, 0.0, -1.0),
-            &aabb,
-        ));
+    /// Whether two pick results are the same object, sub-object, and hit point.
+    fn pick_hits_agree(
+        a: &Option<crate::renderer::PickHit>,
+        b: &Option<crate::renderer::PickHit>,
+    ) -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(x), Some(y)) => {
+                x.id == y.id
+                    && x.sub_object == y.sub_object
+                    && (x.world_pos - y.world_pos).length() < 1e-3
+                    && (x.normal - y.normal).length() < 1e-3
+            }
+            _ => false,
+        }
+    }
+
+    /// A deterministic battery of rays aimed through the scene volume, mixing hits
+    /// and misses. A small LCG keeps it reproducible without a dependency.
+    fn parity_ray_battery() -> Vec<(glam::Vec3, glam::Vec3)> {
+        let mut state: u64 = 0x1234_5678_9ABC_DEF0;
+        let mut rnd = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as f32 / (1u64 << 31) as f32
+        };
+        (0..500)
+            .map(|_| {
+                let origin = glam::Vec3::new(
+                    (rnd() - 0.5) * 18.0,
+                    (rnd() - 0.5) * 18.0,
+                    8.0 + rnd() * 6.0,
+                );
+                let target = glam::Vec3::new(
+                    (rnd() - 0.5) * 9.0,
+                    (rnd() - 0.5) * 9.0,
+                    (rnd() - 0.5) * 5.0,
+                );
+                (origin, (target - origin).normalize())
+            })
+            .collect()
     }
 }
