@@ -150,7 +150,7 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 **Demos:** Shared 6-box scene rendered through a 2x2 quad layout (Perspective + Top/Front/Right orthos) using the split rendering API. Pointer input routes to the hovered quad; the gizmo appears in all four quads at correct screen-space scale; click-picking uses CPU BVH against the hovered quad's ray; G/R/S sessions drive transforms across all selected nodes.
 
-**Uses:** `Camera`, `OrbitCameraController`, `ViewportContext`, `ViewportEvent`, `ManipulationController`, `Gizmo`, `Selection`, `Projection::Orthographic`, `picking::{pick_scene_nodes_cpu, screen_to_ray}`, `ViewportId`, `MultiViewportCallback`.
+**Uses:** `Camera`, `OrbitCameraController`, `ViewportContext`, `ViewportEvent`, `ManipulationController`, `Gizmo`, `Selection`, `Projection::Orthographic`, `picking::{pick_scene_nodes_cpu, screen_to_ray}`, `ViewportId`, `prepare_scene` / `prepare_viewport` / `render_viewport`, `OffscreenViewportTarget` (one per quad).
 
 **Sidebar:** Selection counts; gizmo Mode + Space radios; Clear Selection; static help blocks.
 

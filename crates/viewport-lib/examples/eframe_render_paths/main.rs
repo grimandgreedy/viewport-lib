@@ -21,17 +21,16 @@
 //!   Right drag   : pan
 //!   Scroll       : zoom
 
-mod viewport_callback;
 
-use eframe::egui;
+use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
     BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, ComputeFilterItem,
     ComputeFilterKind, FrameData, LightKind, LightSource, LightingSettings, MatcapId, Material,
-    MeshId, OrbitCameraController, ParamVis, ParamVisMode, PatternConfig, PickId, PickMask,
-    SceneFrame, SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter, ViewportContext,
-    ViewportEvent, ViewportRenderer,
+    MeshId, OffscreenViewportTarget, OrbitCameraController, ParamVis, ParamVisMode, PatternConfig,
+    PickId, PickMask, SceneFrame, SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter,
+    ViewportContext, ViewportEvent, ViewportRenderer,
     material::AlphaMode,
     plugins::skinning::{SkinWeights, SkinningPlugin},
     primitives,
@@ -137,7 +136,9 @@ fn main() -> eframe::Result {
             let queue = &rs.queue;
             let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // sRGB render format; the offscreen target keeps the encode through egui.
+            let mut renderer =
+                ViewportRenderer::new(device, OffscreenViewportTarget::render_format(format));
             // pick()/pick_rect() read a CPU-side cache that prepare() only builds
             // when this is on. Off by default, so enable it for picking to work.
             renderer.set_cpu_pick_cache(true);
@@ -363,6 +364,13 @@ struct App {
 
     // Shared with the paint callback (one frame behind).
     instancing_status: std::sync::Arc<std::sync::Mutex<(bool, usize)>>,
+    target: Option<Target>,
+}
+
+/// The offscreen colour target and its egui texture id, recreated on resize.
+struct Target {
+    inner: OffscreenViewportTarget,
+    id: egui::TextureId,
 }
 
 impl App {
@@ -410,6 +418,7 @@ impl App {
             shadow_atlas_resolution: 4096,
             hemisphere_intensity: 0.25,
             instancing_status: std::sync::Arc::new(std::sync::Mutex::new((false, 0))),
+            target: None,
         }
     }
 
@@ -782,18 +791,63 @@ impl eframe::App for App {
             fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0];
             fd.interaction.outline_width_px = 3.0;
 
-            ui.painter()
-                .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    viewport_callback::ViewportCallback {
-                        frame: fd,
-                        gpu_culling: self.gpu_culling,
-                        skinning: Some(self.skinning.clone()),
-                        skinned_mesh: self.meshes.skinned,
-                        skin_palette: self.skin_palette(),
-                        instancing_status: self.instancing_status.clone(),
-                    },
-                ));
+            // Render into the offscreen target (sRGB dual-view keeps the encode
+            // through egui's sample), then display it as an image. The culling
+            // toggle, skin-palette upload, and instancing readback that used to
+            // live in the paint callback's prepare happen inline here.
+            let skin_palette = self.skin_palette();
+            let skinned_mesh = self.meshes.skinned;
+            let gpu_culling = self.gpu_culling;
+            let rs = frame.wgpu_render_state().expect("wgpu required");
+            let size_px = [
+                (w * ppp).round().max(1.0) as u32,
+                (h * ppp).round().max(1.0) as u32,
+            ];
+            let mut guard = rs.renderer.write();
+            if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+                let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
+                let id = guard.register_native_texture(
+                    &rs.device,
+                    inner.sample_view(),
+                    wgpu::FilterMode::Linear,
+                );
+                self.target = Some(Target { inner, id });
+            }
+            let target = self.target.as_ref().unwrap();
+            let render_view = target.inner.render_view();
+            let tex_id = target.id;
+            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                if gpu_culling && renderer.is_gpu_culling_supported() {
+                    renderer.enable_gpu_driven_culling();
+                } else {
+                    renderer.disable_gpu_driven_culling();
+                }
+                self.skinning.attach_palette(
+                    renderer.resources_mut(),
+                    &rs.device,
+                    &rs.queue,
+                    skinned_mesh,
+                    0,
+                    &skin_palette,
+                );
+                let cmd = renderer
+                    .owned()
+                    .render(&rs.device, &rs.queue, render_view, &fd);
+                rs.queue.submit(std::iter::once(cmd));
+                if let Ok(mut status) = self.instancing_status.lock() {
+                    *status = (
+                        renderer.is_using_instanced_path(),
+                        renderer.instanced_batch_count(),
+                    );
+                }
+            }
+            drop(guard);
+            ui.painter().image(
+                tex_id,
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
 
             let (is_instanced, batch_count) = self
                 .instancing_status

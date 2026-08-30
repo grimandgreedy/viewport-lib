@@ -6,16 +6,15 @@ use vpl::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera, CameraAnimator,
     CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo, GizmoMode, GroundPlane,
     GroundPlaneMode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
-    MeshData, MeshId, OrbitCameraController, PickId, PointCloudItem, PostProcessSettings,
-    RenderCamera, RuntimeMode, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ShadowFilter,
-    ViewportContext, ViewportEvent, ViewportRenderer,
+    MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController, PickId, PointCloudItem,
+    PostProcessSettings, RenderCamera, RuntimeMode, SceneFrame, SceneRenderItem, ScrollUnits,
+    Selection, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
     scene::Scene,
 };
 
 mod geometry;
 mod gizmo_helpers;
-mod multi_viewport_callback;
 mod shared;
 mod showcase_01_basic;
 mod showcase_02_scene_graph;
@@ -76,7 +75,6 @@ mod showcase_56_submesh_materials;
 mod showcase_57_photometric_lighting;
 mod showcase_58_physically_based_surfaces;
 mod showcase_59_vector_art;
-mod viewport_callback;
 
 const BG_COLOUR: [f32; 4] = [0.22, 0.22, 0.24, 1.0];
 
@@ -132,7 +130,10 @@ fn main() -> eframe::Result {
             let queue = wgpu_render_state.queue.clone();
             let format = wgpu_render_state.target_format;
 
-            let mut renderer = ViewportRenderer::new(&device, format);
+            // sRGB render format so the tonemap encode happens; the offscreen
+            // targets hand egui non-sRGB views so the encode survives the sample.
+            let mut renderer =
+                ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
             // Several showcases (Picking Levels, Tensor Glyphs) use the CPU
             // renderer.pick()/pick_rect() path, which needs the pick cache.
             renderer.set_cpu_pick_cache(true);
@@ -152,6 +153,8 @@ fn main() -> eframe::Result {
             Ok(Box::new(App {
                 device,
                 queue,
+                viewport_target: None,
+                mv_targets: Vec::new(),
                 camera: Camera {
                     center: glam::Vec3::ZERO,
                     distance: 12.0,
@@ -392,11 +395,23 @@ impl ShowcaseMode {
 // Application state
 // ---------------------------------------------------------------------------
 
+/// An offscreen colour target and its egui texture id, recreated on resize.
+pub(crate) struct Target {
+    pub(crate) inner: OffscreenViewportTarget,
+    pub(crate) id: egui::TextureId,
+}
+
 pub(crate) struct App {
     // GPU handles (captured at startup for lazy mesh uploads).
     // wgpu::Device and Queue are internally ref-counted and implement Clone.
     device: eframe::wgpu::Device,
     queue: eframe::wgpu::Queue,
+
+    /// Offscreen target for the single-viewport showcases (sRGB dual-view so the
+    /// tonemap encode survives egui's sample).
+    viewport_target: Option<Target>,
+    /// Offscreen targets for the four multi-viewport quadrants.
+    mv_targets: Vec<Target>,
 
     camera: Camera,
     controller: OrbitCameraController,
@@ -1375,12 +1390,52 @@ impl eframe::App for App {
                     }
                 }
 
-                // ----- Schedule paint callback -----
-                ui.painter()
-                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                // ----- Render into the offscreen target and display it -----
+                // The target's sRGB dual-view keeps the tonemap encode through
+                // egui's sample (see `OffscreenViewportTarget`).
+                {
+                    let rs = frame.wgpu_render_state().expect("wgpu required");
+                    let ppp = ui.ctx().pixels_per_point();
+                    let size_px = [
+                        (rect.width() * ppp).round().max(1.0) as u32,
+                        (rect.height() * ppp).round().max(1.0) as u32,
+                    ];
+                    let mut guard = rs.renderer.write();
+                    if self
+                        .viewport_target
+                        .as_ref()
+                        .map_or(true, |t| t.inner.size() != size_px)
+                    {
+                        let inner =
+                            OffscreenViewportTarget::new(&self.device, rs.target_format, size_px);
+                        let id = guard.register_native_texture(
+                            &self.device,
+                            inner.sample_view(),
+                            eframe::wgpu::FilterMode::Linear,
+                        );
+                        self.viewport_target = Some(Target { inner, id });
+                    }
+                    let target = self.viewport_target.as_ref().unwrap();
+                    if let Some(renderer) =
+                        guard.callback_resources.get_mut::<ViewportRenderer>()
+                    {
+                        let cmd = renderer.owned().render(
+                            &self.device,
+                            &self.queue,
+                            target.inner.render_view(),
+                            &frame_data,
+                        );
+                        self.queue.submit(std::iter::once(cmd));
+                    }
+                    let tex_id = target.id;
+                    drop(guard);
+                    ui.painter().image(
+                        tex_id,
                         rect,
-                        viewport_callback::ViewportCallback::new(frame_data),
-                    ));
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
 
                 // ----- PickLevels: rubber-band drag rect overlay -----
                 if self.mode == ShowcaseMode::PickLevels {

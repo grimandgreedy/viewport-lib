@@ -26,15 +26,15 @@
 //!   Digits while active       : numeric input
 //!   Enter / left-click        : confirm   Esc : cancel
 
-mod multi_viewport_callback;
 
-use eframe::egui;
+use eframe::{egui, wgpu};
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use vpl::{
     Action, BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
     GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult, ManipulationContext,
-    ManipulationController, Material, MeshId, Modifiers, MouseButton, OrbitCameraController,
+    ManipulationController, Material, MeshId, Modifiers, MouseButton, OffscreenViewportTarget,
+    OrbitCameraController,
     Projection, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ViewportContext,
     ViewportEvent, ViewportId, ViewportRenderer, gizmo::compute_gizmo_scale,
     gizmo_center_for_pivot, picking::screen_to_ray, primitives,
@@ -87,7 +87,9 @@ fn main() -> eframe::Result {
             let device = &rs.device;
             let format = rs.target_format;
 
-            let mut renderer = ViewportRenderer::new(device, format);
+            // sRGB render format; the offscreen targets keep the encode through egui.
+            let mut renderer =
+                ViewportRenderer::new(device, OffscreenViewportTarget::render_format(format));
             let res = renderer.resources_mut();
             let m_sphere = res
                 .upload_mesh_data(device, &primitives::sphere(0.6, 24, 12))
@@ -169,6 +171,16 @@ struct App {
     hovered_quad: usize,
     cursor_local: glam::Vec2,
     left_held: bool,
+
+    /// Offscreen targets for the four quadrants (sRGB dual-view so the tonemap
+    /// encode survives egui's sample).
+    mv_targets: Vec<Target>,
+}
+
+/// An offscreen colour target and its egui texture id, recreated on resize.
+struct Target {
+    inner: OffscreenViewportTarget,
+    id: egui::TextureId,
 }
 
 impl App {
@@ -232,6 +244,7 @@ impl App {
             hovered_quad: 0,
             cursor_local: glam::Vec2::ZERO,
             left_held: false,
+            mv_targets: Vec::new(),
         }
     }
 
@@ -348,7 +361,7 @@ impl App {
 // ---------------------------------------------------------------------------
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, eframe_frame: &mut eframe::Frame) {
         let ppp = ctx.pixels_per_point();
 
         egui::CentralPanel::default()
@@ -657,14 +670,69 @@ impl eframe::App for App {
                     fd
                 });
 
-                ui.painter()
-                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                        rect,
-                        multi_viewport_callback::MultiViewportCallback {
-                            frames,
-                            viewports: self.vp_ids,
-                        },
-                    ));
+                // Render each quadrant into its own offscreen target (sRGB dual-view
+                // so the tonemap encode survives egui's sample), then draw them.
+                let rs = eframe_frame.wgpu_render_state().expect("wgpu required");
+                let quad_px = |qr: &egui::Rect| -> [u32; 2] {
+                    [
+                        (qr.width() * ppp).round().max(1.0) as u32,
+                        (qr.height() * ppp).round().max(1.0) as u32,
+                    ]
+                };
+                let mut guard = rs.renderer.write();
+                let needs_rebuild = self.mv_targets.len() != 4
+                    || self
+                        .mv_targets
+                        .iter()
+                        .zip(quads.iter())
+                        .any(|(t, qr)| t.inner.size() != quad_px(qr));
+                if needs_rebuild {
+                    self.mv_targets.clear();
+                    for qr in &quads {
+                        let inner =
+                            OffscreenViewportTarget::new(&rs.device, rs.target_format, quad_px(qr));
+                        let id = guard.register_native_texture(
+                            &rs.device,
+                            inner.sample_view(),
+                            wgpu::FilterMode::Linear,
+                        );
+                        self.mv_targets.push(Target { inner, id });
+                    }
+                }
+                if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                    let (scene_fx, _) = frames[0].effects.split();
+                    let token = renderer.owned().prepare_scene(
+                        &rs.device,
+                        &rs.queue,
+                        &frames[0],
+                        &scene_fx,
+                    );
+                    for i in 0..4 {
+                        renderer.owned().prepare_viewport(
+                            &rs.device,
+                            &rs.queue,
+                            &token,
+                            self.vp_ids[i],
+                            &frames[i],
+                        );
+                    }
+                    for i in 0..4 {
+                        let cmd = renderer.owned().render_viewport(
+                            &rs.device,
+                            &rs.queue,
+                            self.mv_targets[i].inner.render_view(),
+                            self.vp_ids[i],
+                            &frames[i],
+                        );
+                        rs.queue.submit(std::iter::once(cmd));
+                    }
+                }
+                let ids: [egui::TextureId; 4] = std::array::from_fn(|i| self.mv_targets[i].id);
+                drop(guard);
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                for (i, qr) in quads.iter().enumerate() {
+                    ui.painter().image(ids[i], *qr, uv, egui::Color32::WHITE);
+                }
 
                 // Quad dividers and labels.
                 let painter = ui.painter_at(rect);

@@ -11,14 +11,13 @@
 //!   Right drag = pan
 //!   Scroll = zoom
 
-mod viewport_callback;
 
-use eframe::egui;
+use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
-    LightingSettings, Material, MeshId, OrbitCameraController, SceneFrame, SceneRenderItem,
-    ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    LightingSettings, Material, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame,
+    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
 };
 
 // Solid unlit colours for the subsurface objects. Picked to be visually distinct
@@ -41,9 +40,12 @@ fn main() -> eframe::Result {
                 .as_ref()
                 .expect("wgpu backend required");
             let device = &rs.device;
-            let _queue = &rs.queue;
 
-            let mut renderer = ViewportRenderer::new(device, rs.target_format);
+            // sRGB render format; the offscreen target keeps the encode through egui.
+            let mut renderer = ViewportRenderer::new(
+                device,
+                OffscreenViewportTarget::render_format(rs.target_format),
+            );
             let res = renderer.resources_mut();
 
             // Ground plane: large flat slab so cascade boundaries are visible.
@@ -109,6 +111,13 @@ struct App {
     ground_two_sided: bool,
     show_subsurface: bool,
     gpu_culling: bool,
+    target: Option<Target>,
+}
+
+/// The offscreen colour target and its egui texture id, recreated on resize.
+struct Target {
+    inner: OffscreenViewportTarget,
+    id: egui::TextureId,
 }
 
 impl App {
@@ -151,6 +160,7 @@ impl App {
             ground_two_sided: true,
             show_subsurface: true,
             gpu_culling: true,
+            target: None,
         }
     }
 
@@ -237,7 +247,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, eframe_frame: &mut eframe::Frame) {
         // Side panel: controls + live readout.
         egui::SidePanel::left("controls")
             .min_width(260.0)
@@ -404,14 +414,49 @@ impl eframe::App for App {
             )
             .with_lighting(lighting);
 
-            ui.painter()
-                .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                    rect,
-                    viewport_callback::ViewportCallback {
-                        frame: frame_data,
-                        gpu_culling: self.gpu_culling,
-                    },
-                ));
+            // Render into the offscreen target (sRGB dual-view keeps the encode
+            // through egui's sample), then display it as an image.
+            let rs = eframe_frame
+                .wgpu_render_state()
+                .expect("wgpu backend required");
+            let ppp = ui.ctx().pixels_per_point();
+            let size_px = [
+                (w * ppp).round().max(1.0) as u32,
+                (h * ppp).round().max(1.0) as u32,
+            ];
+            let mut guard = rs.renderer.write();
+            if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+                let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
+                let id = guard.register_native_texture(
+                    &rs.device,
+                    inner.sample_view(),
+                    wgpu::FilterMode::Linear,
+                );
+                self.target = Some(Target { inner, id });
+            }
+            let target = self.target.as_ref().unwrap();
+            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+                if self.gpu_culling {
+                    renderer.enable_gpu_driven_culling();
+                } else {
+                    renderer.disable_gpu_driven_culling();
+                }
+                let cmd = renderer.owned().render(
+                    &rs.device,
+                    &rs.queue,
+                    target.inner.render_view(),
+                    &frame_data,
+                );
+                rs.queue.submit(std::iter::once(cmd));
+            }
+            let tex_id = target.id;
+            drop(guard);
+            ui.painter().image(
+                tex_id,
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
         });
     }
 }

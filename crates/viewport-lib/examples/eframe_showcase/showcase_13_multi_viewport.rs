@@ -18,7 +18,6 @@
 //! drag transforms are driven by the hovered quad's camera.
 
 use crate::App;
-use crate::multi_viewport_callback::MultiViewportCallback;
 use eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
@@ -166,7 +165,7 @@ impl App {
         ui: &mut egui::Ui,
         rect: egui::Rect,
         response: egui::Response,
-        _frame: &eframe::Frame,
+        frame: &eframe::Frame,
     ) {
         let Some(viewports) = self.mv_state.viewports else {
             return;
@@ -565,12 +564,67 @@ impl App {
             egui::StrokeKind::Middle,
         );
 
-        // Schedule the multi-viewport paint callback over the full panel.
-        ui.painter()
-            .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                rect,
-                MultiViewportCallback { frames, viewports },
-            ));
+        // Render each quadrant into its own offscreen target (sRGB dual-view so the
+        // tonemap encode survives egui's sample), then draw them as egui images.
+        let rs = frame.wgpu_render_state().expect("wgpu required");
+        let quad_px = |qr: &egui::Rect| -> [u32; 2] {
+            [
+                (qr.width() * ppp).round().max(1.0) as u32,
+                (qr.height() * ppp).round().max(1.0) as u32,
+            ]
+        };
+        let mut guard = rs.renderer.write();
+        let needs_rebuild = self.mv_targets.len() != 4
+            || self
+                .mv_targets
+                .iter()
+                .zip(quad_rects.iter())
+                .any(|(t, qr)| t.inner.size() != quad_px(qr));
+        if needs_rebuild {
+            self.mv_targets.clear();
+            for qr in &quad_rects {
+                let inner =
+                    vpl::OffscreenViewportTarget::new(&self.device, rs.target_format, quad_px(qr));
+                let id = guard.register_native_texture(
+                    &self.device,
+                    inner.sample_view(),
+                    eframe::wgpu::FilterMode::Linear,
+                );
+                self.mv_targets.push(crate::Target { inner, id });
+            }
+        }
+        if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+            let (scene_fx, _) = frames[0].effects.split();
+            let token =
+                renderer
+                    .owned()
+                    .prepare_scene(&self.device, &self.queue, &frames[0], &scene_fx);
+            for i in 0..4 {
+                renderer.owned().prepare_viewport(
+                    &self.device,
+                    &self.queue,
+                    &token,
+                    viewports[i],
+                    &frames[i],
+                );
+            }
+            for i in 0..4 {
+                let cmd = renderer.owned().render_viewport(
+                    &self.device,
+                    &self.queue,
+                    self.mv_targets[i].inner.render_view(),
+                    viewports[i],
+                    &frames[i],
+                );
+                self.queue.submit(std::iter::once(cmd));
+            }
+        }
+        let ids: [egui::TextureId; 4] = std::array::from_fn(|i| self.mv_targets[i].id);
+        drop(guard);
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        for (i, qr) in quad_rects.iter().enumerate() {
+            ui.painter().image(ids[i], *qr, uv, egui::Color32::WHITE);
+        }
     }
 }
 
