@@ -4600,8 +4600,6 @@ impl ViewportRenderer {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
             let has_editor_overlays = !slot.constraint_line_buffers.is_empty()
-                || !slot.clip_plane_fill_buffers.is_empty()
-                || !slot.clip_plane_line_buffers.is_empty()
                 || !slot.xray_object_buffers.is_empty();
             if has_editor_overlays {
                 let camera_bg = &slot.camera_bind_group;

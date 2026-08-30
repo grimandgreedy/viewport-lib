@@ -219,22 +219,6 @@ pub(crate) struct ViewportSlot {
         crate::gpu::Buffer,
         crate::gpu::BindGroup,
     )>,
-    /// Per-frame clip plane fill overlay buffers, rebuilt in prepare().
-    pub clip_plane_fill_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
-    /// Per-frame clip plane line overlay buffers, rebuilt in prepare().
-    pub clip_plane_line_buffers: Vec<(
-        crate::gpu::Buffer,
-        crate::gpu::Buffer,
-        u32,
-        crate::gpu::Buffer,
-        crate::gpu::BindGroup,
-    )>,
     /// Vertex buffer for axes indicator geometry (rebuilt each frame).
     pub axes_vertex_buffer: crate::gpu::Buffer,
     /// Number of vertices in the axes indicator buffer.
@@ -2732,8 +2716,6 @@ impl ViewportRenderer {
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),
                 cap_buffers: Vec::new(),
-                clip_plane_fill_buffers: Vec::new(),
-                clip_plane_line_buffers: Vec::new(),
                 axes_vertex_buffer,
                 axes_vertex_count: 0,
                 sub_highlight: None,

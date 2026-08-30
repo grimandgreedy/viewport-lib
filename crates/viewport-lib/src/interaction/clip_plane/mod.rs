@@ -31,10 +31,9 @@
 //! // Suppress orbit while a drag is active:
 //! if ctrl.is_active() { orbit.resolve(); } else { orbit.apply_to_camera(&mut camera); }
 //!
-//! // Feed the overlay into InteractionFrame for rendering:
-//! if let Some(overlay) = ctrl.overlay(&ctx) {
-//!     interaction_frame.clip_plane_overlays.push(overlay);
-//! }
+//! // Draw the plane indicator: build the outline from `visual` and submit it as an
+//! // ordinary scene polyline, tagged `ignore_clip` so it stays visible through the cut:
+//! frame.scene.polylines.push(visual::outline(&clip.shape, extent, colour));
 //! ```
 
 use crate::camera::camera::Camera;
@@ -129,33 +128,6 @@ pub fn plane_from_axis_preset(axis: ClipAxis, distance: f32) -> ClipObject {
 }
 
 pub use crate::geometry::intersect::ray_plane_intersection;
-
-// ---------------------------------------------------------------------------
-// Visual overlay data
-// ---------------------------------------------------------------------------
-
-/// Visual data for rendering a clip plane handle in the viewport.
-///
-/// This is internal data used by the renderer. It is constructed automatically
-/// from [`ClipObject`]s that have a `colour` set. Not part of the public API.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub(crate) struct ClipPlaneOverlay {
-    /// World-space center of the plane quad (`normal * distance`).
-    pub center: glam::Vec3,
-    /// Unit normal of the plane.
-    pub normal: glam::Vec3,
-    /// Half-extent of the visual quad in world units.
-    pub extent: f32,
-    /// RGBA fill colour of the plane quad (semi-transparent).
-    pub fill_colour: [f32; 4],
-    /// RGBA colour for the border edges and normal indicator line.
-    pub border_colour: [f32; 4],
-    /// Whether the plane handle is hovered.
-    pub _hovered: bool,
-    /// Whether the plane is actively being dragged.
-    pub _active: bool,
-}
 
 // ---------------------------------------------------------------------------
 // Hit testing
@@ -492,54 +464,6 @@ impl ClipPlaneController {
         self.session.is_some()
     }
 
-    /// Returns the visual overlay for the current controller state.
-    ///
-    /// Returns `None` if the plane is not enabled or the shape is not a Plane variant.
-    /// Used internally by the renderer when the `ClipObject` has a colour set.
-    #[allow(dead_code)]
-    pub(crate) fn overlay(&self, ctx: &ClipPlaneContext) -> Option<ClipPlaneOverlay> {
-        if !ctx.plane.enabled {
-            return None;
-        }
-        let (normal_arr, distance) = if let ClipShape::Plane {
-            normal, distance, ..
-        } = ctx.plane.shape
-        {
-            (normal, distance)
-        } else {
-            return None;
-        };
-        let normal = glam::Vec3::from(normal_arr);
-        let center = normal * distance;
-        let active = self.is_active();
-        let hovered = self.hovered || active;
-
-        let fill_colour = if active {
-            [0.2, 0.6, 1.0, 0.25]
-        } else if hovered {
-            [0.4, 0.7, 1.0, 0.18]
-        } else {
-            [0.3, 0.6, 0.9, 0.12]
-        };
-        let border_colour = if active {
-            [0.2, 0.7, 1.0, 0.9]
-        } else if hovered {
-            [0.5, 0.8, 1.0, 0.8]
-        } else {
-            [0.4, 0.65, 0.9, 0.6]
-        };
-
-        Some(ClipPlaneOverlay {
-            center,
-            normal,
-            extent: ctx.plane_extent,
-            fill_colour,
-            border_colour,
-            _hovered: hovered,
-            _active: active,
-        })
-    }
-
     /// Returns `true` when the handle is being hovered.
     pub fn is_hovered(&self) -> bool {
         self.hovered
@@ -838,20 +762,5 @@ mod tests {
         let result = ctrl.update(&ActionFrame::default(), idle_ctx());
         assert_eq!(result, ClipPlaneResult::Commit);
         assert!(!ctrl.is_active());
-    }
-
-    #[test]
-    fn controller_overlay_none_when_disabled() {
-        let ctrl = ClipPlaneController::new();
-        let mut ctx = idle_ctx();
-        ctx.plane.enabled = false;
-        assert!(ctrl.overlay(&ctx).is_none());
-    }
-
-    #[test]
-    fn controller_overlay_some_when_enabled() {
-        let ctrl = ClipPlaneController::new();
-        // overlay() is pub(crate), accessible within the crate
-        assert!(ctrl.overlay(&idle_ctx()).is_some());
     }
 }
