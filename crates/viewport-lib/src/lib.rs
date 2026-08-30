@@ -153,9 +153,9 @@ pub mod runners;
 
 pub use geometry::bvh;
 pub use geometry::primitives;
+pub use interaction::clip_plane;
 pub use interaction::input;
 pub use interaction::manipulation;
-pub use interaction::manipulation::clip_plane;
 pub use interaction::manipulation::gizmo;
 pub use interaction::manipulation::gizmo_overlay;
 pub use interaction::query::picking;
@@ -242,7 +242,7 @@ pub use interaction::widgets::{
     SphereWidget, SplineWidget, WidgetContext, WidgetResult,
 };
 
-pub use interaction::manipulation::clip_plane::{
+pub use interaction::clip_plane::{
     ClipAxis, ClipPlaneContext, ClipPlaneController, ClipPlaneDelta, ClipPlaneHit, ClipPlaneResult,
     ClipPlaneSessionKind, hit_test_normal_handle, hit_test_plane_quad, plane_from_axis_preset,
     project_drag_onto_normal, ray_plane_intersection, snap_plane_distance,

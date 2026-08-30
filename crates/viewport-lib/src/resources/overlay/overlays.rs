@@ -114,7 +114,7 @@ impl DeviceResources {
     pub(crate) fn create_clip_plane_fill_overlay(
         &self,
         device: &crate::gpu::Device,
-        overlay: &crate::interaction::manipulation::clip_plane::ClipPlaneOverlay,
+        overlay: &crate::interaction::clip_plane::ClipPlaneOverlay,
     ) -> (
         crate::gpu::Buffer,
         crate::gpu::Buffer,
@@ -122,7 +122,7 @@ impl DeviceResources {
         crate::gpu::Buffer,
         crate::gpu::BindGroup,
     ) {
-        use crate::interaction::manipulation::clip_plane::plane_tangents;
+        use crate::interaction::clip_plane::plane_tangents;
         use bytemuck::cast_slice;
 
         let (t1, t2) = plane_tangents(overlay.normal);
@@ -204,7 +204,7 @@ impl DeviceResources {
     pub(crate) fn create_clip_plane_line_overlay(
         &self,
         device: &crate::gpu::Device,
-        overlay: &crate::interaction::manipulation::clip_plane::ClipPlaneOverlay,
+        overlay: &crate::interaction::clip_plane::ClipPlaneOverlay,
     ) -> (
         crate::gpu::Buffer,
         crate::gpu::Buffer,
@@ -212,7 +212,7 @@ impl DeviceResources {
         crate::gpu::Buffer,
         crate::gpu::BindGroup,
     ) {
-        use crate::interaction::manipulation::clip_plane::plane_tangents;
+        use crate::interaction::clip_plane::plane_tangents;
         use bytemuck::cast_slice;
 
         let (t1, t2) = plane_tangents(overlay.normal);

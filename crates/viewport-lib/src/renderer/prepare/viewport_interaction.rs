@@ -1380,7 +1380,7 @@ impl ViewportRenderer {
                     ]
                 };
 
-                let overlay = crate::interaction::manipulation::clip_plane::ClipPlaneOverlay {
+                let overlay = crate::interaction::clip_plane::ClipPlaneOverlay {
                     center,
                     normal: n,
                     extent: obj.extent,
