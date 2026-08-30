@@ -51,9 +51,9 @@ impl crate::resources::DeviceResources {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: Some(
-                            std::num::NonZeroU64::new(
-                                std::mem::size_of::<crate::resources::ClipShapeGpu>() as u64,
-                            )
+                            std::num::NonZeroU64::new(std::mem::size_of::<
+                                crate::resources::ClipShapeGpu,
+                            >() as u64)
                             .unwrap(),
                         ),
                     },

@@ -45,7 +45,9 @@ use crate::scene::scene::Scene;
 
 use parry3d::math::Vector;
 use parry3d::query::{Ray, RayCast};
-use spatial_query::{Aabb as SqAabb, Bvh, LeafHit, Point, QueryFilter, QueryGeometry, Ray as SqRay};
+use spatial_query::{
+    Aabb as SqAabb, Bvh, LeafHit, Point, QueryFilter, QueryGeometry, Ray as SqRay,
+};
 
 use crate::renderer::SubObjectRef;
 
@@ -322,7 +324,13 @@ impl QueryGeometry<3> for PickGeom<'_> {
     fn test_ray(&self, leaf: usize, ray: &SqRay<3>, max_toi: f32) -> Option<LeafHit<3>> {
         let origin = glam::Vec3::new(ray.origin[0], ray.origin[1], ray.origin[2]);
         let dir = glam::Vec3::new(ray.dir[0], ray.dir[1], ray.dir[2]);
-        let cast = cast_leaf(&self.entries[leaf], origin, dir, self.mesh_lookup, self.cache)?;
+        let cast = cast_leaf(
+            &self.entries[leaf],
+            origin,
+            dir,
+            self.mesh_lookup,
+            self.cache,
+        )?;
         if cast.toi < 0.0 || cast.toi > max_toi {
             return None;
         }

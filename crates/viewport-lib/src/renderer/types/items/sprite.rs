@@ -271,7 +271,10 @@ mod lit_sprite_tests {
         assert!(item.lit);
         assert_eq!(item.lit_params.normal_mode, SpriteNormalMode::NormalMap);
         assert!(item.lit_params.receive_shadows);
-        assert_eq!(item.normal_texture_id, Some(crate::resources::TextureId::from_raw(7)));
+        assert_eq!(
+            item.normal_texture_id,
+            Some(crate::resources::TextureId::from_raw(7))
+        );
         assert_eq!(item.orientation, SpriteOrientation::VelocityStretched);
     }
 

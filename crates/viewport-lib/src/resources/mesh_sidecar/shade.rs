@@ -840,7 +840,10 @@ impl crate::resources::DeviceResources {
             .get_mut(&plugin.plugin_index())
             .expect("checked above");
         gpu.variants.push(variant);
-        Ok(MaterialPluginId::from_parts(plugin.plugin_index(), (gpu.variants.len() - 1) as u32))
+        Ok(MaterialPluginId::from_parts(
+            plugin.plugin_index(),
+            (gpu.variants.len() - 1) as u32,
+        ))
     }
 
     /// Build one variant's params buffer and group-3 bind group, resolving

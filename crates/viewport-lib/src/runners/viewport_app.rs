@@ -558,7 +558,10 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
         // like every other translated event: without an input handler, feed the session
         // directly (its numeric-input buffer keeps only digits, `.`, and `-`); with one,
         // buffer it so the handler decides what the viewport sees each frame.
-        if let WindowEvent::KeyboardInput { event: key_event, .. } = &event {
+        if let WindowEvent::KeyboardInput {
+            event: key_event, ..
+        } = &event
+        {
             if key_event.state == ::winit::event::ElementState::Pressed {
                 if let Some(text) = &key_event.text {
                     for c in text.chars().filter(|c| !c.is_control()) {
