@@ -653,59 +653,9 @@ impl InteractionFrame {
     }
 }
 
-/// Environment map configuration for IBL (image-based lighting) and skybox.
-///
-/// Ground plane rendering mode.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum GroundPlaneMode {
-    /// No ground plane rendered (default, zero overhead).
-    #[default]
-    None,
-    /// Invisible plane that receives and displays shadows only.
-    ShadowOnly,
-    /// Procedural checkerboard tile pattern.
-    Tile,
-    /// Flat solid colour.
-    SolidColour,
-}
-
-/// Ground plane configuration for the viewport.
-///
-/// Renders a large horizontal plane at a configurable world-space Z height.
-/// Provides spatial grounding without explicit scene geometry.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct GroundPlane {
-    /// Rendering mode. Default: `None` (plane not drawn).
-    pub mode: GroundPlaneMode,
-    /// World-space Z coordinate of the ground plane. Default: `0.0`.
-    pub height: f32,
-    /// Primary colour for `Tile` and `SolidColour` modes. Default: `[1.0, 1.0, 1.0, 1.0]`.
-    pub colour: [f32; 4],
-    /// Secondary tile colour for `Tile` mode. Default: `[0.0, 0.0, 0.0, 1.0]`.
-    pub tile_colour2: [f32; 4],
-    /// Checker tile size in world units (`Tile` mode). Default: `1.0`.
-    pub tile_size: f32,
-    /// Shadow tint colour (`ShadowOnly` mode). Default: `[0.0, 0.0, 0.0, 1.0]`.
-    pub shadow_colour: [f32; 4],
-    /// Maximum shadow opacity (`ShadowOnly` mode). `0.0` = transparent, `1.0` = fully opaque. Default: `0.5`.
-    pub shadow_opacity: f32,
-}
-
-impl Default for GroundPlane {
-    fn default() -> Self {
-        Self {
-            mode: GroundPlaneMode::None,
-            height: 0.0,
-            colour: [1.0, 1.0, 1.0, 1.0],
-            tile_colour2: [0.0, 0.0, 0.0, 1.0],
-            tile_size: 1.0,
-            shadow_colour: [0.0, 0.0, 0.0, 1.0],
-            shadow_opacity: 0.5,
-        }
-    }
-}
+// Ground-plane config (`GroundPlaneMode`, `GroundPlane`) lives in
+// viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.
+pub use viewport_lib_types::effects::ground::{GroundPlane, GroundPlaneMode};
 
 /// When set on `EffectsFrame::environment`, the renderer uses the environment
 /// map for PBR ambient lighting (irradiance + specular) and optionally renders
@@ -745,81 +695,9 @@ impl Default for EnvironmentSettings {
     }
 }
 
-/// Quality presets for the participating-media (`ScatterVolume`) pass.
-///
-/// Trades step count for fidelity. Each preset implies a global default
-/// number of ray-march steps; individual volumes can override via
-/// [`ScatterVolume::step_budget`](crate::scene::scatter_volume::ScatterVolume::step_budget).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum ScatterQuality {
-    /// 8 steps. Default. Cheap enough to run on many overlapping volumes;
-    /// the bundled defaults pair this with temporal accumulation and
-    /// half-resolution rendering so banding is not visible.
-    Low,
-    /// 16 steps. Mid-tier; useful at full resolution without temporal blending.
-    Medium,
-    /// 32 steps. Highest fidelity; pick this when motion clarity matters more
-    /// than per-frame cost.
-    High,
-}
-
-impl Default for ScatterQuality {
-    fn default() -> Self {
-        Self::Low
-    }
-}
-
-impl ScatterQuality {
-    /// Global step count implied by this preset.
-    pub fn default_steps(self) -> u32 {
-        match self {
-            Self::Low => 8,
-            Self::Medium => 16,
-            Self::High => 32,
-        }
-    }
-}
-
-/// Per-frame settings for the participating-media (`ScatterVolume`) pass.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub struct ScatterSettings {
-    /// Quality preset. Sets the global default ray-march step count.
-    pub quality: ScatterQuality,
-    /// Enable the blue-noise jitter on the ray-march start offset. Hides
-    /// banding at low step counts at the cost of high-frequency noise that
-    /// temporal accumulation would normally average out. Default `true`.
-    pub blue_noise_jitter: bool,
-    /// Render the scatter pass into a half-resolution offscreen target and
-    /// upsample-composite into the main HDR target. Cuts the per-pixel
-    /// ray-march cost roughly to a quarter. Default `false`.
-    pub downsample: bool,
-    /// Blend each frame's scatter result with the previous frame's reprojected
-    /// result. Smooths out blue-noise jitter and banding over time; produces a
-    /// short trail when the camera moves quickly. Default `false`.
-    pub temporal: bool,
-    /// Exponential-moving-average weight used when `temporal` is enabled.
-    /// Larger values keep more history (smoother but laggier). Default `0.85`.
-    pub temporal_blend: f32,
-}
-
-impl Default for ScatterSettings {
-    fn default() -> Self {
-        // Defaults pick the conventional game-engine setup: half-resolution
-        // ray-march with temporal accumulation so the per-frame cost stays
-        // reasonable when many volumes overlap. Consumers that prioritise
-        // motion clarity over throughput can switch to full-res / non-temporal.
-        Self {
-            quality: ScatterQuality::Low,
-            blue_noise_jitter: true,
-            downsample: true,
-            temporal: true,
-            temporal_blend: 0.85,
-        }
-    }
-}
+// Scatter-volume pass config (`ScatterQuality`, `ScatterSettings`) lives in
+// viewport-lib-types; re-exported so `crate::renderer::types::*` paths hold.
+pub use viewport_lib_types::effects::scatter::{ScatterQuality, ScatterSettings};
 
 /// Configuration for the foreground pass.
 ///
@@ -933,50 +811,9 @@ impl Default for ClipSettings {
     }
 }
 
-/// Debug overlays and diagnostics for one frame. Grouped on
-/// [`EffectsFrame::debug`] to keep debug knobs out of the production effect,
-/// lighting, and viewport fields.
-///
-/// Not `Copy`: it carries the [`DebugVis`](crate::renderer::types::debug::DebugVis)
-/// channel-visualization config, which is a plain (non-`Copy`) struct.
-#[non_exhaustive]
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EffectsDebug {
-    /// Show the shadow depth atlas as a corner overlay. Default: false.
-    pub show_shadow_atlas: bool,
-    /// Corner where the atlas viewer is placed. Default: BottomRight.
-    pub atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner,
-    /// Atlas viewer size as a fraction of viewport width. Default: 0.3.
-    pub atlas_viewer_scale: f32,
-    /// Per-fragment channel visualization (debug view of shadow factor, normals,
-    /// and other quantities). Inactive by default; see
-    /// [`DebugVis`](crate::renderer::types::debug::DebugVis).
-    pub debug_vis: crate::renderer::types::debug::DebugVis,
-    /// Force every lit pipeline onto the straight-iteration light loop even when
-    /// the active light count is above the cluster-build threshold, so a consumer
-    /// can A/B the clustered path against it to spot bugs. Default: false.
-    pub force_cluster_fallback: bool,
-    /// Trigger a host-visible readback of the cluster cell array at the end of
-    /// `prepare_scene`, exposed via
-    /// [`ViewportRenderer::cluster_stats`](crate::renderer::ViewportRenderer::cluster_stats).
-    /// The readback blocks the calling thread on a device poll, so leave this off
-    /// unless a debug panel is actively displaying the numbers. Default: false.
-    pub cluster_stats_request: bool,
-}
-
-impl Default for EffectsDebug {
-    fn default() -> Self {
-        Self {
-            show_shadow_atlas: false,
-            atlas_viewer_corner: crate::renderer::types::debug::AtlasViewerCorner::BottomRight,
-            atlas_viewer_scale: 0.3,
-            debug_vis: crate::renderer::types::debug::DebugVis::default(),
-            force_cluster_fallback: false,
-            cluster_stats_request: false,
-        }
-    }
-}
+// `EffectsDebug` lives in viewport-lib-types (effects::debug); re-exported
+// so `crate::renderer::types::*` paths keep resolving.
+pub use viewport_lib_types::effects::debug::EffectsDebug;
 
 /// Scene-global effects for one frame, consumed by [`ViewportRenderer::prepare_scene`].
 ///
