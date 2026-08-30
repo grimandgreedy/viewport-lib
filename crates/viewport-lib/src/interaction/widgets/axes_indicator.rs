@@ -23,10 +23,12 @@ pub struct AxisView {
     pub axis_index: usize,
 }
 
-// Colours (same as the original egui version).
-const X_COLOUR: [f32; 4] = [0.878, 0.322, 0.322, 1.0]; // #e05252
-const Y_COLOUR: [f32; 4] = [0.361, 0.722, 0.361, 1.0]; // #5cb85c
-const Z_COLOUR: [f32; 4] = [0.290, 0.620, 1.000, 1.0]; // #4a9eff
+// Axis colours in linear light (the overlay pass writes to the sRGB target, which
+// encodes on write). Kept deliberately dark and muted so the indicator sits back
+// against the scene rather than glowing.
+const X_COLOUR: [f32; 4] = [0.75, 0.06, 0.07, 1.0]; // red
+const Y_COLOUR: [f32; 4] = [0.18, 0.55, 0.03, 1.0]; // green
+const Z_COLOUR: [f32; 4] = [0.05, 0.27, 0.72, 1.0]; // blue
 
 // Layout parameters, in logical pixels (the overlay pass scales by DPI).
 //
@@ -34,17 +36,14 @@ const Z_COLOUR: [f32; 4] = [0.290, 0.620, 1.000, 1.0]; // #4a9eff
 // drew: the shared overlay shapes are drawn with a 1px SDF anti-alias band at
 // every edge, which softens thin strokes, so the weights are bumped to keep the
 // same visual "ink" as the old hard-edged triangles.
-const ORIGIN_OFFSET: f32 = 40.0;
-const LINE_LENGTH: f32 = 30.0;
-const LINE_THICKNESS: f32 = 3.5;
-const CIRCLE_RADIUS: f32 = 9.0;
-/// Inner radius of the ring outline as a fraction of the outer radius. Lower
-/// values make the ring wall thicker; `0.66` gives a ~3px wall at this radius.
-const RING_INNER_FRAC: f32 = 0.66;
+const ORIGIN_OFFSET: f32 = 54.0;
+const LINE_LENGTH: f32 = 40.0;
+const LINE_THICKNESS: f32 = 4.75;
+const CIRCLE_RADIUS: f32 = 12.0;
 /// Half-width / half-height of a letter glyph.
 const GLYPH_HALF: f32 = 4.5;
 /// Stroke thickness of a letter glyph.
-const GLYPH_THICKNESS: f32 = 2.6;
+const GLYPH_THICKNESS: f32 = 2.65;
 /// z_order spacing between the three axes so a nearer axis stacks over a farther
 /// one; the four sub-parts of one axis occupy the slots in between.
 const AXIS_Z_STRIDE: i32 = 10;
@@ -101,23 +100,13 @@ pub(crate) fn build_axes_overlays(
         // Axis line from the origin to the tip.
         shapes.push(segment(origin, tip, LINE_THICKNESS, colour, base_z));
 
-        // Filled circle background (dimmed, semi-transparent).
-        let bg = [colour[0] * 0.33, colour[1] * 0.33, colour[2] * 0.33, 0.7];
-        shapes.push(disc(tip, CIRCLE_RADIUS, OverlayShape::Circle, bg, base_z + 1));
+        // Filled circle background: the solid axis colour, so the disc reads as a
+        // clean coloured dot rather than a dark hole inside the ring.
+        shapes.push(disc(tip, CIRCLE_RADIUS, OverlayShape::Circle, colour, base_z + 1));
 
-        // Ring outline.
-        shapes.push(disc(
-            tip,
-            CIRCLE_RADIUS,
-            OverlayShape::Ring {
-                inner_radius_frac: RING_INNER_FRAC,
-            },
-            colour,
-            base_z + 2,
-        ));
-
-        // Letter glyph.
-        push_letter(shapes, i, tip, colour, base_z + 3);
+        // Letter glyph in a dark tint of the axis colour, so it reads against the
+        // solid disc.
+        push_letter(shapes, i, tip, darken(colour, 0.75), base_z + 2);
     }
 }
 
@@ -136,6 +125,14 @@ fn segment(a: glam::Vec2, b: glam::Vec2, thickness: f32, colour: [f32; 4], z: i3
     .with_fill(OverlayFill::Solid(colour))
     .with_rotation(angle)
     .with_z_order(z)
+}
+
+/// Mix an RGB colour toward black by `t` (0 = unchanged, 1 = black), leaving
+/// alpha intact. Used to darken the letter glyph so it reads against the solid
+/// disc fill.
+fn darken(c: [f32; 4], t: f32) -> [f32; 4] {
+    let k = 1.0 - t;
+    [c[0] * k, c[1] * k, c[2] * k, c[3]]
 }
 
 /// A circle or ring centred on `centre` with the given outer `radius`.
@@ -282,8 +279,8 @@ mod tests {
     fn overlays_have_expected_shape_count() {
         let mut shapes = Vec::new();
         build_axes_overlays(800.0, 600.0, glam::Quat::IDENTITY, &mut shapes);
-        // Per axis: 1 line + 1 circle + 1 ring + letter strokes (X=2, Y=3, Z=3) = 5+6+6.
-        assert_eq!(shapes.len(), 3 + 3 + 3 + (2 + 3 + 3));
+        // Per axis: 1 line + 1 circle + letter strokes (X=2, Y=3, Z=3).
+        assert_eq!(shapes.len(), 3 + 3 + (2 + 3 + 3));
     }
 
     #[test]

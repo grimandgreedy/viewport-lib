@@ -214,9 +214,11 @@ impl ViewportRenderer {
         self.resources.ensure_dyn_res_ds_pipeline(device);
 
         let bg_colour = frame.viewport.background_colour.unwrap_or([
-            65.0 / 255.0,
-            65.0 / 255.0,
-            65.0 / 255.0,
+            // Default background #3b3b40, expressed in linear light (the renderer
+            // outputs linear and the sRGB target encodes on write).
+            0.0437,
+            0.0437,
+            0.0513,
             1.0,
         ]);
 
@@ -767,9 +769,11 @@ impl ViewportRenderer {
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
         let bg_colour = frame.viewport.background_colour.unwrap_or([
-            65.0 / 255.0,
-            65.0 / 255.0,
-            65.0 / 255.0,
+            // Default background #3b3b40, expressed in linear light (the renderer
+            // outputs linear and the sRGB target encodes on write).
+            0.0437,
+            0.0437,
+            0.0513,
             1.0,
         ]);
         let ppp = frame.camera.pixels_per_point;
