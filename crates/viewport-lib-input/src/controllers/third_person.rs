@@ -16,7 +16,7 @@ use glam::{Vec2, Vec3};
 
 use super::look::{build_orientation, orientation_to_aim, yaw_pitch_from_orientation};
 use crate::Camera;
-use crate::interaction::input::action_frame::ActionFrame;
+use crate::input::action_frame::ActionFrame;
 
 /// Body-attached third-person orbit-and-boom camera controller.
 ///

@@ -21,7 +21,7 @@
 #![allow(deprecated)]
 
 // The input vocabulary (actions, events, bindings, modes, presets) now lives in
-// `viewport-lib-types`. Re-export the modules so `crate::interaction::input::<mod>`
+// `viewport-lib-types`. Re-export the modules so `crate::input::<mod>`
 // paths, and the `super::<mod>` paths in the pipeline files below, keep resolving.
 pub use viewport_lib_types::input::{
     action, action_frame, binding, context, defaults, event, mode, preset, viewport_binding,

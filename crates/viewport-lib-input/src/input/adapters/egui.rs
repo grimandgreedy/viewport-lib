@@ -1,6 +1,6 @@
 //! egui -> [`ViewportEvent`] translation.
 
-use crate::interaction::input::{ButtonState, KeyCode, MouseButton, ScrollUnits, ViewportEvent};
+use crate::input::{ButtonState, KeyCode, MouseButton, ScrollUnits, ViewportEvent};
 
 /// Translate an [`egui::Event`](::egui::Event) into a [`ViewportEvent`], or
 /// `None` for events the viewport does not consume.

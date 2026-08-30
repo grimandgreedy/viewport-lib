@@ -28,10 +28,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # Publish workspace members bottom-up in dependency order: the pure-data
-      # types crate first, then the geometry crate that depends on it, then the
-      # renderer that depends on both. Each is skipped if that exact version is
-      # already on crates.io, so a release that only bumped one crate does not fail
-      # on the unchanged ones (the crates version independently).
+      # types crate first, then the geometry and input crates that depend on it,
+      # then the renderer that depends on all three. Each is skipped if that exact
+      # version is already on crates.io, so a release that only bumped one crate
+      # does not fail on the unchanged ones (the crates version independently).
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -50,6 +50,7 @@ jobs:
           }
           publish_if_new viewport-lib-types
           publish_if_new viewport-lib-geometry
+          publish_if_new viewport-lib-input
           publish_if_new viewport-lib
 
       - name: Get changelog entry

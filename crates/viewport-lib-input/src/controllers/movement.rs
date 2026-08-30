@@ -14,8 +14,8 @@
 
 use glam::{Vec2, Vec3};
 
-use crate::interaction::input::action::Action;
-use crate::interaction::input::action_frame::ActionFrame;
+use crate::input::action::Action;
+use crate::input::action_frame::ActionFrame;
 
 /// Resolve the forward / back / left / right movement actions into a horizontal
 /// wish vector in the camera's ground-plane basis.
@@ -52,7 +52,7 @@ pub fn wish_xy_from_actions(frame: &ActionFrame, forward_xy: Vec3, right_xy: Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interaction::input::action_frame::ResolvedActionState;
+    use crate::input::action_frame::ResolvedActionState;
 
     fn frame_with(actions: &[Action]) -> ActionFrame {
         let mut f = ActionFrame::default();

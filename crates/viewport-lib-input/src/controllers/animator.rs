@@ -4,7 +4,7 @@
 //! [`update()`](crate::camera::controllers::animator::CameraAnimator::update) so the application decides whether to
 //! use animation at all.
 
-use crate::camera::camera::{Camera, Projection};
+use viewport_lib_types::camera::{Camera, Projection};
 
 /// Easing function for fly-to animations.
 #[derive(Clone, Copy, Debug, PartialEq)]

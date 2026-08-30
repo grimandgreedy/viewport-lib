@@ -1,6 +1,6 @@
 //! Turntable (continuous orbit) camera controller.
 
-use crate::camera::camera::Camera;
+use viewport_lib_types::camera::Camera;
 
 // ---------------------------------------------------------------------------
 // TurntableController

@@ -1,19 +1,17 @@
 //! Orbit/pan/zoom camera controller.
 //!
-//! [`OrbitCameraController`] wraps [`crate::interaction::input::viewport_input::ViewportInput`] and
+//! [`OrbitCameraController`] wraps [`crate::input::viewport_input::ViewportInput`] and
 //! applies resolved orbit / pan / zoom actions directly to a [`crate::Camera`].
 
 use crate::Camera;
 
-use crate::interaction::input::action::Action;
-use crate::interaction::input::action_frame::ActionFrame;
-use crate::interaction::input::context::ViewportContext;
-use crate::interaction::input::event::ViewportEvent;
-use crate::interaction::input::mode::NavigationMode;
-use crate::interaction::input::preset::{
-    BindingPreset, viewport_all_bindings, viewport_primitives_bindings,
-};
-use crate::interaction::input::viewport_input::ViewportInput;
+use crate::input::action::Action;
+use crate::input::action_frame::ActionFrame;
+use crate::input::context::ViewportContext;
+use crate::input::event::ViewportEvent;
+use crate::input::mode::NavigationMode;
+use crate::input::preset::{BindingPreset, viewport_all_bindings, viewport_primitives_bindings};
+use crate::input::viewport_input::ViewportInput;
 
 /// High-level orbit / pan / zoom camera controller.
 ///
@@ -326,8 +324,8 @@ fn apply_fly_look(camera: &mut Camera, yaw: f32, pitch: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interaction::input::binding::KeyCode;
-    use crate::interaction::input::event::{ButtonState, ScrollUnits, ViewportEvent};
+    use crate::input::binding::KeyCode;
+    use crate::input::event::{ButtonState, ScrollUnits, ViewportEvent};
 
     fn make_ctx() -> ViewportContext {
         ViewportContext {
@@ -387,7 +385,7 @@ mod tests {
             position: glam::Vec2::new(100.0, 100.0),
         });
         ctrl.push_event(ViewportEvent::MouseButton {
-            button: crate::interaction::input::binding::MouseButton::Left,
+            button: crate::input::binding::MouseButton::Left,
             state: ButtonState::Pressed,
         });
         ctrl.push_event(ViewportEvent::PointerMoved {

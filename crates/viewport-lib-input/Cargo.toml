@@ -1,0 +1,27 @@
+[package]
+name = "viewport-lib-input"
+version = "0.1.0"
+edition = "2024"
+description = "Input handling for viewport-lib: the event resolver, the camera controllers, and the optional winit/egui adapters. A replaceable layer on viewport-lib-types - resolve events into an ActionFrame, then apply it to a Camera however you like."
+readme = "README.md"
+license = "GPL-3.0-only"
+repository = "https://github.com/grimandgreedy/viewport-lib"
+homepage = "https://github.com/grimandgreedy/viewport-lib"
+documentation = "https://docs.rs/viewport-lib-input"
+keywords = ["3d", "input", "camera", "controls", "viewport"]
+categories = ["graphics", "rendering", "game-development"]
+rust-version = "1.85"
+publish = true
+
+[features]
+default = []
+# Native-event translation adapters. Off by default so the resolver and
+# controllers build with no framework dependency.
+winit-adapter = ["dep:winit"]
+egui-adapter = ["dep:egui"]
+
+[dependencies]
+viewport-lib-types = { path = "../viewport-lib-types", version = "0.1.0" }
+glam = { workspace = true }
+winit = { version = "0.30", optional = true }
+egui = { version = "0.33", optional = true }

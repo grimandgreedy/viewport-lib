@@ -1,7 +1,9 @@
 /// Arcball camera with perspective and orthographic projections.
 pub mod camera;
 /// Orbit, first-person, third-person, turntable, and fly-to camera controllers.
-pub mod controllers;
+/// Camera controllers. Live in the `viewport-lib-input` crate; re-exported here
+/// so the renderer keeps its `crate::camera::controllers` path.
+pub use viewport_lib_input::controllers;
 /// View frustum planes and AABB culling.
 pub mod frustum;
 /// Keyframe camera animation with Catmull-Rom interpolation.

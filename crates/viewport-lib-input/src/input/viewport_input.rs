@@ -383,8 +383,8 @@ impl ViewportInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interaction::input::event::ButtonState;
-    use crate::interaction::input::preset::viewport_all_bindings;
+    use crate::input::event::ButtonState;
+    use crate::input::preset::viewport_all_bindings;
 
     fn focused_ctx() -> ViewportContext {
         ViewportContext {

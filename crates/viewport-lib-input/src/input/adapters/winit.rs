@@ -1,8 +1,6 @@
 //! winit -> [`ViewportEvent`] translation.
 
-use crate::interaction::input::{
-    ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, ViewportEvent,
-};
+use crate::input::{ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, ViewportEvent};
 
 /// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
 /// [`ViewportEvent`], or `None` for events the viewport does not consume.

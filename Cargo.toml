@@ -4,6 +4,7 @@ members = [
     "crates/viewport-lib",
     "crates/viewport-lib-types",
     "crates/viewport-lib-geometry",
+    "crates/viewport-lib-input",
 ]
 
 # Shared dependency pins. Both crates take `glam` from here so the version can
