@@ -145,6 +145,62 @@ impl PickAccelerator {
         })
     }
 
+    /// Update leaf bounds from the current scene, keeping the tree topology.
+    ///
+    /// Much cheaper than [`build_from_scene`](Self::build_from_scene) for a scene
+    /// whose objects moved but did not change in number: for a moving scene, build
+    /// once and refit each frame. Re-reads the world AABB of every visible,
+    /// mesh-bearing node (in the same order the build walked them) and propagates
+    /// the new bounds up the existing tree.
+    ///
+    /// Returns `false` without touching the tree when a refit is not valid: the set
+    /// of visible, mesh-bearing nodes changed size (objects added, removed, or shown
+    /// or hidden), or the accelerator was never built. The caller should rebuild in
+    /// that case. Refit assumes the node set is otherwise stable in identity and
+    /// order; toggling which objects are visible while keeping the count the same is
+    /// the caller's responsibility to avoid.
+    ///
+    /// The tree quality drifts as objects move away from where they were built;
+    /// rebuild periodically (on a timer, or when picks start feeling slow) to
+    /// restore it.
+    pub fn refit_from_scene(
+        &mut self,
+        scene: &Scene,
+        mesh_aabb_fn: impl Fn(MeshId) -> Option<Aabb>,
+    ) -> bool {
+        let mut new_entries = Vec::with_capacity(self.entries.len());
+        for node in scene.nodes() {
+            if !node.is_visible() {
+                continue;
+            }
+            let Some(mesh_id) = node.mesh_id() else {
+                continue;
+            };
+            if let Some(local_aabb) = mesh_aabb_fn(mesh_id) {
+                new_entries.push(BvhEntry {
+                    aabb: local_aabb.transformed(&node.world_transform()),
+                    node_id: node.id(),
+                    mesh_index: mesh_id.index(),
+                    world_transform: node.world_transform(),
+                });
+            }
+        }
+
+        if self.bvh.is_none() || new_entries.len() != self.entries.len() {
+            return false;
+        }
+        self.entries = new_entries;
+
+        let empty = HashMap::new();
+        let geom = PickGeom {
+            entries: &self.entries,
+            mesh_lookup: &empty,
+            cache: &self.trimesh_cache,
+        };
+        self.bvh.as_mut().unwrap().refit(&geom);
+        true
+    }
+
     /// Pick the nearest object hit by the ray.
     ///
     /// `mesh_lookup` maps mesh_index to (positions, indices) for TriMesh construction.
@@ -737,5 +793,60 @@ mod tests {
                 (origin, (target - origin).normalize())
             })
             .collect()
+    }
+
+    /// After shoving every object to a new position, a refit (no rebuild) must give
+    /// the same picks as a brute-force scan of the moved scene. Refit re-reads all
+    /// leaf AABBs, so correctness holds even though the tree topology is frozen at
+    /// build time.
+    #[test]
+    fn refit_matches_brute_after_moving() {
+        use crate::interaction::query::picking::pick_scene_nodes_cpu;
+
+        let mut scene = Scene::new();
+        let mut ids = Vec::new();
+        for gx in -3..=3 {
+            for gy in -3..=3 {
+                let t = glam::Vec3::new(gx as f32 * 1.5, gy as f32 * 1.5, 0.0);
+                ids.push(scene.add(
+                    Some(MeshId::from_index(0)),
+                    glam::Mat4::from_translation(t),
+                    Material::default(),
+                ));
+            }
+        }
+        scene.update_transforms();
+
+        let mut accel = PickAccelerator::build_from_scene(&scene, |_| Some(unit_aabb()));
+
+        // Move every object to a new spot, then refit rather than rebuild.
+        for (k, &id) in ids.iter().enumerate() {
+            let t = glam::Vec3::new(
+                (k % 7) as f32 * 1.3 - 4.0,
+                (k / 7) as f32 * 1.3 - 4.0,
+                (k % 3) as f32 * 1.7,
+            );
+            scene.set_local_transform(id, glam::Mat4::from_translation(t));
+        }
+        scene.update_transforms();
+        assert!(accel.refit_from_scene(&scene, |_| Some(unit_aabb())));
+
+        let (positions, indices) = unit_cube_mesh();
+        let mut mesh_lookup = HashMap::new();
+        mesh_lookup.insert(0u64, (positions, indices));
+
+        let rays = parity_ray_battery();
+        let mut mismatches = 0usize;
+        for (o, d) in &rays {
+            let brute = pick_scene_nodes_cpu(*o, *d, &scene, &mesh_lookup);
+            let refit = accel.pick(*o, *d, &mesh_lookup);
+            if !pick_hits_agree(&brute, &refit) {
+                mismatches += 1;
+            }
+        }
+        assert_eq!(
+            mismatches, 0,
+            "refit pick disagreed with brute force on {mismatches} rays",
+        );
     }
 }

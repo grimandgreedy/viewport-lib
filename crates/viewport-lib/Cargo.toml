@@ -182,7 +182,11 @@ web-sys = { version = "0.3", features = [
     "Node",
 ] }
 
-
+# CPU picking build/refit/query timing. Custom harness (uses std::time), so run
+# with `cargo bench --bench pick_bench`.
+[[bench]]
+name = "pick_bench"
+harness = false
 
 [[example]]
 name = "eframe-minimal"

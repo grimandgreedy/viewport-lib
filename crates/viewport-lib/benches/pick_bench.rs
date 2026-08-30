@@ -7,7 +7,7 @@
 //! replaced by, so it is recorded here for an easy comparison when that migration
 //! lands.
 //!
-//! Run: cargo test --release --test pick_bench -- --ignored --nocapture
+//! Run: cargo bench --bench pick_bench
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -131,9 +131,7 @@ fn min_ms(reps: usize, mut f: impl FnMut()) -> f64 {
     best
 }
 
-#[test]
-#[ignore = "perf benchmark; run with --release --ignored --nocapture"]
-fn pick_accelerator_build_and_query() {
+fn main() {
     const QUERIES: usize = 10_000;
     const BUILD_REPS: usize = 3;
     const QUERY_REPS: usize = 5;
@@ -148,10 +146,10 @@ fn pick_accelerator_build_and_query() {
     let cube_tm = TriMesh::new(verts, tris).unwrap();
 
     println!(
-        "\n{:>9} | {:>10} | {:>12} | {:>13}",
-        "objects", "build ms", "bvh q ms/10k", "linear q ms/10k",
+        "\n{:>9} | {:>10} | {:>10} | {:>12} | {:>13}",
+        "objects", "build ms", "refit ms", "bvh q ms/10k", "linear q ms/10k",
     );
-    println!("{}", "-".repeat(54));
+    println!("{}", "-".repeat(67));
 
     for &n in &[1_000usize, 10_000, 100_000] {
         let (scene, obj_positions) = scatter(n);
@@ -168,6 +166,13 @@ fn pick_accelerator_build_and_query() {
         for (o, d) in rays.iter().take(16) {
             let _ = accel.pick(*o, *d, &mesh_lookup);
         }
+
+        // Refit the same scene (re-reads every leaf AABB, keeps topology). The
+        // per-frame cost for a moving scene that was built once.
+        let refit_ms = min_ms(QUERY_REPS, || {
+            assert!(accel.refit_from_scene(&scene, |_| Some(unit_aabb())));
+        });
+
         let bvh_ms = min_ms(QUERY_REPS, || {
             for (o, d) in &rays {
                 let _ = accel.pick(*o, *d, &mesh_lookup);
@@ -181,8 +186,8 @@ fn pick_accelerator_build_and_query() {
         });
 
         println!(
-            "{:>9} | {:>10.2} | {:>12.2} | {:>13.2}",
-            n, build_ms, bvh_ms, linear_ms,
+            "{:>9} | {:>10.2} | {:>10.2} | {:>12.2} | {:>13.2}",
+            n, build_ms, refit_ms, bvh_ms, linear_ms,
         );
     }
     println!();
