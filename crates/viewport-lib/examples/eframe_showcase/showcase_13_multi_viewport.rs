@@ -500,7 +500,7 @@ impl App {
             fd.effects.lighting = lighting.clone();
             fd.viewport.show_grid = true;
             fd.viewport.show_axes_indicator = true;
-            fd.viewport.background_colour = Some(crate::BG_COLOUR);
+            // Leave background_colour unset so the renderer default applies.
             fd.interaction.outline_selected = has_selection;
             fd.scene.generation = scene_gen;
             fd.interaction.selection_generation = sel_gen;

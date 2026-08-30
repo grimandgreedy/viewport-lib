@@ -230,11 +230,14 @@ pub(crate) fn material_preset(index: usize) -> (Material, vpl::ItemSettings) {
     }
 }
 
-pub(crate) fn background_colour(index: usize) -> [f32; 4] {
+/// Background colour for the cycle position. `None` is the first entry: it
+/// leaves the viewport background unset so the renderer default applies; the
+/// other two entries override with a custom colour to demonstrate cycling.
+pub(crate) fn background_colour(index: usize) -> Option<[f32; 4]> {
     match index % 3 {
-        0 => crate::BG_COLOUR,
-        1 => [0.05, 0.08, 0.15, 1.0],
-        2 => [0.18, 0.16, 0.14, 1.0],
+        0 => None,
+        1 => Some([0.05, 0.08, 0.15, 1.0]),
+        2 => Some([0.18, 0.16, 0.14, 1.0]),
         _ => unreachable!(),
     }
 }

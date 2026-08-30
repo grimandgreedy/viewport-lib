@@ -822,7 +822,7 @@ impl eframe::App for App {
 
         // ---- Central panel: 3-D viewport ----
         let panel_bg = if self.mode == ShowcaseMode::SceneGraph {
-            showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle)
+            showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle).unwrap_or(BG_COLOUR)
         } else {
             BG_COLOUR
         };
@@ -2676,7 +2676,7 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, 0u64, 0u64)
+                (items, None, lighting, 0u64, 0u64)
             }
 
             ShowcaseMode::SceneGraph => {
@@ -2684,7 +2684,8 @@ impl App {
                     .sg_state
                     .scene
                     .collect_render_items(&self.sg_state.selection);
-                let bg = showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle);
+                let bg: Option<[f32; 4]> =
+                    showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle);
                 let lighting = {
                     let mut _t = LightingSettings::default();
                     _t.hemisphere_intensity = 0.5;
@@ -2696,7 +2697,7 @@ impl App {
                 scene_graph_outline_width = self.sg_state.outline_width;
                 let sg = self.sg_state.scene.version();
                 let ss = self.sg_state.selection.version();
-                (items, Some(bg), lighting, sg, ss)
+                (items, bg, lighting, sg, ss)
             }
 
             ShowcaseMode::Performance => {
@@ -2724,13 +2725,13 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (vec![], Some(BG_COLOUR), lighting, sg, ss)
+                (vec![], None, lighting, sg, ss)
             }
 
             ShowcaseMode::Interaction => {
                 let (items, lighting, sg, ss) =
                     showcase_04_interaction::interact_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::MaterialsVisibility => {
@@ -2754,7 +2755,7 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::PostProcess => {
@@ -2800,7 +2801,7 @@ impl App {
                     _t
                 };
                 let sg = self.pp_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::NormalMaps => {
@@ -2842,7 +2843,7 @@ impl App {
                     _t
                 };
                 let sg = self.nm_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::Shadows => {
@@ -2870,7 +2871,7 @@ impl App {
                     _t
                 };
                 let sg = self.shd_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::Annotation => {
@@ -2883,7 +2884,7 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::CameraTools => {
@@ -2896,7 +2897,7 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::Lights => {
@@ -2920,7 +2921,7 @@ impl App {
                     _t
                 };
                 let sg = self.lights_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::MultiViewport => {
@@ -2928,30 +2929,30 @@ impl App {
             }
             ShowcaseMode::Isolines => {
                 let (items, lighting, sg, ss) = showcase_14_isolines::iso_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::PointClouds => {
                 let (items, lighting, sg, ss) =
                     showcase_15_point_clouds::pc_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::Streamlines => {
                 let (items, lighting, sg, ss) =
                     showcase_16_streamlines::stream_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::Volume => {
                 let (items, lighting, sg, ss) = showcase_17_volume::vol_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::ClipVolumes => {
                 let (items, lighting, sg, ss) =
                     showcase_18_clip_volumes::clipvol_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::ScalarFields => {
@@ -2999,7 +3000,7 @@ impl App {
                 };
                 (
                     items,
-                    Some(BG_COLOUR),
+                    None,
                     lighting,
                     sg,
                     self.scalar_state.selection.version(),
@@ -3021,7 +3022,7 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::Textures => {
@@ -3044,7 +3045,7 @@ impl App {
                     _t.ground_colour = [0.8, 0.8, 0.8];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::ParamVis => {
@@ -3060,7 +3061,7 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::GroundPlane => {
@@ -3082,7 +3083,7 @@ impl App {
                     _t.ground_colour = [0.3, 0.3, 0.3];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::FaceAttributes => {
@@ -3138,41 +3139,41 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::BackfacePolicy => {
                 let items = self.sa_scene_items();
                 let sg = self.sa_state.scene.version();
-                (items, Some(BG_COLOUR), App::sa_lighting(), sg, 0)
+                (items, None, App::sa_lighting(), sg, 0)
             }
 
             ShowcaseMode::SurfaceVectors => {
                 let (items, lighting, sg, ss) =
                     showcase_25_surface_vectors::sv_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::VolumeMesh => {
                 let (items, lighting, sg, ss) =
                     showcase_26_volume_mesh::vm_collect_scene_items(self, frame);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::Auxiliary => {
                 let items = self.aux_state.scene.collect_render_items(&Selection::new());
-                (items, Some(BG_COLOUR), App::aux_lighting(), 0, 0)
+                (items, None, App::aux_lighting(), 0, 0)
             }
 
             ShowcaseMode::CurveNetworkQuantities => {
                 let (items, lighting, sg, ss) =
                     showcase_28_curve_network_quantities::cnq_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::DepthCompositeImages => (
                 self.dc_scene_items(),
-                Some(BG_COLOUR),
+                None,
                 App::dc_lighting(),
                 0,
                 0,
@@ -3180,7 +3181,7 @@ impl App {
 
             ShowcaseMode::ImplicitSurface => (
                 self.implicit_scene_items(),
-                Some(BG_COLOUR),
+                None,
                 App::implicit_lighting(),
                 self.mode_gen,
                 0,
@@ -3188,7 +3189,7 @@ impl App {
 
             ShowcaseMode::SparseVolumeGrid => (
                 self.svg_scene_items(),
-                Some(BG_COLOUR),
+                None,
                 App::svg_lighting(),
                 self.mode_gen,
                 0,
@@ -3197,13 +3198,13 @@ impl App {
             ShowcaseMode::ExtendedQuantities => {
                 let (items, lighting, sg, ss) =
                     showcase_32_extended_quantities::eq_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::PickLevels => {
                 let (items, lighting, sg, sel_gen) =
                     showcase_33_picking_levels::pl_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, sel_gen)
+                (items, None, lighting, sg, sel_gen)
             }
 
             ShowcaseMode::Labels => {
@@ -3216,12 +3217,12 @@ impl App {
                     _t.ground_colour = [1.0, 1.0, 1.0];
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::Overlay => (
                 Vec::new(),
-                Some(BG_COLOUR),
+                None,
                 LightingSettings::default(),
                 0,
                 0,
@@ -3230,7 +3231,7 @@ impl App {
             // The artwork is a 2-D overlay; the 3-D scene is empty.
             ShowcaseMode::VectorArt => (
                 Vec::new(),
-                Some(BG_COLOUR),
+                None,
                 LightingSettings::default(),
                 0,
                 0,
@@ -3307,13 +3308,13 @@ impl App {
                     _t
                 };
                 let sg = self.pb_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::ProbeWidgets => {
                 let (items, lighting, sg, ss) =
                     showcase_37_probe_widgets::pw_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::SurfaceLIC => {
@@ -3326,7 +3327,7 @@ impl App {
                     _t
                 };
                 let sg = self.lic_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::TensorGlyphs => {
@@ -3338,14 +3339,14 @@ impl App {
                     _t
                 };
                 let items = showcase_39_tensor_glyphs::beam_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, 0, 0)
+                (items, None, lighting, 0, 0)
             }
 
             ShowcaseMode::VertexWarp => {
                 let items = showcase_40_vertex_warp::warp_scene_items(self);
                 (
                     items,
-                    Some(BG_COLOUR),
+                    None,
                     showcase_40_vertex_warp::warp_lighting(),
                     0,
                     0,
@@ -3356,7 +3357,7 @@ impl App {
                 let items = showcase_41_sprites::sprite_scene_items(self);
                 (
                     items,
-                    Some(BG_COLOUR),
+                    None,
                     showcase_41_sprites::sprite_lighting(self),
                     0,
                     0,
@@ -3366,7 +3367,7 @@ impl App {
             ShowcaseMode::GaussianSplats => {
                 let (items, lighting, sg, ss) =
                     showcase_42_gaussian_splats::splat_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::SceneRuntime => {
@@ -3383,7 +3384,7 @@ impl App {
                     _t
                 };
                 let sg = self.rt_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::DebugDraw => {
@@ -3400,7 +3401,7 @@ impl App {
                     _t
                 };
                 let sg = self.dbg_draw_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::SkinnedAnimation => {
@@ -3424,7 +3425,7 @@ impl App {
                     _t
                 };
                 let sg = self.skin_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::Decals => {
@@ -3441,13 +3442,13 @@ impl App {
                     _t
                 };
                 let sg = self.decal46_state.scene.version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::LightingConsistency => {
                 let (items, lighting, sg, ss) =
                     showcase_47_lighting_consistency::lc_collect_scene_items(self);
-                (items, Some(BG_COLOUR), lighting, sg, ss)
+                (items, None, lighting, sg, ss)
             }
 
             ShowcaseMode::ScatterVolumes => {
@@ -3470,23 +3471,23 @@ impl App {
                     _t.hemisphere_intensity = self.svol_state.hemisphere_intensity;
                     _t
                 };
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::SceneLights => {
                 let (items, lighting, sg) = showcase_49_scene_lights::sl_collect(self);
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
 
             ShowcaseMode::GpuWave => {
                 let (items, lighting) = showcase_50_gpu_wave::wave_collect(self);
-                (items, Some(BG_COLOUR), lighting, 0, 0)
+                (items, None, lighting, 0, 0)
             }
 
             ShowcaseMode::AsyncUploads => {
                 let items = self.async_uploads_scene_items();
                 let lighting = self.async_uploads_lighting();
-                (items, Some(BG_COLOUR), lighting, 0, 0)
+                (items, None, lighting, 0, 0)
             }
 
             ShowcaseMode::Lod => {
@@ -3499,14 +3500,14 @@ impl App {
                     t
                 };
                 let generation = self.lod_state.generation;
-                (items, Some(BG_COLOUR), lighting, generation, 0)
+                (items, None, lighting, generation, 0)
             }
 
             ShowcaseMode::CustomShading => {
                 let items = showcase_54_custom_shading::custom_shading_items(self);
                 (
                     items,
-                    Some(BG_COLOUR),
+                    None,
                     showcase_54_custom_shading::custom_shading_lighting(),
                     0,
                     0,
@@ -3517,7 +3518,7 @@ impl App {
                 let items = showcase_53_vertex_colours::vcol_scene_items(self);
                 (
                     items,
-                    Some(BG_COLOUR),
+                    None,
                     showcase_53_vertex_colours::vcol_lighting(),
                     0,
                     0,
@@ -3526,14 +3527,14 @@ impl App {
 
             ShowcaseMode::Foreground => {
                 let items = showcase_55_foreground_pass::foreground_scene_items(self);
-                (items, Some(BG_COLOUR), App::foreground_lighting(), 0, 0)
+                (items, None, App::foreground_lighting(), 0, 0)
             }
 
             ShowcaseMode::SubmeshMaterials => {
                 let items = showcase_56_submesh_materials::submesh_scene_items(self);
                 (
                     items,
-                    Some(BG_COLOUR),
+                    None,
                     showcase_56_submesh_materials::submesh_lighting(),
                     0,
                     0,
@@ -3546,7 +3547,7 @@ impl App {
                     .collect_render_items(&Selection::new());
                 let lighting = self.lighting_state.lighting();
                 let sg = self.lighting_state.scene().version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
             ShowcaseMode::PhysicallyBasedSurfaces => {
                 let items = self
@@ -3555,7 +3556,7 @@ impl App {
                     .collect_render_items(&Selection::new());
                 let lighting = self.surfaces_state.lighting();
                 let sg = self.surfaces_state.scene().version();
-                (items, Some(BG_COLOUR), lighting, sg, 0)
+                (items, None, lighting, sg, 0)
             }
         };
 
