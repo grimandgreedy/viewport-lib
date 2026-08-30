@@ -29,16 +29,22 @@ const Y_COLOUR: [f32; 4] = [0.361, 0.722, 0.361, 1.0]; // #5cb85c
 const Z_COLOUR: [f32; 4] = [0.290, 0.620, 1.000, 1.0]; // #4a9eff
 
 // Layout parameters, in logical pixels (the overlay pass scales by DPI).
+//
+// Stroke widths are heavier than the raw geometry the earlier bespoke pipeline
+// drew: the shared overlay shapes are drawn with a 1px SDF anti-alias band at
+// every edge, which softens thin strokes, so the weights are bumped to keep the
+// same visual "ink" as the old hard-edged triangles.
 const ORIGIN_OFFSET: f32 = 40.0;
 const LINE_LENGTH: f32 = 30.0;
-const LINE_THICKNESS: f32 = 2.0;
+const LINE_THICKNESS: f32 = 3.5;
 const CIRCLE_RADIUS: f32 = 9.0;
-/// Inner radius of the ring outline as a fraction of the outer radius.
-const RING_INNER_FRAC: f32 = 0.82;
+/// Inner radius of the ring outline as a fraction of the outer radius. Lower
+/// values make the ring wall thicker; `0.66` gives a ~3px wall at this radius.
+const RING_INNER_FRAC: f32 = 0.66;
 /// Half-width / half-height of a letter glyph.
 const GLYPH_HALF: f32 = 4.5;
 /// Stroke thickness of a letter glyph.
-const GLYPH_THICKNESS: f32 = 1.6;
+const GLYPH_THICKNESS: f32 = 2.6;
 /// z_order spacing between the three axes so a nearer axis stacks over a farther
 /// one; the four sub-parts of one axis occupy the slots in between.
 const AXIS_Z_STRIDE: i32 = 10;
