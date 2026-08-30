@@ -24,7 +24,24 @@ struct VertexInput {
     @location(13) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
     @location(14) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
     @location(15) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
-};
+    @location(16) clip_rect:  vec4<f32>,          // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(17) clip_index: f32,                // clip-shape index, or -1 for none
+}
+
+// One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
+// parent_index, invert). A vertex's `clip_index` selects an entry; `parent_index`
+// (or -1) chains to an enclosing mask so nested clips intersect. Matches the
+// solid overlay_shape.wgsl layout so both pipelines share the clip registry.
+struct ClipShape {
+    center:    vec2<f32>,
+    half_size: vec2<f32>,
+    radii:     vec4<f32>,
+    params:    vec4<f32>,
+    pivot:     vec2<f32>,
+    pad:       vec2<f32>,
+}
+
+@group(1) @binding(0) var<storage, read> clip_shapes: array<ClipShape>;;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -43,6 +60,8 @@ struct VertexOutput {
     @location(12) @interpolate(flat) nine_slice_frac: vec4<f32>,
     @location(13) @interpolate(flat) texture_transform_a: vec4<f32>,
     @location(14) @interpolate(flat) texture_transform_b: vec4<f32>,
+    @location(15) @interpolate(flat) clip_rect:  vec4<f32>,
+    @location(16) @interpolate(flat) clip_index: f32,
 };
 
 @vertex
@@ -64,6 +83,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.nine_slice_frac = in.nine_slice_frac;
     out.texture_transform_a = in.texture_transform_a;
     out.texture_transform_b = in.texture_transform_b;
+    out.clip_rect  = in.clip_rect;
+    out.clip_index = in.clip_index;
     return out;
 }
 
@@ -248,6 +269,31 @@ fn eval_sdf(p: vec2<f32>, hs: vec2<f32>, shape_type: f32, radii: vec4<f32>) -> f
     }
 }
 
+// True if the framebuffer point `fp` is outside the clip mask at `idx0` or any of
+// its ancestors (masks intersect down the parent chain). Each mask is evaluated by
+// its SDF in its own rotated frame. A short guard bounds the chain length. Mirrors
+// the solid overlay_shape.wgsl clip test.
+fn clip_outside(fp: vec2<f32>, idx0: f32) -> bool {
+    var idx = i32(idx0);
+    var guard = 0;
+    loop {
+        if (idx < 0 || guard >= 8) {
+            break;
+        }
+        let c = clip_shapes[idx];
+        let rc = cos(-c.params.y);
+        let rs = sin(-c.params.y);
+        let pd = (fp - c.center) - c.pivot;
+        let p = vec2<f32>(rc * pd.x - rs * pd.y, rs * pd.x + rc * pd.y) + c.pivot;
+        if (eval_sdf(p, c.half_size, c.params.x, c.radii) > 0.5) {
+            return true;
+        }
+        idx = i32(c.params.z);
+        guard = guard + 1;
+    }
+    return false;
+}
+
 // Apply saturation, brightness, and hue-rotation to a backdrop colour.
 // sat/bright are multipliers (1.0 = unchanged); hue is in radians. Hue
 // rotation uses Rodrigues rotation around the grey axis (1,1,1)/sqrt(3).
@@ -267,6 +313,20 @@ fn apply_backdrop_filters(rgb: vec3<f32>, sat: f32, bright: f32, hue: f32) -> ve
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Clip: cheap bounding-box reject first (exact for rectangular masks), then
+    // the mask SDF and its parent chain. `clip_rect`/`clip_position.xy` are in
+    // framebuffer pixels (top-left origin), same as the solid shape path.
+    let cr = in.clip_rect;
+    if (cr.z > cr.x && cr.w > cr.y) {
+        let fp = in.clip_position.xy;
+        if (fp.x < cr.x || fp.x > cr.z || fp.y < cr.y || fp.y > cr.w) {
+            discard;
+        }
+    }
+    if (in.clip_index >= 0.0 && clip_outside(in.clip_position.xy, in.clip_index)) {
+        discard;
+    }
+
     let p = in.local_pos;
     let hs = in.half_size;
 

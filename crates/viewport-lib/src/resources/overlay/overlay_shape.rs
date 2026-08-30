@@ -14,6 +14,9 @@ pub(crate) struct OverlayShapeResources {
     pub(crate) tex_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the texture pipeline (group 0: texture + sampler).
     pub(crate) tex_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Bind group layout for the texture pipeline's clip masks (group 1: the
+    /// clip-shape storage buffer, shared with the solid pipeline's binding 1).
+    pub(crate) tex_clip_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Clamp-to-edge linear sampler shared across all texture shape bind groups.
     pub(crate) tex_sampler: Option<crate::gpu::Sampler>,
 }
@@ -157,10 +160,29 @@ impl crate::resources::DeviceResources {
         let sampler =
             crate::resources::builders::clamp_linear_sampler(device, "overlay_shape_tex_sampler");
 
+        // Group 1: the clip-mask storage buffer, so a textured shape honours
+        // `with_clip` the same way a solid shape does.
+        let clip_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("overlay_shape_tex_clip_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        std::num::NonZeroU64::new(std::mem::size_of::<ClipShapeGpu>() as u64)
+                            .unwrap(),
+                    ),
+                },
+                count: None,
+            }],
+        });
+
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "overlay_shape_tex_layout",
-            &[&bgl],
+            &[&bgl, &clip_bgl],
         );
 
         let shader = crate::resources::builders::wgsl_module(
@@ -215,6 +237,7 @@ impl crate::resources::DeviceResources {
         );
 
         self.overlay_shape.tex_bgl = Some(bgl);
+        self.overlay_shape.tex_clip_bgl = Some(clip_bgl);
         self.overlay_shape.tex_sampler = Some(sampler);
         self.overlay_shape.tex_pipeline = Some(pipeline);
     }
@@ -756,6 +779,12 @@ pub(crate) struct OverlayShapeTexVertex {
     /// Texture transform part B:
     /// `[rotation_radians, tile_mode (0/1/2), flip_x (0/1), flip_y (0/1)]`.
     pub texture_transform_b: [f32; 4],
+    /// Framebuffer-pixel clip bbox `(x0, y0, x1, y1)`; all zero means no box
+    /// clip. Same encoding as `OverlayShapeVertex::clip_rect`.
+    pub clip_rect: [f32; 4],
+    /// Clip-mask shape index, or `-1.0` for none. Same encoding as
+    /// `OverlayShapeVertex::clip_index`.
+    pub clip_index: f32,
 }
 
 impl OverlayShapeTexVertex {
@@ -859,6 +888,18 @@ impl OverlayShapeTexVertex {
                     offset: 184,
                     shader_location: 15,
                     format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 16: clip_rect vec4f (framebuffer-pixel clip bbox)
+                crate::gpu::VertexAttribute {
+                    offset: 200,
+                    shader_location: 16,
+                    format: crate::gpu::VertexFormat::Float32x4,
+                },
+                // location 17: clip_index f32 (clip-shape index, or -1)
+                crate::gpu::VertexAttribute {
+                    offset: 216,
+                    shader_location: 17,
+                    format: crate::gpu::VertexFormat::Float32,
                 },
             ],
         }
@@ -966,6 +1007,12 @@ pub(crate) struct OverlayShapeGpuData {
     pub _clip_buf: Option<crate::gpu::Buffer>,
     /// One batch per unique texture, drawn after solid shapes.
     pub tex_batches: Vec<OverlayShapeTexBatch>,
+    /// Clip-mask bind group (group 1) shared by every textured and blur draw.
+    /// Present whenever the texture pipeline is used this frame.
+    pub tex_clip_bind_group: Option<crate::gpu::BindGroup>,
+    /// Backing clip-shape storage buffer for `tex_clip_bind_group`. Kept alive
+    /// alongside it.
+    pub _tex_clip_buf: Option<crate::gpu::Buffer>,
     /// Vertex buffer for backdrop-blur shapes (frosted glass). Uses the same
     /// vertex layout as `OverlayShapeTexVertex` with screen-space UVs.
     /// The bind group is created at render time once the blurred scene texture

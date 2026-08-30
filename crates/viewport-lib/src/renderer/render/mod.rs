@@ -52,8 +52,12 @@ macro_rules! emit_overlay_2d_hardcoded {
                 }
             }
             if !sd.tex_batches.is_empty() {
-                if let Some(pipeline) = &$this.resources.overlay_shape.tex_pipeline {
+                if let (Some(pipeline), Some(clip_bg)) = (
+                    &$this.resources.overlay_shape.tex_pipeline,
+                    sd.tex_clip_bind_group.as_ref(),
+                ) {
                     $render_pass.set_pipeline(pipeline);
+                    $render_pass.set_bind_group(1, clip_bg, &[]);
                     for batch in &sd.tex_batches {
                         $render_pass.set_bind_group(0, &batch.bind_group, &[]);
                         $render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
@@ -115,10 +119,15 @@ macro_rules! emit_overlay_2d_ordered {
                         }
                     }
                 }
-                OverlayDrawSource::ShapeTex { batch_index } => {
+                OverlayDrawSource::ShapeTex {
+                    batch_index,
+                    vertex_start,
+                    vertex_count,
+                } => {
                     if let Some(ref sd) = $this.overlay_shape_gpu_data {
-                        if let (Some(pipeline), Some(batch)) = (
+                        if let (Some(pipeline), Some(clip_bg), Some(batch)) = (
                             &$this.resources.overlay_shape.tex_pipeline,
+                            sd.tex_clip_bind_group.as_ref(),
                             sd.tex_batches.get(batch_index as usize),
                         ) {
                             if last_pipe != LastPipe::ShapeTex {
@@ -126,8 +135,9 @@ macro_rules! emit_overlay_2d_ordered {
                                 last_pipe = LastPipe::ShapeTex;
                             }
                             $render_pass.set_bind_group(0, &batch.bind_group, &[]);
+                            $render_pass.set_bind_group(1, clip_bg, &[]);
                             $render_pass.set_vertex_buffer(0, batch.vertex_buf.slice(..));
-                            $render_pass.draw(0..batch.vertex_count, 0..1);
+                            $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
                         }
                     }
                 }
@@ -1354,12 +1364,14 @@ impl ViewportRenderer {
     ) {
         if let Some(ref sd) = self.overlay_shape_gpu_data {
             if sd.blur_vertex_count > 0 {
-                if let (Some(pipeline), Some(vbuf)) = (
+                if let (Some(pipeline), Some(clip_bg), Some(vbuf)) = (
                     &self.resources.overlay_shape.tex_pipeline,
+                    sd.tex_clip_bind_group.as_ref(),
                     &sd.blur_vertex_buf,
                 ) {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, blur_bind_group, &[]);
+                    render_pass.set_bind_group(1, clip_bg, &[]);
                     render_pass.set_vertex_buffer(0, vbuf.slice(..));
                     render_pass.draw(0..sd.blur_vertex_count, 0..1);
                 }

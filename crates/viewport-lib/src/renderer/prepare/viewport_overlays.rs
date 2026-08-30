@@ -806,6 +806,13 @@ impl ViewportRenderer {
                 // `tex_groups`. A textured batch draws as one unit, so it orders
                 // against other families at its frontmost (lowest-z) shape.
                 let mut tex_group_z: Vec<i32> = Vec::new();
+                // One entry per drawn textured shape (and textured polyline
+                // fill), in z-sorted emission order: `(z_order, group_idx,
+                // vertex_start, vertex_count)` where the range indexes into that
+                // group's vertex buffer. Each becomes its own draw segment so a
+                // solid shape can layer between two shapes sharing a texture,
+                // instead of the whole texture group collapsing to its lowest z.
+                let mut tex_shape_segs: Vec<(i32, usize, u32, u32)> = Vec::new();
                 // Blur backdrop vertices (share the tex vertex layout with screen UVs).
                 let mut blur_verts: Vec<crate::resources::OverlayShapeTexVertex> = Vec::new();
                 let mut max_blur_radius: f32 = 0.0;
@@ -1186,6 +1193,22 @@ impl ViewportRenderer {
                         (cx - ex, cy + ey, -ex, ey),
                     ];
 
+                    // Resolve the clip mask for this shape (shared by the solid,
+                    // textured, and blur branches). Missing or unmatched ids fall
+                    // through to a -1 index and an all-zero rect, which the shaders
+                    // treat as no clipping. The bbox and index come from the same
+                    // registry entry, so they never disagree.
+                    let clip_index_i = shape
+                        .clip_id
+                        .and_then(|id| clip_index_of.get(&id).copied())
+                        .unwrap_or(-1);
+                    let clip_rect = if clip_index_i >= 0 {
+                        clip_bboxes[clip_index_i as usize]
+                    } else {
+                        [0.0, 0.0, 0.0, 0.0]
+                    };
+                    let clip_index = clip_index_i as f32;
+
                     if let Some(tex_id) = shape.texture {
                         // Find or create a group for this texture ID.
                         let group_idx = tex_groups
@@ -1198,6 +1221,7 @@ impl ViewportRenderer {
                             });
                         tex_group_z[group_idx] = tex_group_z[group_idx].min(shape.z_order);
                         let group_verts = &mut tex_groups[group_idx].1;
+                        let tex_seg_start = group_verts.len() as u32;
 
                         // UV maps local_pos to [0,1] over the shape content area.
                         // hw/hh safe-guarded so we never divide by zero.
@@ -1271,8 +1295,16 @@ impl ViewportRenderer {
                                 nine_slice_frac: nine_frac,
                                 texture_transform_a: tt_a,
                                 texture_transform_b: tt_b,
+                                clip_rect,
+                                clip_index,
                             });
                         }
+                        tex_shape_segs.push((
+                            shape.z_order,
+                            group_idx,
+                            tex_seg_start,
+                            group_verts.len() as u32 - tex_seg_start,
+                        ));
                     } else if shape.backdrop_blur > 0.0 {
                         max_blur_radius = max_blur_radius.max(shape.backdrop_blur);
                         // Blur backdrop: same tex vertex layout but UV is screen-space.
@@ -1302,24 +1334,13 @@ impl ViewportRenderer {
                                 nine_slice_frac: [0.0; 4],
                                 texture_transform_a: [0.0, 0.0, 1.0, 1.0],
                                 texture_transform_b: [0.0, 0.0, 0.0, 0.0],
+                                // Backdrop blur is composited separately and is
+                                // not clipped by a mask.
+                                clip_rect: [0.0; 4],
+                                clip_index: -1.0,
                             });
                         }
                     } else {
-                        // Look up the clip mask for this shape (if it has a
-                        // clip_id). Missing or unmatched ids fall through to a
-                        // -1 index and an all-zero rect, which the shader treats
-                        // as no clipping. The bbox and index come from the same
-                        // registry entry, so they never disagree.
-                        let clip_index_i = shape
-                            .clip_id
-                            .and_then(|id| clip_index_of.get(&id).copied())
-                            .unwrap_or(-1);
-                        let clip_rect = if clip_index_i >= 0 {
-                            clip_bboxes[clip_index_i as usize]
-                        } else {
-                            [0.0, 0.0, 0.0, 0.0]
-                        };
-                        let clip_index = clip_index_i as f32;
                         // gradient_params is now vec4: [type, angle, stop_count, _pad]
                         let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
 
@@ -1465,6 +1486,7 @@ impl ViewportRenderer {
                         });
                     tex_group_z[group_idx] = tex_group_z[group_idx].min(poly.z_order);
                     let group_verts = &mut tex_groups[group_idx].1;
+                    let poly_seg_start = group_verts.len() as u32;
                     let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
                     let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
                     let half_size = [size[0] * 0.5, size[1] * 0.5];
@@ -1510,9 +1532,18 @@ impl ViewportRenderer {
                                 nine_slice_frac: [0.0; 4],
                                 texture_transform_a: tt_a,
                                 texture_transform_b: tt_b,
+                                // Textured polyline fills carry no clip mask.
+                                clip_rect: [0.0; 4],
+                                clip_index: -1.0,
                             });
                         }
                     }
+                    tex_shape_segs.push((
+                        poly.z_order,
+                        group_idx,
+                        poly_seg_start,
+                        group_verts.len() as u32 - poly_seg_start,
+                    ));
                 }
 
                 let solid_vbuf = if !solid_verts.is_empty() {
@@ -1568,6 +1599,10 @@ impl ViewportRenderer {
                 };
 
                 let mut tex_batches = Vec::new();
+                // Maps a texture group index to its batch index in `tex_batches`
+                // (groups with no drawable verts or a missing texture have none),
+                // so per-shape segments can reference the right batch.
+                let mut group_to_batch: Vec<Option<u32>> = vec![None; tex_groups.len()];
                 if has_tex {
                     if let (Some(bgl), Some(sampler)) = (
                         self.resources.overlay_shape.tex_bgl.as_ref(),
@@ -1602,32 +1637,59 @@ impl ViewportRenderer {
                             let vertex_buf =
                                 upload_overlay_vbuf(device, queue, "overlay_shape_tex_vbuf", verts);
                             let batch_index = tex_batches.len() as u32;
+                            group_to_batch[group_idx] = Some(batch_index);
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {
                                 vertex_buf,
                                 vertex_count: verts.len() as u32,
                                 bind_group,
                             });
-                            if self.overlay_uses_zorder {
-                                let z = tex_group_z
-                                    .get(group_idx)
-                                    .copied()
-                                    .filter(|z| *z != i32::MAX)
-                                    .unwrap_or(0);
-                                self.overlay_draw_segments.push(
-                                    crate::renderer::overlay_draw_order::OverlayDrawSegment {
-                                        z_order: z,
-                                        family_rank:
-                                            crate::renderer::overlay_draw_order::family_rank::SHAPE,
-                                        source:
-                                            crate::renderer::overlay_draw_order::OverlayDrawSource::ShapeTex {
-                                                batch_index,
-                                            },
-                                    },
+                        }
+                    }
+
+                    // Emit one draw segment per textured shape (coalescing
+                    // contiguous same-texture, same-z runs) at the shape's own
+                    // z_order, so a solid shape can layer between two shapes that
+                    // share a texture. The whole batch no longer collapses to its
+                    // lowest z.
+                    if self.overlay_uses_zorder {
+                        for &(z, group_idx, vstart, vcount) in &tex_shape_segs {
+                            if let Some(batch_index) =
+                                group_to_batch.get(group_idx).copied().flatten()
+                            {
+                                crate::renderer::overlay_draw_order::OverlayDrawSegment::push_shape_tex(
+                                    &mut self.overlay_draw_segments,
+                                    z,
+                                    batch_index,
+                                    vstart,
+                                    vcount,
                                 );
                             }
                         }
                     }
                 }
+
+                // Clip-mask bind group (group 1) for the texture pipeline, used by
+                // both textured shape batches and blur shapes. Built whenever the
+                // texture pipeline runs this frame so `with_clip` is honoured on a
+                // textured shape the same way it is on a solid one.
+                let (tex_clip_bind_group, tex_clip_buf) = if has_tex || has_blur {
+                    if let Some(bgl) = self.resources.overlay_shape.tex_clip_bgl.as_ref() {
+                        let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                        let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                            label: Some("overlay_shape_tex_clip_bg"),
+                            layout: bgl,
+                            entries: &[crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: clip_buf.as_entire_binding(),
+                            }],
+                        });
+                        (Some(bg), Some(clip_buf))
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                };
 
                 let blur_vbuf = if !blur_verts.is_empty() {
                     Some(upload_overlay_vbuf(
@@ -1648,6 +1710,8 @@ impl ViewportRenderer {
                         _shadow_buf: shadow_buf,
                         _clip_buf: shape_clip_buf,
                         tex_batches,
+                        tex_clip_bind_group,
+                        _tex_clip_buf: tex_clip_buf,
                         blur_vertex_buf: blur_vbuf,
                         blur_vertex_count: blur_verts.len() as u32,
                         max_blur_radius,
