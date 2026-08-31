@@ -134,4 +134,4 @@ pub use self::volume::sparse_volume::SparseVolumeGridData;
 pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 pub use crate::renderer::GpuImplicitItem;
-pub use crate::renderer::GpuMarchingCubesJob;
+pub use crate::renderer::GpuMarchingCubesItem;

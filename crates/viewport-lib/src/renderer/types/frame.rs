@@ -289,8 +289,8 @@ pub struct SceneFrame {
     pub screen_images: Vec<ScreenImageItem>,
     /// GPU implicit surface items to render this frame.
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
-    /// GPU marching cubes jobs to dispatch this frame.
-    pub gpu_mc_jobs: Vec<crate::resources::GpuMarchingCubesJob>,
+    /// GPU marching cubes items to dispatch this frame.
+    pub gpu_mc_items: Vec<crate::resources::GpuMarchingCubesItem>,
     /// GPU compute filter items dispatched before the render pass.
     ///
     /// Each item references a pre-uploaded mesh and a compute kernel that
@@ -387,7 +387,7 @@ impl Default for SceneFrame {
             streamtube_refs: Vec::new(),
             screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
-            gpu_mc_jobs: Vec::new(),
+            gpu_mc_items: Vec::new(),
             compute_filter_items: Vec::new(),
             volume_meshes: Vec::new(),
             tube_items: Vec::new(),

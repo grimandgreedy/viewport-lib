@@ -58,7 +58,7 @@ pub use self::types::{
     EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode, ExposureSettings,
     ExternalInstancesItem, FillRule, FilterMode, ForceField, ForegroundPass, ForegroundProjection,
     FrameData, GaussianSplatItem, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType,
-    GpuImplicitItem, GpuMarchingCubesJob, GpuParticleSystemItem, GradientStop, GroundPlane,
+    GpuImplicitItem, GpuMarchingCubesItem, GpuParticleSystemItem, GradientStop, GroundPlane,
     GroundPlaneMode, ImageSliceItem, IndirectLightSource, InteractionFrame, LabelAnchor,
     LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture,
     LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem,
@@ -142,7 +142,7 @@ pub(crate) struct SelectionOutlines {
     pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
     /// Indices into `implicit_gpu_data` for selected GPU implicit items.
     pub implicit_outline_indices: Vec<usize>,
-    /// Per-frame outline data for selected GPU marching cubes jobs.
+    /// Per-frame outline data for selected GPU marching cubes items.
     pub mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>,
     /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
     pub streamtube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
@@ -256,7 +256,7 @@ struct GpuImplicitPickItem {
     max_distance: f32,
 }
 
-/// Retained pick state for one GPU marching cubes job, built during `prepare()`.
+/// Retained pick state for one GPU marching cubes item, built during `prepare()`.
 struct GpuMcPickItem {
     id: u64,
     isovalue: f32,
@@ -551,7 +551,7 @@ pub struct ViewportRenderer {
     pick_decal_items: Vec<DecalItem>,
     /// GPU implicit surface items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_implicit_items: Vec<GpuImplicitPickItem>,
-    /// GPU marching cubes jobs from the last `prepare()` call, retained for `pick()` dispatch.
+    /// GPU marching cubes items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_mc_items: Vec<GpuMcPickItem>,
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
     /// scenes that never call `pick()`/`pick_rect()` avoid a per-frame deep copy

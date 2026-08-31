@@ -246,7 +246,7 @@ struct ImplicitPickDraw<'a> {
     render_bind_group: &'a crate::gpu::BindGroup,
 }
 
-/// One GPU marching-cubes job to draw into the pick pass. The owned group-1 bind
+/// One GPU marching-cubes item to draw into the pick pass. The owned group-1 bind
 /// group holds the object id; each slab contributes a borrowed (vertex buffer,
 /// indirect-args buffer) pair drawn with the reused MC surface indirect args.
 struct McPickDraw<'a> {

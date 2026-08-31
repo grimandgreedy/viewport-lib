@@ -21,7 +21,7 @@ use glam::{Mat4, Vec2, Vec3};
 use vpl::{
     AnchorX, AnchorY, BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem,
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
+    GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
     Material, McVolumeId, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId,
     PickMask, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, ScreenImageItem,
     ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef,
@@ -362,7 +362,7 @@ impl PickingShowcase {
             settings.unlit = false;
             settings.pick_id = PickId(MC);
             settings.selected = sel(MC);
-            fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
+            fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
                 volume_id: mc_id,
                 isovalue: 0.0,
                 material: mat,

@@ -12,7 +12,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::{
     geometry::marching_cubes::{TRI_TABLE, VolumeData},
-    renderer::GpuMarchingCubesJob,
+    renderer::GpuMarchingCubesItem,
     resources::{DeviceResources, DualPipeline},
 };
 
@@ -49,7 +49,7 @@ crate::resources::handle::slot_handle! {
     /// Handle to a volume scalar field uploaded for GPU marching cubes.
     ///
     /// Returned by [`DeviceResources::upload_volume_for_mc`]. Pass to
-    /// [`GpuMarchingCubesJob`] to select which volume to triangulate each frame.
+    /// [`GpuMarchingCubesItem`] to select which volume to triangulate each frame.
     ///
     /// Carries the slot index plus the generation the slot had when the handle
     /// was issued. A handle whose volume was removed (its slot freed and reused
@@ -942,7 +942,7 @@ impl DeviceResources {
         &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        jobs: &[GpuMarchingCubesJob],
+        jobs: &[GpuMarchingCubesItem],
     ) -> Vec<McFrameData> {
         if jobs.is_empty() {
             return Vec::new();

@@ -325,9 +325,9 @@ pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, ComputeFilterResult,
     DeviceResources, EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget,
-    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive,
-    JobId, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange,
-    TextMetrics, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
+    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
+    ImplicitPrimitive, JobId, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes,
+    SubmeshRange, TextMetrics, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
     lerp_attributes, supports_texture_format, vram_budget,
 };
 pub use resources::{

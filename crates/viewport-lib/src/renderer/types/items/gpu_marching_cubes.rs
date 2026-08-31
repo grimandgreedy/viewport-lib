@@ -1,12 +1,12 @@
 use crate::resources::McVolumeId;
 use crate::scene::material::{ItemSettings, Material};
 
-/// One GPU marching cubes draw job submitted per frame.
+/// One GPU marching cubes draw item submitted per frame.
 ///
 /// The volume referenced by `volume_id` is triangulated on the GPU at `isovalue`
 /// and drawn with `material`. No CPU readback occurs; the vertex count is
 /// determined by an indirect draw call.
-pub struct GpuMarchingCubesJob {
+pub struct GpuMarchingCubesItem {
     /// Volume to triangulate (must remain alive).
     pub volume_id: McVolumeId,
     /// Isovalue at which to extract the surface.

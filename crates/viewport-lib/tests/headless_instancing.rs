@@ -206,8 +206,8 @@ fn mc_external_scalar_drives_isosurface() {
         frame.viewport.show_axes_indicator = false;
         frame
             .scene
-            .gpu_mc_jobs
-            .push(viewport_lib::GpuMarchingCubesJob {
+            .gpu_mc_items
+            .push(viewport_lib::GpuMarchingCubesItem {
                 volume_id,
                 isovalue: 1.5,
                 material: Material::default(),
@@ -218,7 +218,7 @@ fn mc_external_scalar_drives_isosurface() {
     };
     let empty_frame = || -> FrameData {
         let mut frame = make_frame();
-        frame.scene.gpu_mc_jobs.clear();
+        frame.scene.gpu_mc_items.clear();
         frame
     };
     let diff_count = |a: &[u8], b: &[u8]| -> usize {

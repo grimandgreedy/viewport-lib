@@ -22,12 +22,12 @@ use eframe::egui;
 use vpl::{
     AnchorX, AnchorY, BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem,
     FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
-    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode, ImplicitPrimitive,
-    ItemSettings, LightingSettings, Material, McVolumeId, MeshId, NodeId, PickBackend, PickId,
-    PickMask, PickRectResult, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem,
-    SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree, SpriteItem, StreamtubeItem,
-    SubObjectRef, SubSelectionRef, TensorGlyphItem, TextureId, TubeItem, ViewportRenderer,
-    VolumeData, VolumeMeshData, VolumeMeshItem, VolumeSurfaceSliceItem,
+    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
+    ImplicitPrimitive, ItemSettings, LightingSettings, Material, McVolumeId, MeshId, NodeId,
+    PickBackend, PickId, PickMask, PickRectResult, PointCloudItem, PolylineItem,
+    PolylineSelectionInfo, RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree,
+    SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef, TensorGlyphItem, TextureId,
+    TubeItem, ViewportRenderer, VolumeData, VolumeMeshData, VolumeMeshItem, VolumeSurfaceSliceItem,
 };
 
 use crate::App;
@@ -398,7 +398,7 @@ pub(crate) struct PlState {
     pub ribbon_strip_lengths: Vec<u32>,
     /// Plane mesh uploaded for VolumeSurfaceSliceItem (pick_id=51).
     pub surface_slice_mesh_id: Option<MeshId>,
-    /// GPU volume handle for the GpuMarchingCubesJob (pick_id=54).
+    /// GPU volume handle for the GpuMarchingCubesItem (pick_id=54).
     pub mc_volume_id: Option<McVolumeId>,
     /// CPU-side copy of the MC volume data, retained for CPU picking.
     pub mc_volume_data: Option<std::sync::Arc<vpl::VolumeData>>,
@@ -2201,7 +2201,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         mc_settings.unlit = false;
         mc_settings.pick_id = PickId(54);
         mc_settings.selected = app.pl_state.selection.contains(54);
-        fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
+        fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
             volume_id: mc_vol_id,
             isovalue: 0.0,
             material: mat,

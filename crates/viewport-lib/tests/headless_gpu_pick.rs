@@ -1403,7 +1403,7 @@ fn gpu_pick_hits_marching_cubes() {
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
-    let mut job = viewport_lib::GpuMarchingCubesJob {
+    let mut job = viewport_lib::GpuMarchingCubesItem {
         volume_id,
         isovalue: 1.5,
         material: Material::default(),
@@ -1411,7 +1411,7 @@ fn gpu_pick_hits_marching_cubes() {
         cpu_data: None,
     };
     job.settings.pick_id = PickId(717);
-    frame.scene.gpu_mc_jobs.push(job);
+    frame.scene.gpu_mc_items.push(job);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);

@@ -1201,7 +1201,7 @@ impl ViewportRenderer {
         let mut mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem> =
             Vec::new();
         if frame.interaction.outline_selected {
-            for (i, job) in frame.scene.gpu_mc_jobs.iter().enumerate() {
+            for (i, job) in frame.scene.gpu_mc_items.iter().enumerate() {
                 if job.settings.hidden || !job.settings.selected {
                     continue;
                 }
@@ -1396,7 +1396,9 @@ impl ViewportRenderer {
         // plugin has a selection this frame, so both the mask/edge pass below and
         // the composite (see `emit_outline_composite!`) run for plugin outlines.
         let plugin_outline = self.any_plugin_item_selected(frame);
-        self.viewport_slots[vp_idx].selection_outlines.plugin_outline_present = plugin_outline;
+        self.viewport_slots[vp_idx]
+            .selection_outlines
+            .plugin_outline_present = plugin_outline;
 
         // ------------------------------------------------------------------
         // Outline offscreen pass : screen-space edge detection.
@@ -1410,37 +1412,61 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         if frame.interaction.outline_selected
             && (!self.viewport_slots[vp_idx]
-                .selection_outlines.outline_object_buffers
+                .selection_outlines
+                .outline_object_buffers
                 .is_empty()
-                || !self.viewport_slots[vp_idx].selection_outlines.splat_outline_buffers.is_empty()
                 || !self.viewport_slots[vp_idx]
-                    .selection_outlines.streamtube_outline_items
-                    .is_empty()
-                || !self.viewport_slots[vp_idx].selection_outlines.tube_outline_items.is_empty()
-                || !self.viewport_slots[vp_idx].selection_outlines.ribbon_outline_items.is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines.polyline_outline_indices
+                    .selection_outlines
+                    .splat_outline_buffers
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
-                    .selection_outlines.volume_outline_indices
-                    .is_empty()
-                || !self.viewport_slots[vp_idx].selection_outlines.glyph_outline_indices.is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines.tensor_glyph_outline_indices
+                    .selection_outlines
+                    .streamtube_outline_items
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
-                    .selection_outlines.sprite_outline_indices
+                    .selection_outlines
+                    .tube_outline_items
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
-                    .selection_outlines.raw_geom_outline_buffers
+                    .selection_outlines
+                    .ribbon_outline_items
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
-                    .selection_outlines.screen_rect_outline_buffers
+                    .selection_outlines
+                    .polyline_outline_indices
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
-                    .selection_outlines.implicit_outline_indices
+                    .selection_outlines
+                    .volume_outline_indices
                     .is_empty()
-                || !self.viewport_slots[vp_idx].selection_outlines.mc_outline_data.is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .selection_outlines
+                    .glyph_outline_indices
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .selection_outlines
+                    .tensor_glyph_outline_indices
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .selection_outlines
+                    .sprite_outline_indices
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .selection_outlines
+                    .raw_geom_outline_buffers
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .selection_outlines
+                    .screen_rect_outline_buffers
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .selection_outlines
+                    .implicit_outline_indices
+                    .is_empty()
+                || !self.viewport_slots[vp_idx]
+                    .selection_outlines
+                    .mc_outline_data
+                    .is_empty()
                 || plugin_outline)
         {
             let ppp = frame.camera.pixels_per_point;
@@ -1479,28 +1505,33 @@ impl ViewportRenderer {
             // Extract raw pointers for slot fields needed inside the render
             // passes alongside &self.resources borrows.
             let slot_ref = &self.viewport_slots[vp_idx];
-            let outlines_ptr = &slot_ref.selection_outlines.outline_object_buffers as *const Vec<OutlineObjectBuffers>;
+            let outlines_ptr = &slot_ref.selection_outlines.outline_object_buffers
+                as *const Vec<OutlineObjectBuffers>;
             let splat_outlines_ptr = &slot_ref.selection_outlines.splat_outline_buffers
                 as *const Vec<crate::resources::SplatOutlineBuffers>;
-            let streamtube_outline_items_ptr =
-                &slot_ref.selection_outlines.streamtube_outline_items as *const Vec<CurveMeshOutlineItem>;
+            let streamtube_outline_items_ptr = &slot_ref.selection_outlines.streamtube_outline_items
+                as *const Vec<CurveMeshOutlineItem>;
             let tube_outline_items_ptr =
                 &slot_ref.selection_outlines.tube_outline_items as *const Vec<CurveMeshOutlineItem>;
-            let ribbon_outline_items_ptr =
-                &slot_ref.selection_outlines.ribbon_outline_items as *const Vec<CurveMeshOutlineItem>;
-            let polyline_outline_idx_ptr = &slot_ref.selection_outlines.polyline_outline_indices as *const Vec<usize>;
-            let vol_outline_idx_ptr = &slot_ref.selection_outlines.volume_outline_indices as *const Vec<usize>;
-            let glyph_outline_idx_ptr =
-                &slot_ref.selection_outlines.glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
+            let ribbon_outline_items_ptr = &slot_ref.selection_outlines.ribbon_outline_items
+                as *const Vec<CurveMeshOutlineItem>;
+            let polyline_outline_idx_ptr =
+                &slot_ref.selection_outlines.polyline_outline_indices as *const Vec<usize>;
+            let vol_outline_idx_ptr =
+                &slot_ref.selection_outlines.volume_outline_indices as *const Vec<usize>;
+            let glyph_outline_idx_ptr = &slot_ref.selection_outlines.glyph_outline_indices
+                as *const Vec<(usize, Option<Vec<u32>>)>;
             let tensor_glyph_outline_idx_ptr =
-                &slot_ref.selection_outlines.tensor_glyph_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
-            let sprite_outline_idx_ptr =
-                &slot_ref.selection_outlines.sprite_outline_indices as *const Vec<(usize, Option<Vec<u32>>)>;
+                &slot_ref.selection_outlines.tensor_glyph_outline_indices
+                    as *const Vec<(usize, Option<Vec<u32>>)>;
+            let sprite_outline_idx_ptr = &slot_ref.selection_outlines.sprite_outline_indices
+                as *const Vec<(usize, Option<Vec<u32>>)>;
             let raw_geom_outlines_ptr = &slot_ref.selection_outlines.raw_geom_outline_buffers
                 as *const Vec<crate::resources::RawGeomOutlineBuffers>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
-            let implicit_outline_idx_ptr = &slot_ref.selection_outlines.implicit_outline_indices as *const Vec<usize>;
+            let implicit_outline_idx_ptr =
+                &slot_ref.selection_outlines.implicit_outline_indices as *const Vec<usize>;
             let mc_outlines_ptr = &slot_ref.selection_outlines.mc_outline_data
                 as *const Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>;
             let glyph_gpu_ptr = &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;

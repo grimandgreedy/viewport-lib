@@ -20,7 +20,7 @@ use eframe::egui;
 use glam::Vec3;
 use viewport_lib as vpl;
 use vpl::{
-    Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesJob, ImplicitBlendMode,
+    Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
     ImplicitPrimitive, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
     VolumeData, extract_isosurface,
     geometry::implicit::{ImplicitRenderOptions, march_implicit_surface_colour},
@@ -447,7 +447,7 @@ impl App {
         fd.scene.gpu_implicit.push(item);
     }
 
-    /// Submit a GPU marching cubes job for the gyroid field.
+    /// Submit a GPU marching cubes item for the gyroid field.
     ///
     /// Only active when `is_sdf_variant == GpuMarchingCubes`.
     pub(crate) fn push_gpu_mc_job(&self, fd: &mut vpl::FrameData) {
@@ -461,7 +461,7 @@ impl App {
         let mut mat = Material::from_colour([0.45, 0.48, 0.52]);
         mat.roughness = 0.4;
 
-        fd.scene.gpu_mc_jobs.push(GpuMarchingCubesJob {
+        fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
             volume_id,
             isovalue: self.is_state.gmc_isovalue,
             material: mat,

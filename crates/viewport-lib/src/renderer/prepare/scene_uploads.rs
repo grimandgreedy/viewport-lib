@@ -604,10 +604,10 @@ impl ViewportRenderer {
         // ------------------------------------------------------------------
         mc_gpu_data.clear();
         pick_mc_items.clear();
-        if !frame.scene.gpu_mc_jobs.is_empty() {
+        if !frame.scene.gpu_mc_items.is_empty() {
             resources.ensure_mc_pipelines(device);
-            *mc_gpu_data = resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_jobs);
-            for job in &frame.scene.gpu_mc_jobs {
+            *mc_gpu_data = resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_items);
+            for job in &frame.scene.gpu_mc_items {
                 if job.settings.pick_id != PickId::NONE {
                     if let Some(cpu_data) = &job.cpu_data {
                         pick_mc_items.push(GpuMcPickItem {
