@@ -13,6 +13,30 @@ pub enum ManipulationKind {
     Scale,
 }
 
+// `ManipulationKind` and `GizmoMode` are the same move/rotate/scale choice
+// named from the controller's and the gizmo's side respectively (the only
+// spelling difference is `Move` vs `Translate`). These conversions are the one
+// canonical mapping between them.
+impl From<GizmoMode> for ManipulationKind {
+    fn from(mode: GizmoMode) -> Self {
+        match mode {
+            GizmoMode::Translate => ManipulationKind::Move,
+            GizmoMode::Rotate => ManipulationKind::Rotate,
+            GizmoMode::Scale => ManipulationKind::Scale,
+        }
+    }
+}
+
+impl From<ManipulationKind> for GizmoMode {
+    fn from(kind: ManipulationKind) -> Self {
+        match kind {
+            ManipulationKind::Move => GizmoMode::Translate,
+            ManipulationKind::Rotate => GizmoMode::Rotate,
+            ManipulationKind::Scale => GizmoMode::Scale,
+        }
+    }
+}
+
 /// Solved per-frame transform increment. Zero/identity values mean "no change on this axis."
 ///
 /// The `*_override` arrays carry raw numeric input, one value per axis. They are

@@ -3,7 +3,7 @@
 use super::ViewportInstance;
 use crate::interaction::input::ViewportContext;
 use crate::interaction::manipulation::gizmo::{GizmoAxis, GizmoMode, compute_gizmo_scale};
-use crate::interaction::manipulation::{ManipResult, ManipulationContext, ManipulationKind};
+use crate::interaction::manipulation::{ManipResult, ManipulationContext};
 use crate::runtime::RuntimeFrameContext;
 use crate::{
     CameraFrame, FrameData, InteractionFrame, OrbitCameraController, OverlayFrame, SceneFrame,
@@ -190,11 +190,10 @@ impl ViewportInstance {
             center,
         ));
         let state = self.manip.as_ref().and_then(|m| m.state());
-        self.frame.interaction.gizmo_mode = match state.as_ref().map(|s| s.kind) {
-            Some(ManipulationKind::Rotate) => GizmoMode::Rotate,
-            Some(ManipulationKind::Scale) => GizmoMode::Scale,
-            Some(ManipulationKind::Move) | None => GizmoMode::Translate,
-        };
+        self.frame.interaction.gizmo_mode = state
+            .as_ref()
+            .map(|s| GizmoMode::from(s.kind))
+            .unwrap_or(GizmoMode::Translate);
         self.frame.interaction.gizmo_hovered =
             state.and_then(|s| s.axis).unwrap_or(GizmoAxis::None);
     }

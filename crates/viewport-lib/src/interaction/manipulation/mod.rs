@@ -32,7 +32,7 @@ pub mod types;
 pub use types::*;
 
 use crate::interaction::input::{Action, ActionFrame};
-use crate::interaction::manipulation::gizmo::{Gizmo, GizmoAxis, GizmoMode, GizmoSpace};
+use crate::interaction::manipulation::gizmo::{Gizmo, GizmoAxis, GizmoSpace};
 use crate::interaction::query::snap::{SnapConfig, snap_value, snap_vec3};
 use session::{ManipulationSession, update_constraint, update_numeric_state};
 
@@ -341,11 +341,7 @@ impl ManipulationController {
                 );
 
                 if hit != GizmoAxis::None {
-                    let kind = match gizmo_info.mode {
-                        GizmoMode::Translate => ManipulationKind::Move,
-                        GizmoMode::Rotate => ManipulationKind::Rotate,
-                        GizmoMode::Scale => ManipulationKind::Scale,
-                    };
+                    let kind = ManipulationKind::from(gizmo_info.mode);
                     let (axis, exclude_axis) = hit_to_constraint(hit);
                     self.session = Some(ManipulationSession {
                         kind,

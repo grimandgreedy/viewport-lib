@@ -137,8 +137,7 @@ impl Default for AutoExposure {
 
 /// Physical-camera exposure configuration for the HDR pipeline.
 ///
-/// Passed via `EffectsFrame::exposure`. Replaces the old
-/// `PostProcessSettings.exposure` scalar. `compensation` is a stops-of-bias
+/// Passed via `EffectsFrame::exposure`. `compensation` is a stops-of-bias
 /// applied on top of every mode (positive brightens the image).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]

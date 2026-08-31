@@ -364,9 +364,9 @@ pub enum ShadowFilter {
 
 /// Per-frame lighting configuration for the viewport.
 ///
-/// Supports up to 8 light sources. Only `lights[0]` casts shadows.
-/// Blinn-Phong shading coefficients (ambient, diffuse, specular, shininess) have
-/// moved to per-object [`Material`] structs.
+/// Supports up to 8 light sources; each casts shadows when its `cast_shadows`
+/// flag is set. Blinn-Phong shading coefficients (ambient, diffuse, specular,
+/// shininess) have moved to per-object [`Material`] structs.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

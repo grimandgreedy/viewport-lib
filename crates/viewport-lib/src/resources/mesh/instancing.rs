@@ -1646,21 +1646,31 @@ pub(crate) struct PickInstance {
 }
 
 const _: () = assert!(std::mem::size_of::<PickInstance>() == 80);
-/// Per-instance world-space AABB, uploaded to GPU for the compute cull pass.
+/// Per-instance world-space bounding box for GPU culling.
 ///
-/// Layout (32 bytes):
+/// Uploaded to the GPU for the compute cull pass. Plugin code builds an
+/// `array<InstanceAabb>` storage buffer, one entry per drawable instance, and
+/// passes it via
+/// [`CullSubmission::instance_aabbs`](crate::plugin_api::CullSubmission).
+///
+/// Layout matches the cull shader's contract (32 bytes per entry):
 /// - min:         [f32; 3] = 12 bytes, offset  0
 /// - batch_index: u32      =  4 bytes, offset 12 (index into batch_meta_buf)
 /// - max:         [f32; 3] = 12 bytes, offset 16
-/// - _pad:        u32      =  4 bytes, offset 28
+/// - cast_shadows: u32     =  4 bytes, offset 28
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct InstanceAabb {
-    pub(crate) min: [f32; 3],
-    pub(crate) batch_index: u32,
-    pub(crate) max: [f32; 3],
-    /// 1 = item participates in shadow casting, 0 = skipped during shadow cull.
-    pub(crate) cast_shadows: u32,
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, Debug)]
+pub struct InstanceAabb {
+    /// World-space minimum corner.
+    pub min: [f32; 3],
+    /// Index into the batch_meta buffer that this instance belongs to. For a
+    /// single-batch submission set it to 0.
+    pub batch_index: u32,
+    /// World-space maximum corner.
+    pub max: [f32; 3],
+    /// `1` if the instance participates in shadow casting, `0` to skip it
+    /// during shadow cull dispatches. Ignored on non-shadow submissions.
+    pub cast_shadows: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);

@@ -19,33 +19,7 @@
 //! Submit via [`crate::renderer::ViewportRenderer::submit_cull`] or
 //! [`crate::renderer::ViewportRenderer::submit_cull_shadow`].
 
-pub use crate::resources::mesh::instancing::BatchMeta;
-
-/// Per-instance world-space bounding box for GPU culling.
-///
-/// Plugin code builds an `array<InstanceAabb>` storage buffer, one entry per
-/// drawable instance, and passes it via [`CullSubmission::instance_aabbs`].
-///
-/// Layout matches the cull shader's contract (32 bytes per entry).
-/// `batch_index` selects which [`BatchMeta`] entry the instance belongs to;
-/// for a single-batch submission set it to 0. `cast_shadows` is honoured
-/// when [`CullSubmission::shadow_pass`] is `true` or the submission goes
-/// through `submit_cull_shadow`.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, Debug)]
-pub struct InstanceAabb {
-    /// World-space minimum corner.
-    pub min: [f32; 3],
-    /// Index into the batch_meta buffer that this instance belongs to.
-    pub batch_index: u32,
-    /// World-space maximum corner.
-    pub max: [f32; 3],
-    /// `1` if the instance participates in shadow casting, `0` to skip it
-    /// during shadow cull dispatches. Ignored on non-shadow submissions.
-    pub cast_shadows: u32,
-}
-
-const _: () = assert!(std::mem::size_of::<InstanceAabb>() == 32);
+pub use crate::resources::mesh::instancing::{BatchMeta, InstanceAabb};
 
 /// Inputs to one cull dispatch.
 ///
