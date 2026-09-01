@@ -9,9 +9,9 @@
 //!   same handle), submitted every frame at a fixed position,
 //! - the panel's scrollable content (polyline "rows" through the text pipeline
 //!   plus SDF rounded-rect row backgrounds through the shape pipeline), submitted
-//!   every frame with a `translate` that scrolls it and a `clip_rect` that clips
-//!   both streams to the panel interior (the shape-stream clip is applied per
-//!   frame, so the row backgrounds do not bleed past the panel as they scroll), and
+//!   every frame with a `translate` that scrolls it and a `clip_mask` that clips
+//!   both streams to the panel's rounded rect (applied per frame, so the rows
+//!   follow the rounded corners and do not bleed past the panel as they scroll), and
 //! - a world-anchored label pinned to the top of the cube (`compile_overlay_label`),
 //!   whose text is laid out once: the renderer reprojects its anchor every frame so
 //!   it tracks the cube as the camera orbits, and hides it when the cube is off
@@ -42,6 +42,9 @@ const PANEL_W: f32 = 340.0;
 const PANEL_H: f32 = 420.0;
 const ROW_COUNT: usize = 40;
 const ROW_STEP: f32 = 44.0;
+/// Clip-mask id shared by the invisible rounded-rect mask (submitted immediate)
+/// and the scrolling content group that clips to it.
+const CLIP_MASK_ID: u32 = 1;
 
 /// The static panel background: one SDF rounded-rect (shape stream).
 fn panel_background() -> Vec<OverlayShapeItem> {
@@ -283,17 +286,30 @@ impl eframe::App for App {
                 let extra = (ROW_COUNT as f32 * ROW_STEP - PANEL_H + 40.0).max(0.0);
                 let phase = (time * 0.15).fract();
                 let scroll = extra * (1.0 - (2.0 * phase - 1.0).abs());
-                let clip = [PANEL_X, PANEL_TOP, PANEL_X + PANEL_W, PANEL_TOP + PANEL_H];
 
-                // Set both groups as retained submissions (assembly clears overlays,
-                // so this runs after `update_orbit`).
+                // Register the panel's rounded rect as an invisible clip mask this
+                // frame (masks resolve in screen space, so they are submitted per
+                // frame). The scrolling content clips to it, so its rows follow the
+                // rounded corners rather than a square bbox.
+                let mask = OverlayShapeItem::new(
+                    OverlayShape::RoundedRect { radii: [14.0; 4] },
+                    [PANEL_X, PANEL_TOP],
+                    [PANEL_W, PANEL_H],
+                )
+                .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]))
+                .with_clip_mask(CLIP_MASK_ID);
+                self.session.frame_data_mut().overlays.shapes = vec![mask];
+
+                // Set the retained submissions (assembly clears overlays, so this
+                // runs after `update_orbit`).
                 self.session.frame_data_mut().overlays.retained = vec![
                     // Static background (shape stream), drawn under the content.
                     RetainedOverlay::new(self.background.unwrap()).with_z_order(0),
-                    // Scrolling content (polyline stream), clipped to the panel.
+                    // Scrolling content (text + shape streams), clipped to the
+                    // rounded panel mask; only the translate changes per frame.
                     RetainedOverlay::new(self.content.unwrap())
                         .with_translate([0.0, -scroll])
-                        .with_clip_rect(clip)
+                        .with_clip_mask(CLIP_MASK_ID)
                         .with_z_order(1),
                     // World-anchored label: no translate here. The renderer
                     // resolves its baked anchor to the cube's projected position

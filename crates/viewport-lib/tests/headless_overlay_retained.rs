@@ -158,6 +158,54 @@ fn retained_shape_per_frame_clip() {
     );
 }
 
+/// An invisible circular clip mask (id 7) centred at (32, 32) with radius 16,
+/// registered by submitting it as an immediate shape. Fill alpha is zero so it
+/// only masks; it does not paint.
+fn circle_mask() -> OverlayShapeItem {
+    OverlayShapeItem::new(OverlayShape::Circle, [16.0, 16.0], [32.0, 32.0])
+        .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]))
+        .with_clip_mask(7)
+}
+
+/// A retained group clips to an SDF mask referenced by `clip_id` (P8), for both
+/// the text and shape streams. The mask is a circle, so a pixel inside the
+/// content's bounding box but outside the circle is removed only by the SDF clip:
+/// a plain bbox clip could not do it, and before P8 a retained group ignored
+/// `clip_id` entirely.
+#[test]
+fn retained_group_clips_to_sdf_mask() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+
+    // Shape stream (red_sdf_rect) and text stream (red_square) both cover 16..48.
+    let shape_id =
+        renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], &[], 1.0);
+    let text_id =
+        renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], &[], 1.0);
+
+    for id in [shape_id, text_id] {
+        let mut frame = overlay_frame(size);
+        frame.overlays.shapes = vec![circle_mask()]; // register mask 7 this frame
+        frame.overlays.retained = vec![RetainedOverlay::new(id).with_clip_mask(7)];
+        let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+        assert!(
+            is_red(rgb_at(&px, size, 32, 32)),
+            "centre is inside the circular mask and should draw"
+        );
+        // (18, 18) is inside the 16..48 content and its bbox, but ~19px from the
+        // centre, well outside the radius-16 circle: clipped only by the SDF mask
+        // (a plain bbox could not remove it).
+        assert!(
+            is_background(rgb_at(&px, size, 18, 18)),
+            "inside the content but outside the circular mask should be clipped (P8)"
+        );
+    }
+}
+
 /// A single row of built-in-font glyphs (ids 4.. are letters/digits in Inter),
 /// drawn white.
 fn glyph_run() -> GlyphRunItem {

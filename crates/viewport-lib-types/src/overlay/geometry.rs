@@ -41,8 +41,16 @@ pub struct RetainedOverlay {
     pub z_order: i32,
     /// Outer clip bounding box in logical pixels `[x0, y0, x1, y1]`; all-zero
     /// means no clip. Fragments of the group outside it are discarded, which is
-    /// how a scroll viewport clips its content.
+    /// how a rectangular scroll viewport clips its content.
     pub clip_rect: [f32; 4],
+    /// Clip the group to a mask shape for shaped (non-rectangular) clipping, e.g.
+    /// a rounded-rect scroll viewport. The value matches the `clip_mask_id` of an
+    /// overlay shape submitted in the same frame (masks are registered per frame
+    /// because they resolve in screen space); the group's fragments outside that
+    /// mask, and outside any of its nested parent masks, are discarded. `None`
+    /// (the default) applies no shaped clip. Composes with `clip_rect`: both are
+    /// applied. A mask absent from the frame leaves the group unclipped.
+    pub clip_id: Option<u32>,
 }
 
 impl RetainedOverlay {
@@ -54,6 +62,7 @@ impl RetainedOverlay {
             opacity: 1.0,
             z_order: 0,
             clip_rect: [0.0; 4],
+            clip_id: None,
         }
     }
 
@@ -78,6 +87,14 @@ impl RetainedOverlay {
     /// Set the outer clip bounding box in logical pixels.
     pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
         self.clip_rect = clip_rect;
+        self
+    }
+
+    /// Clip the group to the mask shape whose `clip_mask_id` matches `clip_id`
+    /// (registered by an overlay shape submitted in the same frame), for shaped
+    /// clipping such as a rounded-rect scroll viewport.
+    pub fn with_clip_mask(mut self, clip_id: u32) -> Self {
+        self.clip_id = Some(clip_id);
         self
     }
 }

@@ -63,10 +63,10 @@ struct Viewport {
 // equivalent to one reject against their intersection, which avoids a second
 // varying). Shadow-layer opacity is still baked.
 struct OverlayInstance {
-    translate: vec2<f32>,
-    opacity:   f32,
-    pad:       f32,
-    clip_rect: vec4<f32>,
+    translate:  vec2<f32>,
+    opacity:    f32,
+    clip_index: f32,        // per-frame clip-mask index, or -1 for none
+    clip_rect:  vec4<f32>,
 };
 @group(0) @binding(3) var<storage, read> instances: array<OverlayInstance>;
 
@@ -134,7 +134,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Intersect the baked per-vertex clip with the per-frame group clip (identity
     // for immediate draws), so a retained shape group clips to its outer rect.
     out.clip_rect       = combine_clip(in.clip_rect, inst.clip_rect);
-    out.clip_index      = in.clip_index;
+    // Prefer the per-frame group clip mask (retained groups) over the baked mask;
+    // the identity instance is -1, so immediate draws keep their baked clip.
+    out.clip_index      = select(in.clip_index, inst.clip_index, inst.clip_index >= 0.0);
     out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb, in.stop_colour_c.a * a);
     out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb, in.stop_colour_d.a * a);
     out.stop_positions  = in.stop_positions;

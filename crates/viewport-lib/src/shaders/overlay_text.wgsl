@@ -36,10 +36,10 @@ struct Viewport {
 // Per-draw instance: a group's per-frame translate, opacity, and outer clip.
 // Indexed by @builtin(instance_index); slot 0 is the identity immediate draws use.
 struct OverlayInstance {
-    translate: vec2<f32>,
-    opacity:   f32,
-    pad:       f32,
-    clip_rect: vec4<f32>,
+    translate:  vec2<f32>,
+    opacity:    f32,
+    clip_index: f32,        // per-frame clip-mask index, or -1 for none
+    clip_rect:  vec4<f32>,
 };
 @group(0) @binding(4) var<storage, read> instances: array<OverlayInstance>;
 
@@ -77,7 +77,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.uv            = in.uv;
     out.colour        = in.colour;
     out.use_texture   = in.use_texture;
-    out.clip_index    = in.clip_index;
+    // Prefer the per-frame group clip mask (retained groups) over the baked
+    // per-vertex mask (immediate items); the identity instance is -1, so
+    // immediate draws keep their baked clip.
+    out.clip_index    = select(in.clip_index, inst.clip_index, inst.clip_index >= 0.0);
     out.clip_rect     = in.clip_rect;
     out.opacity       = inst.opacity;
     out.outer_clip    = inst.clip_rect;

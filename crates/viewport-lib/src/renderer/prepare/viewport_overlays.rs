@@ -807,21 +807,35 @@ impl ViewportRenderer {
                         }
                         None => r.translate,
                     };
-                    let clip_rect = if r.clip_rect == [0.0, 0.0, 0.0, 0.0] {
-                        [0.0, 0.0, 0.0, 0.0]
-                    } else {
+                    // Resolve the group's clip mask (if any) to this frame's
+                    // clip-shape index and bbox, mirroring the immediate
+                    // `stamp_clip`. The mask is registered as an immediate shape
+                    // each frame; if it is absent this frame the group is unclipped.
+                    let (clip_index, mask_bbox) =
+                        match r.clip_id.and_then(|id| clip_index_of.get(&id).copied()) {
+                            Some(ci) => (ci as f32, Some(clip_bboxes[ci as usize])),
+                            None => (-1.0, None),
+                        };
+                    // Outer bbox in framebuffer pixels: the group's explicit
+                    // `clip_rect` if set, else the mask's own bbox (a cheap reject
+                    // matching the shaped mask), else none.
+                    let clip_rect = if r.clip_rect != [0.0, 0.0, 0.0, 0.0] {
                         [
                             r.clip_rect[0] * ppp,
                             r.clip_rect[1] * ppp,
                             r.clip_rect[2] * ppp,
                             r.clip_rect[3] * ppp,
                         ]
+                    } else if let Some(bb) = mask_bbox {
+                        bb
+                    } else {
+                        [0.0, 0.0, 0.0, 0.0]
                     };
                     let instance_index = instances.len() as u32;
                     instances.push(crate::resources::OverlayInstance {
                         translate,
                         opacity: r.opacity,
-                        _pad: 0.0,
+                        clip_index,
                         clip_rect,
                     });
                     if let Some((vbuf, vcount)) = text {

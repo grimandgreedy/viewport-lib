@@ -67,7 +67,11 @@ pub(crate) struct OverlayInstance {
     pub translate: [f32; 2],
     /// Opacity multiplier applied to the fragment alpha.
     pub opacity: f32,
-    pub _pad: f32,
+    /// Per-frame clip-mask index into the frame's clip-shape buffer, resolved from
+    /// the group's `clip_id`, or `-1` for no shaped clip. The shaders prefer this
+    /// over the baked per-vertex clip index when it is set, so a retained group
+    /// clips to a mask registered this frame.
+    pub clip_index: f32,
     /// Outer clip bounding box in framebuffer pixels `[x0, y0, x1, y1]`; all-zero
     /// means no clip.
     pub clip_rect: [f32; 4],
@@ -78,7 +82,7 @@ impl OverlayInstance {
     pub const IDENTITY: OverlayInstance = OverlayInstance {
         translate: [0.0, 0.0],
         opacity: 1.0,
-        _pad: 0.0,
+        clip_index: -1.0,
         clip_rect: [0.0, 0.0, 0.0, 0.0],
     };
 }
