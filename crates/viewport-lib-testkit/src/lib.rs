@@ -41,7 +41,7 @@ pub mod golden;
 #[cfg(feature = "counters")]
 pub mod counters;
 
-pub use device::headless_device;
+pub use device::{DeviceProfile, Limits, headless_device, headless_device_with};
 pub use harness::Harness;
 
 // Re-export the corpus submodules and catalogue items at the crate root so the

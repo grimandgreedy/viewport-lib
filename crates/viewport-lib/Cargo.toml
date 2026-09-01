@@ -163,6 +163,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # that target where it would otherwise block building any example.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 viewport-lib-lightbake = { path = "../../../viewport-lib-lightbake" }
+# The headless integration tests share one device constructor with the testkit
+# instead of keeping their own copies. `core` only, so no scene catalogue or
+# `image` is pulled; path-only and dev-only, so it never reaches the published
+# manifest, and its wgpu leg comes from this crate's (unified) instance. The
+# dev-dependency cycle (the testkit depends on `viewport-lib`) is permitted
+# because dev-dependencies are outside the normal build graph.
+viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }
 
 # wasm-only glue for the `winit-web` example: async task spawning, the canvas in
 # the DOM, a browser-safe clock, and panic/log forwarding to the console. Only

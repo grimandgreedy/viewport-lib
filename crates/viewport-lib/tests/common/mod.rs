@@ -35,22 +35,15 @@ pub use viewport_lib::{
     resources::{MeshData, PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, SCENE_DEPTH_FORMAT},
 };
 
+// Every headless device below comes from the testkit's one parameterised
+// constructor (`headless_device_with`), so there is a single copy of the adapter
+// request, limits policy, and feature negotiation. Each function here just names
+// the `DeviceProfile` its suite needs.
+use viewport_lib_testkit::{DeviceProfile, headless_device_with};
+
 /// Create a headless wgpu device + queue for testing.
 pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = viewport_lib::wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("test"),
-        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
-        ..Default::default()
-    }))
-    .ok()?;
-    Some((device, queue))
+    headless_device_with(&DeviceProfile::low_power("test"))
 }
 
 /// Headless device with `INDIRECT_FIRST_INSTANCE` enabled (plus
@@ -60,61 +53,21 @@ pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// collapse. Metal advertises `INDIRECT_FIRST_INSTANCE` but not the count
 /// feature, so the collapse there runs emulated (still bit-identical output).
 pub fn headless_device_with_indirect() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = viewport_lib::wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    if !adapter
-        .features()
-        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
-    {
-        return None;
-    }
-    let mut features = wgpu::Features::INDIRECT_FIRST_INSTANCE;
-    if adapter
-        .features()
-        .contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT)
-    {
-        features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
-    }
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("test-indirect"),
-        required_features: features,
-        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
-        ..Default::default()
-    }))
-    .ok()?;
-    Some((device, queue))
+    headless_device_with(
+        &DeviceProfile::low_power("test-indirect")
+            .require(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+            .optional(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT),
+    )
 }
 
 /// Headless device with `SHADER_PRIMITIVE_INDEX` enabled, or `None` when no
 /// adapter is available or the adapter does not support the feature. Used by the
 /// GPU sub-object tests that read the pick pass's triangle-index channel.
 pub fn headless_device_with_primitive_index() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = viewport_lib::wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    if !adapter
-        .features()
-        .contains(viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE)
-    {
-        return None;
-    }
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("test-primitive-index"),
-        required_features: viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE,
-        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
-        ..Default::default()
-    }))
-    .ok()?;
-    Some((device, queue))
+    headless_device_with(
+        &DeviceProfile::low_power("test-primitive-index")
+            .require(viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE),
+    )
 }
 
 /// Headless device with `max_bind_groups` capped at 2, or `None` when no
@@ -125,24 +78,9 @@ pub fn headless_device_with_primitive_index() -> Option<(wgpu::Device, wgpu::Que
 /// See `docs/issues/iced-max-bind-groups-2-draw-path-incomplete.md` and
 /// `docs/plans/iced-two-bind-group-support-plan.md`.
 pub fn headless_device_limited_bind_groups() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = viewport_lib::wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    // Start from viewport-lib's required limits (it needs more storage buffers
-    // per stage than wgpu's default) and additionally cap bind groups at 2.
-    let mut limits = ViewportRenderer::recommended_device_limits(&adapter);
-    limits.max_bind_groups = 2;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("test-2-bind-groups"),
-        required_limits: limits,
-        ..Default::default()
-    }))
-    .ok()?;
-    Some((device, queue))
+    // Recommended limits (viewport-lib needs more storage buffers per stage than
+    // wgpu's default) with bind groups additionally capped at 2.
+    headless_device_with(&DeviceProfile::low_power("test-2-bind-groups").max_bind_groups(2))
 }
 
 /// A headless device requested with exactly `ViewportRenderer::recommended_device_limits`
@@ -153,46 +91,18 @@ pub fn headless_device_limited_bind_groups() -> Option<(wgpu::Device, wgpu::Queu
 /// at pipeline-layout creation, so the explicit assert is what catches it).
 /// Returns `None` when no adapter is available.
 pub fn headless_device_recommended_limits() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = viewport_lib::wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("test-recommended-limits"),
-        required_features: ViewportRenderer::recommended_device_features(&adapter),
-        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
-        ..Default::default()
-    }))
-    .ok()?;
-    Some((device, queue))
+    headless_device_with(
+        &DeviceProfile::high_performance("test-recommended-limits").with_recommended_features(),
+    )
 }
 
 /// A headless device/queue for the feature-gated bake and raytrace suites, or
 /// `None` when no adapter is available. Requests a high-performance adapter and
-/// the default device, named through `viewport_lib::gpu` to match those suites'
-/// APIs. Separate from [`headless_device`], which the renderer tests use with a
-/// low-power adapter and the `wgpu` re-export.
+/// recommended limits, named through `viewport_lib::gpu` to match those suites'
+/// APIs (the same wgpu types the `wgpu` re-export names). Separate from
+/// [`headless_device`], which the renderer tests use with a low-power adapter.
 pub fn device_queue() -> Option<(viewport_lib::gpu::Device, viewport_lib::gpu::Queue)> {
-    let instance = viewport_lib::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &viewport_lib::gpu::RequestAdapterOptions {
-            power_preference: viewport_lib::gpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        },
-    ))
-    .ok()?;
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &viewport_lib::gpu::DeviceDescriptor {
-            required_limits: ViewportRenderer::recommended_device_limits(&adapter),
-            ..Default::default()
-        },
-    ))
-    .ok()?;
-    Some((device, queue))
+    headless_device_with(&DeviceProfile::high_performance("test-device-queue"))
 }
 
 /// Simple unit box mesh data for testing.
