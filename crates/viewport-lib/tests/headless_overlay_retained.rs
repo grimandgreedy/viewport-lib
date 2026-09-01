@@ -111,6 +111,53 @@ fn retained_sdf_shape_draws_and_translates() {
     );
 }
 
+/// A retained SDF shape is clipped to the group's per-frame outer `clip_rect`,
+/// and that clip is fixed in screen space while the shape scrolls under it: the
+/// scroll-container case. Without the per-frame shape clip, a retained shape
+/// ignored the clip and drew everywhere.
+#[test]
+fn retained_shape_per_frame_clip() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+
+    // red_sdf_rect covers pixels 16..48. Clip to the right half (x >= 32).
+    let id =
+        renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], &[], 1.0);
+    let clip = [32.0, 0.0, 64.0, 64.0];
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_clip_rect(clip)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 40, 32)),
+        "shape right of the clip edge should draw"
+    );
+    assert!(
+        is_background(rgb_at(&px, size, 24, 32)),
+        "shape left of the clip edge should be clipped (P9)"
+    );
+
+    // The clip is fixed screen-space; the shape scrolls under it. Translate the
+    // shape left by 20 (rect -> -4..28) with the same right-half clip. Pixel x=20
+    // is inside the translated rect but left of the clip edge, so it is removed;
+    // without a fixed per-frame shape clip it would read red.
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![
+        RetainedOverlay::new(id)
+            .with_translate([-20.0, 0.0])
+            .with_clip_rect(clip),
+    ];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_background(rgb_at(&px, size, 20, 32)),
+        "scrolled shape left of the fixed clip edge should be clipped"
+    );
+}
+
 /// A single row of built-in-font glyphs (ids 4.. are letters/digits in Inter),
 /// drawn white.
 fn glyph_run() -> GlyphRunItem {

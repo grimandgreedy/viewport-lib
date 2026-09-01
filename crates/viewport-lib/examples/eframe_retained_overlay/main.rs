@@ -7,9 +7,11 @@
 //! - a static panel background: one mixed handle carrying an SDF rounded-rect
 //!   plate plus a fixed-local title label (a string laid out once, bundled into the
 //!   same handle), submitted every frame at a fixed position,
-//! - the panel's scrollable content (polyline "rows", drawn through the text
-//!   pipeline), submitted every frame with a `translate` that scrolls it and a
-//!   `clip_rect` that clips it to the panel interior, and
+//! - the panel's scrollable content (polyline "rows" through the text pipeline
+//!   plus SDF rounded-rect row backgrounds through the shape pipeline), submitted
+//!   every frame with a `translate` that scrolls it and a `clip_rect` that clips
+//!   both streams to the panel interior (the shape-stream clip is applied per
+//!   frame, so the row backgrounds do not bleed past the panel as they scroll), and
 //! - a world-anchored label pinned to the top of the cube (`compile_overlay_label`),
 //!   whose text is laid out once: the renderer reprojects its anchor every frame so
 //!   it tracks the cube as the camera orbits, and hides it when the cube is off
@@ -87,6 +89,29 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
         lines.push(swatch);
     }
     lines
+}
+
+/// The scrollable content's row backgrounds, as analytic SDF rounded-rects (shape
+/// stream). These scroll with the content and rely on the group's per-frame outer
+/// clip to stay inside the panel: without a per-frame clip on the shape stream
+/// they would bleed past the panel top and bottom as they scroll.
+fn panel_content_shapes() -> Vec<OverlayShapeItem> {
+    let mut shapes = Vec::new();
+    for i in 0..ROW_COUNT {
+        if i % 2 != 0 {
+            continue; // faint stripe on alternate rows
+        }
+        let y = PANEL_TOP + 12.0 + i as f32 * ROW_STEP;
+        shapes.push(
+            OverlayShapeItem::new(
+                OverlayShape::RoundedRect { radii: [6.0; 4] },
+                [PANEL_X + 12.0, y],
+                [PANEL_W - 24.0, ROW_STEP - 6.0],
+            )
+            .with_fill(OverlayFill::Solid([0.18, 0.2, 0.28, 0.55])),
+        );
+    }
+    shapes
 }
 
 fn main() -> eframe::Result {
@@ -227,7 +252,7 @@ impl eframe::App for App {
                         &rs.device,
                         &rs.queue,
                         &panel_content(),
-                        &[],
+                        &panel_content_shapes(),
                         &[],
                         &[],
                         ppp,

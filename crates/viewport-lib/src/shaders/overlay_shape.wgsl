@@ -54,12 +54,14 @@ struct Viewport {
 };
 @group(0) @binding(2) var<uniform> viewport: Viewport;
 
-// Per-draw instance: a retained group's per-frame translate and opacity. Indexed
-// by @builtin(instance_index); slot 0 is the identity immediate draws use. The
-// shape shader is at the inter-stage variable limit, so the instance is consumed
-// entirely in the vertex stage (translate on the position, opacity folded into
-// the vertex colours). A retained shape group therefore has no per-frame outer
-// clip (its group's text stream carries the clip); shadow-layer opacity is baked.
+// Per-draw instance: a retained group's per-frame translate, opacity, and outer
+// clip. Indexed by @builtin(instance_index); slot 0 is the identity immediate
+// draws use. The shape shader is at the inter-stage variable limit, so the
+// instance is consumed in the vertex stage: translate on the position, opacity
+// folded into the vertex colours, and the outer clip intersected with the baked
+// per-vertex clip into the single `clip_rect` varying (two bbox rejects are
+// equivalent to one reject against their intersection, which avoids a second
+// varying). Shadow-layer opacity is still baked.
 struct OverlayInstance {
     translate: vec2<f32>,
     opacity:   f32,
@@ -70,6 +72,23 @@ struct OverlayInstance {
 
 fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(px.x / viewport.size.x * 2.0 - 1.0, 1.0 - px.y / viewport.size.y * 2.0);
+}
+
+// Combine two bounding-box clips in framebuffer pixels. An all-zero rect means
+// "no clip", so the other is returned; two real boxes intersect (a fragment must
+// lie inside both). A non-overlapping intersection returns an off-screen box so
+// nothing survives. Immediate shapes read the identity instance (zero clip) and
+// so keep exactly their baked per-vertex clip.
+fn combine_clip(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
+    let a_valid = a.z > a.x && a.w > a.y;
+    let b_valid = b.z > b.x && b.w > b.y;
+    if (!a_valid) { return b; }
+    if (!b_valid) { return a; }
+    let r = vec4<f32>(max(a.x, b.x), max(a.y, b.y), min(a.z, b.z), min(a.w, b.w));
+    if (r.z <= r.x || r.w <= r.y) {
+        return vec4<f32>(1.0e9, 1.0e9, 1.0e9 + 1.0, 1.0e9 + 1.0);
+    }
+    return r;
 }
 
 struct VertexOutput {
@@ -112,7 +131,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.gradient_params = in.gradient_params;
     out.shadow_index    = in.shadow_index;
     out.rotation_pivot  = in.rotation_pivot;
-    out.clip_rect       = in.clip_rect;
+    // Intersect the baked per-vertex clip with the per-frame group clip (identity
+    // for immediate draws), so a retained shape group clips to its outer rect.
+    out.clip_rect       = combine_clip(in.clip_rect, inst.clip_rect);
     out.clip_index      = in.clip_index;
     out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb, in.stop_colour_c.a * a);
     out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb, in.stop_colour_d.a * a);
