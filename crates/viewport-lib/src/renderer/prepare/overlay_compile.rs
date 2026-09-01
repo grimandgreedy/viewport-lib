@@ -74,7 +74,12 @@ fn emit_glyph_run(
     let quads = atlas.layout_glyph_run(
         run.glyphs.iter().enumerate().map(|(i, g)| {
             let colour = run.colours.get(i).copied().unwrap_or(run.colour);
-            (g.glyph_id, g.x, g.y, overlay_geometry::apply_opacity(colour, opacity))
+            (
+                g.glyph_id,
+                g.x,
+                g.y,
+                overlay_geometry::apply_opacity(colour, opacity),
+            )
         }),
         run.font_size,
         run.font,
@@ -84,27 +89,139 @@ fn emit_glyph_run(
     overlay_geometry::emit_glyph_quads_colored(verts, &quads, run_x, run_y, 0.0, 0.0);
 }
 
-/// Emit a whole group (polylines, vector shapes, glyph runs) into a fresh vertex
-/// list, returning it with the atlas version it baked glyph UVs against.
+/// Emit one label's text-stream geometry (background box, leader line, glyph
+/// quads) into `verts`, laid out as if its anchor origin were `[0, 0]`. This
+/// mirrors the immediate label draw (`prepare_overlay_labels`) with the anchor
+/// held at the local origin: the renderer resolves the real anchor per frame and
+/// folds it into the group's translate. A world-anchor leader line runs from the
+/// projected point to the text, and that point coincides with the resolved
+/// origin, so the leader is a constant segment from `[0, 0]` here and rides the
+/// same translate. May rasterize glyphs into the atlas (and grow it).
+///
+/// `emit_leader` gates the world-anchor leader line: it is drawn for a
+/// self-anchoring label (`compile_overlay_label`, whose anchor is resolved per
+/// frame so the leader points at the projected anchor), and suppressed for a
+/// fixed-local label mixed into a geometry group (`compile_overlay_geometry`,
+/// whose anchor is ignored, so a leader would point at nothing).
+fn emit_label(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    atlas: &mut crate::resources::overlay::font::GlyphAtlas,
+    device: &crate::gpu::Device,
+    label: &crate::renderer::types::LabelItem,
+    emit_leader: bool,
+    ppp: f32,
+) {
+    use crate::renderer::types::{AnchorX, AnchorY, OverlayAnchor};
+    if label.text.is_empty() || label.opacity <= 0.0 {
+        return;
+    }
+    let opacity = label.opacity.clamp(0.0, 1.0);
+    let layout = if let Some(max_w) = label.max_width {
+        atlas.layout_text_wrapped(&label.text, label.font_size, label.font, max_w, ppp, device)
+    } else {
+        atlas.layout_text(&label.text, label.font_size, label.font, ppp, device)
+    };
+    let font_index = label.font.map_or(0, |h| h.0);
+    let ascent = atlas.font_ascent(font_index, label.font_size);
+
+    // Alignment folds in anchor_padding on X (Left pushes right, Right pulls
+    // left, Middle unaffected); position nudges last. The anchor origin is [0, 0].
+    let align_offset = match label.align_x {
+        AnchorX::Left => label.anchor_padding,
+        AnchorX::Middle => -layout.total_width * 0.5,
+        AnchorX::Right => -layout.total_width - label.anchor_padding,
+    };
+    let align_offset_y = match label.align_y {
+        AnchorY::Top => 0.0,
+        AnchorY::Middle => -layout.height * 0.5,
+        AnchorY::Bottom => -layout.height,
+    };
+    let text_x = align_offset + label.position[0];
+    let text_y = align_offset_y + label.position[1];
+
+    if label.background {
+        let pad = label.padding;
+        let (bx0, by0) = (text_x - pad, text_y - pad);
+        let (bx1, by1) = (
+            text_x + layout.total_width + pad,
+            text_y + layout.height + pad,
+        );
+        let bg = overlay_geometry::apply_opacity(label.background_colour, opacity);
+        if label.border_radius > 0.0 {
+            overlay_geometry::emit_rounded_quad(
+                verts,
+                bx0,
+                by0,
+                bx1,
+                by1,
+                label.border_radius,
+                bg,
+                0.0,
+                0.0,
+            );
+        } else {
+            overlay_geometry::emit_solid_quad(verts, bx0, by0, bx1, by1, bg, 0.0, 0.0);
+        }
+    }
+
+    if emit_leader && label.leader_line && matches!(label.anchor, OverlayAnchor::World(_)) {
+        overlay_geometry::emit_line_quad(
+            verts,
+            0.0,
+            0.0,
+            text_x,
+            text_y + layout.height * 0.5,
+            1.5,
+            overlay_geometry::apply_opacity(label.leader_colour, opacity),
+            0.0,
+            0.0,
+        );
+    }
+
+    let text_colour = overlay_geometry::apply_opacity(label.colour, opacity);
+    // The label origin is the text-box top-left; add the ascent to reach the
+    // first baseline the quads are relative to.
+    overlay_geometry::emit_glyph_quads(
+        verts,
+        &layout.quads,
+        text_x,
+        text_y + ascent,
+        text_colour,
+        0.0,
+        0.0,
+    );
+}
+
+/// Emit a whole group (polylines, vector shapes, glyph runs, labels) into a fresh
+/// vertex list, returning it with the atlas version it baked glyph UVs against.
 ///
 /// Glyph UVs divide by the atlas size, so if rasterizing this group's glyphs grows
 /// the atlas, glyphs emitted before the grow carry a stale divisor. The loop
 /// re-emits the glyph portion once the atlas has stopped growing (all this group's
 /// glyphs are then resident), so the returned geometry always uses a single,
 /// final atlas size. The base (polyline/vector) portion is emitted once.
+///
+/// `label_leaders` is passed through to each label's `emit_label`: true for a
+/// self-anchoring label group, false for fixed-local labels in a mixed group.
 pub(super) fn emit_group_verts(
     atlas: &mut crate::resources::overlay::font::GlyphAtlas,
     device: &crate::gpu::Device,
     polylines: &[crate::renderer::types::OverlayPolylineItem],
     vector_shapes: &[crate::renderer::types::OverlayShapeItem],
     glyph_runs: &[crate::renderer::types::GlyphRunItem],
+    labels: &[crate::renderer::types::LabelItem],
+    label_leaders: bool,
     ppp: f32,
 ) -> (Vec<crate::resources::OverlayTextVertex>, u64) {
     let mut base = Vec::new();
     emit_base(&mut base, polylines, vector_shapes);
 
-    // Fast path: no glyphs, nothing can grow the atlas.
-    if glyph_runs.iter().all(|r| r.glyphs.is_empty() || r.opacity <= 0.0) {
+    // Fast path: no glyph-bearing content (runs or labels), nothing grows the atlas.
+    let has_glyphs = glyph_runs
+        .iter()
+        .any(|r| !r.glyphs.is_empty() && r.opacity > 0.0)
+        || labels.iter().any(|l| !l.text.is_empty() && l.opacity > 0.0);
+    if !has_glyphs {
         return (base, atlas.version());
     }
 
@@ -115,6 +232,9 @@ pub(super) fn emit_group_verts(
         let mut verts = base.clone();
         for run in glyph_runs {
             emit_glyph_run(&mut verts, atlas, device, run, ppp);
+        }
+        for label in labels {
+            emit_label(&mut verts, atlas, device, label, label_leaders, ppp);
         }
         guard += 1;
         if atlas.version() == v0 || guard >= 8 {
@@ -154,7 +274,10 @@ fn emit_sdf_shape(
     let cy = shape.position[1] + hh;
 
     let mut shadow_pad = if shape.shadow_radius > 0.0 {
-        shape.shadow_radius + shape.shadow_offset[0].abs().max(shape.shadow_offset[1].abs())
+        shape.shadow_radius
+            + shape.shadow_offset[0]
+                .abs()
+                .max(shape.shadow_offset[1].abs())
     } else {
         0.0
     };
@@ -213,7 +336,12 @@ fn emit_sdf_shape(
             end_angle,
         } => (
             5.0,
-            [inner_radius_frac.clamp(0.0, 1.0), *start_angle, *end_angle, 0.0],
+            [
+                inner_radius_frac.clamp(0.0, 1.0),
+                *start_angle,
+                *end_angle,
+                0.0,
+            ],
         ),
         OverlayShape::Triangle { direction } => {
             let d = match direction {
@@ -236,7 +364,12 @@ fn emit_sdf_shape(
             inner_radius_frac,
         } => (
             8.0,
-            [(*points).max(3) as f32, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0],
+            [
+                (*points).max(3) as f32,
+                inner_radius_frac.clamp(0.0, 1.0),
+                0.0,
+                0.0,
+            ],
         ),
         OverlayShape::RegularPolygon { sides } => (9.0, [(*sides).max(3) as f32, 0.0, 0.0, 0.0]),
         OverlayShape::Cross { arm_width_frac } => {
@@ -339,7 +472,12 @@ fn emit_sdf_shape(
     } else if shape.shadow_radius > 0.0 && !shape.shadow_inset {
         out_shadows.push(crate::resources::OverlayShadowLayerGpu {
             colour: sc,
-            params: [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], 0.0],
+            params: [
+                shape.shadow_radius,
+                shape.shadow_offset[0],
+                shape.shadow_offset[1],
+                0.0,
+            ],
         });
         outer_count += 1;
     }
@@ -356,7 +494,12 @@ fn emit_sdf_shape(
     } else if shape.shadow_radius > 0.0 && shape.shadow_inset {
         out_shadows.push(crate::resources::OverlayShadowLayerGpu {
             colour: sc,
-            params: [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], 1.0],
+            params: [
+                shape.shadow_radius,
+                shape.shadow_offset[0],
+                shape.shadow_offset[1],
+                1.0,
+            ],
         });
         inner_count += 1;
     }
@@ -405,11 +548,12 @@ fn emit_sdf_shape(
 }
 
 impl ViewportRenderer {
-    /// Compile a group of polylines, vector shapes, and glyph runs into a retained
-    /// overlay-geometry handle.
+    /// Compile a group of polylines, vector shapes, glyph runs, and labels into a
+    /// retained overlay-geometry handle.
     ///
     /// The items are tessellated once (polyline fills and strokes, vector-path
-    /// fills and borders, glyph quads) into local logical-pixel geometry and
+    /// fills and borders, SDF shapes, glyph quads, and each label's laid-out text,
+    /// background box, and glyph quads) into local logical-pixel geometry and
     /// uploaded to a buffer that lives until the group is freed. Each frame, submit
     /// the returned id through `OverlayFrame::retained` as a [`RetainedOverlay`]
     /// carrying a per-frame translate, opacity, z-order, and clip, instead of
@@ -417,15 +561,20 @@ impl ViewportRenderer {
     /// [`free_overlay_geometry`](Self::free_overlay_geometry).
     ///
     /// `pixels_per_point` must match the frame's; glyphs rasterize at
-    /// `font_size * pixels_per_point`. A group that carries glyphs is re-emitted
-    /// automatically when the atlas grows or the frame's `pixels_per_point` changes,
-    /// so callers only re-compile when their own text, style, or width changes.
+    /// `font_size * pixels_per_point`. A group that carries glyphs (in a run or a
+    /// label) is re-emitted automatically when the atlas grows or the frame's
+    /// `pixels_per_point` changes, so callers only re-compile when their own text,
+    /// style, or width changes.
     ///
     /// All slices are optional (pass `&[]`). `vector_shapes` entries that are not
-    /// `OverlayShape::Vector` are ignored (SDF shapes are a later phase). Geometry is
-    /// taken in its own screen-pixel space; position the group each frame with
-    /// `RetainedOverlay::translate`. Anchors are not resolved (a retained group is
-    /// static geometry moved by its per-frame translate).
+    /// `OverlayShape::Vector` are drawn as analytic SDF shapes. Geometry is taken in
+    /// its own screen-pixel space; position the group each frame with
+    /// `RetainedOverlay::translate`. Anchors are not resolved: every item, labels
+    /// included, is fixed-local geometry placed by its own `position` / alignment
+    /// and moved by the group's translate. A label's `anchor` and `leader_line` are
+    /// therefore ignored here (they only make sense for a single anchor-tracking
+    /// label); use [`compile_overlay_label`](Self::compile_overlay_label) for a
+    /// label that tracks a viewport corner or a world point.
     pub fn compile_overlay_geometry(
         &mut self,
         device: &crate::gpu::Device,
@@ -433,11 +582,13 @@ impl ViewportRenderer {
         polylines: &[crate::renderer::types::OverlayPolylineItem],
         vector_shapes: &[crate::renderer::types::OverlayShapeItem],
         glyph_runs: &[crate::renderer::types::GlyphRunItem],
+        labels: &[crate::renderer::types::LabelItem],
         pixels_per_point: f32,
     ) -> crate::renderer::OverlayGeometryId {
         let has_glyphs = glyph_runs
             .iter()
-            .any(|r| !r.glyphs.is_empty() && r.opacity > 0.0);
+            .any(|r| !r.glyphs.is_empty() && r.opacity > 0.0)
+            || labels.iter().any(|l| !l.text.is_empty() && l.opacity > 0.0);
 
         let (verts, baked_version) = emit_group_verts(
             &mut self.resources.content.glyph_atlas,
@@ -445,6 +596,9 @@ impl ViewportRenderer {
             polylines,
             vector_shapes,
             glyph_runs,
+            labels,
+            // Fixed-local labels in a mixed group: anchor ignored, so no leader.
+            false,
             pixels_per_point,
         );
         // Upload any newly rasterized glyphs so the atlas texture has them.
@@ -466,7 +620,10 @@ impl ViewportRenderer {
         let mut shape_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
         let mut shadow_layers: Vec<crate::resources::OverlayShadowLayerGpu> = Vec::new();
         for shape in vector_shapes {
-            if !matches!(shape.shape, crate::renderer::types::OverlayShape::Vector { .. }) {
+            if !matches!(
+                shape.shape,
+                crate::renderer::types::OverlayShape::Vector { .. }
+            ) {
                 emit_sdf_shape(shape, &mut shape_verts, &mut shadow_layers);
             }
         }
@@ -506,6 +663,7 @@ impl ViewportRenderer {
             polylines: polylines.to_vec(),
             vector_shapes: vector_shapes.to_vec(),
             glyph_runs: glyph_runs.to_vec(),
+            labels: labels.to_vec(),
             baked_atlas_version: baked_version,
             baked_ppp: pixels_per_point,
         });
@@ -520,8 +678,87 @@ impl ViewportRenderer {
                 shape_vertex_count: shape_verts.len() as u32,
                 shadow_buf,
                 source,
+                anchor: None,
             },
             total_bytes,
+        )
+    }
+
+    /// Compile a single [`LabelItem`](crate::renderer::types::LabelItem) into a
+    /// retained overlay-geometry handle.
+    ///
+    /// The text is laid out once, the way the immediate label draw lays it out,
+    /// into local logical-pixel geometry on the text stream: the background box,
+    /// the leader line (for a world anchor), and the glyph quads. Each frame the
+    /// renderer resolves the label's own anchor (a viewport corner, or a world
+    /// point projected through the camera) to a screen origin and folds it into the
+    /// group's translate, so the compiled label tracks its anchor across a resize
+    /// or camera move without re-laying-out. A world-anchored label is skipped for
+    /// any frame its point is behind the camera or off screen, like the immediate
+    /// path.
+    ///
+    /// `pixels_per_point` must match the frame's; the group re-emits automatically
+    /// when the atlas grows or `pixels_per_point` changes, like any glyph-bearing
+    /// group. Submit the returned id through `OverlayFrame::retained`; a
+    /// [`RetainedOverlay::translate`](crate::renderer::RetainedOverlay) composes on
+    /// top of the resolved anchor (to scroll or nudge), and the per-frame opacity
+    /// and outer `clip_rect` apply as for any retained group. The label's own
+    /// `clip_id` mask is not applied to a retained label; use the group's
+    /// `clip_rect`. Release it with
+    /// [`free_overlay_geometry`](Self::free_overlay_geometry).
+    pub fn compile_overlay_label(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        label: &crate::renderer::types::LabelItem,
+        pixels_per_point: f32,
+    ) -> crate::renderer::OverlayGeometryId {
+        let (verts, baked_version) = emit_group_verts(
+            &mut self.resources.content.glyph_atlas,
+            device,
+            &[],
+            &[],
+            &[],
+            std::slice::from_ref(label),
+            // A self-anchoring label: its anchor is resolved per frame, so its
+            // world-anchor leader line is meaningful.
+            true,
+            pixels_per_point,
+        );
+        self.resources.content.glyph_atlas.upload_if_dirty(queue);
+
+        let bytes = std::mem::size_of_val(&verts[..]) as u64;
+        let vertex_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("compiled_overlay_label_vbuf"),
+            size: bytes.max(4),
+            usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !verts.is_empty() {
+            queue.write_buffer(&vertex_buf, 0, bytemuck::cast_slice(&verts));
+        }
+
+        let source = crate::resources::CompiledSource {
+            polylines: Vec::new(),
+            vector_shapes: Vec::new(),
+            glyph_runs: Vec::new(),
+            labels: vec![label.clone()],
+            baked_atlas_version: baked_version,
+            baked_ppp: pixels_per_point,
+        };
+
+        self.resources.content.overlay_geometry.insert(
+            crate::resources::CompiledOverlay {
+                vertex_buf,
+                vertex_count: verts.len() as u32,
+                bytes,
+                shape_vertex_buf: None,
+                shape_vertex_count: 0,
+                shadow_buf: None,
+                source: Some(source),
+                anchor: Some(label.anchor),
+            },
+            bytes,
         )
     }
 
@@ -553,13 +790,15 @@ impl ViewportRenderer {
         if !stale {
             return;
         }
-        // Clone the source so the atlas and store borrows do not overlap.
-        let src = self
+        // Clone the source so the atlas and store borrows do not overlap. A group
+        // that resolves an anchor per frame (a single self-anchoring label) keeps
+        // its leader line on re-emit; a fixed-local mixed group does not.
+        let (src, label_leaders) = self
             .resources
             .content
             .overlay_geometry
             .get(id)
-            .and_then(|c| c.source.clone())
+            .and_then(|c| c.source.clone().map(|s| (s, c.anchor.is_some())))
             .unwrap();
         let (verts, baked_version) = emit_group_verts(
             &mut self.resources.content.glyph_atlas,
@@ -567,6 +806,8 @@ impl ViewportRenderer {
             &src.polylines,
             &src.vector_shapes,
             &src.glyph_runs,
+            &src.labels,
+            label_leaders,
             ppp,
         );
         self.resources.content.glyph_atlas.upload_if_dirty(queue);

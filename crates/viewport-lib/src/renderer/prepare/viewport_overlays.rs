@@ -770,23 +770,43 @@ impl ViewportRenderer {
                     // Re-emit the group first if its baked glyph UVs went stale
                     // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
                     self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp);
-                    let (text, shape) = match self.resources.content.overlay_geometry.get(r.id) {
-                        Some(c) => {
-                            let text = (c.vertex_count > 0)
-                                .then(|| (c.vertex_buf.clone(), c.vertex_count));
-                            let shape = match (&c.shape_vertex_buf, &c.shadow_buf) {
-                                (Some(sv), Some(sh)) if c.shape_vertex_count > 0 => {
-                                    Some((sv.clone(), c.shape_vertex_count, sh.clone()))
-                                }
-                                _ => None,
-                            };
-                            (text, shape)
-                        }
-                        None => continue,
-                    };
+                    let (text, shape, anchor) =
+                        match self.resources.content.overlay_geometry.get(r.id) {
+                            Some(c) => {
+                                let text = (c.vertex_count > 0)
+                                    .then(|| (c.vertex_buf.clone(), c.vertex_count));
+                                let shape = match (&c.shape_vertex_buf, &c.shadow_buf) {
+                                    (Some(sv), Some(sh)) if c.shape_vertex_count > 0 => {
+                                        Some((sv.clone(), c.shape_vertex_count, sh.clone()))
+                                    }
+                                    _ => None,
+                                };
+                                (text, shape, c.anchor)
+                            }
+                            None => continue,
+                        };
                     if text.is_none() && shape.is_none() {
                         continue;
                     }
+                    // A compiled label carries its own anchor: resolve it to a
+                    // screen origin (a viewport corner, or a world point projected
+                    // through the camera) and fold it into the translate. The
+                    // submission's translate composes on top (scroll/nudge). A world
+                    // anchor that is culled skips the group for this frame.
+                    let translate = match anchor {
+                        Some(a) => {
+                            let Some(origin) = crate::renderer::types::resolve_anchor_origin(
+                                &a,
+                                [vp_w, vp_h],
+                                view,
+                                proj,
+                            ) else {
+                                continue;
+                            };
+                            [origin[0] + r.translate[0], origin[1] + r.translate[1]]
+                        }
+                        None => r.translate,
+                    };
                     let clip_rect = if r.clip_rect == [0.0, 0.0, 0.0, 0.0] {
                         [0.0, 0.0, 0.0, 0.0]
                     } else {
@@ -799,19 +819,20 @@ impl ViewportRenderer {
                     };
                     let instance_index = instances.len() as u32;
                     instances.push(crate::resources::OverlayInstance {
-                        translate: r.translate,
+                        translate,
                         opacity: r.opacity,
                         _pad: 0.0,
                         clip_rect,
                     });
                     if let Some((vbuf, vcount)) = text {
                         let draw_index = self.overlay_retained_draws.len() as u32;
-                        self.overlay_retained_draws
-                            .push(crate::renderer::overlay_buffers::RetainedDraw {
+                        self.overlay_retained_draws.push(
+                            crate::renderer::overlay_buffers::RetainedDraw {
                                 vertex_buf: vbuf,
                                 vertex_count: vcount,
                                 instance_index,
-                            });
+                            },
+                        );
                         crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained(
                             &mut self.overlay_draw_segments,
                             r.z_order,
@@ -833,7 +854,8 @@ impl ViewportRenderer {
                     let instances_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                         label: Some("overlay_instances_buf"),
                         size: std::mem::size_of_val(&instances[..]) as u64,
-                        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                        usage: crate::gpu::BufferUsages::STORAGE
+                            | crate::gpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
                     queue.write_buffer(&instances_buf, 0, bytemuck::cast_slice(&instances));
@@ -850,7 +872,8 @@ impl ViewportRenderer {
                         self.resources.ensure_overlay_shape_pipeline(device);
                         let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
                         if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
-                            for (svbuf, svcount, shbuf, instance_index, z) in pending_shapes.drain(..)
+                            for (svbuf, svcount, shbuf, instance_index, z) in
+                                pending_shapes.drain(..)
                             {
                                 let bind_group =
                                     device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1848,8 +1871,8 @@ impl ViewportRenderer {
                                     ),
                                 );
                             }
-                            let vertex_buf =
-                                self.overlay_shape_tex_vbufs[batch_index].write(device, queue, verts);
+                            let vertex_buf = self.overlay_shape_tex_vbufs[batch_index]
+                                .write(device, queue, verts);
                             group_to_batch[group_idx] = Some(batch_index as u32);
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {
                                 vertex_buf,
@@ -1912,7 +1935,10 @@ impl ViewportRenderer {
                 };
 
                 let blur_vbuf = if !blur_verts.is_empty() {
-                    Some(self.overlay_shape_blur_vbuf.write(device, queue, &blur_verts))
+                    Some(
+                        self.overlay_shape_blur_vbuf
+                            .write(device, queue, &blur_verts),
+                    )
                 } else {
                     None
                 };

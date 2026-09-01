@@ -30,6 +30,12 @@ pub(crate) struct CompiledOverlay {
     /// from this source on that event. `None` for polyline/vector-only groups,
     /// whose geometry is viewport-independent and never invalidates.
     pub source: Option<CompiledSource>,
+    /// The anchor a compiled label resolves each frame. `Some` only for a group
+    /// compiled from a `LabelItem`: the renderer resolves this to a screen origin
+    /// (a viewport corner, or a world point projected through the camera) and adds
+    /// it to the per-frame translate, and skips the group when a world anchor is
+    /// culled. `None` for every other group, whose translate is taken as-is.
+    pub anchor: Option<viewport_lib_types::overlay::OverlayAnchor>,
 }
 
 /// The source items a glyph-bearing group retains so its geometry can be
@@ -39,6 +45,10 @@ pub(crate) struct CompiledSource {
     pub polylines: Vec<viewport_lib_types::overlay::OverlayPolylineItem>,
     pub vector_shapes: Vec<viewport_lib_types::overlay::OverlayShapeItem>,
     pub glyph_runs: Vec<viewport_lib_types::overlay::GlyphRunItem>,
+    /// Labels retained for re-emission. A label lays its text out at compile time
+    /// (glyphs, background box, and leader line, all on the text stream); a DPI or
+    /// atlas change re-lays it out from here.
+    pub labels: Vec<viewport_lib_types::overlay::LabelItem>,
     /// The atlas growth version the current geometry baked UVs against.
     pub baked_atlas_version: u64,
     /// The `pixels_per_point` the current geometry baked glyphs at.

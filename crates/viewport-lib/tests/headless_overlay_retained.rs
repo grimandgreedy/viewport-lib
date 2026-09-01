@@ -15,8 +15,8 @@ mod common;
 use common::*;
 
 use viewport_lib::{
-    GlyphRunItem, OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem, PositionedGlyph,
-    RetainedOverlay,
+    AnchorX, AnchorY, GlyphRunItem, LabelItem, OverlayAnchor, OverlayFill, OverlayPolylineItem,
+    OverlayShape, OverlayShapeItem, PositionedGlyph, RetainedOverlay,
 };
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
@@ -63,8 +63,12 @@ fn is_background(c: (u8, u8, u8)) -> bool {
 
 /// A red SDF rect over pixels 16..48 (analytic shape pipeline).
 fn red_sdf_rect() -> OverlayShapeItem {
-    OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, [16.0, 16.0], [32.0, 32.0])
-        .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0]))
+    OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 0.0 },
+        [16.0, 16.0],
+        [32.0, 32.0],
+    )
+    .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0]))
 }
 
 /// A retained group carrying an analytic SDF shape draws through the shape
@@ -79,12 +83,16 @@ fn retained_sdf_shape_draws_and_translates() {
     let size = 64u32;
 
     // Pass the SDF rect in the shapes slice; it routes to the shape stream.
-    let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], 1.0);
+    let id =
+        renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], &[], 1.0);
 
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![RetainedOverlay::new(id)];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
-    assert!(is_red(rgb_at(&px, size, 32, 32)), "SDF rect centre should be red");
+    assert!(
+        is_red(rgb_at(&px, size, 32, 32)),
+        "SDF rect centre should be red"
+    );
     assert!(
         is_background(rgb_at(&px, size, 8, 32)),
         "left of the rect should be background"
@@ -136,14 +144,17 @@ fn retained_glyphs_survive_dpi_change() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let size = 128u32;
 
-    let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[], &[glyph_run()], 1.0);
+    let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[], &[glyph_run()], &[], 1.0);
 
     // ppp 1.0 (matches the compile): glyphs draw straight from the cache.
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![RetainedOverlay::new(id)];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     let n1 = bright_pixels(&px);
-    assert!(n1 > 10, "glyphs should draw at ppp 1.0, got {n1} bright pixels");
+    assert!(
+        n1 > 10,
+        "glyphs should draw at ppp 1.0, got {n1} bright pixels"
+    );
 
     // ppp 2.0: baked ppp no longer matches, so the group re-emits at the new
     // physical size; the glyphs still draw. The offscreen target is sized to the
@@ -160,6 +171,173 @@ fn retained_glyphs_survive_dpi_change() {
     );
 }
 
+/// Count near-white pixels inside a rectangular region `[x0, y0)` .. `[x1, y1)`.
+fn bright_in(px: &[u8], size: u32, x0: u32, y0: u32, x1: u32, y1: u32) -> usize {
+    let mut n = 0;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (r, g, b) = rgb_at(px, size, x, y);
+            if r > 200 && g > 200 && b > 200 {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// A retained `LabelItem` lays its text out once and draws from the cache; a
+/// freed handle draws nothing.
+#[test]
+fn retained_label_draws_and_free() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 128u32;
+
+    let label = LabelItem::new("ABCD")
+        .with_font_size(22.0)
+        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_align_y(AnchorY::Top)
+        .with_position([8.0, 8.0]);
+    let id = renderer.compile_overlay_label(&device, &queue, &label, 1.0);
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(bright_pixels(&px) > 10, "retained label should draw glyphs");
+
+    assert!(
+        renderer.free_overlay_geometry(id),
+        "free should report success"
+    );
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert_eq!(bright_pixels(&px), 0, "a freed label should draw nothing");
+}
+
+/// A retained label resolves its own anchor per frame: the same compiled geometry
+/// lands in the top-left when anchored to the viewport top-left, and in the
+/// bottom-right when anchored to the viewport bottom-right.
+#[test]
+fn retained_label_anchor_resolves_to_corner() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 128u32;
+    let half = size / 2;
+
+    let top_left = LabelItem::new("ABCD")
+        .with_font_size(22.0)
+        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_anchor(OverlayAnchor::Viewport {
+            x: AnchorX::Left,
+            y: AnchorY::Top,
+        })
+        .with_align_x(AnchorX::Left)
+        .with_align_y(AnchorY::Top)
+        .with_position([6.0, 6.0]);
+    let tl_id = renderer.compile_overlay_label(&device, &queue, &top_left, 1.0);
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(tl_id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        bright_in(&px, size, 0, 0, half, half) > 10,
+        "top-left-anchored label should draw in the top-left quadrant"
+    );
+    assert_eq!(
+        bright_in(&px, size, half, half, size, size),
+        0,
+        "top-left-anchored label should not reach the bottom-right quadrant"
+    );
+
+    let bottom_right = LabelItem::new("ABCD")
+        .with_font_size(22.0)
+        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_anchor(OverlayAnchor::Viewport {
+            x: AnchorX::Right,
+            y: AnchorY::Bottom,
+        })
+        .with_align_x(AnchorX::Right)
+        .with_align_y(AnchorY::Bottom)
+        .with_position([-6.0, -6.0]);
+    let br_id = renderer.compile_overlay_label(&device, &queue, &bottom_right, 1.0);
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(br_id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        bright_in(&px, size, half, half, size, size) > 10,
+        "bottom-right-anchored label should draw in the bottom-right quadrant"
+    );
+    assert_eq!(
+        bright_in(&px, size, 0, 0, half, half),
+        0,
+        "bottom-right-anchored label should not reach the top-left quadrant"
+    );
+}
+
+/// A string-in label mixes into a multi-family group: one handle carries a
+/// filled square (polyline stream) and an auto-laid-out label (text stream), both
+/// draw, and the per-frame translate moves the whole group as one unit. The
+/// label's anchor is ignored on this path (it is placed fixed-local by position).
+#[test]
+fn retained_mixed_group_shape_and_label() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+
+    // A label laid out below the red square (glyphs land around y=40..).
+    let label = LabelItem::new("ABCD")
+        .with_font_size(18.0)
+        .with_colour([1.0, 1.0, 1.0, 1.0])
+        .with_align_y(AnchorY::Top)
+        .with_position([2.0, 40.0]);
+    let id = renderer.compile_overlay_geometry(
+        &device,
+        &queue,
+        &[red_square()],
+        &[],
+        &[],
+        &[label],
+        1.0,
+    );
+
+    // Both families draw from the one handle: red square centre, white glyphs below.
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 32, 32)),
+        "mixed group should draw the square"
+    );
+    assert!(
+        bright_pixels(&px) > 10,
+        "mixed group should draw the label glyphs"
+    );
+
+    // One translate moves the whole group: the square vacates its old centre.
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 56, 32)),
+        "translated mixed group should cover x=56"
+    );
+    assert!(
+        is_background(rgb_at(&px, size, 24, 32)),
+        "translated mixed group should have vacated x=24"
+    );
+}
+
 /// A compiled group draws from its cached buffer, and the per-frame `translate`
 /// moves it without re-compiling.
 #[test]
@@ -171,7 +349,8 @@ fn retained_draws_and_translates() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let size = 64u32;
 
-    let id = renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], 1.0);
+    let id =
+        renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], &[], 1.0);
 
     // No translate: the square covers pixels 16..48, so the centre is red and a
     // point to its left is background.
@@ -209,7 +388,8 @@ fn retained_opacity_and_free() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let size = 64u32;
 
-    let id = renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], 1.0);
+    let id =
+        renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], &[], 1.0);
 
     // Fully transparent: the centre reads the background.
     let mut frame = overlay_frame(size);
@@ -221,7 +401,10 @@ fn retained_opacity_and_free() {
     );
 
     // Free the group; a submission referencing the freed id is skipped.
-    assert!(renderer.free_overlay_geometry(id), "free should report success");
+    assert!(
+        renderer.free_overlay_geometry(id),
+        "free should report success"
+    );
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![RetainedOverlay::new(id)];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

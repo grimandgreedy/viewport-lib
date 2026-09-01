@@ -1,18 +1,24 @@
 //! Retained overlay geometry: compile a scrollable panel once, then scroll it by
 //! updating only its per-frame translate (no re-tessellation).
 //!
-//! This is the payoff of `compile_overlay_geometry` / `RetainedOverlay`. Two
-//! groups are compiled a single time at startup:
+//! This is the payoff of `compile_overlay_geometry` / `compile_overlay_label` /
+//! `RetainedOverlay`. Three groups are compiled a single time at startup:
 //!
-//! - a static panel background (an SDF rounded-rect, drawn through the shape
-//!   pipeline), submitted every frame at a fixed position, and
+//! - a static panel background: one mixed handle carrying an SDF rounded-rect
+//!   plate plus a fixed-local title label (a string laid out once, bundled into the
+//!   same handle), submitted every frame at a fixed position,
 //! - the panel's scrollable content (polyline "rows", drawn through the text
 //!   pipeline), submitted every frame with a `translate` that scrolls it and a
-//!   `clip_rect` that clips it to the panel interior.
+//!   `clip_rect` that clips it to the panel interior, and
+//! - a world-anchored label pinned to the top of the cube (`compile_overlay_label`),
+//!   whose text is laid out once: the renderer reprojects its anchor every frame so
+//!   it tracks the cube as the camera orbits, and hides it when the cube is off
+//!   screen, with no re-layout.
 //!
-//! Neither is re-tessellated as it scrolls: only the small per-frame
-//! `RetainedOverlay` (a handle plus translate/opacity/clip) changes. Compare with
-//! pushing hundreds of items into `OverlayFrame` every frame.
+//! None is re-tessellated as it scrolls or the camera moves: only the small
+//! per-frame `RetainedOverlay` (a handle plus translate/opacity/clip) changes, and
+//! the label carries no translate at all. Compare with pushing hundreds of items
+//! into `OverlayFrame` every frame.
 //!
 //! Navigation: left/middle drag orbit, right drag pan, scroll zoom (the cube is
 //! just context behind the panel).
@@ -21,9 +27,9 @@ use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use vpl::input::adapters::from_egui;
 use vpl::{
-    Material, Modifiers, OffscreenViewportTarget, OrbitCameraController, OverlayFill,
-    OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, RetainedOverlay,
-    ViewportContext, ViewportEvent, ViewportInstance, primitives,
+    AnchorY, LabelItem, Material, Modifiers, OffscreenViewportTarget, OrbitCameraController,
+    OverlayFill, OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    RetainedOverlay, ViewportContext, ViewportEvent, ViewportInstance, primitives,
 };
 
 /// Panel geometry, in the panel's own logical-pixel space (top-left origin near
@@ -55,7 +61,10 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
         let y = PANEL_TOP + 16.0 + i as f32 * ROW_STEP;
         // Row separator line.
         let mut sep = OverlayPolylineItem::default();
-        sep.points = vec![[PANEL_X + 20.0, y + ROW_STEP - 8.0], [PANEL_X + PANEL_W - 20.0, y + ROW_STEP - 8.0]];
+        sep.points = vec![
+            [PANEL_X + 20.0, y + ROW_STEP - 8.0],
+            [PANEL_X + PANEL_W - 20.0, y + ROW_STEP - 8.0],
+        ];
         sep.thickness = 1.5;
         sep.colour = [0.4, 0.45, 0.6, 0.7];
         lines.push(sep);
@@ -69,7 +78,12 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + 24.0],
         ];
         swatch.closed = true;
-        swatch.fill = Some(OverlayFill::Solid([0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0]));
+        swatch.fill = Some(OverlayFill::Solid([
+            0.9 - t * 0.6,
+            0.4 + t * 0.4,
+            0.3 + t * 0.5,
+            1.0,
+        ]));
         lines.push(swatch);
     }
     lines
@@ -109,6 +123,7 @@ fn main() -> eframe::Result {
                 target: None,
                 background: None,
                 content: None,
+                label: None,
             }))
         }),
     )
@@ -126,6 +141,10 @@ struct App {
     /// Compiled once, on the first frame (when `pixels_per_point` is known).
     background: Option<OverlayGeometryId>,
     content: Option<OverlayGeometryId>,
+    /// A world-anchored label pinned to the top of the cube. Compiled once; the
+    /// renderer reprojects its anchor every frame so it tracks the cube as the
+    /// camera orbits, with no re-layout, and hides when the point goes off screen.
+    label: Option<OverlayGeometryId>,
 }
 
 impl eframe::App for App {
@@ -144,7 +163,11 @@ impl eframe::App for App {
                     (rect.height() * ppp).round().max(1.0) as u32,
                 ];
 
-                if self.target.as_ref().map_or(true, |t| t.inner.size() != size) {
+                if self
+                    .target
+                    .as_ref()
+                    .map_or(true, |t| t.inner.size() != size)
+                {
                     let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size);
                     let id = rs.renderer.write().register_native_texture(
                         &rs.device,
@@ -178,12 +201,26 @@ impl eframe::App for App {
 
                 // Compile the two panel groups once, now that ppp is known.
                 if self.background.is_none() {
+                    // The panel background is one mixed handle: the rounded-rect
+                    // plate plus a fixed-local title label, laid out once. The
+                    // label rides the shape in a single handle (one dirty unit);
+                    // its anchor is ignored here, it sits at its local position.
+                    let title = LabelItem::new("Layers")
+                        .with_screen_anchor([PANEL_X, PANEL_TOP - 8.0])
+                        .with_align_y(AnchorY::Bottom)
+                        .with_font_size(16.0)
+                        .with_colour([0.95, 0.97, 1.0, 1.0])
+                        .with_background(true)
+                        .with_background_colour([0.2, 0.24, 0.34, 1.0])
+                        .with_padding(5.0)
+                        .with_border_radius(4.0);
                     let bg = self.session.renderer_mut().compile_overlay_geometry(
                         &rs.device,
                         &rs.queue,
                         &[],
                         &panel_background(),
                         &[],
+                        std::slice::from_ref(&title),
                         ppp,
                     );
                     let content = self.session.renderer_mut().compile_overlay_geometry(
@@ -192,10 +229,26 @@ impl eframe::App for App {
                         &panel_content(),
                         &[],
                         &[],
+                        &[],
                         ppp,
                     );
+                    // A world-anchored label, laid out once. The renderer resolves
+                    // its anchor each frame so it tracks the cube; the "cube" text,
+                    // background, and leader line are never re-tessellated.
+                    let tag = LabelItem::new("cube")
+                        .with_world_anchor([0.0, 0.0, 0.7])
+                        .with_leader_line(true)
+                        .with_background(true)
+                        .with_border_radius(4.0)
+                        .with_align_y(AnchorY::Bottom)
+                        .with_font_size(15.0);
+                    let label = self
+                        .session
+                        .renderer_mut()
+                        .compile_overlay_label(&rs.device, &rs.queue, &tag, ppp);
                     self.background = Some(bg);
                     self.content = Some(content);
+                    self.label = Some(label);
                 }
 
                 self.session.update_orbit(&mut self.orbit);
@@ -205,12 +258,7 @@ impl eframe::App for App {
                 let extra = (ROW_COUNT as f32 * ROW_STEP - PANEL_H + 40.0).max(0.0);
                 let phase = (time * 0.15).fract();
                 let scroll = extra * (1.0 - (2.0 * phase - 1.0).abs());
-                let clip = [
-                    PANEL_X,
-                    PANEL_TOP,
-                    PANEL_X + PANEL_W,
-                    PANEL_TOP + PANEL_H,
-                ];
+                let clip = [PANEL_X, PANEL_TOP, PANEL_X + PANEL_W, PANEL_TOP + PANEL_H];
 
                 // Set both groups as retained submissions (assembly clears overlays,
                 // so this runs after `update_orbit`).
@@ -222,6 +270,10 @@ impl eframe::App for App {
                         .with_translate([0.0, -scroll])
                         .with_clip_rect(clip)
                         .with_z_order(1),
+                    // World-anchored label: no translate here. The renderer
+                    // resolves its baked anchor to the cube's projected position
+                    // each frame and hides it when the cube is off screen.
+                    RetainedOverlay::new(self.label.unwrap()).with_z_order(2),
                 ];
 
                 let cmd = self
