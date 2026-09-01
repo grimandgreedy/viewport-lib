@@ -1,9 +1,9 @@
-# This crate lives in `crates/` so it clones with the repo and is visible, but it
-# is deliberately not a member of the parent workspace (that stays the four
-# published crates, so `cargo publish -p viewport-lib` is unaffected). An empty
-# `[workspace]` table detaches it into its own workspace root; without it cargo
-# errors with "current package believes it's in a workspace when it's not"
-# because the crate sits inside the parent workspace tree. It never publishes.
+# This crate lives in `crates/` but is deliberately not a member of the parent
+# workspace (that stays the other published crates), so `cargo publish -p
+# viewport-lib` is unaffected and the testkit publishes from its own directory.
+# An empty `[workspace]` table detaches it into its own workspace root; without
+# it cargo errors with "current package believes it's in a workspace when it's
+# not" because the crate sits inside the parent workspace tree.
 [workspace]
 
 [package]
@@ -11,17 +11,21 @@ name = "viewport-lib-testkit"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-publish = false
+license = "GPL-3.0-only"
+repository = "https://github.com/grimandgreedy/viewport-lib"
 description = "Shared scene catalogue and headless harness for testing and benchmarking viewport-lib"
+# The golden reference images are per-environment test data, not part of the
+# shipped crate; the golden comparison code in `src/golden.rs` still ships.
+exclude = ["tests/snapshots/*.png"]
 
 # `default-features = false` so the wgpu leg comes from whoever drives the
 # build (Cargo unifies it), not forced to the default here. The testkit names
 # wgpu through `viewport_lib::wgpu`, so it always matches the library's leg.
 [dependencies]
-viewport-lib = { path = "../viewport-lib", default-features = false }
+viewport-lib = { path = "../viewport-lib", version = "0.20", default-features = false }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
-viewport-lib-io = { path = "../../../viewport-lib-io", optional = true }
+viewport-lib-io = { path = "../../../viewport-lib-io", version = "0.7", optional = true }
 # PNG load/save for the golden module; optional so the core does not pull it.
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 

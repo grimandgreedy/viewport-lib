@@ -27,31 +27,41 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Publish workspace members bottom-up in dependency order: the pure-data
-      # types crate first, then the geometry and input crates that depend on it,
-      # then the renderer that depends on all three. Each is skipped if that exact
-      # version is already on crates.io, so a release that only bumped one crate
-      # does not fail on the unchanged ones (the crates version independently).
+      # Publish bottom-up in dependency order: the pure-data types crate first,
+      # then the geometry and input crates that depend on it, then the renderer
+      # that depends on all three, and finally the testkit which depends on the
+      # renderer. Each is skipped if that exact version is already on crates.io, so
+      # a release that only bumped one crate does not fail on the unchanged ones
+      # (the crates version independently).
+      #
+      # The testkit is NOT a member of this workspace (it has its own `[workspace]`
+      # table so `cargo publish -p viewport-lib` stays clean), so it is published
+      # by manifest path rather than `-p`, and it carries its own version. Its
+      # `real_models` feature depends on `viewport-lib-io`, which is published from
+      # its own repository; that must already be on crates.io for the testkit
+      # publish to resolve.
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           publish_if_new() {
             name="$1"
-            ver=$(cargo metadata --no-deps --format-version 1 \
+            manifest="$2"
+            ver=$(cargo metadata --no-deps --format-version 1 --manifest-path "$manifest" \
               | python3 -c "import sys,json;print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='$name'))")
             idx="https://index.crates.io/${name:0:2}/${name:2:2}/$name"
             if curl -sf "$idx" | grep -q "\"vers\":\"$ver\""; then
               echo "$name $ver already on crates.io, skipping"
             else
               echo "publishing $name $ver"
-              cargo publish -p "$name"
+              cargo publish --manifest-path "$manifest"
             fi
           }
-          publish_if_new viewport-lib-types
-          publish_if_new viewport-lib-geometry
-          publish_if_new viewport-lib-input
-          publish_if_new viewport-lib
+          publish_if_new viewport-lib-types    crates/viewport-lib-types/Cargo.toml
+          publish_if_new viewport-lib-geometry crates/viewport-lib-geometry/Cargo.toml
+          publish_if_new viewport-lib-input    crates/viewport-lib-input/Cargo.toml
+          publish_if_new viewport-lib          crates/viewport-lib/Cargo.toml
+          publish_if_new viewport-lib-testkit  crates/viewport-lib-testkit/Cargo.toml
 
       - name: Get changelog entry
         id: changelog

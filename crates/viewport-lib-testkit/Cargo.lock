@@ -4145,7 +4145,7 @@ dependencies = [
 
 [[package]]
 name = "viewport-lib-io"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "fbxcel-dom",
