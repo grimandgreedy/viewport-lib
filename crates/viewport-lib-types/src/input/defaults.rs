@@ -119,8 +119,6 @@ pub fn default_bindings() -> Vec<Binding> {
         Binding::in_modes(Action::FlyDown, key_held_any_mod(KeyCode::Q), fly),
         // FlySpeedBoost is handled by checking modifiers.shift directly in fly-mode logic,
         // not via a binding, because Shift is a modifier and not a standalone key.
-        Binding::in_modes(Action::FlySpeedIncrease, scroll(Modifiers::NONE), fly),
-        Binding::in_modes(Action::FlySpeedDecrease, scroll(Modifiers::SHIFT), fly),
         // -- Gizmo space toggle --
         Binding::in_modes(
             Action::ToggleGizmoSpace,
@@ -213,4 +211,90 @@ pub fn default_bindings() -> Vec<Binding> {
         Binding::global(Action::Redo, key_press(KeyCode::Z, Modifiers::CTRL_SHIFT)),
         Binding::global(Action::Redo, key_press(KeyCode::Y, Modifiers::CTRL)),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::viewport_all_bindings;
+    use std::collections::HashSet;
+
+    // One list of every action, expanded into both the array the coverage test
+    // walks and an exhaustive `match`. Adding an `Action` variant fails to
+    // compile here until it is listed, which forces a decision: bind it, or add
+    // it to the documented exceptions below.
+    macro_rules! all_actions {
+        ($($v:ident),* $(,)?) => {
+            const ALL_ACTIONS: &[Action] = &[$(Action::$v),*];
+            #[allow(dead_code)]
+            fn actions_are_exhaustive(a: Action) {
+                match a { $(Action::$v => {}),* }
+            }
+        };
+    }
+
+    all_actions!(
+        Orbit,
+        Pan,
+        Zoom,
+        FocusObject,
+        ResetView,
+        ToggleWireframe,
+        CycleGizmoMode,
+        EnterFlyMode,
+        FlyForward,
+        FlyBackward,
+        FlyLeft,
+        FlyRight,
+        FlyUp,
+        FlyDown,
+        FlySpeedBoost,
+        BeginMove,
+        BeginRotate,
+        BeginScale,
+        ConstrainX,
+        ConstrainY,
+        ConstrainZ,
+        ExcludeX,
+        ExcludeY,
+        ExcludeZ,
+        Confirm,
+        Cancel,
+        NumericBackspace,
+        NumericNextAxis,
+        Undo,
+        Redo,
+        ToggleGizmoSpace,
+        CyclePivotModeForward,
+        CyclePivotModeBackward,
+        OpenAddMenu,
+        DeleteSelected,
+    );
+
+    /// Every action must be reachable from at least one of the two shipped
+    /// binding sets (`default_bindings` or `viewport_all_bindings`), so no action
+    /// is defined but impossible to trigger. The single documented exception is
+    /// `FlySpeedBoost`, which fly-mode logic reads from the Shift modifier
+    /// directly rather than through a binding.
+    #[test]
+    fn every_action_is_bound_or_a_documented_exception() {
+        let bound: HashSet<Action> = default_bindings()
+            .iter()
+            .map(|b| b.action)
+            .chain(viewport_all_bindings().iter().map(|b| b.action))
+            .collect();
+
+        let unbound: Vec<Action> = ALL_ACTIONS
+            .iter()
+            .copied()
+            .filter(|a| !bound.contains(a))
+            .collect();
+
+        assert_eq!(
+            unbound,
+            vec![Action::FlySpeedBoost],
+            "actions with no binding in either set: bind them, or add to the \
+             documented exceptions with a reason"
+        );
+    }
 }

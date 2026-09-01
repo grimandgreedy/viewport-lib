@@ -163,6 +163,18 @@ fn map_key(key: &::winit::keyboard::PhysicalKey) -> Option<KeyCode> {
         W::F10 => KeyCode::F10,
         W::F11 => KeyCode::F11,
         W::F12 => KeyCode::F12,
+        W::F13 => KeyCode::F13,
+        W::F14 => KeyCode::F14,
+        W::F15 => KeyCode::F15,
+        W::F16 => KeyCode::F16,
+        W::F17 => KeyCode::F17,
+        W::F18 => KeyCode::F18,
+        W::F19 => KeyCode::F19,
+        W::F20 => KeyCode::F20,
+        W::F21 => KeyCode::F21,
+        W::F22 => KeyCode::F22,
+        W::F23 => KeyCode::F23,
+        W::F24 => KeyCode::F24,
         W::Numpad0 => KeyCode::Numpad0,
         W::Numpad1 => KeyCode::Numpad1,
         W::Numpad2 => KeyCode::Numpad2,
@@ -182,4 +194,110 @@ fn map_key(key: &::winit::keyboard::PhysicalKey) -> Option<KeyCode> {
         _ => return None,
     };
     Some(k)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::winit::event::{ElementState, MouseButton as WinitMouseButton};
+    use ::winit::keyboard::{KeyCode as Wk, PhysicalKey};
+
+    // One pairs list, expanded into both the full list of library keys and the
+    // exhaustive library-key -> winit-key mapping used to test coverage. Because
+    // the generated `match` has no wildcard, adding a `KeyCode` variant fails to
+    // compile here until its winit key is listed: that is the tripwire that keeps
+    // the adapter from silently dropping a newly defined key.
+    macro_rules! key_pairs {
+        ($($lib:ident => $winit:ident),* $(,)?) => {
+            const ALL_KEYCODES: &[KeyCode] = &[$(KeyCode::$lib),*];
+            /// The winit key that must translate to each library key.
+            fn winit_key_for(k: KeyCode) -> Wk {
+                match k { $(KeyCode::$lib => Wk::$winit),* }
+            }
+        };
+    }
+
+    key_pairs! {
+        A => KeyA, B => KeyB, C => KeyC, D => KeyD, E => KeyE, F => KeyF, G => KeyG,
+        H => KeyH, I => KeyI, J => KeyJ, K => KeyK, L => KeyL, M => KeyM, N => KeyN,
+        O => KeyO, P => KeyP, Q => KeyQ, R => KeyR, S => KeyS, T => KeyT, U => KeyU,
+        V => KeyV, W => KeyW, X => KeyX, Y => KeyY, Z => KeyZ,
+        Num0 => Digit0, Num1 => Digit1, Num2 => Digit2, Num3 => Digit3, Num4 => Digit4,
+        Num5 => Digit5, Num6 => Digit6, Num7 => Digit7, Num8 => Digit8, Num9 => Digit9,
+        Tab => Tab, Enter => Enter, Escape => Escape, Backtick => Backquote,
+        Backspace => Backspace, Comma => Comma, Period => Period,
+        LeftBracket => BracketLeft, RightBracket => BracketRight, Slash => Slash,
+        LeftShift => ShiftLeft, RightShift => ShiftRight, Space => Space,
+        Up => ArrowUp, Down => ArrowDown, Left => ArrowLeft, Right => ArrowRight,
+        F1 => F1, F2 => F2, F3 => F3, F4 => F4, F5 => F5, F6 => F6, F7 => F7,
+        F8 => F8, F9 => F9, F10 => F10, F11 => F11, F12 => F12, F13 => F13,
+        F14 => F14, F15 => F15, F16 => F16, F17 => F17, F18 => F18, F19 => F19,
+        F20 => F20, F21 => F21, F22 => F22, F23 => F23, F24 => F24,
+        Semicolon => Semicolon, Apostrophe => Quote, Backslash => Backslash,
+        Minus => Minus, Equals => Equal, LeftCtrl => ControlLeft,
+        RightCtrl => ControlRight, LeftAlt => AltLeft, RightAlt => AltRight,
+        LeftSuper => SuperLeft, RightSuper => SuperRight, CapsLock => CapsLock,
+        Delete => Delete, Insert => Insert, Home => Home, End => End,
+        PageUp => PageUp, PageDown => PageDown,
+        Numpad0 => Numpad0, Numpad1 => Numpad1, Numpad2 => Numpad2, Numpad3 => Numpad3,
+        Numpad4 => Numpad4, Numpad5 => Numpad5, Numpad6 => Numpad6, Numpad7 => Numpad7,
+        Numpad8 => Numpad8, Numpad9 => Numpad9, NumpadAdd => NumpadAdd,
+        NumpadSubtract => NumpadSubtract, NumpadMultiply => NumpadMultiply,
+        NumpadDivide => NumpadDivide, NumpadDecimal => NumpadDecimal,
+        NumpadEnter => NumpadEnter, NumLock => NumLock, PrintScreen => PrintScreen,
+        Pause => Pause, ScrollLock => ScrollLock,
+    }
+
+    /// Every key the library defines must translate from some winit key. This is
+    /// the guard against the "key not in the defined set" class: a defined key
+    /// the adapter forgets to map (F13-F24 were exactly this) fails here because
+    /// `map_key` returns `None` for it.
+    #[test]
+    fn every_defined_key_maps_from_winit() {
+        for &code in ALL_KEYCODES {
+            let winit = winit_key_for(code);
+            assert_eq!(
+                map_key(&PhysicalKey::Code(winit)),
+                Some(code),
+                "winit {winit:?} should map to KeyCode::{code:?}"
+            );
+        }
+    }
+
+    /// An unmapped physical key is dropped (returns `None`), not mis-mapped. The
+    /// `Fn` lock keys are examples winit exposes that the viewport does not use.
+    #[test]
+    fn unmapped_physical_key_is_none() {
+        assert_eq!(map_key(&PhysicalKey::Code(Wk::Fn)), None);
+        assert_eq!(map_key(&PhysicalKey::Code(Wk::ContextMenu)), None);
+        assert_eq!(
+            map_key(&PhysicalKey::Unidentified(
+                ::winit::keyboard::NativeKeyCode::Unidentified
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn mouse_buttons_map_and_extras_drop() {
+        assert_eq!(map_button(WinitMouseButton::Left), Some(MouseButton::Left));
+        assert_eq!(
+            map_button(WinitMouseButton::Right),
+            Some(MouseButton::Right)
+        );
+        assert_eq!(
+            map_button(WinitMouseButton::Middle),
+            Some(MouseButton::Middle)
+        );
+        // Back/forward and hardware extras are not viewport buttons.
+        assert_eq!(map_button(WinitMouseButton::Back), None);
+        assert_eq!(map_button(WinitMouseButton::Forward), None);
+        assert_eq!(map_button(WinitMouseButton::Other(9)), None);
+    }
+
+    #[test]
+    fn element_state_maps() {
+        assert_eq!(map_state(ElementState::Pressed), ButtonState::Pressed);
+        assert_eq!(map_state(ElementState::Released), ButtonState::Released);
+    }
 }

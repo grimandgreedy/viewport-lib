@@ -81,12 +81,6 @@ pub enum Action {
     /// Redo the previously undone action.
     Redo,
 
-    // -- Fly mode speed --
-    /// Increase fly-mode movement speed.
-    FlySpeedIncrease,
-    /// Decrease fly-mode movement speed.
-    FlySpeedDecrease,
-
     // -- Gizmo --
     /// Toggle gizmo between World and Local coordinate space.
     ToggleGizmoSpace,
