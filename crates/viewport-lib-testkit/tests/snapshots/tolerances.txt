@@ -1,0 +1,21 @@
+# Per-scene golden-image tolerance overrides.
+#
+# Every scene not listed here is compared EXACTLY (a single differing channel
+# fails). A line here relaxes one scene, and must only ever record a *measured*
+# non-determinism floor from the determinism probe (tests/determinism.rs) on the
+# reference adapter, never a value chosen to accept an intended visual change.
+# An intended change is a re-bless (a new reference), not a wider tolerance.
+#
+# Format (whitespace-separated), one scene per line:
+#   <scene_name> <max_channel_delta> <max_pixels_over>   # reason
+#
+# max_channel_delta : largest per-channel difference (0..255) a pixel may have
+#                     and still count as unchanged.
+# max_pixels_over   : how many pixels may exceed that before the scene fails.
+#
+# Example (do not keep; illustrative):
+#   transparent 2 40   # OIT pass is order-dependent; probe floor on lavapipe
+#
+# No overrides yet: every scene is exact. The reference set is blessed on the
+# pinned software adapter (lavapipe); populate this file from the probe's report
+# for any scene that is not bit-identical there.

@@ -22,10 +22,11 @@ viewport-lib = { path = "../viewport-lib", default-features = false }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
 viewport-lib-io = { path = "../../../viewport-lib-io", optional = true }
+# PNG load/save for the golden module; optional so the core does not pull it.
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
 # For the perf-bench / catalogue-viewer example UIs (moved here from
 # viewport-lib so the library's example builds do not pull the testkit).
 eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
@@ -36,7 +37,7 @@ harness = false
 required-features = ["scenes"]
 
 [features]
-default = ["wgpu27", "scenes"]
+default = ["wgpu27", "scenes", "golden", "counters"]
 # The reusable core: the headless device constructor plus `Harness`
 # (render/stats). It carries no scene catalogue, so a caller can pull it without
 # the meshes/rigs/textures/scenes corpus or its dependencies. Build the core
@@ -46,6 +47,11 @@ core = []
 # The data-driven scene catalogue plus the meshes, rigs, and textures it builds
 # from. Gating this keeps the core buildable on its own.
 scenes = []
+# Golden-image comparison (`golden` module): exact-default tolerance, diff
+# images, and the per-scene tolerance manifest. Pulls `image` for PNG IO.
+golden = ["dep:image"]
+# FrameStats counter-snapshot capture (`counters` module). No extra deps.
+counters = []
 # wgpu leg selection, forwarded to viewport-lib. Used when the testkit is built
 # standalone; as viewport-lib's dev-dependency the leg comes from the library
 # via Cargo feature unification.

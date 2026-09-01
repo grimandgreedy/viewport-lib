@@ -33,6 +33,14 @@ pub mod harness;
 #[cfg(feature = "scenes")]
 pub mod scenes;
 
+// Checks: golden-image comparison and FrameStats counter snapshots. Each behind
+// its own feature so a caller can pull the harness without them.
+#[cfg(feature = "golden")]
+pub mod golden;
+
+#[cfg(feature = "counters")]
+pub mod counters;
+
 pub use device::headless_device;
 pub use harness::Harness;
 
