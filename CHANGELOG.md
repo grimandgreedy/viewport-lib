@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.21.0]
+## [0.21.0]
 
 This release: photometric lighting units (lux / candela / nits) with a physical-camera exposure model, a faithful "colour is data" default lighting posture, the per-frame effects config regrouped by concern, and the renderer running in the browser on WebGPU.
 
@@ -56,7 +56,7 @@ This release: photometric lighting units (lux / candela / nits) with a physical-
 - **`ScatterSettings` is now scene-global** (`SceneEffects.scatter`), no longer on `ViewportEffects`.
 - **Faithful default lighting posture** - default `ShadingModel::Phong`, neutral `Manual { ev: 0 }` exposure, and modest light/fill that read at EV 0. Opt into the daylight look with `EffectsFrame::with_posture(LightingPosture::PhysicalDaylight)` (see New).
 - **Point/spot falloff is now physical inverse-square** (`1/d^2`, clamped by `radius`) instead of `(1 - d/range)^2`; `range` is reach, not brightness, and `Point`/`Spot` gain a `radius`. Lights authored against the old curve need re-tuning.
-
+- **Removed the unused `Action::FlySpeedIncrease` / `Action::FlySpeedDecrease`** - they had no default binding in the current preset and no consumer.
 ### New
 - **`LightingPosture` + `EffectsFrame::with_posture` / `FrameData::with_posture`** -
   one call sets the lighting magnitudes and camera exposure as a matched pair.

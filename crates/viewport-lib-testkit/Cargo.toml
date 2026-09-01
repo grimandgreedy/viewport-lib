@@ -22,7 +22,7 @@ exclude = ["tests/snapshots/*.png"]
 # build (Cargo unifies it), not forced to the default here. The testkit names
 # wgpu through `viewport_lib::wgpu`, so it always matches the library's leg.
 [dependencies]
-viewport-lib = { path = "../viewport-lib", version = "0.20", default-features = false }
+viewport-lib = { path = "../viewport-lib", version = "0.21", default-features = false }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
 viewport-lib-io = { path = "../../../viewport-lib-io", version = "0.7", optional = true }
