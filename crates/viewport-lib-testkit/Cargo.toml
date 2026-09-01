@@ -1,0 +1,67 @@
+# This crate lives in `crates/` so it clones with the repo and is visible, but it
+# is deliberately not a member of the parent workspace (that stays the four
+# published crates, so `cargo publish -p viewport-lib` is unaffected). An empty
+# `[workspace]` table detaches it into its own workspace root; without it cargo
+# errors with "current package believes it's in a workspace when it's not"
+# because the crate sits inside the parent workspace tree. It never publishes.
+[workspace]
+
+[package]
+name = "viewport-lib-testkit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Shared scene catalogue and headless harness for testing and benchmarking viewport-lib"
+
+# `default-features = false` so the wgpu leg comes from whoever drives the
+# build (Cargo unifies it), not forced to the default here. The testkit names
+# wgpu through `viewport_lib::wgpu`, so it always matches the library's leg.
+[dependencies]
+viewport-lib = { path = "../viewport-lib", default-features = false }
+glam = { version = "=0.30.10", features = ["bytemuck"] }
+pollster = "0.4"
+viewport-lib-io = { path = "../../../viewport-lib-io", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+# For the perf-bench / catalogue-viewer example UIs (moved here from
+# viewport-lib so the library's example builds do not pull the testkit).
+eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
+
+[[bench]]
+name = "cpu"
+harness = false
+required-features = ["scenes"]
+
+[features]
+default = ["wgpu27", "scenes"]
+# The reusable core: the headless device constructor plus `Harness`
+# (render/stats). It carries no scene catalogue, so a caller can pull it without
+# the meshes/rigs/textures/scenes corpus or its dependencies. Build the core
+# alone with `--no-default-features --features core,wgpu27`. This is an empty
+# marker feature: "core" is simply the crate with `scenes` off.
+core = []
+# The data-driven scene catalogue plus the meshes, rigs, and textures it builds
+# from. Gating this keeps the core buildable on its own.
+scenes = []
+# wgpu leg selection, forwarded to viewport-lib. Used when the testkit is built
+# standalone; as viewport-lib's dev-dependency the leg comes from the library
+# via Cargo feature unification.
+wgpu27 = ["viewport-lib/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29"]
+# Load real models (Suzanne, Stanford bunny, CAD parts) through viewport-lib-io.
+# Off by default so the base build needs no external model files. Implies
+# `scenes` because the loaders build catalogue scenes.
+real_models = ["scenes", "dep:viewport-lib-io"]
+
+[[example]]
+name = "perf-bench"
+path = "examples/perf_bench/main.rs"
+required-features = ["wgpu27", "scenes"]
+
+[[example]]
+name = "catalogue-viewer"
+path = "examples/catalogue_viewer/main.rs"
+required-features = ["wgpu27", "scenes"]
