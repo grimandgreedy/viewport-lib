@@ -1,6 +1,6 @@
 # viewport-lib
 
-`viewport-lib` is a gpu-accelerated 3D viewport library for rust. It works with any GUI framework that gives you access to a wgpu device, queue, and render target: `eframe`/`egui`, `winit`, `Iced`, `Slint`, and others.
+`viewport-lib` is a gpu-accelerated 3D viewport library for rust. It works with any GUI framework that gives you access to a wgpu device, queue, and render target.
 
 <table>
   <tr>
@@ -35,17 +35,18 @@
 
 The `examples/` directory contains working integrations for several GUI frameworks.
 
-- **eframe-showcase**: run this first: demonstrates many of the viewport's built-in capabilities across multiple showcases (not exhaustive).
+- **eframe-showcase**: run this first if you want to a see a feature showcase: demonstrates many of the viewport's built-in capabilities across multiple showcases (not exhaustive).
 - **eframe-minimal**: the simplest integration: start here if you want to understand the minimal setup.
 - **eframe-primitives**: demonstrates the built-in geometry primitives.
 - **eframe-viewport**: a mid-complexity example with scene graph, picking, and gizmos.
 - **eframe-input-controllers**: shows custom input bindings and controller configuration.
 
 ```
-cargo run --release --example eframe-minimal --features example-egui
+cargo run --release --example eframe-minimal --features="wgpu27 example-egui egui-adapter" 
 cargo run --release --example eframe-showcase --features example-egui,example-io
-cargo run --release --example winit-viewport
-cargo run --release --example iced-viewport --features example-iced
+cargo run --release --example winit-minimal --features="wgpu27 app"
+cargo run --release --example iced-viewport --features="wgpu27 example-iced"
+cargo run --release --example slint-minimal --no-default-features --features="wgpu29,example-slint"
 cargo run --release --example bevy-swarm --no-default-features --features wgpu29,example-bevy
 ```
 
@@ -55,7 +56,7 @@ Note: the feature flags are there so that when you run them you don't have to pu
 
 A viewport is created and managed via a runner. There are two primary runners that we maintain and ship, but for intensive applications you are encouraged to make your own. The runner is an object that manages the viewport's per-frame work.
 
-- **`ViewportApp`**: owns the window and the run loop. The simplest and easiest way to get started. It works like bevy and most other 3d renderers.
+- **`ViewportApp`**: owns the window and the run loop. The simplest and easiest way to get started, for a standalone viewport with no surrounding GUI.
 - **`ViewportInstance`**: the runner you drive yourself. You own the loop and the input, redraw when you want, and route each event to either the viewport's input controller or your GUI. This is the right fit when you are embedding a viewport into an existing application which already owns the run-loop. 
 - **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement their own runner. Look at, e.g., the `eframe_multi_viewport` or `wgpu_leg_agnostic` examples.
 
