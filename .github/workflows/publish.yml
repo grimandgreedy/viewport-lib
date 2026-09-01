@@ -54,7 +54,13 @@ jobs:
               echo "$name $ver already on crates.io, skipping"
             else
               echo "publishing $name $ver"
-              cargo publish --manifest-path "$manifest"
+              # --allow-dirty: in a sequential multi-crate release, a crate's
+              # Cargo.lock is re-resolved and updated when the crates it depends on
+              # have just been published (the testkit is its own workspace, so its
+              # lock picks up the freshly published viewport-lib / viewport-lib-io).
+              # That auto-update is the only working-tree change; Cargo.lock is not
+              # part of a published library anyway.
+              cargo publish --manifest-path "$manifest" --allow-dirty
             fi
           }
           publish_if_new viewport-lib-types    crates/viewport-lib-types/Cargo.toml
