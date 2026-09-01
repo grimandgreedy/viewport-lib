@@ -186,7 +186,7 @@ pub(super) fn emit_filled_polyline(
             let mut colour = sample_overlay_fill(fill, p, min, max);
             colour[3] *= opacity;
             verts.push(crate::resources::OverlayTextVertex {
-                position: px_to_ndc(p[0], p[1], vp_w, vp_h),
+                position: overlay_local_px(p[0], p[1], vp_w, vp_h),
                 uv: [0.0, 0.0],
                 colour,
                 use_texture: 0.0,
@@ -220,7 +220,7 @@ pub(super) fn emit_vector_fill(
         let mut colour = sample_overlay_fill(fill, p, min, max);
         colour[3] *= opacity;
         verts.push(crate::resources::OverlayTextVertex {
-            position: px_to_ndc(p[0], p[1], vp_w, vp_h),
+            position: overlay_local_px(p[0], p[1], vp_w, vp_h),
             uv: [0.0, 0.0],
             colour,
             use_texture: 0.0,
@@ -365,7 +365,7 @@ pub(super) fn tessellate_polyline(
         Vec::with_capacity((ribs.len() - 1) * 6);
     let mut emit = |px: [f32; 2]| {
         verts.push(crate::resources::OverlayTextVertex {
-            position: px_to_ndc(px[0], px[1], vp_w, vp_h),
+            position: overlay_local_px(px[0], px[1], vp_w, vp_h),
             uv: [0.0, 0.0],
             colour,
             use_texture: 0.0,
@@ -517,7 +517,7 @@ pub(super) fn emit_disc(
 ) {
     let segs = 10;
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: px_to_ndc(pos[0], pos[1], vp_w, vp_h),
+        position: overlay_local_px(pos[0], pos[1], vp_w, vp_h),
         uv: [0.0, 0.0],
         colour,
         use_texture: 0.0,
@@ -675,10 +675,10 @@ pub(super) fn emit_solid_quad(
     vp_w: f32,
     vp_h: f32,
 ) {
-    let tl = px_to_ndc(x0, y0, vp_w, vp_h);
-    let tr = px_to_ndc(x1, y0, vp_w, vp_h);
-    let bl = px_to_ndc(x0, y1, vp_w, vp_h);
-    let br = px_to_ndc(x1, y1, vp_w, vp_h);
+    let tl = overlay_local_px(x0, y0, vp_w, vp_h);
+    let tr = overlay_local_px(x1, y0, vp_w, vp_h);
+    let bl = overlay_local_px(x0, y1, vp_w, vp_h);
+    let br = overlay_local_px(x1, y1, vp_w, vp_h);
     let uv = [0.0, 0.0];
     let tex = 0.0;
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
@@ -707,10 +707,10 @@ pub(super) fn emit_textured_quad(
     vp_w: f32,
     vp_h: f32,
 ) {
-    let tl = px_to_ndc(x0, y0, vp_w, vp_h);
-    let tr = px_to_ndc(x1, y0, vp_w, vp_h);
-    let bl = px_to_ndc(x0, y1, vp_w, vp_h);
-    let br = px_to_ndc(x1, y1, vp_w, vp_h);
+    let tl = overlay_local_px(x0, y0, vp_w, vp_h);
+    let tr = overlay_local_px(x1, y0, vp_w, vp_h);
+    let bl = overlay_local_px(x0, y1, vp_w, vp_h);
+    let br = overlay_local_px(x1, y1, vp_w, vp_h);
     let v = |pos: [f32; 2], uv: [f32; 2]| crate::resources::OverlayTextVertex {
         position: pos,
         uv,
@@ -822,10 +822,10 @@ pub(super) fn emit_line_quad(
     let nx = -dy / len * half;
     let ny = dx / len * half;
 
-    let p0 = px_to_ndc(x0 + nx, y0 + ny, vp_w, vp_h);
-    let p1 = px_to_ndc(x0 - nx, y0 - ny, vp_w, vp_h);
-    let p2 = px_to_ndc(x1 + nx, y1 + ny, vp_w, vp_h);
-    let p3 = px_to_ndc(x1 - nx, y1 - ny, vp_w, vp_h);
+    let p0 = overlay_local_px(x0 + nx, y0 + ny, vp_w, vp_h);
+    let p1 = overlay_local_px(x0 - nx, y0 - ny, vp_w, vp_h);
+    let p2 = overlay_local_px(x1 + nx, y1 + ny, vp_w, vp_h);
+    let p3 = overlay_local_px(x1 - nx, y1 - ny, vp_w, vp_h);
     let uv = [0.0, 0.0];
     let tex = 0.0;
     let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
@@ -1034,12 +1034,12 @@ pub(super) fn emit_rounded_quad(
         clip_rect: [0.0; 4],
     };
     for (cx, cy, start, end) in corners {
-        let center = px_to_ndc(cx, cy, vp_w, vp_h);
+        let center = overlay_local_px(cx, cy, vp_w, vp_h);
         for i in 0..segments {
             let a0 = start + (end - start) * i as f32 / segments as f32;
             let a1 = start + (end - start) * (i + 1) as f32 / segments as f32;
-            let p0 = px_to_ndc(cx + a0.cos() * r, cy + a0.sin() * r, vp_w, vp_h);
-            let p1 = px_to_ndc(cx + a1.cos() * r, cy + a1.sin() * r, vp_w, vp_h);
+            let p0 = overlay_local_px(cx + a0.cos() * r, cy + a0.sin() * r, vp_w, vp_h);
+            let p1 = overlay_local_px(cx + a1.cos() * r, cy + a1.sin() * r, vp_w, vp_h);
             verts.extend_from_slice(&[v(center), v(p0), v(p1)]);
         }
     }

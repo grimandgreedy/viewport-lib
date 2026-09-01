@@ -27,6 +27,7 @@ pub use picking::{
     PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo,
 };
 mod capture;
+mod overlay_buffers;
 mod overlay_draw_order;
 mod readback;
 pub use readback::ExposureReadback;
@@ -418,6 +419,21 @@ pub struct ViewportRenderer {
     /// false, the segment list is left empty and the emit path uses its fixed
     /// family order, so scenes that never touch `z_order` pay nothing.
     overlay_uses_zorder: bool,
+    /// Persistent grow-on-demand vertex buffers for the overlay pass. The prepare
+    /// passes write their per-frame geometry into these in place instead of
+    /// allocating a fresh buffer every frame; each grows only when a frame needs
+    /// more room. One per fixed stream (text, solid shapes, blur) plus a pool for
+    /// the variable number of per-texture shape batches.
+    overlay_text_vbuf: overlay_buffers::GrowBuffer,
+    overlay_shape_vbuf: overlay_buffers::GrowBuffer,
+    overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer,
+    overlay_shape_tex_vbufs: Vec<overlay_buffers::GrowBuffer>,
+    /// Per-frame viewport-size uniform (logical `[w, h, 0, 0]`) shared by the
+    /// overlay pipelines. Overlay vertices are stored in local logical pixels; the
+    /// overlay vertex shaders read this to map them to NDC, so overlay geometry is
+    /// independent of the viewport size (a resize rewrites this uniform, not the
+    /// vertices). Created once and overwritten each frame.
+    overlay_viewport_buf: Option<crate::gpu::Buffer>,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -910,6 +926,11 @@ impl ViewportRenderer {
             screen_image_gpu_data: Vec::new(),
             label_gpu_data: None,
             overlay_shape_gpu_data: None,
+            overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
+            overlay_shape_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_vbuf"),
+            overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
+            overlay_shape_tex_vbufs: Vec::new(),
+            overlay_viewport_buf: None,
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,
             backdrop_blur_state: None,

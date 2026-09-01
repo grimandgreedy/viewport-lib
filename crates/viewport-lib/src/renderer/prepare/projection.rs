@@ -24,10 +24,17 @@ pub(super) fn project_to_screen(
     Some([x, y])
 }
 
-/// Convert screen pixel coordinates to NDC.
+/// The screen-pixel position stored in an overlay vertex.
+///
+/// Overlay geometry is stored in local logical-pixel space; the overlay shaders
+/// apply the pixel-to-NDC transform from a per-frame viewport-size uniform, so a
+/// compiled or immediate overlay is independent of the viewport size (a resize
+/// updates the uniform, not the vertices). The viewport-size arguments are kept
+/// in the signature so call sites do not have to change while the transform lives
+/// in the shader; they are unused here.
 #[inline]
-pub(super) fn px_to_ndc(px_x: f32, px_y: f32, vp_w: f32, vp_h: f32) -> [f32; 2] {
-    [px_x / vp_w * 2.0 - 1.0, 1.0 - px_y / vp_h * 2.0]
+pub(super) fn overlay_local_px(px_x: f32, px_y: f32, _vp_w: f32, _vp_h: f32) -> [f32; 2] {
+    [px_x, px_y]
 }
 
 pub(super) fn polyline_bounds(points: &[[f32; 2]]) -> Option<([f32; 2], [f32; 2])> {

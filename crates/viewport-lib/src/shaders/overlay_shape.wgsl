@@ -45,6 +45,18 @@ struct ClipShape {
 
 @group(0) @binding(1) var<storage, read> clip_shapes: array<ClipShape>;
 
+// Viewport size in logical pixels (xy); zw padding. Maps local-pixel vertex
+// positions to NDC so overlay geometry is independent of the viewport size.
+struct Viewport {
+    size: vec2<f32>,
+    pad:  vec2<f32>,
+};
+@group(0) @binding(2) var<uniform> viewport: Viewport;
+
+fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(px.x / viewport.size.x * 2.0 - 1.0, 1.0 - px.y / viewport.size.y * 2.0);
+}
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) local_pos:       vec2<f32>,
@@ -68,7 +80,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position   = vec4<f32>(in.position, 0.0, 1.0);
+    out.clip_position   = vec4<f32>(px_to_ndc(in.position), 0.0, 1.0);
     out.local_pos       = in.local_pos;
     out.fill_colour     = in.fill_colour;
     out.border_colour   = in.border_colour;

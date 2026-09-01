@@ -3,29 +3,6 @@
 
 use super::*;
 
-/// Upload `verts` into a fresh vertex buffer without mapping at creation.
-///
-/// `create_buffer_init` maps the buffer at creation and copies through
-/// `get_mapped_range`, which panics outright ("Buffer is invalid") when the GPU
-/// has rejected the allocation, e.g. after a device loss. Creating an unmapped
-/// buffer and uploading via the queue turns such a failure into a logged error
-/// and a degraded frame rather than a hard crash that takes the process down.
-fn upload_overlay_vbuf<T: bytemuck::Pod>(
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
-    label: &str,
-    verts: &[T],
-) -> crate::gpu::Buffer {
-    let buffer = device.create_buffer(&crate::gpu::BufferDescriptor {
-        label: Some(label),
-        size: std::mem::size_of_val(verts) as u64,
-        usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&buffer, 0, bytemuck::cast_slice(verts));
-    buffer
-}
-
 /// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the
 /// draw path's packing. `hw`/`hh` are the half-extents used to clamp corner radii.
 /// This is shared by the shape draw path and the clip-shape registry so the mask
@@ -362,6 +339,32 @@ impl ViewportRenderer {
             );
         }
         shapes
+    }
+
+    /// Ensure the shared overlay viewport-size uniform exists and holds this
+    /// frame's logical size `[w, h, 0, 0]`. Overlay vertices are stored in local
+    /// logical pixels; the overlay shaders map them to NDC using this uniform, so
+    /// overlay geometry does not depend on the viewport size.
+    fn ensure_overlay_viewport_buf(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        vp_w: f32,
+        vp_h: f32,
+    ) {
+        let data = [vp_w, vp_h, 0.0, 0.0];
+        if let Some(buf) = &self.overlay_viewport_buf {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(&data));
+        } else {
+            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("overlay_viewport_uniform"),
+                size: std::mem::size_of_val(&data) as u64,
+                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&data));
+            self.overlay_viewport_buf = Some(buf);
+        }
     }
 
     pub(super) fn prepare_overlay_labels(
@@ -724,11 +727,12 @@ impl ViewportRenderer {
                 }
 
                 if !verts.is_empty() {
-                    let vertex_buf =
-                        upload_overlay_vbuf(device, queue, "overlay_label_vbuf", &verts);
+                    let vertex_buf = self.overlay_text_vbuf.write(device, queue, &verts);
+                    self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
                     let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
+                    let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
                     let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("overlay_label_bg"),
                         layout: bgl,
@@ -746,6 +750,10 @@ impl ViewportRenderer {
                             crate::gpu::BindGroupEntry {
                                 binding: 2,
                                 resource: clip_buf.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 3,
+                                resource: vp_buf.as_entire_binding(),
                             },
                         ],
                     });
@@ -788,6 +796,7 @@ impl ViewportRenderer {
             let vp_w = frame.camera.viewport_size[0];
             let vp_h = frame.camera.viewport_size[1];
             if vp_w > 0.0 && vp_h > 0.0 {
+                self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
                 let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> = frame
                     .overlays
                     .shapes
@@ -1298,7 +1307,7 @@ impl ViewportRenderer {
                         ];
                         for (px, py, lx, ly) in corners_px {
                             group_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: px_to_ndc(px, py, vp_w, vp_h),
+                                position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
                                 border_colour: bc,
@@ -1334,7 +1343,7 @@ impl ViewportRenderer {
                         // Blur backdrop: same tex vertex layout but UV is screen-space.
                         for (px, py, lx, ly) in corners_px {
                             blur_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: px_to_ndc(px, py, vp_w, vp_h),
+                                position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
                                 border_colour: bc,
@@ -1436,7 +1445,7 @@ impl ViewportRenderer {
                         let solid_seg_start = solid_verts.len() as u32;
                         for (px, py, lx, ly) in corners_px {
                             solid_verts.push(crate::resources::OverlayShapeVertex {
-                                position: px_to_ndc(px, py, vp_w, vp_h),
+                                position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
                                 border_colour: bc,
@@ -1540,7 +1549,7 @@ impl ViewportRenderer {
                                 |uvs| uvs[idx],
                             );
                             group_verts.push(crate::resources::OverlayShapeTexVertex {
-                                position: px_to_ndc(p[0], p[1], vp_w, vp_h),
+                                position: overlay_local_px(p[0], p[1], vp_w, vp_h),
                                 local_pos: local,
                                 fill_colour: tint,
                                 border_colour: [0.0; 4],
@@ -1571,12 +1580,7 @@ impl ViewportRenderer {
                 }
 
                 let solid_vbuf = if !solid_verts.is_empty() {
-                    Some(upload_overlay_vbuf(
-                        device,
-                        queue,
-                        "overlay_shape_vbuf",
-                        &solid_verts,
-                    ))
+                    Some(self.overlay_shape_vbuf.write(device, queue, &solid_verts))
                 } else {
                     None
                 };
@@ -1601,6 +1605,7 @@ impl ViewportRenderer {
                     });
                     queue.write_buffer(&buf, 0, bytemuck::cast_slice(&shadow_layers));
                     let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                    let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
                     let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
                         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("overlay_shape_shadow_bg"),
@@ -1613,6 +1618,10 @@ impl ViewportRenderer {
                                 crate::gpu::BindGroupEntry {
                                     binding: 1,
                                     resource: clip_buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: vp_buf.as_entire_binding(),
                                 },
                             ],
                         })
@@ -1658,10 +1667,17 @@ impl ViewportRenderer {
                                         },
                                     ],
                                 });
+                            let batch_index = tex_batches.len();
+                            if batch_index >= self.overlay_shape_tex_vbufs.len() {
+                                self.overlay_shape_tex_vbufs.push(
+                                    crate::renderer::overlay_buffers::GrowBuffer::vertex(
+                                        "overlay_shape_tex_vbuf",
+                                    ),
+                                );
+                            }
                             let vertex_buf =
-                                upload_overlay_vbuf(device, queue, "overlay_shape_tex_vbuf", verts);
-                            let batch_index = tex_batches.len() as u32;
-                            group_to_batch[group_idx] = Some(batch_index);
+                                self.overlay_shape_tex_vbufs[batch_index].write(device, queue, verts);
+                            group_to_batch[group_idx] = Some(batch_index as u32);
                             tex_batches.push(crate::resources::OverlayShapeTexBatch {
                                 vertex_buf,
                                 vertex_count: verts.len() as u32,
@@ -1699,13 +1715,20 @@ impl ViewportRenderer {
                 let (tex_clip_bind_group, tex_clip_buf) = if has_tex || has_blur {
                     if let Some(bgl) = self.resources.overlay_shape.tex_clip_bgl.as_ref() {
                         let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                        let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
                         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("overlay_shape_tex_clip_bg"),
                             layout: bgl,
-                            entries: &[crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: clip_buf.as_entire_binding(),
-                            }],
+                            entries: &[
+                                crate::gpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: clip_buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: vp_buf.as_entire_binding(),
+                                },
+                            ],
                         });
                         (Some(bg), Some(clip_buf))
                     } else {
@@ -1716,12 +1739,7 @@ impl ViewportRenderer {
                 };
 
                 let blur_vbuf = if !blur_verts.is_empty() {
-                    Some(upload_overlay_vbuf(
-                        device,
-                        queue,
-                        "overlay_shape_blur_vbuf",
-                        &blur_verts,
-                    ))
+                    Some(self.overlay_shape_blur_vbuf.write(device, queue, &blur_verts))
                 } else {
                     None
                 };

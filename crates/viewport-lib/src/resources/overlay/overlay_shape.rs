@@ -77,6 +77,18 @@ impl crate::resources::DeviceResources {
                     },
                     count: None,
                 },
+                // binding 2: viewport-size uniform (logical w, h) for the
+                // vertex shader's local-pixel-to-NDC transform.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -164,19 +176,33 @@ impl crate::resources::DeviceResources {
         // `with_clip` the same way a solid shape does.
         let clip_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_shape_tex_clip_bgl"),
-            entries: &[crate::gpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: crate::gpu::ShaderStages::FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(
-                        std::num::NonZeroU64::new(std::mem::size_of::<ClipShapeGpu>() as u64)
-                            .unwrap(),
-                    ),
+            entries: &[
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(
+                            std::num::NonZeroU64::new(std::mem::size_of::<ClipShapeGpu>() as u64)
+                                .unwrap(),
+                        ),
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                // binding 1: viewport-size uniform (logical w, h) for the
+                // vertex shader's local-pixel-to-NDC transform.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
         });
 
         let layout = crate::resources::builders::pipeline_layout(

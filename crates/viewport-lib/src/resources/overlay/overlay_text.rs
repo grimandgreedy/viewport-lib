@@ -59,6 +59,18 @@ impl crate::resources::DeviceResources {
                     },
                     count: None,
                 },
+                // binding 3: viewport-size uniform (logical w, h). The vertex
+                // shader maps local-pixel positions to NDC with it.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
