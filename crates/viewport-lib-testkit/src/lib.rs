@@ -51,8 +51,8 @@ pub use harness::Harness;
 pub use scenes::real_models;
 #[cfg(feature = "scenes")]
 pub use scenes::{
-    BuildCtx, BuiltScene, NamedCamera, NamedScene, catalogue, frame_for, orbit_camera,
-    scene_by_name, standard_cameras,
+    BuildCtx, BuiltScene, NamedCamera, NamedScene, TEST_BACKGROUND, catalogue, frame_for,
+    orbit_camera, scene_by_name, standard_cameras,
 };
 #[cfg(feature = "scenes")]
 pub use scenes::{meshes, rigs, textures};

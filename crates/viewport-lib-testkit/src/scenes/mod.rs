@@ -109,7 +109,22 @@ pub fn standard_cameras(centre: Vec3, distance: f32) -> Vec<NamedCamera> {
     ]
 }
 
+/// Background clear colour every test frame pins explicitly, in linear light.
+///
+/// A scene that sets its own background overrides this; otherwise `frame_for`
+/// uses it rather than leaving the background unset (which would inherit the
+/// renderer's default). Pinning it here keeps the tests independent of the
+/// renderer's default background, so a change to that default does not move
+/// every golden. The value happens to match the renderer's current default, but
+/// nothing depends on that: it just has to stay fixed here.
+pub const TEST_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
+
 /// Assemble a `FrameData` from a built scene and one camera.
+///
+/// The frame pins two pieces of viewport chrome so the tests do not depend on
+/// renderer defaults: the background is set explicitly (to the scene's own
+/// colour, or [`TEST_BACKGROUND`]), and the axes-orientation indicator is turned
+/// off so it never draws over the scene.
 pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -> FrameData {
     let mut sf = SceneFrame::from_surface_items(scene.items.clone());
     sf.point_clouds = scene.point_clouds.clone();
@@ -117,9 +132,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     sf.glyphs = scene.glyphs.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
-    if let Some(bg) = scene.background {
-        fd.viewport.background_colour = Some(bg);
-    }
+    fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND));
+    fd.viewport.show_axes_indicator = false;
     fd
 }
 
