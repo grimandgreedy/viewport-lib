@@ -153,3 +153,43 @@ impl crate::plugin_api::ViewportPlugin for ConstraintPlugin {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::select::selection::Selection;
+    use crate::runtime::context::RuntimeFrameContext;
+    use crate::scene::material::Material;
+    use crate::scene::scene::Scene;
+
+    #[test]
+    fn spring_target_pulls_the_node_toward_its_target() {
+        let mut scene = Scene::new();
+        let node = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+
+        let plugin = ConstraintPlugin::new().add(Constraint::SpringTarget {
+            node_id: node,
+            target: glam::Vec3::new(3.0, 0.0, 0.0),
+            stiffness: 60.0,
+            damping: 10.0,
+        });
+        let mut runtime = crate::ViewportRuntime::new().with_plugin(plugin);
+        let mut sel = Selection::new();
+        let frame = RuntimeFrameContext {
+            dt: 1.0 / 60.0,
+            ..Default::default()
+        };
+        for _ in 0..180 {
+            runtime.step(&mut scene, &mut sel, &frame);
+        }
+
+        let x = scene
+            .node(node)
+            .unwrap()
+            .world_transform()
+            .col(3)
+            .truncate()
+            .x;
+        assert!(x > 1.5, "spring should pull the node toward x = 3; x = {x}");
+    }
+}

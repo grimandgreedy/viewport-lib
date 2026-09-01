@@ -238,3 +238,51 @@ impl crate::plugin_api::ViewportPlugin for PhysicsLitePlugin {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::select::selection::Selection;
+    use crate::runtime::context::RuntimeFrameContext;
+    use crate::scene::material::Material;
+    use crate::scene::scene::Scene;
+
+    #[test]
+    fn body_builders_set_fields() {
+        let node = Scene::new().add(None, glam::Mat4::IDENTITY, Material::default());
+        let b = PhysicsBody::new(node)
+            .with_velocity(glam::Vec3::new(1.0, 2.0, 3.0))
+            .with_gravity_scale(0.5)
+            .with_restitution(0.8);
+        assert_eq!(b.velocity, glam::Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(b.gravity_scale, 0.5);
+        assert_eq!(b.restitution, 0.8);
+    }
+
+    #[test]
+    fn body_falls_under_gravity() {
+        let mut scene = Scene::new();
+        let node = scene.add(None, glam::Mat4::IDENTITY, Material::default());
+        let mut phys = PhysicsLitePlugin::new(); // default gravity -Z
+        phys.add_body(PhysicsBody::new(node));
+
+        let mut runtime = crate::ViewportRuntime::new().with_plugin(phys);
+        let mut sel = Selection::new();
+        let frame = RuntimeFrameContext {
+            dt: 1.0 / 60.0,
+            ..Default::default()
+        };
+        for _ in 0..60 {
+            runtime.step(&mut scene, &mut sel, &frame);
+        }
+
+        let z = scene
+            .node(node)
+            .unwrap()
+            .world_transform()
+            .col(3)
+            .truncate()
+            .z;
+        assert!(z < -0.5, "a body under gravity should fall; z = {z}");
+    }
+}

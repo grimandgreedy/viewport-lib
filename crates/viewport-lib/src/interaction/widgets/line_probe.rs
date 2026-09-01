@@ -228,3 +228,77 @@ impl LineProbeWidget {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::widgets::test_support::{CENTRE, ctx_at, point_on_cursor_ray};
+    use glam::{Vec2, Vec3};
+
+    #[test]
+    fn new_sets_endpoints() {
+        let w = LineProbeWidget::new(Vec3::new(-2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
+        assert_eq!(w.start, Vec3::new(-2.0, 0.0, 0.0));
+        assert_eq!(w.end, Vec3::new(2.0, 0.0, 0.0));
+        assert!(!w.is_active());
+        assert_eq!(w.hovered_endpoint(), None);
+    }
+
+    #[test]
+    fn polyline_and_handle_items_track_endpoints() {
+        let ctx = ctx_at(CENTRE);
+        let w = LineProbeWidget::new(Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 2.0, 0.0));
+        let line = w.polyline_item(7);
+        assert_eq!(line.positions, vec![[-1.0, 0.0, 0.0], [1.0, 2.0, 0.0]]);
+        let glyphs = w.handle_glyphs(9, &ctx);
+        assert_eq!(glyphs.positions.len(), 2, "one glyph per endpoint");
+    }
+
+    #[test]
+    fn endpoint_under_cursor_hovers() {
+        let ctx = ctx_at(CENTRE);
+        // start sits on the cursor ray; end well off to the side.
+        let start = point_on_cursor_ray(&ctx, 10.0);
+        let end = start + Vec3::new(5.0, 0.0, 0.0);
+        let mut w = LineProbeWidget::new(start, end);
+        let r = w.update(&ctx);
+        assert_eq!(
+            w.hovered_endpoint(),
+            Some(0),
+            "start should hover under cursor"
+        );
+        assert_eq!(r, WidgetResult::None, "hover alone does not change state");
+    }
+
+    #[test]
+    fn dragging_moves_the_active_endpoint_then_release_ends_it() {
+        let ctx = ctx_at(CENTRE);
+        let start = point_on_cursor_ray(&ctx, 10.0);
+        let end = start + Vec3::new(5.0, 0.0, 0.0);
+        let mut w = LineProbeWidget::new(start, end);
+
+        // Hover, then begin the drag on the same cursor.
+        w.update(&ctx);
+        let mut begin = ctx.clone();
+        begin.drag_started = true;
+        w.update(&begin);
+        assert!(
+            w.is_active(),
+            "drag should have started on the hovered endpoint"
+        );
+
+        // Move the cursor while dragging: the endpoint follows onto the drag plane.
+        let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
+        drag.dragging = true;
+        let r = w.update(&drag);
+        assert_eq!(r, WidgetResult::Updated);
+        assert_ne!(w.start, start, "start endpoint should have moved");
+        assert_eq!(w.end, end, "the other endpoint stays put");
+
+        // Release ends the drag.
+        let mut release = drag.clone();
+        release.released = true;
+        w.update(&release);
+        assert!(!w.is_active());
+    }
+}

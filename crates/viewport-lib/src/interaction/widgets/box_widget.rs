@@ -471,3 +471,71 @@ impl BoxWidget {
         best.map(|(_, h)| h)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::widgets::test_support::{CENTRE, ctx_at, point_on_cursor_ray};
+    use glam::{Quat, Vec2, Vec3};
+
+    #[test]
+    fn new_sets_center_extents_and_identity_rotation() {
+        let w = BoxWidget::new(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.5, 1.0, 1.5));
+        assert_eq!(w.center, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(w.half_extents, Vec3::new(0.5, 1.0, 1.5));
+        assert_eq!(w.rotation, Quat::IDENTITY);
+        assert!(!w.is_active());
+    }
+
+    #[test]
+    fn contains_point_matches_the_box() {
+        let w = BoxWidget::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
+        assert!(w.contains_point(Vec3::ZERO), "centre is inside");
+        assert!(
+            w.contains_point(Vec3::new(0.9, -0.9, 0.9)),
+            "just inside a corner"
+        );
+        assert!(!w.contains_point(Vec3::new(2.0, 0.0, 0.0)), "outside on +x");
+    }
+
+    #[test]
+    fn axis_aligned_aabb_is_center_plus_minus_extents() {
+        let w = BoxWidget::new(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 2.0, 3.0));
+        let bb = w.aabb();
+        assert!((bb.min - Vec3::new(1.0, -2.0, -3.0)).length() < 1e-5);
+        assert!((bb.max - Vec3::new(3.0, 2.0, 3.0)).length() < 1e-5);
+        let (c, h, _) = w.obb();
+        assert_eq!(c, w.center);
+        assert_eq!(h, w.half_extents);
+    }
+
+    #[test]
+    fn outputs_have_geometry() {
+        let ctx = ctx_at(CENTRE);
+        let w = BoxWidget::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
+        assert!(!w.wireframe_item(1).positions.is_empty());
+        assert!(!w.rotation_arcs_item(2).positions.is_empty());
+        assert!(!w.handle_glyphs(3, &ctx).positions.is_empty());
+    }
+
+    #[test]
+    fn drag_center_handle_moves_the_box() {
+        let ctx = ctx_at(CENTRE);
+        let center = point_on_cursor_ray(&ctx, 14.0);
+        // Small box so only the centre handle sits under the cursor, not a face handle.
+        let mut w = BoxWidget::new(center, Vec3::new(0.5, 0.5, 0.5));
+        w.update(&ctx);
+        let mut begin = ctx.clone();
+        begin.drag_started = true;
+        w.update(&begin);
+        assert!(w.is_active());
+        let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
+        drag.dragging = true;
+        w.update(&drag);
+        assert_ne!(w.center, center, "the box centre should move");
+        let mut rel = drag.clone();
+        rel.released = true;
+        w.update(&rel);
+        assert!(!w.is_active());
+    }
+}

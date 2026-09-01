@@ -279,3 +279,70 @@ fn closest_point_on_segment_to_ray(
     let dist = ray_point_dist(ray_o, ray_d, seg_pt);
     (seg_pt, dist)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::widgets::test_support::{CENTRE, ctx_at, point_on_cursor_ray};
+    use glam::{Vec2, Vec3};
+
+    fn line() -> Vec<Vec3> {
+        vec![
+            Vec3::new(-2.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+        ]
+    }
+
+    #[test]
+    fn new_keeps_the_points() {
+        let w = PolylineWidget::new(line());
+        assert_eq!(w.points.len(), 3);
+        assert!(!w.is_active());
+    }
+
+    #[test]
+    fn add_and_remove_point_change_the_count() {
+        let mut w = PolylineWidget::new(line());
+        w.add_point(Vec3::new(4.0, 0.0, 0.0));
+        assert_eq!(w.points.len(), 4);
+        w.remove_point(1);
+        assert_eq!(w.points.len(), 3);
+        assert!(
+            !w.points.contains(&Vec3::new(0.0, 0.0, 0.0)),
+            "removed the middle point"
+        );
+    }
+
+    #[test]
+    fn outputs_have_geometry() {
+        let ctx = ctx_at(CENTRE);
+        let w = PolylineWidget::new(line());
+        assert_eq!(w.polyline_item(1).positions.len(), 3);
+        assert_eq!(w.handle_glyphs(2, &ctx).positions.len(), 3);
+    }
+
+    #[test]
+    fn drag_moves_the_control_point_under_cursor() {
+        let ctx = ctx_at(CENTRE);
+        let p0 = point_on_cursor_ray(&ctx, 12.0);
+        let mut w = PolylineWidget::new(vec![
+            p0,
+            p0 + Vec3::new(4.0, 0.0, 0.0),
+            p0 + Vec3::new(8.0, 0.0, 0.0),
+        ]);
+        w.update(&ctx);
+        let mut begin = ctx.clone();
+        begin.drag_started = true;
+        w.update(&begin);
+        assert!(w.is_active());
+        let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
+        drag.dragging = true;
+        w.update(&drag);
+        assert_ne!(w.points[0], p0, "the hovered control point should move");
+        let mut rel = drag.clone();
+        rel.released = true;
+        w.update(&rel);
+        assert!(!w.is_active());
+    }
+}

@@ -278,3 +278,48 @@ impl DiskWidget {
         best.map(|(_, h)| h)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::widgets::test_support::{CENTRE, ctx_at, point_on_cursor_ray};
+    use glam::{Vec2, Vec3};
+
+    #[test]
+    fn new_sets_center_normal_radius() {
+        let w = DiskWidget::new(Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 2.0), 3.0);
+        assert_eq!(w.center, Vec3::new(0.0, 1.0, 0.0));
+        assert!((w.normal.length() - 1.0).abs() < 1e-5);
+        assert_eq!(w.radius, 3.0);
+        assert!(!w.is_active());
+    }
+
+    #[test]
+    fn outputs_have_geometry() {
+        let ctx = ctx_at(CENTRE);
+        let w = DiskWidget::new(Vec3::ZERO, Vec3::Z, 2.0);
+        assert!(!w.wireframe_item(1).positions.is_empty());
+        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+    }
+
+    #[test]
+    fn drag_center_moves_and_radius_stays_positive() {
+        let ctx = ctx_at(CENTRE);
+        let center = point_on_cursor_ray(&ctx, 12.0);
+        let mut w = DiskWidget::new(center, Vec3::Z, 2.0);
+        w.update(&ctx);
+        let mut begin = ctx.clone();
+        begin.drag_started = true;
+        w.update(&begin);
+        assert!(w.is_active());
+        let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
+        drag.dragging = true;
+        w.update(&drag);
+        assert_ne!(w.center, center);
+        assert!(w.radius > 0.0);
+        let mut rel = drag.clone();
+        rel.released = true;
+        w.update(&rel);
+        assert!(!w.is_active());
+    }
+}

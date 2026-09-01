@@ -180,3 +180,66 @@ fn catmull_rom(
         + (-p0 + p2) * t
         + 2.0 * p1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::widgets::test_support::{CENTRE, ctx_at, point_on_cursor_ray};
+    use glam::{Vec2, Vec3};
+
+    fn pts() -> Vec<Vec3> {
+        vec![
+            Vec3::new(-2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(4.0, 2.0, 0.0),
+        ]
+    }
+
+    #[test]
+    fn new_keeps_control_points() {
+        let w = SplineWidget::new(pts());
+        assert_eq!(w.points.len(), 4);
+        assert_eq!(w.hovered_point(), None);
+        assert!(!w.is_active());
+    }
+
+    #[test]
+    fn sampled_positions_are_denser_than_control_points() {
+        let w = SplineWidget::new(pts());
+        let sampled = w.sampled_positions();
+        assert!(
+            sampled.len() > w.points.len(),
+            "a Catmull-Rom sampling should have more points than the {} controls, got {}",
+            w.points.len(),
+            sampled.len()
+        );
+    }
+
+    #[test]
+    fn drag_moves_the_control_point_under_cursor() {
+        let ctx = ctx_at(CENTRE);
+        let p0 = point_on_cursor_ray(&ctx, 12.0);
+        let mut w = SplineWidget::new(vec![
+            p0,
+            p0 + Vec3::new(3.0, 2.0, 0.0),
+            p0 + Vec3::new(6.0, 0.0, 0.0),
+            p0 + Vec3::new(9.0, 2.0, 0.0),
+        ]);
+        w.update(&ctx);
+        let mut begin = ctx.clone();
+        begin.drag_started = true;
+        w.update(&begin);
+        assert!(w.is_active());
+        let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
+        drag.dragging = true;
+        w.update(&drag);
+        assert_ne!(w.points[0], p0);
+        // A real release frame stops dragging.
+        let mut rel = drag.clone();
+        rel.dragging = false;
+        rel.released = true;
+        w.update(&rel);
+        assert!(!w.is_active());
+    }
+}

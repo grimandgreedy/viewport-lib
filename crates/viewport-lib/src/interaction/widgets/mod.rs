@@ -142,3 +142,37 @@ pub(super) fn any_perpendicular_pair(n: glam::Vec3) -> (glam::Vec3, glam::Vec3) 
     let v = n_unit.cross(u);
     (u, v)
 }
+
+#[cfg(test)]
+pub(super) mod test_support {
+    //! Shared helpers for the widget unit tests: a convention-correct camera and
+    //! a way to place a handle exactly on the cursor ray, so hit-tests do not
+    //! depend on reproducing the screen-projection maths by hand.
+    use super::{WidgetContext, ctx_ray};
+    use crate::camera::Camera;
+    use crate::renderer::RenderCamera;
+    use glam::{Vec2, Vec3};
+
+    /// Viewport-centre cursor for an 800x600 viewport.
+    pub const CENTRE: Vec2 = Vec2::new(400.0, 300.0);
+
+    /// A context with the given cursor and no drag flags set.
+    pub fn ctx_at(cursor: Vec2) -> WidgetContext {
+        WidgetContext {
+            camera: RenderCamera::from_camera(&Camera::default()),
+            viewport_size: Vec2::new(800.0, 600.0),
+            cursor_viewport: cursor,
+            drag_started: false,
+            dragging: false,
+            released: false,
+            double_clicked: false,
+        }
+    }
+
+    /// The world point a distance `t` along the cursor ray of `ctx`. A handle
+    /// placed here sits exactly under the cursor, so the widget's hit test hits.
+    pub fn point_on_cursor_ray(ctx: &WidgetContext, t: f32) -> Vec3 {
+        let (ro, rd) = ctx_ray(ctx);
+        ro + rd * t
+    }
+}

@@ -199,3 +199,66 @@ impl crate::plugin_api::ViewportPlugin for AnimationPlugin {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::material::Material;
+    use crate::scene::scene::Scene;
+    use glam::{Affine3A, Vec3};
+
+    fn some_node() -> NodeId {
+        Scene::new().add(None, glam::Mat4::IDENTITY, Material::default())
+    }
+    fn kf(time: f32, pos: Vec3) -> Keyframe {
+        Keyframe {
+            time,
+            transform: Affine3A::from_translation(pos),
+        }
+    }
+    fn track(keyframes: Vec<Keyframe>, looping: bool) -> AnimationTrack {
+        AnimationTrack {
+            node_id: some_node(),
+            keyframes,
+            looping,
+        }
+    }
+
+    #[test]
+    fn empty_track_samples_to_none() {
+        assert!(track(vec![], false).sample(0.0).is_none());
+    }
+
+    #[test]
+    fn single_keyframe_returns_its_transform() {
+        let t = track(vec![kf(0.0, Vec3::new(1.0, 2.0, 3.0))], false);
+        let s = t.sample(9.0).unwrap();
+        assert!((Vec3::from(s.translation) - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn interpolates_translation_at_the_midpoint() {
+        let t = track(
+            vec![kf(0.0, Vec3::ZERO), kf(2.0, Vec3::new(4.0, 0.0, 0.0))],
+            false,
+        );
+        let s = t.sample(1.0).unwrap();
+        assert!((Vec3::from(s.translation) - Vec3::new(2.0, 0.0, 0.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn clamps_past_the_end_when_not_looping() {
+        let t = track(
+            vec![kf(0.0, Vec3::ZERO), kf(2.0, Vec3::new(4.0, 0.0, 0.0))],
+            false,
+        );
+        let s = t.sample(100.0).unwrap();
+        assert!((Vec3::from(s.translation) - Vec3::new(4.0, 0.0, 0.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn duration_is_the_last_keyframe_time() {
+        let t = track(vec![kf(0.0, Vec3::ZERO), kf(2.5, Vec3::X)], false);
+        assert_eq!(t.duration(), 2.5);
+    }
+}

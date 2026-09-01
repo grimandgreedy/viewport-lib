@@ -312,3 +312,55 @@ impl CylinderWidget {
         best.map(|(_, h)| h)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interaction::widgets::test_support::{CENTRE, ctx_at, point_on_cursor_ray};
+    use glam::{Vec2, Vec3};
+
+    #[test]
+    fn new_sets_endpoints_and_radius() {
+        let w = CylinderWidget::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(0.0, 2.0, 0.0), 1.5);
+        assert_eq!(w.start, Vec3::new(0.0, -2.0, 0.0));
+        assert_eq!(w.end, Vec3::new(0.0, 2.0, 0.0));
+        assert_eq!(w.radius, 1.5);
+        assert!(!w.is_active());
+    }
+
+    #[test]
+    fn axis_is_the_start_to_end_vector() {
+        let w = CylinderWidget::new(Vec3::ZERO, Vec3::new(0.0, 4.0, 0.0), 1.0);
+        assert_eq!(w.axis(), Vec3::new(0.0, 4.0, 0.0));
+        assert!((w.axis().normalize() - Vec3::Y).length() < 1e-5);
+    }
+
+    #[test]
+    fn outputs_have_geometry() {
+        let ctx = ctx_at(CENTRE);
+        let w = CylinderWidget::new(Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 1.0, 0.0), 1.0);
+        assert!(!w.wireframe_item(1).positions.is_empty());
+        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+    }
+
+    #[test]
+    fn drag_start_endpoint_moves() {
+        let ctx = ctx_at(CENTRE);
+        let start = point_on_cursor_ray(&ctx, 12.0);
+        let end = start + Vec3::new(0.0, 6.0, 0.0);
+        let mut w = CylinderWidget::new(start, end, 1.0);
+        w.update(&ctx);
+        let mut begin = ctx.clone();
+        begin.drag_started = true;
+        w.update(&begin);
+        assert!(w.is_active());
+        let mut drag = ctx_at(CENTRE + Vec2::new(60.0, 0.0));
+        drag.dragging = true;
+        w.update(&drag);
+        assert_ne!(w.start, start, "start endpoint should move");
+        let mut rel = drag.clone();
+        rel.released = true;
+        w.update(&rel);
+        assert!(!w.is_active());
+    }
+}
