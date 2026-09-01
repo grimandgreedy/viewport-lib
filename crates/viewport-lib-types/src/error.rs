@@ -48,10 +48,10 @@ pub enum ViewportError {
         override_vertices: usize,
     },
 
-    /// A consumer-owned buffer handed to the renderer was created without a
-    /// usage flag the binding requires (for example `STORAGE` for an
-    /// external instance positions buffer, or `COPY_SRC` for an external
-    /// marching-cubes scalar source).
+    /// A buffer handed to the renderer was created without a usage flag the
+    /// binding requires (for example `STORAGE` for an external instance
+    /// positions buffer, or `COPY_SRC` for an external marching-cubes scalar
+    /// source).
     #[error("external buffer is missing the {missing} usage flag")]
     ExternalBufferUsageMissing {
         /// Name of the missing `wgpu::BufferUsages` flag.

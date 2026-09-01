@@ -12,7 +12,7 @@ pub const MATERIAL_PLUGIN_PARAM_VEC4S: usize = 16;
 ///
 /// The consumer-facing layer over `ShadingHookDesc`, registered with
 /// `register_material_plugin`. A material selects the plugin by setting
-/// [`Material::shading_plugin`](crate::scene::material::Material::shading_plugin)
+/// [`Material::shading_plugin`](crate::material::Material::shading_plugin)
 /// to the returned [`MaterialPluginId`]; those draws then shade through the
 /// plugin's hooks with shadows, AO, normal maps, and alpha modes intact.
 ///

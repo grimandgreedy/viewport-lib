@@ -8,8 +8,8 @@
 //! target's feet.
 //!
 //! The coordinate conventions match
-//! [`FirstPersonCameraController`](crate::camera::controllers::first_person::FirstPersonCameraController), so the
-//! shared [`wish_xy_from_actions`](crate::camera::controllers::movement::wish_xy_from_actions) helper produces
+//! [`FirstPersonCameraController`](crate::controllers::first_person::FirstPersonCameraController), so the
+//! shared [`wish_xy_from_actions`](crate::controllers::movement::wish_xy_from_actions) helper produces
 //! the same world-space movement vector in either view.
 
 use glam::{Vec2, Vec3};

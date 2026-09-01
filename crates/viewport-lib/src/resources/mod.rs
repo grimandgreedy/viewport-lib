@@ -1,7 +1,7 @@
 /// Shared constructors for common wgpu bind-group-layout, sampler, and
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
-/// Screen-space decal pipeline (D1).
+/// Screen-space decal pipeline.
 pub(crate) mod decal;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;

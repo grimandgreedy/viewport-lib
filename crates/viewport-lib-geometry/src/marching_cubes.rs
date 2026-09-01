@@ -127,7 +127,7 @@ fn gradient_at(volume: &VolumeData, pos: [f32; 3]) -> [f32; 3] {
 /// Returns a [`MeshData`] with positions, normals (from volume gradient), and triangle
 /// indices. The mesh can be uploaded to the viewport via the standard mesh pipeline.
 ///
-/// For volumes larger than 64x64x64 cells the extraction is parallelized via
+/// For volumes larger than 64x64x64 cells the extraction is parallelised via
 /// Z-slab decomposition. Edges on slab boundaries are independently interpolated
 /// by each adjacent slab, producing a small number of geometrically coincident
 /// but topologically disconnected vertices along each Z-boundary. For rendering
@@ -212,7 +212,7 @@ fn extract_isosurface_slab(
     for iz in iz_start..iz_end {
         for iy in 0..(ny - 1) {
             for ix in 0..(nx - 1) {
-                // 8 corner values in standard marching cubes order (Bourke numbering).
+                // 8 corner values in standard marching cubes corner order.
                 let corners = [
                     volume.sample(ix, iy, iz),             // 0
                     volume.sample(ix + 1, iy, iz),         // 1
@@ -362,7 +362,7 @@ const EDGE_VERTICES: [(u8, u8); 12] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Standard marching cubes lookup tables (Paul Bourke)
+// Standard marching cubes lookup tables
 // ---------------------------------------------------------------------------
 
 /// 12-bit edge intersection bitmask per cube configuration.
@@ -740,7 +740,7 @@ mod tests {
             mesh.indices.len()
         );
 
-        // All positions within expected bounding box (center 16 +/- radius 8 + margin).
+        // All positions within expected bounding box (centre 16 +/- radius 8 + margin).
         for pos in &mesh.positions {
             for c in pos {
                 assert!(

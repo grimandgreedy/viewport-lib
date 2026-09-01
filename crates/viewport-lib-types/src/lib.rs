@@ -8,9 +8,6 @@
 //!
 //! `viewport-lib` re-exports this crate's surface, so existing
 //! `viewport_lib::` paths keep working.
-//!
-//! Its modules are populated as the type vocabulary is moved out of
-//! `viewport-lib`.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 

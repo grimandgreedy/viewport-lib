@@ -9,8 +9,8 @@
 //! The new pipeline works like this:
 //!
 //! 1. Translate native events to [`ViewportEvent`]
-//! 2. Feed into [`OrbitCameraController`](crate::camera::controllers::orbit::OrbitCameraController) (or lower-level [`ViewportInput`])
-//! 3. Call [`OrbitCameraController::apply_to_camera`](crate::camera::controllers::orbit::OrbitCameraController::apply_to_camera) each frame
+//! 2. Feed into [`OrbitCameraController`](crate::controllers::orbit::OrbitCameraController) (or lower-level [`ViewportInput`])
+//! 3. Call [`OrbitCameraController::apply_to_camera`](crate::controllers::orbit::OrbitCameraController::apply_to_camera) each frame
 //!
 //! # Legacy input system (compatibility)
 //!

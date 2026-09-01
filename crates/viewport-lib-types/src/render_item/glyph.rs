@@ -66,7 +66,7 @@ impl Default for GlyphItem {
     }
 }
 
-/// A set of instanced tensor glyphs for stress/strain visualization.
+/// A set of instanced tensor glyphs for stress/strain visualisation.
 ///
 /// Each instance is an ellipsoid at `positions[i]`, scaled anisotropically by the
 /// absolute eigenvalues along the eigenvector axes. Colour comes from `colour_attribute`

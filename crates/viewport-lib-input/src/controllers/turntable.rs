@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_azimuth_normalization() {
         let mut cam = default_camera();
-        // Spin fast for many frames -- azimuth should stay bounded.
+        // Spin fast for many frames: azimuth should stay bounded.
         let mut tt = TurntableController::new(10.0, 1.0);
         for _ in 0..1000 {
             tt.update(0.1, &mut cam);

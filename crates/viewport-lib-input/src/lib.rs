@@ -3,9 +3,9 @@
 //! The design intent is that a consumer can bring their own. Input handling
 //! splits into two halves, and either is usable on its own:
 //!
-//! 1. **Resolve** - [`input::ViewportInput`] turns `ViewportEvent`s into a single
+//! 1. **Resolve**: [`input::ViewportInput`] turns `ViewportEvent`s into a single
 //!    [`ActionFrame`](viewport_lib_types::input::ActionFrame) per frame.
-//! 2. **Apply** - a camera controller takes that `ActionFrame` and a
+//! 2. **Apply**: a camera controller takes that `ActionFrame` and a
 //!    `&mut Camera` and produces a new pose. This is the half a custom controller
 //!    replaces; see [`CameraController`].
 //!

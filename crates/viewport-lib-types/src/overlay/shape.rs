@@ -207,8 +207,7 @@ pub struct OverlayShapeItem {
     /// projected world point. `position` is a screen-pixel nudge from this
     /// origin and `align_x` / `align_y` place the bounding box onto it. The
     /// default `Viewport { Left, Top }` resolves to `[0, 0]`, so with the
-    /// default alignment `position` is the absolute top-left, unchanged from
-    /// before this field existed.
+    /// default alignment `position` is the absolute top-left.
     pub anchor: OverlayAnchor,
     /// Placement in logical pixels relative to the resolved `anchor` origin.
     /// With the default `anchor` and alignment this is the absolute top-left
@@ -310,8 +309,7 @@ pub struct OverlayShapeItem {
     /// other recessed UI surfaces.
     ///
     /// A shape currently carries either an outer or an inner shadow, not
-    /// both at once. Stackable outer + inner shadow layers are planned for
-    /// a follow-up phase.
+    /// both at once.
     pub shadow_inset: bool,
     /// Multi-channel animation tracks for `position`, `size`, `fill`,
     /// `border_colour`, `rotation`, and `opacity`. Each `Some` track

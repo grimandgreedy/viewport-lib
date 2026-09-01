@@ -517,7 +517,7 @@ mod tests {
         assert!(cap.indices.len() >= 3);
     }
 
-    /// UV sphere sliced through its center: the clip plane passes through
+    /// UV sphere sliced through its centre: the clip plane passes through
     /// on-plane vertices, which previously produced duplicate segments that
     /// broke loop assembly.
     #[test]
@@ -552,7 +552,7 @@ mod tests {
             }
         }
 
-        // Clip at X=0 through the center (same as showcase_07).
+        // Clip at X=0 through the centre.
         let model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 1.0));
         let cap = generate_cap_mesh(&positions, &indices, &model, glam::Vec3::X, 0.0);
         assert!(cap.is_some(), "sphere cap mesh must be generated");

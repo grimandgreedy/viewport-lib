@@ -1197,7 +1197,7 @@ impl ViewportRenderer {
             }
         }
 
-        // MC surface outlines: build per-job outline uniform + bind group.
+        // MC surface outlines: build per-item outline uniform + bind group.
         let mut mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem> =
             Vec::new();
         if frame.interaction.outline_selected {

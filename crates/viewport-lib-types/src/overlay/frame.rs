@@ -20,7 +20,7 @@ pub struct OverlayFrame {
     pub labels: Vec<LabelItem>,
     /// Pre-positioned glyph runs. The low-level text path: the caller supplies
     /// glyph ids and positions (typically from a shaping engine) and the
-    /// renderer only rasterizes and draws them. `labels` is the string-in,
+    /// renderer only rasterises and draws them. `labels` is the string-in,
     /// laid-out-here path; this is the glyphs-in, drawn-as-given path.
     pub glyph_runs: Vec<GlyphRunItem>,
     /// Stroked polylines. Rendered through the same pipeline as labels; share

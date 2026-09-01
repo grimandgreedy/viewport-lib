@@ -5,8 +5,8 @@ use std::collections::HashSet;
 
 /// Per-frame input snapshot populated by the egui adapter.
 ///
-/// This is framework-agnostic - the egui-specific translation happens in the
-/// host application's viewport adapter.
+/// This type itself has no egui dependency; the egui-specific translation
+/// happens in the host application's viewport adapter.
 #[derive(Debug, Clone)]
 #[deprecated(note = "superseded by ViewportInput and ActionFrame")]
 pub struct FrameInput {

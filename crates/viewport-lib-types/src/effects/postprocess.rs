@@ -14,12 +14,11 @@ pub enum ToneMapping {
     KhronosNeutral,
 }
 
-/// Neutral exposure numerator. Temporary: cancels the `1.2` maxLuminance
-/// divisor so `ExposureMode::Manual { ev: 0.0 }` maps to a linear multiplier of
-/// exactly `1.0`, matching the retired `PostProcessSettings.exposure = 1.0`
-/// default while light intensities are still unitless (`~1`, not yet
-/// lux/candela). It goes away once lights carry photometric units, when the full
-/// `exposure = 1 / (1.2 * 2^EV)` form becomes correct.
+/// Neutral exposure numerator. Cancels the `1.2` maxLuminance divisor so
+/// `ExposureMode::Manual { ev: 0.0 }` maps to a linear multiplier of exactly
+/// `1.0`, keeping exposure neutral while light intensities are still unitless
+/// (`~1`, not yet lux/candela). It goes away once lights carry photometric
+/// units, when the full `exposure = 1 / (1.2 * 2^EV)` form becomes correct.
 #[doc(hidden)]
 pub const INTERIM_EXPOSURE_BOOST: f32 = 1.2;
 
@@ -249,7 +248,7 @@ pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
 
 /// Which render pipeline turns scene geometry into display pixels.
 ///
-/// `Hdr` is the only first-class path; `Direct` is a constrained fallback for
+/// `Hdr` is the main path; `Direct` is a constrained fallback for
 /// host-owned render passes (`paint_to` / `paint_viewport`, which always use it)
 /// and cheap inline rendering. `Direct` omits the HDR target and therefore
 /// exposure, tone mapping, every post effect, OIT (so transparency is
@@ -409,7 +408,7 @@ impl Default for ContactShadowSettings {
 
 /// Eye-Dome Lighting settings, grouped on [`PostProcessSettings::edl`].
 ///
-/// Samples a ring of 8 depth neighbors and darkens pixels at depth
+/// Samples a ring of 8 depth neighbours and darkens pixels at depth
 /// discontinuities, making point clouds and surface edges easier to read at any
 /// viewing distance.
 #[non_exhaustive]
@@ -436,7 +435,7 @@ impl Default for EdlSettings {
 
 /// Depth-of-field bokeh settings, grouped on [`PostProcessSettings::dof`].
 ///
-/// Pixels whose linearized depth is outside
+/// Pixels whose linearised depth is outside
 /// `[focal_distance - focal_range, focal_distance + focal_range]` are blurred
 /// with a disc kernel whose radius scales up to `max_blur_radius` pixels.
 #[non_exhaustive]
@@ -494,8 +493,8 @@ mod exposure_tests {
     #[test]
     fn ev0_is_unit_multiplier() {
         // The neutral boost is chosen so EV 0 lands on a 1.0 multiplier,
-        // reproducing the retired `exposure = 1.0` default. It goes away once
-        // lights carry photometric units.
+        // keeping exposure neutral. It goes away once lights carry
+        // photometric units.
         assert!(approx(ev100_to_exposure(0.0), 1.0, 1e-4));
     }
 

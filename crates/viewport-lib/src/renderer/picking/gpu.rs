@@ -638,7 +638,7 @@ impl ViewportRenderer {
     /// (barycentric scalar probe, exact world position), use the CPU
     /// [`crate::interaction::query::picking::pick_scene_cpu`] path instead.
     ///
-    /// The pipeline is lazily initialized on first call : zero overhead when
+    /// The pipeline is lazily initialised on first call : zero overhead when
     /// this method is never invoked.
     ///
     /// # Arguments
@@ -1611,7 +1611,7 @@ impl ViewportRenderer {
         }
 
         // GPU marching-cubes surfaces: one indirect draw per slab of each pickable
-        // job, with a group-1 object-id uniform. The generated MC vertex buffer and
+        // item, with a group-1 object-id uniform. The generated MC vertex buffer and
         // surface indirect args are reused from the render path.
         let mut mc_draws: Vec<McPickDraw> = Vec::new();
         if has_pickable_mc && self.resources.pick.mc_pipeline.is_some() {
@@ -2198,7 +2198,7 @@ impl ViewportRenderer {
 
         // GPU marching-cubes surfaces: rasterise each slab's generated vertex
         // buffer via its surface indirect args. Group 0 is the shared minimal
-        // pick camera; group 1 is the per-job object id.
+        // pick camera; group 1 is the per-item object id.
         if let Some(mc_pipeline) = self.resources.pick.mc_pipeline.as_ref() {
             if !draw_set.mc_draws.is_empty() {
                 pick_pass.set_pipeline(mc_pipeline);

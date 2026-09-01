@@ -23,7 +23,7 @@ pub enum BuiltinColourmap {
     Magma = 5,
     /// Inferno : perceptually uniform (black -> deep-red -> orange -> light-yellow).
     Inferno = 6,
-    /// Turbo : improved rainbow (Google 2019). Better perceptual uniformity than Jet.
+    /// Turbo : improved rainbow. Better perceptual uniformity than Jet.
     Turbo = 7,
     /// Jet : classic blue-cyan-green-yellow-red. Widely used in engineering.
     Jet = 8,
@@ -119,7 +119,7 @@ pub fn plasma_rgba() -> [[u8; 4]; 256] {
     let mut lut = [[0u8; 4]; 256];
     for i in 0..256 {
         let t = i as f32 / 255.0;
-        // Degree-6 polynomial approximation (Zucker/Kall coefficients).
+        // Degree-6 polynomial approximation.
         // Range: dark blue (t=0) -> pink (t=0.5) -> orange -> yellow (t=1).
         let r = 0.058_732_344
             + t * (2.176_514_6
@@ -750,7 +750,7 @@ pub fn inferno_rgba() -> [[u8; 4]; 256] {
 // Turbo: exact 256-sample LUT sampled from matplotlib
 // ---------------------------------------------------------------------------
 
-/// Turbo colourmap (Google 2019) : improved rainbow. Deep purple -> cyan -> green -> yellow -> red.
+/// Turbo colourmap : improved rainbow. Deep purple -> cyan -> green -> yellow -> red.
 pub fn turbo_rgba() -> [[u8; 4]; 256] {
     [
         [48, 18, 59, 255],

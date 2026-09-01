@@ -1,7 +1,5 @@
 //! Debug visualisation configuration.
 
-// Debug visualization types for the shadow and lighting pipeline.
-
 /// Selects which intermediate quantity to display in a debug channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -100,17 +98,17 @@ impl DebugQuantity {
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DebugOutputMode {
-    /// Fragment color is entirely replaced by the debug output.
+    /// Fragment colour is entirely replaced by the debug output.
     #[default]
     Replace,
-    /// Debug output is blended over the normal color at 50% opacity.
+    /// Debug output is blended over the normal colour at 50% opacity.
     TintOverlay,
     /// Left half shows normal render, right half shows debug quantity.
     /// Split position is set by `DebugVis::split_x`.
     SplitScreen,
 }
 
-/// Debug visualization configuration for the shadow and lighting pipeline.
+/// Debug visualisation configuration for the shadow and lighting pipeline.
 ///
 /// Attach to [`EffectsDebug::debug_vis`] to activate per-fragment channel output.
 /// When `active` is false the overhead is zero: the lit pipelines compile
@@ -122,7 +120,7 @@ pub enum DebugOutputMode {
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DebugVis {
-    /// Whether debug visualization is active.
+    /// Whether debug visualisation is active.
     pub active: bool,
     /// How the debug value is composited over the normal render.
     pub mode: DebugOutputMode,
@@ -135,13 +133,13 @@ pub struct DebugVis {
     /// Multiplier applied to the raw quantity value before display.
     /// Use values > 1.0 to bring small quantities (e.g. bias in world units) into visible range.
     pub scale: f32,
-    /// Split position for `SplitScreen` mode, in normalized viewport coordinates (0..1).
+    /// Split position for `SplitScreen` mode, in normalised viewport coordinates (0..1).
     /// 0.5 = center. Ignored unless mode is `SplitScreen`.
     pub split_x: f32,
 }
 
 impl DebugVis {
-    /// Create a new active debug visualization configuration.
+    /// Create a new active debug visualisation configuration.
     pub fn new(
         mode: DebugOutputMode,
         channel_r: DebugQuantity,
@@ -166,7 +164,7 @@ impl DebugVis {
     ///   bits 0..5   : channel R quantity index (5 bits, up to 32 quantities)
     ///   bits 5..10  : channel G quantity index
     ///   bits 10..15 : channel B quantity index
-    ///   bits 15..17 : output mode (0=Replace, 1=TintOverlay)
+    ///   bits 15..17 : output mode (0=Replace, 1=TintOverlay, 2=SplitScreen)
     ///   bit 31      : active flag (0=off, non-zero=on)
     ///
     /// Returns 0 when not active, so the shader exits immediately.
@@ -207,7 +205,7 @@ pub enum AtlasViewerCorner {
 /// lighting, and viewport fields.
 ///
 /// Not `Copy`: it carries the [`DebugVis`]
-/// channel-visualization config, which is a plain (non-`Copy`) struct.
+/// channel-visualisation config, which is a plain (non-`Copy`) struct.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -218,7 +216,7 @@ pub struct EffectsDebug {
     pub atlas_viewer_corner: AtlasViewerCorner,
     /// Atlas viewer size as a fraction of viewport width. Default: 0.3.
     pub atlas_viewer_scale: f32,
-    /// Per-fragment channel visualization (debug view of shadow factor, normals,
+    /// Per-fragment channel visualisation (debug view of shadow factor, normals,
     /// and other quantities). Inactive by default; see
     /// [`DebugVis`].
     pub debug_vis: DebugVis,

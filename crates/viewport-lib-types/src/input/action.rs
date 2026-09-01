@@ -3,7 +3,8 @@
 /// Semantic actions that can be triggered by user input.
 ///
 /// Actions are decoupled from their physical triggers (keys/mouse buttons),
-/// enabling future key reconfiguration and context-sensitive bindings.
+/// so bindings can be remapped and the same action can be reached through
+/// different triggers depending on context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]

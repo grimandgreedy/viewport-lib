@@ -1,10 +1,11 @@
 //! Native-event translation into [`ViewportEvent`](super::ViewportEvent).
 //!
-//! Each host framework delivers input as its own event type; the mapping to
-//! [`ViewportEvent`](super::ViewportEvent) (buttons, wheel units, modifiers,
-//! click-vs-drag) is otherwise identical and was previously copy-pasted per
-//! example. These adapters are feature-gated per framework and are usable on
-//! their own, without a [`ViewportInstance`](crate::runners::ViewportInstance).
+//! Each host framework delivers input as its own event type, but the mapping
+//! to [`ViewportEvent`](super::ViewportEvent) (buttons, wheel units,
+//! modifiers, click-vs-drag) is otherwise identical, so it lives here once
+//! per framework instead of in every host application. These adapters are
+//! feature-gated per framework and can be used standalone, without any other
+//! part of this crate.
 
 #[cfg(feature = "winit-adapter")]
 mod winit;

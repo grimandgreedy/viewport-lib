@@ -102,7 +102,7 @@ pub fn expand_cell_to_vertex(
         .collect()
 }
 
-/// Compute per-vertex tangents using Gram-Schmidt orthogonalization with handedness.
+/// Compute per-vertex tangents using Gram-Schmidt orthogonalisation with handedness.
 ///
 /// Returns a `Vec<[f32; 4]>` of length `positions.len()` where each element is
 /// `[tx, ty, tz, w]` with `w = +/-1.0` encoding bitangent handedness.
@@ -182,7 +182,7 @@ pub fn compute_tangents(
         }
     }
 
-    // Gram-Schmidt orthogonalization per vertex. Sequential, for the
+    // Gram-Schmidt orthogonalisation per vertex. Sequential, for the
     // same nested-rayon reason as above.
     (0..n)
         .map(|i| {

@@ -1,7 +1,7 @@
 //! Movement-input helper shared across the character camera controllers.
 //!
-//! [`FirstPersonCameraController`](crate::camera::controllers::first_person::FirstPersonCameraController) and
-//! [`ThirdPersonCameraController`](crate::camera::controllers::third_person::ThirdPersonCameraController) expose a
+//! [`FirstPersonCameraController`](crate::controllers::first_person::FirstPersonCameraController) and
+//! [`ThirdPersonCameraController`](crate::controllers::third_person::ThirdPersonCameraController) expose a
 //! `forward_dir()` / `right_dir()` pair defining the ground-plane basis the
 //! player walks in. [`wish_xy_from_actions`] resolves the standard fly-movement
 //! actions against that basis and returns a normalised horizontal wish vector,

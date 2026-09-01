@@ -93,8 +93,6 @@ impl Camera {
     // -----------------------------------------------------------------------
 
     /// Return the orbit target center in world space.
-    ///
-    /// Forward-compatible accessor : equivalent to reading `self.center`.
     pub fn center(&self) -> glam::Vec3 {
         self.center
     }
@@ -105,8 +103,6 @@ impl Camera {
     }
 
     /// Return the camera distance (zoom).
-    ///
-    /// Forward-compatible accessor : equivalent to reading `self.distance`.
     pub fn distance(&self) -> f32 {
         self.distance
     }
@@ -117,8 +113,6 @@ impl Camera {
     }
 
     /// Return the camera orientation quaternion.
-    ///
-    /// Forward-compatible accessor : equivalent to reading `self.orientation`.
     pub fn orientation(&self) -> glam::Quat {
         self.orientation
     }

@@ -1,7 +1,7 @@
 //! Shared look-basis math for the body-attached character cameras.
 //!
-//! Both [`crate::camera::controllers::first_person::FirstPersonCameraController`] and
-//! [`crate::camera::controllers::third_person::ThirdPersonCameraController`] decompose the look direction into
+//! Both [`crate::controllers::first_person::FirstPersonCameraController`] and
+//! [`crate::controllers::third_person::ThirdPersonCameraController`] decompose the look direction into
 //! explicit `yaw` and `pitch` angles (Z-up): yaw rotates around world Z with
 //! yaw 0 looking along +Y, pitch is the angle above the horizontal plane.
 

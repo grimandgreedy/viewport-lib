@@ -1,6 +1,6 @@
 /// Fill style for an [`OverlayShapeItem`](crate::overlay::OverlayShapeItem).
 ///
-/// `Solid` is the default and matches the previous single-colour behaviour.
+/// `Solid` is the default, a single flat colour.
 /// `LinearGradient`, `RadialGradient`, and `ConicalGradient` interpolate
 /// between two colours across the shape's bounding box.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,8 +106,7 @@ pub const OVERLAY_MAX_GRADIENT_STOPS: usize = 4;
 /// Border placement relative to the shape edge.
 ///
 /// Controls whether the border band sits inside, outside, or centred on the
-/// SDF zero-crossing. `Inset` matches the default behaviour from earlier
-/// phases.
+/// SDF zero-crossing. `Inset` is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BorderMode {

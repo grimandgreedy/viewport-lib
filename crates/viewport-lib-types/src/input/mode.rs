@@ -22,7 +22,6 @@ pub enum NavigationMode {
     /// Unconstrained arcball rotation (default).
     ///
     /// Drag rotates the camera freely around the orbit center in any direction.
-    /// Equivalent to the behavior before navigation modes were introduced.
     #[default]
     Arcball,
     /// Yaw around the world Z axis; pitch clamped to +/-89 deg.

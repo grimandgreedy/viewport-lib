@@ -334,11 +334,11 @@ pub struct SceneFrame {
     /// GPU particle systems to advance and draw this frame.
     pub gpu_particle_systems: Vec<GpuParticleSystemItem>,
     /// External instance sets to draw this frame (mesh per element of a
-    /// consumer-owned GPU positions buffer).
+    /// caller-supplied GPU positions buffer).
     pub external_instances: Vec<ExternalInstancesItem>,
     /// Gaussian splat items to render this frame.
     pub gaussian_splats: Vec<GaussianSplatItem>,
-    /// Screen-space decal items to render this frame (D1).
+    /// Screen-space decal items to render this frame.
     pub decals: Vec<DecalItem>,
     /// Participating-media volumes (fog, smoke, clouds) to render this frame.
     pub scatter_volumes: Vec<ScatterVolumeItem>,

@@ -13,7 +13,7 @@
 //! - `pitch` is the angle above the horizontal plane: positive looks up,
 //!   clamped to `+/- pitch_clamp`.
 //!
-//! Unlike [`OrbitCameraController`](crate::camera::controllers::orbit::OrbitCameraController), this
+//! Unlike [`OrbitCameraController`](crate::controllers::orbit::OrbitCameraController), this
 //! controller does not own a camera: call
 //! [`apply`](FirstPersonCameraController::apply) with the host's `&mut Camera`.
 //! Look is read from `frame.navigation.orbit`, so the same input pipeline and

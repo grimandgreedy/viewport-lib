@@ -1,6 +1,6 @@
 use viewport_lib_types::data::mesh::MeshData;
 
-/// Unit cube (side length 1, centered at the origin).
+/// Unit cube (side length 1, centred at the origin).
 ///
 /// `size` scales all three axes uniformly.
 pub fn cube(size: f32) -> MeshData {
@@ -55,7 +55,7 @@ pub fn cube(size: f32) -> MeshData {
     m
 }
 
-/// UV sphere centered at the origin.
+/// UV sphere centred at the origin.
 ///
 /// `radius` : sphere radius.
 /// `sectors` : longitude subdivisions (minimum 3).
@@ -109,7 +109,7 @@ pub fn sphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     m
 }
 
-/// Flat XY plane centered at the origin (Z-up world: this is the ground plane).
+/// Flat XY plane centred at the origin (Z-up world: this is the ground plane).
 ///
 /// `width` : extent along X. `depth` : extent along Y. Normal points +Z.
 pub fn plane(width: f32, depth: f32) -> MeshData {
@@ -131,7 +131,7 @@ pub fn plane(width: f32, depth: f32) -> MeshData {
     m
 }
 
-/// Cylinder centered at the origin, axis along Z.
+/// Cylinder centred at the origin, axis along Z.
 ///
 /// `radius` : circle radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
 pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
@@ -221,7 +221,7 @@ pub fn cylinder(radius: f32, height: f32, sectors: u32) -> MeshData {
     m
 }
 
-/// Non-uniform box (cuboid) centered at the origin.
+/// Non-uniform box (cuboid) centred at the origin.
 ///
 /// `width` : X extent. `height` : Y extent. `depth` : Z extent.
 pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
@@ -276,9 +276,9 @@ pub fn cuboid(width: f32, height: f32, depth: f32) -> MeshData {
 }
 
 /// Box-unwrap UVs for the shared 24-vertex cube / cuboid layout: each of the six
-/// faces gets its own tile in a 3×2 atlas, so a texture (or a paint stroke) maps
+/// faces gets its own tile in a 3x2 atlas, so a texture (or a paint stroke) maps
 /// to each face independently rather than repeating identically across all six
-/// (as the overlapping `[0,1]²` UVs of [`cube`] / [`cuboid`] do).
+/// (as the overlapping `[0,1]x[0,1]` UVs of [`cube`] / [`cuboid`] do).
 ///
 /// A small inset keeps each face's UVs a texel or so inside its tile border, so
 /// bilinear filtering at a tile edge does not bleed one face's colour into its
@@ -303,7 +303,7 @@ fn box_unwrap_uvs() -> Vec<[f32; 2]> {
 /// Unit cube with a **box-unwrap** UV layout ([`box_unwrap_uvs`]).
 ///
 /// Geometry is identical to [`cube`]; only the UVs differ. Where [`cube`]'s six
-/// faces share one `[0,1]²` square (so a texture repeats identically on every
+/// faces share one `[0,1]x[0,1]` square (so a texture repeats identically on every
 /// face), each face here owns a distinct atlas tile, making per-face texturing
 /// and painting independent.
 pub fn cube_unwrapped(size: f32) -> MeshData {
@@ -321,7 +321,7 @@ pub fn cuboid_unwrapped(width: f32, height: f32, depth: f32) -> MeshData {
     m
 }
 
-/// Cone with tip at +Z and base at -Z, centered at the origin.
+/// Cone with tip at +Z and base at -Z, centred at the origin.
 ///
 /// `radius` : base radius. `height` : total height. `sectors` : circumference subdivisions (minimum 3).
 pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
@@ -394,7 +394,7 @@ pub fn cone(radius: f32, height: f32, sectors: u32) -> MeshData {
     m
 }
 
-/// Capsule (cylinder body with hemispherical caps) centered at the origin, axis along Z.
+/// Capsule (cylinder body with hemispherical caps) centred at the origin, axis along Z.
 ///
 /// `radius` : sphere cap radius. `height` : total height (clamped so body >= 0).
 /// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 2).
@@ -513,7 +513,7 @@ pub fn capsule(radius: f32, height: f32, sectors: u32, stacks: u32) -> MeshData 
     m
 }
 
-/// Torus centered at the origin, lying in the XY plane.
+/// Torus centred at the origin, lying in the XY plane.
 ///
 /// `major_radius` : distance from the torus centre to the tube centre.
 /// `minor_radius` : radius of the tube.
@@ -647,7 +647,7 @@ fn swept_tube<F: Fn(u32) -> ([f32; 3], [f32; 2])>(
     m
 }
 
-/// Elliptic torus centered at the origin, lying in the XY plane.
+/// Elliptic torus centred at the origin, lying in the XY plane.
 ///
 /// Like [`torus`], but the ring centre-line is an ellipse instead of a circle,
 /// so the tube traces an oval. `torus(r, m, s, st)` is the special case
@@ -678,7 +678,7 @@ pub fn torus_ellipse(
     })
 }
 
-/// Stadium (capsule) torus centered at the origin, lying in the XY plane.
+/// Stadium (capsule) torus centred at the origin, lying in the XY plane.
 ///
 /// The ring centre-line is a stadium: two semicircular ends joined by two
 /// straight runs, which gives the chain-link / oval-link outline. The straight
@@ -739,7 +739,7 @@ pub fn torus_stadium(
     })
 }
 
-/// Icosphere centered at the origin (better tessellation than UV sphere; no pole pinching).
+/// Icosphere centred at the origin (better tessellation than UV sphere; no pole pinching).
 ///
 /// `radius` : sphere radius. `subdivisions` : refinement level (0 = raw icosahedron, 20 faces).
 pub fn icosphere(radius: f32, subdivisions: u32) -> MeshData {
@@ -849,7 +849,7 @@ fn ico_midpoint(
     idx
 }
 
-/// Arrow along +Z, centered at the origin (total length 1).
+/// Arrow along +Z, centred at the origin (total length 1).
 ///
 /// `shaft_radius` : cylinder shaft radius.
 /// `head_radius` : cone head base radius.
@@ -971,7 +971,7 @@ pub fn arrow(shaft_radius: f32, head_radius: f32, head_fraction: f32, sectors: u
     m
 }
 
-/// Flat disk in the XY plane, centered at the origin, normal pointing +Z.
+/// Flat disk in the XY plane, centred at the origin, normal pointing +Z.
 ///
 /// `radius` : disk radius. `sectors` : circumference subdivisions (minimum 3).
 pub fn disk(radius: f32, sectors: u32) -> MeshData {
@@ -1005,7 +1005,7 @@ pub fn disk(radius: f32, sectors: u32) -> MeshData {
     m
 }
 
-/// Camera frustum mesh for visualization.
+/// Camera frustum mesh for visualisation.
 ///
 /// The camera sits at the origin looking along -Z.
 /// `fov_y` : vertical field of view in radians. `aspect` : width / height.
@@ -1073,7 +1073,7 @@ pub fn frustum(fov_y: f32, aspect: f32, near: f32, far: f32) -> MeshData {
     m
 }
 
-/// Hemisphere (upper half of a UV sphere) centered at the origin, dome facing +Z.
+/// Hemisphere (upper half of a UV sphere) centred at the origin, dome facing +Z.
 ///
 /// `radius` : sphere radius.
 /// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 1).
@@ -1142,7 +1142,7 @@ pub fn hemisphere(radius: f32, sectors: u32, stacks: u32) -> MeshData {
     m
 }
 
-/// Flat ring (annulus) in the XY plane, centered at the origin, normal pointing +Z.
+/// Flat ring (annulus) in the XY plane, centred at the origin, normal pointing +Z.
 ///
 /// `inner_radius` : inner edge. `outer_radius` : outer edge. `sectors` : circumference subdivisions (minimum 3).
 pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
@@ -1185,7 +1185,7 @@ pub fn ring(inner_radius: f32, outer_radius: f32, sectors: u32) -> MeshData {
     m
 }
 
-/// Ellipsoid centered at the origin.
+/// Ellipsoid centred at the origin.
 ///
 /// `rx`, `ry`, `rz` : semi-axes along X, Y, Z.
 /// `sectors` : longitude subdivisions (minimum 3). `stacks` : latitude subdivisions (minimum 2).
@@ -1253,7 +1253,7 @@ pub fn ellipsoid(rx: f32, ry: f32, rz: f32, sectors: u32, stacks: u32) -> MeshDa
     m
 }
 
-/// Helical spring centered at the origin, axis along Z.
+/// Helical spring centred at the origin, axis along Z.
 ///
 /// `radius` : distance from Z axis to tube centre.
 /// `coil_radius` : cross-section tube radius.
@@ -1342,7 +1342,7 @@ pub fn spring(radius: f32, coil_radius: f32, turns: f32, sectors: u32) -> MeshDa
     m
 }
 
-/// Subdivided plane in the XY plane, centered at the origin, normal pointing +Z.
+/// Subdivided plane in the XY plane, centred at the origin, normal pointing +Z.
 ///
 /// `width` : X extent. `depth` : Y extent.
 /// `cols` : column subdivisions (minimum 1). `rows` : row subdivisions (minimum 1).
@@ -1581,7 +1581,7 @@ mod tests {
 
     #[test]
     fn unwrapped_cube_gives_each_face_a_distinct_tile() {
-        // The box unwrap: each face's UVs fall inside a unique 3×2 atlas cell, so
+        // The box unwrap: each face's UVs fall inside a unique 3x2 atlas cell, so
         // no two faces share texels (the point of per-face painting).
         let m = cube_unwrapped(1.0);
         assert_eq!(m.uvs.as_ref().map(Vec::len), Some(24));

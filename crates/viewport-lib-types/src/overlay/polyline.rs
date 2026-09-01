@@ -75,7 +75,7 @@ pub enum StrokePattern {
 pub struct OverlayPolylineItem {
     /// Waypoints in logical pixels, relative to the resolved `anchor` origin.
     /// With the default anchor (viewport top-left) and a zero `position` these
-    /// are absolute screen coordinates, unchanged from before anchoring existed.
+    /// are absolute screen coordinates.
     pub points: Vec<[f32; 2]>,
     /// Origin the path hangs from: a viewport corner (default top-left) or a
     /// projected world point. Every point in `points` is relative to this.

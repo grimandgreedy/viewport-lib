@@ -3,7 +3,7 @@
 /// `glyph_id` is an index into the font's glyph table, not a Unicode codepoint.
 /// It is what a shaping engine emits after applying the font's substitution and
 /// positioning tables, so a ligature or a joined Arabic form is a single glyph
-/// id that may correspond to no single character. viewport-lib rasterizes the
+/// id that may correspond to no single character. viewport-lib rasterises the
 /// glyph straight from this id; it never sees the source text.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -32,7 +32,7 @@ impl PositionedGlyph {
 /// This is the low-level counterpart to [`LabelItem`]. A `LabelItem` takes a
 /// `String` and lays it out internally (fontdue, one glyph per codepoint,
 /// left to right). A `GlyphRunItem` takes glyphs that are already positioned and
-/// only rasterizes and draws them, so the caller decides the layout. That is the
+/// only rasterises and draws them, so the caller decides the layout. That is the
 /// hook a shaping / bidi engine uses: it shapes a run of text into positioned
 /// glyph ids for a font and submits them here, keeping the shaper itself out of
 /// viewport-lib.
@@ -49,7 +49,7 @@ pub struct GlyphRunItem {
     /// Font the glyph ids index into. `None` uses the built-in default font.
     pub font: Option<crate::overlay::font::FontHandle>,
 
-    /// Font size in logical pixels. Sizes the rasterized glyph bitmaps; the glyph
+    /// Font size in logical pixels. Sizes the rasterised glyph bitmaps; the glyph
     /// positions themselves come from `glyphs`.
     pub font_size: f32,
 

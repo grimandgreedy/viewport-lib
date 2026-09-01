@@ -1,5 +1,6 @@
-//! Input vocabulary: framework-agnostic events, semantic actions, input modes,
-//! and the binding tables that map triggers to actions.
+//! Input vocabulary: events, semantic actions, input modes, and the binding
+//! tables that map triggers to actions. Not tied to any particular windowing
+//! or GUI framework.
 //!
 //! This is pure data. The renderer's input pipeline (the stateful accumulator,
 //! the query-evaluation engine, and the native-event adapters for winit/egui)
@@ -19,7 +20,7 @@ pub mod binding;
 pub mod context;
 /// Default key/mouse bindings for the viewport.
 pub mod defaults;
-/// Framework-agnostic viewport events.
+/// Viewport events, translated from native windowing/GUI events.
 pub mod event;
 /// Input mode enum (Normal, FlyMode, Manipulating).
 pub mod mode;

@@ -1,8 +1,5 @@
 /// Per-item render settings: visibility, appearance overrides, pick identity, and selection state.
 ///
-/// Replaces the former `AppearanceSettings` struct and absorbs the `pick_id` and `selected`
-/// fields that previously appeared at the top level of each item type.
-///
 /// Always use `Default::default()` as the base, then set individual fields:
 ///
 /// ```rust
@@ -107,11 +104,11 @@ impl Default for ShadingModel {
     }
 }
 
-/// Procedural UV visualization mode for parameterization inspection.
+/// Procedural UV visualisation mode for parameterisation inspection.
 ///
 /// When set on a [`Material`], the mesh fragment shader ignores the albedo texture and
 /// renders a procedural pattern driven by the mesh UV coordinates instead. Useful for
-/// inspecting UV distortion, seams, and parameterization quality without needing a texture.
+/// inspecting UV distortion, seams, and parameterisation quality without needing a texture.
 ///
 /// Requires the mesh to have UV coordinates. Has no effect if the mesh lacks UVs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +124,7 @@ pub enum ParamVisMode {
     LocalRadial = 4,
 }
 
-/// UV parameterization visualization settings.
+/// UV parameterisation visualisation settings.
 ///
 /// Attach to [`Material::param_vis`] to enable procedural UV pattern rendering.
 /// The `scale` controls tile frequency : higher values produce more, smaller tiles.
@@ -266,8 +263,8 @@ impl Default for AlphaMode {
 
 /// Per-object material properties for Blinn-Phong and PBR shading.
 ///
-/// Materials carry all shading parameters that were previously global in `LightingSettings`.
-/// Each `SceneRenderItem` now has its own `Material`, enabling per-object visual distinction.
+/// Each `SceneRenderItem` carries its own `Material`, so shading parameters
+/// vary per object rather than applying globally to the whole scene.
 ///
 /// This struct is `#[non_exhaustive]`: construct via [`Material::default`],
 /// [`Material::from_colour`], or spread syntax (`..Default::default()`). This allows new
@@ -353,8 +350,8 @@ pub struct Material {
     /// The `unlit` per-item bypass on [`ItemSettings`] is checked independently
     /// and takes precedence over any value here.
     pub shading_model: ShadingModel,
-    /// UV parameterization visualization. When set, replaces albedo/lighting with a
-    /// procedural pattern in UV space : useful for inspecting parameterization quality.
+    /// UV parameterisation visualisation. When set, replaces albedo/lighting with a
+    /// procedural pattern in UV space : useful for inspecting parameterisation quality.
     ///
     /// Requires UV coordinates on the mesh. Default None (standard shading).
     pub param_vis: Option<ParamVis>,

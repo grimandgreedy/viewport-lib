@@ -349,9 +349,8 @@ pub enum ShadowFilter {
     /// of the sampling cost.
     #[default]
     Pcf,
-    /// 32-tap rotated-Poisson PCF over the same radius. This was the
-    /// `Pcf` behaviour before v0.20.0; the extra taps slightly smooth the
-    /// penumbra dither.
+    /// 32-tap rotated-Poisson PCF over the same radius as [`Pcf`](Self::Pcf).
+    /// The extra taps slightly smooth the penumbra dither.
     PcfHigh,
     /// Percentage-Closer Soft Shadows: a blocker search sizes a variable
     /// penumbra per fragment (contact hardening), then a wide filter
@@ -400,11 +399,8 @@ impl Default for LightingSettings {
     }
 }
 
-/// Shadow-map configuration, grouped on [`LightingSettings::shadows`].
-///
-/// Split out of [`LightingSettings`] so the shadow knobs travel as one unit; the
-/// field names drop the `shadow_` prefix they carried when they were flat
-/// (`lighting.shadow_filter` -> `lighting.shadows.filter`).
+/// Shadow-map configuration, grouped on [`LightingSettings::shadows`] so the
+/// shadow knobs travel as one unit.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

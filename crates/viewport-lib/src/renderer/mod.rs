@@ -377,7 +377,7 @@ pub struct ViewportRenderer {
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint().
     implicit_gpu_data: Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
-    /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint() (D1).
+    /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
     /// Entries are cheap clones of cached GPU handles from `decal_cache`.
     decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
     /// Decal GPU resources cached across frames, keyed by decal content hash.
@@ -385,7 +385,7 @@ pub struct ViewportRenderer {
     /// buffer and bind group for each decal every frame. Entries not seen in a
     /// frame are evicted so removed decals do not leak.
     decal_cache: std::collections::HashMap<u64, crate::resources::decal::DecalGpuItem>,
-    /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint() (D5).
+    /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint().
     decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
     /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint().
     mc_gpu_data: Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>,
@@ -452,7 +452,7 @@ pub struct ViewportRenderer {
     prepared_surfaces: Vec<SceneRenderItem>,
     /// Cached shadow state carried across frames.
     shadow: ShadowState,
-    /// Current runtime mode controlling internal default behavior.
+    /// Current runtime mode controlling internal default behaviour.
     runtime_mode: crate::renderer::stats::RuntimeMode,
     /// Whether the current render presents a frame or is an auxiliary read. Set
     /// to `Derivative` for the duration of a capture / bake render and restored
@@ -577,7 +577,7 @@ pub struct ViewportRenderer {
     // --- GPU timestamp queries ---
     /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
     /// measured pass (see the `GPU_TS_*` slot constants). `None` when
-    /// `TIMESTAMP_QUERY` is unavailable or not yet initialized.
+    /// `TIMESTAMP_QUERY` is unavailable or not yet initialised.
     ///
     /// Double-buffered with `ts_query_set_prev`: passes write this frame's
     /// timestamps here, while the set written last frame is resolved from this
@@ -703,7 +703,7 @@ impl ViewportRenderer {
     ///   scalar field in a full-precision `R32Float` 3D texture and still sample
     ///   it with trilinear interpolation. Without it the field falls back to an
     ///   `R16Float` texture (trilinear at reduced precision, half the bandwidth);
-    ///   either way the reconstruction is smooth, never blocky nearest-neighbor.
+    ///   either way the reconstruction is smooth, never blocky nearest-neighbour.
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
@@ -1176,7 +1176,7 @@ impl ViewportRenderer {
         self.upload_budget
     }
 
-    /// Set the runtime mode controlling internal default behavior.
+    /// Set the runtime mode controlling internal default behaviour.
     ///
     /// - [`RuntimeMode::Interactive`]: full picking rate, full quality (default).
     /// - [`RuntimeMode::Playback`]: picking throttled to reduce CPU overhead during animation.
@@ -1240,7 +1240,7 @@ impl ViewportRenderer {
     }
 
     /// Apply a full [`RenderTuning`] set in one call: the persistent
-    /// performance/behavior knobs (culling, occlusion, adaptive quality, render
+    /// performance/behaviour knobs (culling, occlusion, adaptive quality, render
     /// scale, runtime mode, upload budget, CPU pick cache, and the diagnostic
     /// overrides). Equivalent to calling the individual setters, and applies the
     /// same gating: GPU-driven culling only activates on devices that support

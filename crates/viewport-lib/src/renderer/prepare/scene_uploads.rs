@@ -1,4 +1,4 @@
-//! Scivis per-frame GPU upload passes extracted from `prepare_scene_internal`.
+//! Scivis per-frame GPU upload passes called from `prepare_scene_internal`.
 //!
 //! Associated functions (no `self`): the caller holds a long-lived
 //! `&mut self.resources` borrow across the whole scene prepare, so each takes
@@ -528,7 +528,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // D1 + D3: Screen-space decals, sorted by sort_key (D3).
+        // Screen-space decals, sorted by sort_key.
         // ------------------------------------------------------------------
         decal_gpu_data.clear();
         let mut decal_stats = DecalCacheStats::default();
@@ -579,7 +579,7 @@ impl ViewportRenderer {
         }
 
         // ------------------------------------------------------------------
-        // D5: Collect non-receiver surfaces for the decal exclude pass.
+        // Collect non-receiver surfaces for the decal exclude pass.
         // ------------------------------------------------------------------
         decal_exclude_items.clear();
         {

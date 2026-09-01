@@ -7,7 +7,7 @@ use super::viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 /// Named viewport control presets.
 ///
 /// A preset packages a complete set of [`ViewportBinding`]s that define
-/// the viewport interaction behavior for a given interaction style.
+/// the viewport interaction behaviour for a given interaction style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingPreset {
     /// The canonical camera-navigation control scheme matching `examples/winit_primitives`.

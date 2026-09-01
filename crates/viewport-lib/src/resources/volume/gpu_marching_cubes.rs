@@ -97,7 +97,7 @@ pub(crate) struct McVolumeGpuData {
     /// external scalar source against the volume's node count.
     pub dims: [u32; 3],
     /// When `Some`, the slab scalar buffers are refreshed from this
-    /// consumer-owned buffer before every MC dispatch, so the isosurface
+    /// caller-supplied buffer before every MC dispatch, so the isosurface
     /// tracks the buffer's contents with no CPU upload.
     pub external_scalar: Option<McExternalScalarSource>,
     /// False after `free_mc_volume` is called; the emptied slot is reused lazily.
@@ -107,7 +107,7 @@ pub(crate) struct McVolumeGpuData {
     pub generation: u32,
 }
 
-/// A consumer-owned buffer feeding a volume's scalar field.
+/// A caller-supplied buffer feeding a volume's scalar field.
 pub(crate) struct McExternalScalarSource {
     pub buffer: crate::gpu::Buffer,
     /// Byte offset of the volume's first scalar inside `buffer`.
@@ -134,22 +134,22 @@ impl McVolumeGpuData {
     }
 }
 
-/// Per-frame data for one MC job, consumed by the render phase.
+/// Per-frame data for one MC item, consumed by the render phase.
 pub(crate) struct McFrameData {
     pub volume_idx: usize,
     pub render_bg: crate::gpu::BindGroup,
-    /// True if this job was submitted with `appearance.wireframe = true`.
+    /// True if this item was submitted with `appearance.wireframe = true`.
     pub wireframe: bool,
     /// Per-slab bind groups for the wireframe pipeline (binding 0 = vertex storage buffer).
     pub wire_slab_bgs: Vec<crate::gpu::BindGroup>,
-    /// Object pick id from the job's `settings.pick_id`. `PickId::NONE` (0) when
-    /// the job is not pickable. Used by the GPU pick pass to tag the isosurface.
+    /// Object pick id from the item's `settings.pick_id`. `PickId::NONE` (0) when
+    /// the item is not pickable. Used by the GPU pick pass to tag the isosurface.
     pub pick_id: crate::renderer::PickId,
 }
 
-/// Per-selected MC job data for the outline mask pass.
+/// Per-selected MC item data for the outline mask pass.
 pub(crate) struct McOutlineItem {
-    /// Index into `mc_gpu_data` (frame-level array of processed MC jobs).
+    /// Index into `mc_gpu_data` (frame-level array of processed MC items).
     pub mc_gpu_idx: usize,
     pub _uniform_buf: crate::gpu::Buffer,
     pub mask_bind_group: crate::gpu::BindGroup,
@@ -510,7 +510,7 @@ impl DeviceResources {
         vol: &VolumeData,
     ) -> crate::ViewportResult<McVolumeId> {
         // Build the MC compute and render pipelines now so a load-time upload
-        // also pays the pipeline compiles, not the first frame that runs a job.
+        // also pays the pipeline compiles, not the first frame that dispatches an item.
         self.ensure_mc_pipelines(device);
         let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
         Ok(self.insert_mc_volume_gpu_data(gpu_data))
@@ -545,7 +545,7 @@ impl DeviceResources {
         Some(vol)
     }
 
-    /// Feed the volume's scalar field from a consumer-owned same-device buffer.
+    /// Feed the volume's scalar field from a caller-supplied same-device buffer.
     ///
     /// The buffer holds one `f32` per volume node in x-fastest order
     /// (`index = x + y * nx + z * nx * ny`), matching `VolumeData::data`,
@@ -935,7 +935,7 @@ impl DeviceResources {
             ));
     }
 
-    /// Dispatch all three compute passes for every pending MC job.
+    /// Dispatch all three compute passes for every submitted MC item.
     ///
     /// Returns the per-frame render data to be stored in `ViewportRenderer.mc_gpu_data`.
     pub(crate) fn run_mc_jobs(
@@ -964,7 +964,7 @@ impl DeviceResources {
         });
 
         // Refresh slab scalars from external sources before any compute.
-        // Once per unique volume, even when several jobs reference it. The
+        // Once per unique volume, even when several items reference it. The
         // copies sit in the same encoder ahead of the compute passes, so
         // queue-submission order is the only synchronisation needed against
         // the consumer's earlier compute submissions.
@@ -996,7 +996,7 @@ impl DeviceResources {
             };
 
             // ----------------------------------------------------------
-            // Per-job surface material (one bind group shared by all slabs).
+            // Per-item surface material (one bind group shared by all slabs).
             // ----------------------------------------------------------
             let mat_raw = McSurfaceRaw {
                 base_colour: job.material.base_colour,

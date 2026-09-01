@@ -7,7 +7,7 @@
 /// `Some(handle)` to use a user-supplied TTF font.
 ///
 /// This is a plain index into the renderer's font store: the store itself (and
-/// the font rasterization behind it) lives in `viewport-lib`, but the handle a
+/// the font rasterisation behind it) lives in `viewport-lib`, but the handle a
 /// consumer names on an overlay item is pure data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FontHandle(pub usize);

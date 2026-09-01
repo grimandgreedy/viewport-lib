@@ -64,7 +64,7 @@ pub struct LabelItem {
     pub align_x: AnchorX,
 
     /// Vertical alignment of the label text relative to its anchor. Default:
-    /// `Middle`, which centers the text on the anchor. Use `Top` to place the
+    /// `Middle`, which centres the text on the anchor. Use `Top` to place the
     /// top edge of the text at the anchor when laying out screen-space UI.
     pub align_y: AnchorY,
 
@@ -96,8 +96,8 @@ pub struct LabelItem {
     /// (further back).  Labels with equal `z_order` are drawn in list order.
     pub z_order: i32,
 
-    /// Reserved for depth-based occlusion.  Not implemented yet: when `true`
-    /// the label is still rendered; behaviour will be defined in a follow-up.
+    /// Reserved for depth-based occlusion.  Currently a no-op: the label
+    /// renders the same whether this is `true` or `false`.
     pub occlude: bool,
 
     /// When set, this label is clipped to the mask shape whose `clip_mask_id`

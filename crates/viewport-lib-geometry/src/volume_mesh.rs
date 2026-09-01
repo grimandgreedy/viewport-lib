@@ -95,9 +95,8 @@ pub struct VolumeMeshData {
 // works (both cells that share an interior face must produce the same key).
 
 /// Canonical tetrahedron triangular-face table (one triangle opposite each
-/// vertex). This is the single home for the tet face winding; the CPU picker
-/// (`crate::interaction::query::picking`) references it rather than keeping its
-/// own copy.
+/// vertex). This is the single home for the tet face winding; `viewport-lib`'s
+/// CPU picker references it rather than keeping its own copy.
 #[doc(hidden)]
 pub const TET_FACES: [[usize; 3]; 4] = [
     [1, 2, 3], // opposite v0
@@ -110,7 +109,7 @@ pub const TET_FACES: [[usize; 3]; 4] = [
 // Hex face table
 // ---------------------------------------------------------------------------
 //
-// VTK hex vertex numbering used in `upload_volume_mesh_data` docs:
+// VTK hex vertex numbering used throughout this module:
 //
 //     7 --- 6          top face
 //    /|    /|
@@ -617,34 +616,6 @@ pub fn extract_boundary_faces(data: &VolumeMeshData) -> (MeshData, Vec<u32>) {
 // the standard pipeline; the only renderer-side requirement is that cap-fill
 // is disabled for the same scene object.
 
-/// Produce a clipped `MeshData` from volume cell connectivity.
-///
-/// Each entry in `clip_planes` is `[nx, ny, nz, d]` where a point `p` is on
-/// the kept side when `dot(p, [nx,ny,nz]) + d >= 0`.  This is the same
-/// encoding as `viewport-lib`'s clip-plane uniform, so values can be forwarded
-/// to both the CPU path and the GPU clip shader.
-///
-/// Passing an empty slice returns the same result as [`extract_boundary_faces`].
-///
-/// # Semantics
-///
-/// - A cell where all vertices satisfy every plane contributes its boundary
-///   faces unchanged.
-/// - A cell where no vertex satisfies every plane is discarded.
-/// - An intersected cell contributes its surviving boundary faces (clipped) and
-///   one section polygon per plane that cuts it (clipped against all other
-///   planes, then triangulated).
-///
-/// Section face normals point toward the kept side (matching the cutting plane
-/// normal).  Per-cell scalar and colour attributes are propagated to section
-/// triangles identically to boundary triangles.
-///
-/// # Renderer contract
-///
-/// Generic cap-fill must be disabled for scene objects rendered via this path.
-/// Section faces are generated here from cell data; the generic cap overlay
-/// does not have access to per-cell attribute information and would produce an
-/// incorrect result if left enabled.
 /// Cell edges for tets: all 6 pairs from 4 vertices.
 const TET_EDGES: [[usize; 2]; 6] = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
 
@@ -720,14 +691,13 @@ fn cell_type(cell: &[u32; 8]) -> CellType {
     }
 }
 
-/// Centroid of the first `nv` vertices of `cell`.
-#[inline]
 /// Interior reference point for winding-correcting one boundary face, computed
 /// from the owning cell (deferred from face generation so it is only paid for
 /// boundary faces). For a tet this is the opposite vertex -- the vertex not on
 /// the face -- which is a larger, more numerically robust reference than the
 /// cell centroid for sliver tets; for the other cell types the cell centroid is
 /// used (any strictly-interior point gives the correct outward sign).
+#[inline]
 fn boundary_interior_ref(cell: &[u32; 8], tri: &[u32; 3], positions: &[[f32; 3]]) -> [f32; 3] {
     let ct = cell_type(cell);
     if matches!(ct, CellType::Tet) {
@@ -741,6 +711,7 @@ fn boundary_interior_ref(cell: &[u32; 8], tri: &[u32; 3], positions: &[[f32; 3]]
     cell_centroid(cell, ct.vertex_count(), positions)
 }
 
+/// Centroid of the first `nv` vertices of `cell`.
 fn cell_centroid(cell: &[u32; 8], nv: usize, positions: &[[f32; 3]]) -> [f32; 3] {
     let mut c = [0.0f32; 3];
     for i in 0..nv {
@@ -776,7 +747,7 @@ fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// Normalize a 3-vector; returns `[0, 1, 0]` for degenerate input.
+/// Normalise a 3-vector; returns `[0, 1, 0]` for degenerate input.
 #[inline]
 fn normalize3(v: [f32; 3]) -> [f32; 3] {
     let len = dot3(v, v).sqrt();
@@ -961,12 +932,36 @@ fn generate_section_tris(
     out
 }
 
-/// Produce a clipped `MeshData` from volume cell connectivity and a set of
-/// clip planes.
-///
-/// See the design note in the section comment above for the full contract.
 /// Extract boundary and section faces from a volume mesh clipped by one or
 /// more planes.
+///
+/// Each entry in `clip_planes` is `[nx, ny, nz, d]` where a point `p` is on
+/// the kept side when `dot(p, [nx,ny,nz]) + d >= 0`.  This is the same
+/// encoding as `viewport-lib`'s clip-plane uniform, so values can be forwarded
+/// to both the CPU path and the GPU clip shader.
+///
+/// Passing an empty slice returns the same result as [`extract_boundary_faces`].
+/// See the design note in the section comment above for the full contract.
+///
+/// # Semantics
+///
+/// - A cell where all vertices satisfy every plane contributes its boundary
+///   faces unchanged.
+/// - A cell where no vertex satisfies every plane is discarded.
+/// - An intersected cell contributes its surviving boundary faces (clipped) and
+///   one section polygon per plane that cuts it (clipped against all other
+///   planes, then triangulated).
+///
+/// Section face normals point toward the kept side (matching the cutting plane
+/// normal).  Per-cell scalar and colour attributes are propagated to section
+/// triangles identically to boundary triangles.
+///
+/// # Renderer contract
+///
+/// Generic cap-fill must be disabled for scene objects rendered via this path.
+/// Section faces are generated here from cell data; the generic cap overlay
+/// does not have access to per-cell attribute information and would produce an
+/// incorrect result if left enabled.
 ///
 /// Returns `(mesh_data, face_to_cell)` where `face_to_cell[i]` is the cell
 /// index that output triangle `i` belongs to.
@@ -1430,7 +1425,7 @@ pub fn tet_scalars(data: &VolumeMeshData, attribute: &str) -> Vec<f32> {
 ///   parent cell index (0.0 when the attribute is absent or the cell index is out of range)
 ///
 /// Used in tests. Production upload paths use `for_each_tet` directly to avoid
-/// materializing the full decomposed data before chunking.
+/// materialising the full decomposed data before chunking.
 #[cfg(test)]
 pub(crate) fn decompose_to_tetrahedra(
     data: &VolumeMeshData,
@@ -1966,8 +1961,7 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Executable specifications for extract_clipped_volume_faces.
-    // These tests document the required invariants and are currently ignored.
-    // Enable them by removing #[ignore].
+    // These tests document the required invariants of the clipped extraction path.
     // -----------------------------------------------------------------------
 
     /// Empty clip-plane slice must produce the same triangles as the boundary

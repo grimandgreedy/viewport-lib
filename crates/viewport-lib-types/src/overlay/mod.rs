@@ -3,7 +3,7 @@
 //! with the fills, anchors, animations, and texture-sampling parameters they
 //! compose from.
 //!
-//! This is pure data. The renderer rasterizes and uploads these items; a
+//! This is pure data. The renderer rasterises and uploads these items; a
 //! consumer (or a feature crate such as the gizmo or ui overlays) only needs to
 //! name and build them.
 

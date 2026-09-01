@@ -7,9 +7,9 @@ built on [`viewport-lib-types`](https://crates.io/crates/viewport-lib-types).
 Input handling is a replaceable layer, not baked-in core. It splits into two
 halves, and either is usable on its own:
 
-- **Resolve** - `ViewportInput` turns `ViewportEvent`s into one `ActionFrame` per
+- **Resolve**: `ViewportInput` turns `ViewportEvent`s into one `ActionFrame` per
   frame.
-- **Apply** - a camera controller drives a `Camera` from that `ActionFrame`.
+- **Apply**: a camera controller drives a `Camera` from that `ActionFrame`.
   Implement `CameraController` to bring your own; the built-in controllers (orbit,
   first/third-person, turntable, and the `dt`-driven animator) are the
   batteries-included defaults.
