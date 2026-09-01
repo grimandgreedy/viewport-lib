@@ -1,19 +1,19 @@
 # viewport-lib
 
-`viewport-lib` is a gpu-accelerated 3D viewport library for rust. It works with any GUI framework that gives you access to a wgpu device, queue, and render target.
+`viewport-lib` is a gpu-accelerated 3D viewport library for rust. It works with any GUI framework that gives you access to a wgpu device, queue, and render target. 
 
 <table>
   <tr>
-    <td><img src="assets/demo1.png" alt="demo 1" /></td>
-    <td><img src="assets/demo7.png" alt="demo 2" /></td>
+    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo1.png?raw=true" alt="demo 1" /></td>
+    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo7.png?raw=true" alt="demo 2" /></td>
   </tr>
   <tr>
-    <td><img src="assets/demo3.png" alt="demo 3" /></td>
-    <td><img src="assets/demo10.png" alt="demo 4" /></td>
+    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo3.png?raw=true" alt="demo 3" /></td>
+    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo10.png?raw=true" alt="demo 4" /></td>
   </tr>
   <tr>
-    <td><img src="assets/demo2.png" alt="demo 5" /></td>
-    <td><img src="assets/demo8.png" alt="demo 6" /></td>
+    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo2.png?raw=true" alt="demo 5" /></td>
+    <td><img src="https://github.com/grimandgreedy/viewport-lib/blob/master/assets/demo8.png?raw=true" alt="demo 6" /></td>
   </tr>
 </table>
 
@@ -21,7 +21,7 @@
 
 - **Objects**:
     - Lib Items: tri-meshes, point volumes, scatter volumes, volume meshes (tet-, pyramid-, hex-meshes), point clouds, Gaussian splats, glyphs and tensor glyphs, polylines, tubes, ribbons, streamtubes, sprites, decals, implicit and marching-cubes surfaces.
-    - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels, scalar bars, rulers, axes indicators; support for colours, glow, textures, animations and much more.
+    - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels; support for colours, glow, textures, animations and much more.
 - **Lighting**: directional, point, and spot lights; cascaded, point-light, and contact shadows; image-based lighting from environment maps; baked lightmaps.
 - **Materials & effects**: Blinn-Phong, and matcap shading; normal and AO maps, emissive, and transparency; bloom, SSAO, depth of field, and tone mapping; runtime WGSL shading hooks and GPU deformers
 - **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable key/mouse bindings; view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
@@ -35,7 +35,7 @@
 
 The `examples/` directory contains working integrations for several GUI frameworks.
 
-- **eframe-showcase**: run this first if you want to a see a feature showcase: demonstrates many of the viewport's built-in capabilities across multiple showcases (not exhaustive).
+- **eframe-showcase**: run this first and cycle through the feature showcases: this demonstrates many of the viewport's built-in capabilities but is non-exhaustive.
 - **eframe-minimal**: the simplest integration: start here if you want to understand the minimal setup.
 - **eframe-primitives**: demonstrates the built-in geometry primitives.
 - **eframe-viewport**: a mid-complexity example with scene graph, picking, and gizmos.
@@ -50,13 +50,11 @@ cargo run --release --example slint-minimal --no-default-features --features="wg
 cargo run --release --example bevy-swarm --no-default-features --features wgpu29,example-bevy
 ```
 
-Note: the feature flags are there so that when you run them you don't have to pull in all the various dev-dependencies.
-
 ## Quick start
 
 A viewport is created and managed via a runner. There are two primary runners that we maintain and ship, but for intensive applications you are encouraged to make your own. The runner is an object that manages the viewport's per-frame work.
 
-- **`ViewportApp`**: owns the window and the run loop. The simplest and easiest way to get started, for a standalone viewport with no surrounding GUI.
+- **`ViewportApp`**: owns the window and the run loop -- this is a full app runner. The simplest and easiest way to get started, for a standalone viewport with no surrounding GUI.
 - **`ViewportInstance`**: the runner you drive yourself. You own the loop and the input, redraw when you want, and route each event to either the viewport's input controller or your GUI. This is the right fit when you are embedding a viewport into an existing application which already owns the run-loop. 
 - **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement their own runner. Look at, e.g., the `eframe_multi_viewport` or `wgpu_leg_agnostic` examples.
 

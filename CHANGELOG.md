@@ -1,177 +1,70 @@
 # Changelog
 
-## [Unreleased]
+## [v0.21.0]
 
-Photometric lighting units land this cycle (directional in lux, point/spot in
-candela, emissive/IBL in nits, plus a physical-camera exposure model). Alongside
-them the per-frame effects configuration is regrouped by concern and the default
-lighting posture returns to a faithful "colour is data" baseline. The renderer also
-reaches a new platform this cycle: it runs in the browser on WebGPU.
+This release: photometric lighting units (lux / candela / nits) with a physical-camera exposure model, a faithful "colour is data" default lighting posture, the per-frame effects config regrouped by concern, and the renderer running in the browser on WebGPU.
+
+### Workspace
+- viewport-lib is now split into focused crates, all re-exported through `viewport-lib` so code using the `viewport_lib::` paths is unaffected:
+
+- `viewport-lib-types` (frame data, handles, and item types), 
+- `viewport-lib-geometry` (primitives and geometry),
+- `viewport-lib-input` (the input pipeline and the winit/egui adapters).
 
 ### Features
 - **Submesh material ranges** - one mesh can draw with several materials.
-  `MeshData::submeshes` partitions the index buffer into ranges;
-  `SceneRenderItem::submesh_materials` (or `Scene::set_submesh_materials` on a
-  node) binds one material per range, and the renderer issues one draw per
-  range on the HDR, LDR, and OIT paths. Opaque and blend ranges of one mesh
-  split across the right passes, material plugins select per range, and
-  skinning/deformers are shared across all ranges (one weight buffer, one
-  palette). For triangles that arrive interleaved,
-  `MeshData::sort_triangles_into_submeshes` sorts them by material id, permutes
-  per-triangle attributes alongside, and builds the ranges. Items with range
-  materials draw per-object (no instancing). Everything is additive: meshes and
-  items that never set the fields behave exactly as before. See showcase 56.
-- **On-GPU environment capture** - `capture_hdr_gpu` and `capture_equirect_gpu`
-  render a scene capture straight into a GPU texture and resolve the six cube
-  faces into an equirect panorama on the GPU, with no CPU round-trip, so a
-  capture can feed the IBL prefilter without leaving the GPU. `read_captured_hdr`
-  reads a capture back to `f32` when floats are wanted. The existing
-  `capture_hdr` / `capture_equirect` (CPU readback) are unchanged.
-- **Path-tracer mesh instancing** - `RtScene::add_mesh_geometry` registers a
-  mesh once and `add_instance` places it many times with a transform. The
-  software tracer builds a two-level BVH (one structure per mesh plus a
-  top-level one over the instances) and transforms rays into each instance's
-  space, so a scene with many copies of a mesh stores its triangles once instead
-  of per copy. `add_mesh` is unchanged (one identity instance).
-- **Shared geometry slab and draw collapse** - mesh geometry is packed into a
-  few shared vertex/index buffers instead of one pair per mesh, so a pass binds
-  geometry once and draws each mesh with per-mesh offsets rather than rebinding
-  buffers per mesh. On backends that support native multi-draw
-  (`MULTI_DRAW_INDIRECT_COUNT`, e.g. Vulkan/DX12) the per-batch indirect draws
-  collapse into `multi_draw_indexed_indirect`; other backends keep the per-batch
-  loop. This cuts CPU draw encoding on scenes with many distinct meshes and on
-  the shadow cascades. No API change; the geometry storage is internal.
-- **Indexed per-object draw data** - the non-instanced (per-object) mesh path
-  now reads its transform and material from one shared storage array indexed per
-  draw, instead of a per-item uniform buffer behind a per-item bind group. Items
-  that share a material reuse one group-1 bind group, so the draw loop stops
-  rebinding per draw and the per-item uniform writes go away. Scenes with many
-  distinct-material two-sided/scalar/matcap/override items (the unbatchable
-  path) encode markedly faster. Output is unchanged.
-- **Web (WebGPU) rendering** - the renderer runs in the browser on `wasm32` over
-  WebGPU. The full pipeline works: lit meshes (instanced and not), shadows, and the
-  HDR path with bloom, tone mapping, SSAO, FXAA, DOF, and contact shadows, plus
-  overlays and transparency. `examples/winit_web` is a hand-written winit loop
-  adapted for the web (the adapter/device are awaited, the surface is a `<canvas>`,
-  the loop starts with `spawn_app`, timing uses `web_time::Instant`); the same file
-  still compiles and runs natively. Target WebGPU, not WebGL2: the lit mesh path
-  binds storage buffers in the fragment stage and the HDR pipeline uses compute,
-  neither of which WebGL2 has. On the WebGPU baseline (8 storage buffers per stage)
-  GPU deformers, the compute path tracer, hardware ray query, and GPU-driven culling
-  turn themselves off rather than failing. The mesh, shadow, and post-process shaders
-  were reworked to satisfy strict WGSL uniformity (browsers reject implicit
-  `textureSample` / `dpdx` / `textureSampleCompare` in non-uniform control flow);
-  the rework is behaviour-preserving on every platform. `scripts/build_web.sh` builds
-  and bundles the example.
-- **Streaming overlay textures** - overlay images can be backed by a texture you
-  update and free over its lifetime instead of re-uploading it each frame.
-  `create_streaming_overlay_texture` allocates one and returns an `OverlayTextureId`,
-  `update_overlay_texture` writes new pixels into it, and `free_overlay_texture`
-  releases it. This suits overlay content that changes over time (a decoded video
-  frame, a live plot, a procedurally updated panel) without per-frame allocation.
-- **Pre-positioned glyph runs** - `GlyphRunItem` draws a run of glyphs the caller
-  has already laid out, the low-level counterpart to `LabelItem`. Where a
-  `LabelItem` takes a `String` and lays it out internally (one glyph per
-  codepoint, left to right), a `GlyphRunItem` takes `PositionedGlyph { glyph_id,
-  x, y }` entries and only rasterizes and draws them, so an external shaping /
-  bidi engine can shape text into positioned glyph ids and submit them through
-  `FrameData::overlays.glyph_runs` without pulling the shaper into viewport-lib.
-  One run carries one font; a line spanning several fonts is submitted as several
-  runs sharing a baseline (moving a whole run is a change to `origin` alone). Runs
-  support a run tint or per-glyph `colours`, opacity, a clip mask, and a `z_order`
-  shared with labels and shapes.
-- **Colour emoji in overlays** - overlay text drawn from a colour-emoji font now
-  renders in colour. The `sbix` and `CBDT` bitmap strikes that Apple Color Emoji
-  and Noto Color Emoji ship are decoded and drawn through the overlay glyph atlas
-  as straight RGBA, so emoji show up anywhere overlay text does (labels, scalar
-  bars, and glyph runs). Outline glyphs still rasterize through fontdue as before;
-  a glyph with no colour bitmap falls back to coverage. `png` and `ttf-parser` are
-  now core dependencies for the decode.
+  `MeshData::submeshes` partitions the index buffer into ranges and each range binds
+  its own material, drawn on the correct opaque/blend passes with plugins and
+  skinning shared across ranges. Additive; meshes that don't set it are unchanged.
+  See showcase 56.
+- **On-GPU environment capture** - `capture_hdr_gpu` / `capture_equirect_gpu` render
+  an environment capture straight into a GPU texture with no CPU round-trip, so it can
+  feed the IBL prefilter on-GPU. The CPU-readback `capture_hdr` / `capture_equirect`
+  are unchanged.
+- **Path-tracer mesh instancing** - `RtScene::add_mesh_geometry` + `add_instance`
+  place many copies of a mesh from one stored copy, instead of duplicating triangles
+  per copy. `add_mesh` is unchanged.
+- **Retained overlay geometry** - compile a group of overlay items once and re-draw
+  it from a cached buffer each frame, so static or scrolling UI does no per-frame
+  tessellation or text layout. `compile_overlay_geometry` builds one handle from
+  shapes, vector paths, polylines, glyph runs, and labels (or `compile_overlay_label`
+  for a single anchor-tracking label), submitted each frame as a `RetainedOverlay`
+  with a cheap per-frame translate, opacity, z-order, and clip. Text re-lays-out only
+  when the display scale or glyph atlas changes; a group can be clipped per frame to a
+  rectangle or a shaped mask (rounded rect, circle, nested), fixed in screen space
+  while content scrolls. Opt-in; immediate overlays are unchanged. See the
+  `eframe-retained-overlay` example.
+- **Streaming overlay textures** - back an overlay image with a texture you update and
+  free over its lifetime instead of re-uploading it each frame:
+  `create_streaming_overlay_texture` / `update_overlay_texture` /
+  `free_overlay_texture`. Suits a decoded video frame, a live plot, or a
+  procedurally updated panel.
+- **Pre-positioned glyph overlays** - `GlyphRunItem` draws glyphs the caller has already laid out (a glyph id plus an x/y per glyph), the low-level counterpart to `LabelItem`, so an external shaping / bidi engine can position glyphs and submit them without pulling a shaper into viewport-lib. Supports a run tint or per-glyph colours, opacity, a clip mask, and a z-order shared with labels and shapes.
+- **Colour emoji in overlays** - overlay text from a colour-emoji font (Apple Color Emoji, Noto Color Emoji) now renders in colour anywhere overlay text appears; outline glyphs are unchanged.
+- **Web (WebGPU) rendering** - the renderer runs in the browser on `wasm32` over WebGPU, with the full pipeline: lit meshes, shadows, HDR post (bloom, tone mapping, SSAO, FXAA, DOF, contact shadows), overlays, and transparency. Target WebGPU, not WebGL2; features that exceed the WebGPU baseline (GPU deformers, compute path tracer, hardware ray query, GPU-driven culling) turn themselves off rather than fail. `examples/winit_web` runs on the web and natively; `scripts/build_web.sh` builds and bundles it.
+
+### Performance
+- **Shared geometry slab and draw collapse** - mesh geometry is packed into shared buffers so a pass binds geometry once and draws each mesh by offset, and on Vulkan/DX12 the per-batch draws collapse into one multi-draw. Cuts CPU draw encoding on scenes with many distinct meshes. No API change.
+- **Indexed per-object draw data** - the non-instanced mesh path reads transform and material from a shared indexed array, so items sharing a material stop rebinding per draw. Faster encoding for scenes with many distinct-material non-instanced items. Output unchanged.
 
 ### Breaking changes
-- **`DeviceResources::update_gizmo_mesh` and `update_gizmo_uniform` are gone.**
-  The transform gizmo no longer renders through a dedicated 3D pipeline. It is
-  now generated as 2D overlay primitives each frame from
-  `frame.interaction.gizmo_*` (mode, model matrix, hovered axis, space
-  orientation), so nothing needs to upload gizmo geometry. Hosts that already
-  set those `InteractionFrame` fields need no change; the two `update_gizmo_*`
-  methods (and the internal gizmo pipeline, shader, and per-viewport buffers)
-  were removed. `Gizmo::hit_test`, `compute_gizmo_scale`, and the drag solvers
-  are unchanged. The projection routine is public as
-  `interaction::manipulation::gizmo_overlay::build_gizmo_overlays` for hosts that
-  want to place gizmo overlays themselves.
-
-- **The device must provide `max_storage_buffers_per_shader_stage >= 10`.** The
-  lit mesh fragment shader now binds more storage buffers per stage (the
-  per-object data moved into an indexed storage array), above wgpu's default
-  limit of 8. A device created with the default limits fails to build the mesh
-  pipeline on backends that enforce the limit (Vulkan, DX12); `ViewportRenderer`
-  construction now panics up front with a clear message naming the missing limit
-  instead of a deep wgpu validation error. Fix: create the device with
-  `required_limits: ViewportRenderer::recommended_device_limits(&adapter)` (new)
-  in the `DeviceDescriptor`, or request `adapter.limits()`. Metal did not enforce
-  the limit before, so apps that only ran there and used default limits now need
-  the same fix. `ViewportRenderer::REQUIRED_STORAGE_BUFFERS_PER_STAGE` exposes
-  the required count.
-
-- **HDR display transform grouped under `effects.display`.** `effects.exposure`
-  moves to `effects.display.exposure`; `effects.post_process.tone_mapping` becomes
-  `effects.display.operator`; and the `effects.post_process.enabled` bool becomes
-  `effects.display.mode: PipelineMode` (`Hdr` | `Direct`). `PipelineMode::Hdr` is
-  the default and the only first-class pipeline; `Direct` is the constrained LDR
-  passthrough (host-owned passes / cheap inline), which drops all post effects,
-  OIT, the skybox, exposure, tone mapping, and item-type plugins.
-- **`PostProcessSettings` effects are nested.** `bloom*`, `dof_*`,
-  `contact_shadow*`, and `edl_*` become `bloom`, `dof`, `contact_shadows`, and
-  `edl` sub-structs (e.g. `post_process.bloom_threshold` ->
-  `post_process.bloom.threshold`, `post_process.dof_enabled` ->
-  `post_process.dof.enabled`). `ssao`, `fxaa`, and `ssaa_factor` stay flat.
-- **Shadow settings split out of `LightingSettings`.** The `shadow_*` fields group
-  into `lighting.shadows: ShadowSettings` and drop the prefix
-  (`lighting.shadow_filter` -> `lighting.shadows.filter`, `lighting.shadows_enabled`
-  -> `lighting.shadows.enabled`).
-- **Clip and debug fields grouped.** `effects.clip_objects` /
-  `effects.cap_fill_enabled` -> `effects.clip.objects` /
-  `effects.clip.cap_fill_enabled`; `effects.show_shadow_atlas` /
-  `atlas_viewer_*` -> `effects.debug.*`.
-- **`EnvironmentMap` renamed to `EnvironmentSettings`** (the texture handle already
-  lives in `EnvironmentMapId`).
-- **`ScatterSettings` is now scene-global** (`SceneEffects.scatter`), no longer on
-  `ViewportEffects`.
-- **Faithful default lighting posture.** The default `ShadingModel` is `Phong`
-  again, the default `ExposureSettings` is neutral `Manual { ev: 0 }`, and the
-  default light intensity and hemisphere fill are modest values that read at EV 0
-  ("colour is data"). Opt into the cinematic daylight look with
-  `EffectsFrame::with_posture(LightingPosture::PhysicalDaylight)` (see New). Photometric
-  magnitudes (`Lux`/`Candela`/`Lumen`) remain available and are unchanged.
-- **Punctual falloff is now physical inverse-square.** Point and spot lights use
-  `1/d^2` (clamped by source `radius`) with a Karis reach window instead of the old
-  `(1 - d/range)^2`, matching the path tracer. `range` is reach, not brightness;
-  `LightKind::Point`/`Spot` gain a `radius`. Point/spot lights authored against the
-  old curve need re-tuning.
-- **Config structs now derive `serde` uniformly** under the `serde` feature.
+- **HDR display transform grouped under `effects.display`** - `exposure` -> `display.exposure`, `post_process.tone_mapping` -> `display.operator`, and the `post_process.enabled` bool becomes `display.mode` (`Hdr`, the default, or `Direct`, the LDR passthrough that drops post effects, OIT, skybox, and plugins).
+- **`PostProcessSettings` effects nested** - `bloom*`, `dof_*`, `contact_shadow*`, and `edl_*` become `bloom`, `dof`, `contact_shadows`, and `edl` sub-structs (e.g.  `post_process.dof_enabled` -> `post_process.dof.enabled`). `ssao`, `fxaa`, and `ssaa_factor` stay flat.
+- **Shadow settings split out of `LightingSettings`** into `lighting.shadows`, dropping the prefix (`lighting.shadow_filter` -> `lighting.shadows.filter`).
+- **Clip and debug fields grouped** - `effects.clip_objects` / `cap_fill_enabled` -> `effects.clip.*`; `effects.show_shadow_atlas` / `atlas_viewer_*` -> `effects.debug.*`.
+- **`EnvironmentMap` renamed to `EnvironmentSettings`.**
+- **`ScatterSettings` is now scene-global** (`SceneEffects.scatter`), no longer on `ViewportEffects`.
+- **Faithful default lighting posture** - default `ShadingModel::Phong`, neutral `Manual { ev: 0 }` exposure, and modest light/fill that read at EV 0. Opt into the daylight look with `EffectsFrame::with_posture(LightingPosture::PhysicalDaylight)` (see New).
+- **Point/spot falloff is now physical inverse-square** (`1/d^2`, clamped by `radius`) instead of `(1 - d/range)^2`; `range` is reach, not brightness, and `Point`/`Spot` gain a `radius`. Lights authored against the old curve need re-tuning.
 
 ### New
-- **`LightingPosture` + `EffectsFrame::with_posture` / `FrameData::with_posture`.**
-  One call sets `effects.lighting` and the exposure on `effects.display` as a
-  matched pair, so light magnitudes and the camera cannot disagree. `Faithful` (the
-  default) is nominal magnitudes at neutral exposure; `PhysicalDaylight` is
-  `LightingSettings::daylight()` + `ExposureSettings::automatic()`.
+- **`LightingPosture` + `EffectsFrame::with_posture` / `FrameData::with_posture`** -
+  one call sets the lighting magnitudes and camera exposure as a matched pair.
+  `Faithful` (the default) is nominal magnitudes at neutral exposure; `PhysicalDaylight`
+  is the cinematic daylight look.
 
 ### Fixes
-- **Scene captures could permanently strand a streaming consumer's mesh
-  bindings** - `bake_light_probes`, `capture_equirect`, `capture_reflection_probe(s)`,
-  and `bake_light_probe_volume` ran full internal render passes that advanced
-  the async upload pipeline as a side effect. A consumer that queued mesh
-  uploads and bound each `MeshId` onto its scene node when the upload promoted
-  could have that promotion silently consumed by a capture running before the
-  upload's completion was observed, leaving the mesh uploaded but never bound
-  to anything - a permanently blank viewport with no error or warning. Capture
-  and bake calls now read the currently resident scene without advancing
-  shared per-frame state (the upload pipeline, frame counter, occlusion
-  history, or frame stats), so this can no longer happen. New `mesh_resident`
-  and `frame_fully_resident` queries let a consumer check residency directly
-  instead of relying on upload-completion polling.
+- **Scene captures could permanently strand a streaming consumer's mesh bindings** - captures and bakes (`capture_equirect`, `capture_reflection_probe(s)`, `bake_light_probes`, `bake_light_probe_volume`) advanced the async upload pipeline as a side effect, which could silently consume a queued mesh upload's completion and leave the mesh uploaded but never bound to its node: a permanently blank viewport with no error. Captures and bakes now read the resident scene without touching shared per-frame state. New `mesh_resident` / `frame_fully_resident` queries check residency directly.
 
 ## [0.20.0]
 
@@ -249,13 +142,11 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 #### Compressed texture uploads
 
-`upload_compressed_texture` and `begin_upload_compressed_texture` take pre-compressed block data with a full mip chain, keyed on `wgpu::TextureFormat` (BC7, BC5, BC4, ASTC, ETC2). The block-row math is data-driven, so desktop BC and mobile ASTC/ETC2 formats all upload through the same path. `supports_texture_format` reports whether the device can sample a given format, so a consumer chooses compressed or uncompressed per platform. Encoding stays in the asset pipeline: the library uploads the block data, it does not compress. Compressed textures use roughly a quarter of the VRAM of uncompressed RGBA8, which is what lets large scenes stay resident. Block-compressed textures must have block-aligned dimensions (a multiple of 4 for BC); an upload whose base size is not aligned returns `CompressedTextureNotBlockAligned` up front rather than failing later on the GPU, so a consumer can pad or fall back to an uncompressed upload for odd-sized textures.
+`upload_compressed_texture` and `begin_upload_compressed_texture` take pre-compressed block data with a full mip chain, keyed on `wgpu::TextureFormat` (BC7, BC5, BC4, ASTC, ETC2). The block-row math is data-driven, so desktop BC and mobile ASTC/ETC2 formats all upload through the same path. `supports_texture_format` reports whether the device can sample a given format, so a consumer chooses compressed or uncompressed per platform.
 
 ### Improvements
 
 - **Transform gizmo snapping**: `ManipulationController::set_snap` / `with_snap` take a `SnapConfig` (translation in world units, rotation in radians, scale as a fraction) applied while dragging. Snapping rounds the cumulative transform rather than the per-frame delta, so an object clicks cleanly between grid stops without accumulating drift, and the increment can be changed mid-drag (e.g. bound to a held key). Rotation snapping applies to single-axis rotations. Additive and off by default: a controller that never sets a `SnapConfig` behaves exactly as before.
-
-- **Gizmo plane and screen handles now drag correctly**: dragging a plane handle (XY / XZ / YZ) moves or scales in that plane, and the screen handle does a camera-plane translate or uniform scale. Previously every non-cardinal handle fell through to the Z axis, so plane and screen drags moved along Z.
 
 - **Numeric rotation input**: typing a value during a rotate (with Tab to move between axes) now produces a `TransformDelta::rotation_override`, matching the position and scale overrides. Whether numeric input is applied as absolute or relative to the drag-start transform stays an app-side choice.
 
@@ -280,7 +171,7 @@ An opt-in cull (`ViewportRenderer::set_occlusion_culling`, off by default) that 
 
 - **`LodGroupId` is now a generational handle** for the same reason: `free_lod_group` frees a group's slot and bumps its generation, so a stale group id resolves to no group. Keep the id returned by `register_lod_group`; `LodGroupId::INVALID` is the placeholder. The internal tuple constructor is gone.
 
-- **Texture ids now carry a generation.** Textures moved to a slotted store, so a released texture's slot can be reused without a stale id aliasing the new texture. Ids stay `u64` and a never-freed texture keeps the dense index it always had (the generation is 0), so existing code that only uploads textures is unaffected. The `ViewportGpuResources::textures` field (previously `pub Vec<GpuTexture>`) is no longer public; use `texture_view` / `texture_sampler` / `texture_count` to read textures.
+- **Texture ids now carry a generation.** Textures moved to a slotted store, so a released texture's slot can be reused without a stale id aliasing the new texture. Ids stay `u64` and a never-freed texture keeps the dense index it always had (the generation is 0), so existing code that only uploads textures is unaffected.
 
 ### GPU resource freeing and accounting
 
