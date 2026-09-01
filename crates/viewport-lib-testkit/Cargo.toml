@@ -25,7 +25,7 @@ exclude = ["tests/snapshots/*.png"]
 viewport-lib = { path = "../viewport-lib", version = "0.21", default-features = false }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 pollster = "0.4"
-viewport-lib-io = { path = "../../../viewport-lib-io", version = "0.7", optional = true }
+viewport-lib-io = { version = "0.7", optional = true }
 # PNG load/save for the golden module; optional so the core does not pull it.
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 

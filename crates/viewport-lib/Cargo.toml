@@ -71,7 +71,7 @@ slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-w
 # renders straight into a Bevy GPU texture on Bevy's own device with no CPU copy.
 bevy = { version = "0.19", optional = true }
 # Model/scene import (glTF, STL, VTK, HDF5, ...). Heavy; only showcase 45 uses it.
-viewport-lib-io = { version = "0.7.0", path = "../../../viewport-lib-io", optional = true }
+viewport-lib-io = { version = "0.7.0", optional = true }
 
 # --- Optional host integrations for `session` (consumer-facing, not example-only) ---
 # `winit`/`pollster` power the `app` fullscreen runner and the `from_winit` event
@@ -162,7 +162,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Desktop-only: xatlas is C++ and does not cross-compile to wasm, so keep it off
 # that target where it would otherwise block building any example.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-viewport-lib-lightbake = { path = "../../../viewport-lib-lightbake" }
+viewport-lib-lightbake = { version = "0.1.0" }
 # The headless integration tests share one device constructor with the testkit
 # instead of keeping their own copies. `core` only, so no scene catalogue or
 # `image` is pulled; path-only and dev-only, so it never reaches the published
