@@ -56,6 +56,11 @@ pub(crate) enum OverlayDrawSource {
     Retained {
         draw_index: u32,
     },
+    /// A retained group's SDF shape stream, drawn through the shape pipeline.
+    /// `draw_index` selects `overlay_retained_shape_draws`.
+    RetainedShape {
+        draw_index: u32,
+    },
 }
 
 /// A single draw within the overlay pass, tagged with its z-order and family
@@ -195,6 +200,20 @@ impl OverlayDrawSegment {
             z_order,
             family_rank: family_rank::TEXT_MERGED,
             source: OverlayDrawSource::Retained { draw_index },
+        });
+    }
+
+    /// Append a retained group's SDF shape segment. Ranked with shapes (under the
+    /// group's own text stream at the same z), never coalesced.
+    pub fn push_retained_shape(
+        segments: &mut Vec<OverlayDrawSegment>,
+        z_order: i32,
+        draw_index: u32,
+    ) {
+        segments.push(OverlayDrawSegment {
+            z_order,
+            family_rank: family_rank::SHAPE,
+            source: OverlayDrawSource::RetainedShape { draw_index },
         });
     }
 }

@@ -124,6 +124,286 @@ pub(super) fn emit_group_verts(
     }
 }
 
+/// Emit one analytic SDF shape (Rect, RoundedRect, Circle, Ring, ...) as solid
+/// `OverlayShapeVertex` geometry plus its stacked shadow layers, for the retained
+/// path. Mirrors the solid branch of the immediate shape emission
+/// (`prepare_viewport_internal`) for the static case: no animation sampling, no
+/// anchor resolution, and no internal clip mask (a retained group's outer clip is
+/// carried by its text stream). Textured and backdrop-blur shapes use a separate
+/// pipeline and are skipped.
+fn emit_sdf_shape(
+    shape: &crate::renderer::types::OverlayShapeItem,
+    out_verts: &mut Vec<crate::resources::OverlayShapeVertex>,
+    out_shadows: &mut Vec<crate::resources::OverlayShadowLayerGpu>,
+) {
+    use crate::renderer::types::{
+        BorderMode, LineCap, OverlayFill, OverlayShape, TriangleDirection,
+    };
+    if matches!(shape.shape, OverlayShape::Vector { .. })
+        || shape.clip_mask_id.is_some()
+        || shape.texture.is_some()
+        || shape.backdrop_blur > 0.0
+        || shape.opacity <= 0.0
+    {
+        return;
+    }
+    let op = shape.opacity;
+    let hw = shape.size[0] * 0.5;
+    let hh = shape.size[1] * 0.5;
+    let cx = shape.position[0] + hw;
+    let cy = shape.position[1] + hh;
+
+    let mut shadow_pad = if shape.shadow_radius > 0.0 {
+        shape.shadow_radius + shape.shadow_offset[0].abs().max(shape.shadow_offset[1].abs())
+    } else {
+        0.0
+    };
+    for l in &shape.shadows {
+        shadow_pad = shadow_pad.max(l.radius + l.offset[0].abs().max(l.offset[1].abs()));
+    }
+    let extra_expand = match &shape.shape {
+        OverlayShape::Line { thickness, .. } => thickness * 0.5,
+        _ => 0.0,
+    };
+    let bx = hw + shape.border_width + extra_expand;
+    let by = hh + shape.border_width + extra_expand;
+    let (rx, ry) = if shape.rotation != 0.0 {
+        let c = shape.rotation.cos();
+        let s = shape.rotation.sin();
+        let piv = shape.rotation_pivot;
+        let (mut mx, mut my) = (0.0f32, 0.0f32);
+        for cxp in [-bx, bx] {
+            for cyp in [-by, by] {
+                let dx = cxp - piv[0];
+                let dy = cyp - piv[1];
+                mx = mx.max((c * dx - s * dy + piv[0]).abs());
+                my = my.max((s * dx + c * dy + piv[1]).abs());
+            }
+        }
+        (mx, my)
+    } else {
+        (bx, by)
+    };
+    let ex = rx + shadow_pad + 1.0;
+    let ey = ry + shadow_pad + 1.0;
+
+    let (shape_type, radii) = match &shape.shape {
+        OverlayShape::Rect { corner_radius } => {
+            let r = corner_radius.min(hw).min(hh).max(0.0);
+            (0.0, [r, r, r, r])
+        }
+        OverlayShape::RoundedRect { radii: r } => (
+            0.0,
+            [
+                r[1].min(hw).min(hh).max(0.0),
+                r[2].min(hw).min(hh).max(0.0),
+                r[3].min(hw).min(hh).max(0.0),
+                r[0].min(hw).min(hh).max(0.0),
+            ],
+        ),
+        OverlayShape::Circle => (1.0, [0.0; 4]),
+        OverlayShape::Ellipse => (2.0, [0.0; 4]),
+        OverlayShape::Capsule => (3.0, [0.0; 4]),
+        OverlayShape::Ring { inner_radius_frac } => {
+            (4.0, [inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
+        }
+        OverlayShape::Arc {
+            inner_radius_frac,
+            start_angle,
+            end_angle,
+        } => (
+            5.0,
+            [inner_radius_frac.clamp(0.0, 1.0), *start_angle, *end_angle, 0.0],
+        ),
+        OverlayShape::Triangle { direction } => {
+            let d = match direction {
+                TriangleDirection::Up => 0.0,
+                TriangleDirection::Down => 1.0,
+                TriangleDirection::Left => 2.0,
+                TriangleDirection::Right => 3.0,
+            };
+            (6.0, [d, 0.0, 0.0, 0.0])
+        }
+        OverlayShape::Line { thickness, cap } => {
+            let cap_f = match cap {
+                LineCap::Round => 0.0,
+                LineCap::Square => 1.0,
+            };
+            (7.0, [thickness * 0.5, cap_f, 0.0, 0.0])
+        }
+        OverlayShape::Star {
+            points,
+            inner_radius_frac,
+        } => (
+            8.0,
+            [(*points).max(3) as f32, inner_radius_frac.clamp(0.0, 1.0), 0.0, 0.0],
+        ),
+        OverlayShape::RegularPolygon { sides } => (9.0, [(*sides).max(3) as f32, 0.0, 0.0, 0.0]),
+        OverlayShape::Cross { arm_width_frac } => {
+            (10.0, [arm_width_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
+        }
+        _ => (0.0, [0.0; 4]),
+    };
+
+    let mut stop_colours = [[0.0f32; 4]; 4];
+    let mut stop_positions = [0.0f32, 1.0, 1.0, 1.0];
+    let stop_count: f32;
+    let gradient_params = match &shape.fill {
+        OverlayFill::Solid(c) => {
+            stop_colours[0] = *c;
+            stop_colours[1] = *c;
+            stop_count = 0.0;
+            [0.0f32, 0.0]
+        }
+        OverlayFill::LinearGradient {
+            start_colour,
+            end_colour,
+            angle,
+        } => {
+            stop_colours[0] = *start_colour;
+            stop_colours[1] = *end_colour;
+            stop_count = 2.0;
+            [1.0f32, *angle]
+        }
+        OverlayFill::RadialGradient {
+            centre_colour,
+            edge_colour,
+        } => {
+            stop_colours[0] = *centre_colour;
+            stop_colours[1] = *edge_colour;
+            stop_count = 2.0;
+            [2.0f32, 0.0]
+        }
+        OverlayFill::ConicalGradient {
+            start_colour,
+            end_colour,
+            offset_angle,
+        } => {
+            stop_colours[0] = *start_colour;
+            stop_colours[1] = *end_colour;
+            stop_count = 2.0;
+            [3.0f32, *offset_angle]
+        }
+        OverlayFill::LinearGradientMulti { stops, angle } => {
+            stop_count =
+                overlay_geometry::pack_stops(stops, &mut stop_colours, &mut stop_positions);
+            [1.0f32, *angle]
+        }
+        OverlayFill::RadialGradientMulti { stops } => {
+            stop_count =
+                overlay_geometry::pack_stops(stops, &mut stop_colours, &mut stop_positions);
+            [2.0f32, 0.0]
+        }
+        OverlayFill::ConicalGradientMulti {
+            stops,
+            offset_angle,
+        } => {
+            stop_count =
+                overlay_geometry::pack_stops(stops, &mut stop_colours, &mut stop_positions);
+            [3.0f32, *offset_angle]
+        }
+        _ => {
+            stop_count = 0.0;
+            [0.0f32, 0.0]
+        }
+    };
+    for colour in &mut stop_colours {
+        colour[3] *= op;
+    }
+    let fc = stop_colours[0];
+    let fc2 = stop_colours[1];
+    let mut bc = shape.border_colour;
+    bc[3] *= op;
+    let mut sc = shape.shadow_colour;
+    sc[3] *= op;
+    let border_mode_f = match shape.border_mode {
+        BorderMode::Inset => 0.0,
+        BorderMode::Outer => 1.0,
+        BorderMode::Center => 2.0,
+    };
+    let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
+
+    let base_index = out_shadows.len();
+    let (mut outer_count, mut inner_count) = (0usize, 0usize);
+    let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
+    if !shape.shadows.is_empty() {
+        for l in shape.shadows.iter().take(max_layers) {
+            let mut col = l.colour;
+            col[3] *= op;
+            out_shadows.push(crate::resources::OverlayShadowLayerGpu {
+                colour: col,
+                params: [l.radius, l.offset[0], l.offset[1], 0.0],
+            });
+            outer_count += 1;
+        }
+    } else if shape.shadow_radius > 0.0 && !shape.shadow_inset {
+        out_shadows.push(crate::resources::OverlayShadowLayerGpu {
+            colour: sc,
+            params: [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], 0.0],
+        });
+        outer_count += 1;
+    }
+    if !shape.inner_shadows.is_empty() {
+        for l in shape.inner_shadows.iter().take(max_layers) {
+            let mut col = l.colour;
+            col[3] *= op;
+            out_shadows.push(crate::resources::OverlayShadowLayerGpu {
+                colour: col,
+                params: [l.radius, l.offset[0], l.offset[1], 1.0],
+            });
+            inner_count += 1;
+        }
+    } else if shape.shadow_radius > 0.0 && shape.shadow_inset {
+        out_shadows.push(crate::resources::OverlayShadowLayerGpu {
+            colour: sc,
+            params: [shape.shadow_radius, shape.shadow_offset[0], shape.shadow_offset[1], 1.0],
+        });
+        inner_count += 1;
+    }
+    let shadow_index = [
+        base_index as f32,
+        outer_count as f32,
+        inner_count as f32,
+        border_mode_f,
+    ];
+    let rotation_pivot = [
+        shape.rotation,
+        shape.rotation_pivot[0],
+        shape.rotation_pivot[1],
+        0.0,
+    ];
+    let half_size = [hw, hh];
+    let corners = [
+        (cx - ex, cy - ey, -ex, -ey),
+        (cx + ex, cy - ey, ex, -ey),
+        (cx + ex, cy + ey, ex, ey),
+        (cx - ex, cy - ey, -ex, -ey),
+        (cx + ex, cy + ey, ex, ey),
+        (cx - ex, cy + ey, -ex, ey),
+    ];
+    for (px, py, lx, ly) in corners {
+        out_verts.push(crate::resources::OverlayShapeVertex {
+            position: [px, py],
+            local_pos: [lx, ly],
+            fill_colour: fc,
+            border_colour: bc,
+            half_size,
+            radii,
+            border_width: shape.border_width,
+            shape_type,
+            fill_colour2: fc2,
+            gradient_params: gp4,
+            shadow_index,
+            rotation_pivot,
+            clip_rect: [0.0; 4],
+            clip_index: -1.0,
+            stop_colour_c: stop_colours[2],
+            stop_colour_d: stop_colours[3],
+            stop_positions,
+        });
+    }
+}
+
 impl ViewportRenderer {
     /// Compile a group of polylines, vector shapes, and glyph runs into a retained
     /// overlay-geometry handle.
@@ -181,8 +461,47 @@ impl ViewportRenderer {
             queue.write_buffer(&vertex_buf, 0, bytemuck::cast_slice(&verts));
         }
 
+        // Analytic SDF shapes (the non-Vector entries of `vector_shapes`) go to the
+        // shape-pipeline stream. Vector entries were already handled above.
+        let mut shape_verts: Vec<crate::resources::OverlayShapeVertex> = Vec::new();
+        let mut shadow_layers: Vec<crate::resources::OverlayShadowLayerGpu> = Vec::new();
+        for shape in vector_shapes {
+            if !matches!(shape.shape, crate::renderer::types::OverlayShape::Vector { .. }) {
+                emit_sdf_shape(shape, &mut shape_verts, &mut shadow_layers);
+            }
+        }
+        let (shape_vertex_buf, shadow_buf, shape_bytes) = if shape_verts.is_empty() {
+            (None, None, 0)
+        } else {
+            // The shape pipeline layout always expects a shadow buffer; provide a
+            // dummy entry when no shape has shadows.
+            if shadow_layers.is_empty() {
+                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                    colour: [0.0; 4],
+                    params: [0.0; 4],
+                });
+            }
+            let sv_bytes = std::mem::size_of_val(&shape_verts[..]) as u64;
+            let sh_bytes = std::mem::size_of_val(&shadow_layers[..]) as u64;
+            let sv = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("compiled_overlay_shape_vbuf"),
+                size: sv_bytes,
+                usage: crate::gpu::BufferUsages::VERTEX | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&sv, 0, bytemuck::cast_slice(&shape_verts));
+            let sh = device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some("compiled_overlay_shadow_buf"),
+                size: sh_bytes,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&sh, 0, bytemuck::cast_slice(&shadow_layers));
+            (Some(sv), Some(sh), sv_bytes + sh_bytes)
+        };
+
         // Retain the source only when the group has glyphs (the only geometry that
-        // can go stale). Polyline/vector-only groups never re-emit.
+        // can go stale). Polyline/vector/shape-only groups never re-emit.
         let source = has_glyphs.then(|| crate::resources::CompiledSource {
             polylines: polylines.to_vec(),
             vector_shapes: vector_shapes.to_vec(),
@@ -191,14 +510,18 @@ impl ViewportRenderer {
             baked_ppp: pixels_per_point,
         });
 
+        let total_bytes = bytes + shape_bytes;
         self.resources.content.overlay_geometry.insert(
             crate::resources::CompiledOverlay {
                 vertex_buf,
                 vertex_count: verts.len() as u32,
-                bytes,
+                bytes: total_bytes,
+                shape_vertex_buf,
+                shape_vertex_count: shape_verts.len() as u32,
+                shadow_buf,
                 source,
             },
-            bytes,
+            total_bytes,
         )
     }
 

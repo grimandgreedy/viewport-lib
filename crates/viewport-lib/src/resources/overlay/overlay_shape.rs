@@ -89,6 +89,18 @@ impl crate::resources::DeviceResources {
                     },
                     count: None,
                 },
+                // binding 3: per-draw instance data (translate, opacity), read in
+                // the vertex shader by instance index. Slot 0 is the identity.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 

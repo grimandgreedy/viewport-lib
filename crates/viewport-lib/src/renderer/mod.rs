@@ -435,10 +435,20 @@ pub struct ViewportRenderer {
     /// independent of the viewport size (a resize rewrites this uniform, not the
     /// vertices). Created once and overwritten each frame.
     overlay_viewport_buf: Option<crate::gpu::Buffer>,
-    /// Per-frame retained overlay draws, one per submitted `RetainedOverlay` that
-    /// resolved to a live compiled group. Built in the overlay label prepare and
-    /// referenced by `OverlayDrawSource::Retained { draw_index }`.
+    /// Per-frame retained overlay text-stream draws, one per submitted
+    /// `RetainedOverlay` that resolved to a live compiled group with text-pipeline
+    /// geometry. Referenced by `OverlayDrawSource::Retained { draw_index }`.
     overlay_retained_draws: Vec<overlay_buffers::RetainedDraw>,
+    /// Per-frame retained overlay shape-stream draws (SDF shapes), referenced by
+    /// `OverlayDrawSource::RetainedShape { draw_index }`.
+    overlay_retained_shape_draws: Vec<overlay_buffers::RetainedShapeDraw>,
+    /// Shared per-draw instance buffer for the overlay pass: slot 0 identity plus
+    /// one per retained group. Bound by both the text pipeline (label bind group)
+    /// and the shape pipeline (shadow bind group). Rebuilt each frame.
+    overlay_instances_buf: Option<crate::gpu::Buffer>,
+    /// Set once the label prepare has written `overlay_instances_buf` this frame,
+    /// so the shape prepare reuses it instead of building an identity-only fallback.
+    overlay_instances_ready: bool,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -937,6 +947,9 @@ impl ViewportRenderer {
             overlay_shape_tex_vbufs: Vec::new(),
             overlay_viewport_buf: None,
             overlay_retained_draws: Vec::new(),
+            overlay_retained_shape_draws: Vec::new(),
+            overlay_instances_buf: None,
+            overlay_instances_ready: false,
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,
             backdrop_blur_state: None,

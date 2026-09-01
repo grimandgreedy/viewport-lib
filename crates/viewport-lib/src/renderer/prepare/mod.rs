@@ -929,6 +929,8 @@ impl ViewportRenderer {
             frame.overlays.uses_nonzero_z_order() || !frame.overlays.retained.is_empty();
         self.overlay_draw_segments.clear();
         self.overlay_retained_draws.clear();
+        self.overlay_retained_shape_draws.clear();
+        self.overlay_instances_ready = false;
         self.prepare_overlay_labels(device, queue, frame);
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);

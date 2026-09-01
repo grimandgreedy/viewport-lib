@@ -21,6 +21,7 @@ struct VertexInput {
     @location(13) clip_index:     f32,        // clip-shape index, or -1 for none
     @location(14) stop_colour_c:  vec4<f32>,  // 3rd colour stop (multi-stop gradients)
     @location(15) stop_colour_d:  vec4<f32>,  // 4th colour stop
+    @builtin(instance_index) instance_index: u32,
 };
 
 // One stacked shadow layer. `params` = (radius, offset_x, offset_y, is_inner).
@@ -53,6 +54,20 @@ struct Viewport {
 };
 @group(0) @binding(2) var<uniform> viewport: Viewport;
 
+// Per-draw instance: a retained group's per-frame translate and opacity. Indexed
+// by @builtin(instance_index); slot 0 is the identity immediate draws use. The
+// shape shader is at the inter-stage variable limit, so the instance is consumed
+// entirely in the vertex stage (translate on the position, opacity folded into
+// the vertex colours). A retained shape group therefore has no per-frame outer
+// clip (its group's text stream carries the clip); shadow-layer opacity is baked.
+struct OverlayInstance {
+    translate: vec2<f32>,
+    opacity:   f32,
+    pad:       f32,
+    clip_rect: vec4<f32>,
+};
+@group(0) @binding(3) var<storage, read> instances: array<OverlayInstance>;
+
 fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(px.x / viewport.size.x * 2.0 - 1.0, 1.0 - px.y / viewport.size.y * 2.0);
 }
@@ -80,22 +95,27 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position   = vec4<f32>(px_to_ndc(in.position), 0.0, 1.0);
+    let inst = instances[in.instance_index];
+    let a = inst.opacity;
+    out.clip_position   = vec4<f32>(px_to_ndc(in.position + inst.translate), 0.0, 1.0);
     out.local_pos       = in.local_pos;
-    out.fill_colour     = in.fill_colour;
-    out.border_colour   = in.border_colour;
+    // Fold the per-draw opacity into the vertex colours (identity for immediate
+    // draws). Alpha interpolates linearly, so scaling per-vertex matches scaling
+    // the resolved fragment alpha for these flat/lerped colour channels.
+    out.fill_colour     = vec4<f32>(in.fill_colour.rgb, in.fill_colour.a * a);
+    out.border_colour   = vec4<f32>(in.border_colour.rgb, in.border_colour.a * a);
     out.half_size       = in.half_size;
     out.radii           = in.radii;
     out.border_width    = in.shape_meta.x;
     out.shape_type      = in.shape_meta.y;
-    out.fill_colour2    = in.fill_colour2;
+    out.fill_colour2    = vec4<f32>(in.fill_colour2.rgb, in.fill_colour2.a * a);
     out.gradient_params = in.gradient_params;
     out.shadow_index    = in.shadow_index;
     out.rotation_pivot  = in.rotation_pivot;
     out.clip_rect       = in.clip_rect;
     out.clip_index      = in.clip_index;
-    out.stop_colour_c   = in.stop_colour_c;
-    out.stop_colour_d   = in.stop_colour_d;
+    out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb, in.stop_colour_c.a * a);
+    out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb, in.stop_colour_d.a * a);
     out.stop_positions  = in.stop_positions;
     return out;
 }

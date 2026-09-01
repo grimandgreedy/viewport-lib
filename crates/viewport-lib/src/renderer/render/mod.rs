@@ -178,6 +178,24 @@ macro_rules! emit_overlay_2d_ordered {
                             .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
                     }
                 }
+                OverlayDrawSource::RetainedShape { draw_index } => {
+                    // A retained group's SDF shape stream, through the shape
+                    // pipeline, from its cached buffer, shadow bind group, and
+                    // per-frame instance.
+                    if let (Some(pipeline), Some(rd)) = (
+                        &$this.resources.overlay_shape.pipeline,
+                        $this.overlay_retained_shape_draws.get(draw_index as usize),
+                    ) {
+                        if last_pipe != LastPipe::Shape {
+                            $render_pass.set_pipeline(pipeline);
+                            last_pipe = LastPipe::Shape;
+                        }
+                        $render_pass.set_bind_group(0, &rd.bind_group, &[]);
+                        $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                        $render_pass
+                            .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
+                    }
+                }
             }
         }
     }};

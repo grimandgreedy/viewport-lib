@@ -71,6 +71,17 @@ pub(crate) struct RetainedDraw {
     pub instance_index: u32,
 }
 
+/// One retained group's SDF shape-stream draw: the group's cached shape vertex
+/// buffer, its count, a bind group (the group's shadow buffer plus the shared clip
+/// / viewport / instances), and the per-draw instance index. Drawn through the
+/// overlay shape pipeline.
+pub(crate) struct RetainedShapeDraw {
+    pub vertex_buf: crate::gpu::Buffer,
+    pub vertex_count: u32,
+    pub bind_group: crate::gpu::BindGroup,
+    pub instance_index: u32,
+}
+
 /// Grow the capacity to hold at least `needed` bytes, in 1.5x steps from a small
 /// floor so tiny overlays do not thrash and large ones settle in a few frames.
 /// Kept a multiple of 4 to satisfy the copy alignment.

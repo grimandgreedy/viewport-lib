@@ -367,6 +367,30 @@ impl ViewportRenderer {
         }
     }
 
+    /// Ensure `overlay_instances_buf` holds at least the identity instance. The
+    /// label prepare fills it with the identity plus one slot per retained group;
+    /// this fallback covers a frame with immediate shapes but no text or retained
+    /// groups, so the shape pipeline's binding is always satisfied.
+    fn ensure_overlay_instances_default(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+    ) {
+        if self.overlay_instances_ready {
+            return;
+        }
+        let data = [crate::resources::OverlayInstance::IDENTITY];
+        let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("overlay_instances_buf"),
+            size: std::mem::size_of_val(&data) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::cast_slice(&data));
+        self.overlay_instances_buf = Some(buf);
+        self.overlay_instances_ready = true;
+    }
+
     pub(super) fn prepare_overlay_labels(
         &mut self,
         device: &crate::gpu::Device,
@@ -733,14 +757,36 @@ impl ViewportRenderer {
                 // draw. Slot 0 of the instance buffer is the identity that every
                 // immediate draw reads.
                 let mut instances = vec![crate::resources::OverlayInstance::IDENTITY];
+                // Collected shape-stream draws, finished after the instance buffer
+                // exists: (shape_vbuf, count, shadow_buf, instance_index, z_order).
+                let mut pending_shapes: Vec<(
+                    crate::gpu::Buffer,
+                    u32,
+                    crate::gpu::Buffer,
+                    u32,
+                    i32,
+                )> = Vec::new();
                 for r in &frame.overlays.retained {
                     // Re-emit the group first if its baked glyph UVs went stale
                     // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
                     self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp);
-                    let (vbuf, vcount) = match self.resources.content.overlay_geometry.get(r.id) {
-                        Some(c) if c.vertex_count > 0 => (c.vertex_buf.clone(), c.vertex_count),
-                        _ => continue,
+                    let (text, shape) = match self.resources.content.overlay_geometry.get(r.id) {
+                        Some(c) => {
+                            let text = (c.vertex_count > 0)
+                                .then(|| (c.vertex_buf.clone(), c.vertex_count));
+                            let shape = match (&c.shape_vertex_buf, &c.shadow_buf) {
+                                (Some(sv), Some(sh)) if c.shape_vertex_count > 0 => {
+                                    Some((sv.clone(), c.shape_vertex_count, sh.clone()))
+                                }
+                                _ => None,
+                            };
+                            (text, shape)
+                        }
+                        None => continue,
                     };
+                    if text.is_none() && shape.is_none() {
+                        continue;
+                    }
                     let clip_rect = if r.clip_rect == [0.0, 0.0, 0.0, 0.0] {
                         [0.0, 0.0, 0.0, 0.0]
                     } else {
@@ -758,21 +804,29 @@ impl ViewportRenderer {
                         _pad: 0.0,
                         clip_rect,
                     });
-                    let draw_index = self.overlay_retained_draws.len() as u32;
-                    self.overlay_retained_draws
-                        .push(crate::renderer::overlay_buffers::RetainedDraw {
-                            vertex_buf: vbuf,
-                            vertex_count: vcount,
-                            instance_index,
-                        });
-                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained(
-                        &mut self.overlay_draw_segments,
-                        r.z_order,
-                        draw_index,
-                    );
+                    if let Some((vbuf, vcount)) = text {
+                        let draw_index = self.overlay_retained_draws.len() as u32;
+                        self.overlay_retained_draws
+                            .push(crate::renderer::overlay_buffers::RetainedDraw {
+                                vertex_buf: vbuf,
+                                vertex_count: vcount,
+                                instance_index,
+                            });
+                        crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained(
+                            &mut self.overlay_draw_segments,
+                            r.z_order,
+                            draw_index,
+                        );
+                    }
+                    if let Some((svbuf, svcount, shbuf)) = shape {
+                        pending_shapes.push((svbuf, svcount, shbuf, instance_index, r.z_order));
+                    }
                 }
 
-                if !verts.is_empty() || !self.overlay_retained_draws.is_empty() {
+                if !verts.is_empty()
+                    || !self.overlay_retained_draws.is_empty()
+                    || !pending_shapes.is_empty()
+                {
                     let vertex_buf = self.overlay_text_vbuf.write(device, queue, &verts);
                     self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
                     let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
@@ -783,6 +837,61 @@ impl ViewportRenderer {
                         mapped_at_creation: false,
                     });
                     queue.write_buffer(&instances_buf, 0, bytemuck::cast_slice(&instances));
+                    // Share the instance buffer with the shape pass (immediate shapes
+                    // read the identity at slot 0; retained shape draws use their slot).
+                    self.overlay_instances_buf = Some(instances_buf.clone());
+                    self.overlay_instances_ready = true;
+
+                    // Finish retained shape-stream draws now that the instance
+                    // buffer exists: build each group's shape bind group (its shadow
+                    // buffer plus the shared clip / viewport / instances) and record
+                    // its draw + segment.
+                    if !pending_shapes.is_empty() {
+                        self.resources.ensure_overlay_shape_pipeline(device);
+                        let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
+                        if let Some(sh_bgl) = self.resources.overlay_shape.shadow_bgl.as_ref() {
+                            for (svbuf, svcount, shbuf, instance_index, z) in pending_shapes.drain(..)
+                            {
+                                let bind_group =
+                                    device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                        label: Some("overlay_retained_shape_bg"),
+                                        layout: sh_bgl,
+                                        entries: &[
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 0,
+                                                resource: shbuf.as_entire_binding(),
+                                            },
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 1,
+                                                resource: clip_buf.as_entire_binding(),
+                                            },
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 2,
+                                                resource: vp_buf.as_entire_binding(),
+                                            },
+                                            crate::gpu::BindGroupEntry {
+                                                binding: 3,
+                                                resource: instances_buf.as_entire_binding(),
+                                            },
+                                        ],
+                                    });
+                                let draw_index = self.overlay_retained_shape_draws.len() as u32;
+                                self.overlay_retained_shape_draws.push(
+                                    crate::renderer::overlay_buffers::RetainedShapeDraw {
+                                        vertex_buf: svbuf,
+                                        vertex_count: svcount,
+                                        bind_group,
+                                        instance_index,
+                                    },
+                                );
+                                crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained_shape(
+                                    &mut self.overlay_draw_segments,
+                                    z,
+                                    draw_index,
+                                );
+                            }
+                        }
+                    }
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
@@ -855,6 +964,7 @@ impl ViewportRenderer {
             let vp_h = frame.camera.viewport_size[1];
             if vp_w > 0.0 && vp_h > 0.0 {
                 self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
+                self.ensure_overlay_instances_default(device, queue);
                 let mut sorted: Vec<&crate::renderer::types::OverlayShapeItem> = frame
                     .overlays
                     .shapes
@@ -1664,6 +1774,7 @@ impl ViewportRenderer {
                     queue.write_buffer(&buf, 0, bytemuck::cast_slice(&shadow_layers));
                     let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
                     let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
+                    let inst_buf = self.overlay_instances_buf.as_ref().unwrap();
                     let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
                         device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("overlay_shape_shadow_bg"),
@@ -1680,6 +1791,10 @@ impl ViewportRenderer {
                                 crate::gpu::BindGroupEntry {
                                     binding: 2,
                                     resource: vp_buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: inst_buf.as_entire_binding(),
                                 },
                             ],
                         })

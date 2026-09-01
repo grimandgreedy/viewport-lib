@@ -13,8 +13,17 @@ pub(crate) struct CompiledOverlay {
     pub vertex_buf: crate::gpu::Buffer,
     /// Number of vertices in `vertex_buf`.
     pub vertex_count: u32,
-    /// GPU bytes charged for this entry (the vertex buffer size).
+    /// GPU bytes charged for this entry (both vertex buffers plus shadows).
     pub bytes: u64,
+    /// Analytic SDF shape vertices (`OverlayShapeVertex`), drawn through the shape
+    /// pipeline. `None` when the group has no SDF shapes.
+    pub shape_vertex_buf: Option<crate::gpu::Buffer>,
+    /// Number of vertices in `shape_vertex_buf`.
+    pub shape_vertex_count: u32,
+    /// The stacked shadow-layer storage buffer the SDF shapes reference. Kept
+    /// alive alongside `shape_vertex_buf`; always at least one (dummy) entry when
+    /// the shape stream is present.
+    pub shadow_buf: Option<crate::gpu::Buffer>,
     /// Retained source items for re-emission, present only when the group carries
     /// glyphs. Glyph geometry bakes atlas UVs at a physical size, so it goes stale
     /// when the atlas grows or `pixels_per_point` changes; the renderer re-emits

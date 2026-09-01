@@ -15,7 +15,8 @@ mod common;
 use common::*;
 
 use viewport_lib::{
-    GlyphRunItem, OverlayFill, OverlayPolylineItem, PositionedGlyph, RetainedOverlay,
+    GlyphRunItem, OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem, PositionedGlyph,
+    RetainedOverlay,
 };
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
@@ -58,6 +59,48 @@ fn is_red(c: (u8, u8, u8)) -> bool {
 fn is_background(c: (u8, u8, u8)) -> bool {
     // 0.3 linear grey encodes to ~149 in sRGB; the key point is it is not red.
     c.0 < 200 && (c.0 as i32 - c.1 as i32).abs() < 30 && (c.1 as i32 - c.2 as i32).abs() < 30
+}
+
+/// A red SDF rect over pixels 16..48 (analytic shape pipeline).
+fn red_sdf_rect() -> OverlayShapeItem {
+    OverlayShapeItem::new(OverlayShape::Rect { corner_radius: 0.0 }, [16.0, 16.0], [32.0, 32.0])
+        .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0]))
+}
+
+/// A retained group carrying an analytic SDF shape draws through the shape
+/// pipeline from its cached buffer and moves with the per-frame translate.
+#[test]
+fn retained_sdf_shape_draws_and_translates() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+
+    // Pass the SDF rect in the shapes slice; it routes to the shape stream.
+    let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], 1.0);
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(is_red(rgb_at(&px, size, 32, 32)), "SDF rect centre should be red");
+    assert!(
+        is_background(rgb_at(&px, size, 8, 32)),
+        "left of the rect should be background"
+    );
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 56, 32)),
+        "translated SDF rect should cover x=56"
+    );
+    assert!(
+        is_background(rgb_at(&px, size, 24, 32)),
+        "translated SDF rect should have vacated x=24"
+    );
 }
 
 /// A single row of built-in-font glyphs (ids 4.. are letters/digits in Inter),
