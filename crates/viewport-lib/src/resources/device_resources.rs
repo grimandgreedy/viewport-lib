@@ -531,6 +531,14 @@ pub struct ContentResources {
         OverlayShapeTextureEntry,
         crate::renderer::OverlayTextureId,
     >,
+    /// Compiled retained overlay geometry, keyed by generational
+    /// `OverlayGeometryId`. Each entry is a group tessellated once by
+    /// `compile_overlay_geometry` and drawn from its cached buffer each frame; a
+    /// freed slot cannot alias a later compile.
+    pub(crate) overlay_geometry: crate::resources::handle::SlotStore<
+        crate::resources::CompiledOverlay,
+        viewport_lib_types::overlay::OverlayGeometryId,
+    >,
     /// Matcap textures (256x256 RGBA), indexed by `MatcapId::index`.
     pub(crate) matcap_textures: Vec<crate::gpu::Texture>,
     /// Texture views for each uploaded matcap.

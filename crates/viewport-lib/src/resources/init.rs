@@ -2404,6 +2404,7 @@ impl DeviceResources {
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),
                 overlay_textures: crate::resources::handle::SlotStore::default(),
+                overlay_geometry: crate::resources::handle::SlotStore::default(),
                 matcap_textures: Vec::new(),
                 matcap_views: Vec::new(),
                 matcap_sampler: None,

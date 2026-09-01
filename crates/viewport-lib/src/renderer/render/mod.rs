@@ -158,6 +158,26 @@ macro_rules! emit_overlay_2d_ordered {
                         $render_pass.draw(vertex_start..vertex_start + vertex_count, 0..1);
                     }
                 }
+                OverlayDrawSource::Retained { draw_index } => {
+                    // A retained group draws through the text pipeline, sharing its
+                    // bind group (atlas, clip, viewport, instances) with the
+                    // immediate text batch, from its own cached buffer and
+                    // per-frame instance slot.
+                    if let (Some(pipeline), Some(td), Some(rd)) = (
+                        &$this.resources.overlay_text.pipeline,
+                        $this.label_gpu_data.as_ref(),
+                        $this.overlay_retained_draws.get(draw_index as usize),
+                    ) {
+                        if last_pipe != LastPipe::Text {
+                            $render_pass.set_pipeline(pipeline);
+                            last_pipe = LastPipe::Text;
+                        }
+                        $render_pass.set_bind_group(0, &td.bind_group, &[]);
+                        $render_pass.set_vertex_buffer(0, rd.vertex_buf.slice(..));
+                        $render_pass
+                            .draw(0..rd.vertex_count, rd.instance_index..rd.instance_index + 1);
+                    }
+                }
             }
         }
     }};

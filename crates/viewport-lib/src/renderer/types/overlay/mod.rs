@@ -6,13 +6,14 @@
 //! preserve its existing path; it is intentionally not globbed here.
 
 pub use viewport_lib_types::overlay::{
-    anchor, animation, fill, frame, glyph_run, label, polyline, shape, texture, vector,
+    anchor, animation, fill, frame, geometry, glyph_run, label, polyline, shape, texture, vector,
 };
 
 pub use viewport_lib_types::overlay::anchor::*;
 pub use viewport_lib_types::overlay::animation::*;
 pub use viewport_lib_types::overlay::fill::*;
 pub use viewport_lib_types::overlay::frame::*;
+pub use viewport_lib_types::overlay::geometry::*;
 pub use viewport_lib_types::overlay::glyph_run::*;
 pub use viewport_lib_types::overlay::label::*;
 pub use viewport_lib_types::overlay::polyline::*;

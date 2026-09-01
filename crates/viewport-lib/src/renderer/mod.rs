@@ -65,7 +65,8 @@ pub use self::types::{
     LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem,
     NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor,
     OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE,
+    OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
+    POINT_SHADOW_FACE_SIZE, RetainedOverlay,
     ParticleMeshAlign, PathSegment, PathTrack, PickId, PipelineMode, PointCloudItem,
     PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
     PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
@@ -434,6 +435,10 @@ pub struct ViewportRenderer {
     /// independent of the viewport size (a resize rewrites this uniform, not the
     /// vertices). Created once and overwritten each frame.
     overlay_viewport_buf: Option<crate::gpu::Buffer>,
+    /// Per-frame retained overlay draws, one per submitted `RetainedOverlay` that
+    /// resolved to a live compiled group. Built in the overlay label prepare and
+    /// referenced by `OverlayDrawSource::Retained { draw_index }`.
+    overlay_retained_draws: Vec<overlay_buffers::RetainedDraw>,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -931,6 +936,7 @@ impl ViewportRenderer {
             overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
             overlay_shape_tex_vbufs: Vec::new(),
             overlay_viewport_buf: None,
+            overlay_retained_draws: Vec::new(),
             overlay_draw_segments: Vec::new(),
             overlay_uses_zorder: false,
             backdrop_blur_state: None,

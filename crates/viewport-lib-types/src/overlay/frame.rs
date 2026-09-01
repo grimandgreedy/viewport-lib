@@ -26,6 +26,12 @@ pub struct OverlayFrame {
     /// Stroked polylines. Rendered through the same pipeline as labels; share
     /// their z-order space.
     pub polylines: Vec<OverlayPolylineItem>,
+    /// Retained overlay groups: geometry compiled once with
+    /// `compile_overlay_geometry` and re-drawn from cached buffers, each carrying
+    /// its per-frame translate, opacity, z-order, and clip. Empty by default and
+    /// costs nothing when unused; this is the opt-in path for a UI that draws many
+    /// mostly-static overlays without re-tessellating them every frame.
+    pub retained: Vec<RetainedOverlay>,
 }
 
 impl OverlayFrame {

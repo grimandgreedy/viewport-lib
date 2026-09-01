@@ -129,7 +129,7 @@ fn transform_vector_positions(
 
 /// Tessellate and emit a vector shape's fill, plus its outline border when set,
 /// as `OverlayTextVertex`s into `batch`.
-fn emit_vector_shape(
+pub(super) fn emit_vector_shape(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
     subpaths: &[crate::renderer::types::SubPath],
@@ -392,7 +392,8 @@ impl ViewportRenderer {
             || !frame.overlays.glyph_runs.is_empty()
             || !frame.overlays.polylines.is_empty()
             || !gizmo_polylines.is_empty()
-            || has_vector_shape;
+            || has_vector_shape
+            || !frame.overlays.retained.is_empty();
         if has_overlay {
             self.resources.ensure_overlay_text_pipeline(device);
             let vp_w = frame.camera.viewport_size[0];
@@ -726,10 +727,59 @@ impl ViewportRenderer {
                     }
                 }
 
-                if !verts.is_empty() {
+                // Retained overlay groups: resolve each submitted group to its
+                // compiled buffer, build its per-frame instance (translate,
+                // opacity, and outer clip in framebuffer pixels), and record a
+                // draw. Slot 0 of the instance buffer is the identity that every
+                // immediate draw reads.
+                let mut instances = vec![crate::resources::OverlayInstance::IDENTITY];
+                for r in &frame.overlays.retained {
+                    let (vbuf, vcount) = match self.resources.content.overlay_geometry.get(r.id) {
+                        Some(c) if c.vertex_count > 0 => (c.vertex_buf.clone(), c.vertex_count),
+                        _ => continue,
+                    };
+                    let clip_rect = if r.clip_rect == [0.0, 0.0, 0.0, 0.0] {
+                        [0.0, 0.0, 0.0, 0.0]
+                    } else {
+                        [
+                            r.clip_rect[0] * ppp,
+                            r.clip_rect[1] * ppp,
+                            r.clip_rect[2] * ppp,
+                            r.clip_rect[3] * ppp,
+                        ]
+                    };
+                    let instance_index = instances.len() as u32;
+                    instances.push(crate::resources::OverlayInstance {
+                        translate: r.translate,
+                        opacity: r.opacity,
+                        _pad: 0.0,
+                        clip_rect,
+                    });
+                    let draw_index = self.overlay_retained_draws.len() as u32;
+                    self.overlay_retained_draws
+                        .push(crate::renderer::overlay_buffers::RetainedDraw {
+                            vertex_buf: vbuf,
+                            vertex_count: vcount,
+                            instance_index,
+                        });
+                    crate::renderer::overlay_draw_order::OverlayDrawSegment::push_retained(
+                        &mut self.overlay_draw_segments,
+                        r.z_order,
+                        draw_index,
+                    );
+                }
+
+                if !verts.is_empty() || !self.overlay_retained_draws.is_empty() {
                     let vertex_buf = self.overlay_text_vbuf.write(device, queue, &verts);
                     self.ensure_overlay_viewport_buf(device, queue, vp_w, vp_h);
                     let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                    let instances_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+                        label: Some("overlay_instances_buf"),
+                        size: std::mem::size_of_val(&instances[..]) as u64,
+                        usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    queue.write_buffer(&instances_buf, 0, bytemuck::cast_slice(&instances));
                     let bgl = self.resources.overlay_text.bgl.as_ref().unwrap();
                     let sampler = self.resources.overlay_text.sampler.as_ref().unwrap();
                     let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
@@ -755,6 +805,10 @@ impl ViewportRenderer {
                                 binding: 3,
                                 resource: vp_buf.as_entire_binding(),
                             },
+                            crate::gpu::BindGroupEntry {
+                                binding: 4,
+                                resource: instances_buf.as_entire_binding(),
+                            },
                         ],
                     });
                     self.label_gpu_data = Some(crate::resources::LabelGpuData {
@@ -762,6 +816,7 @@ impl ViewportRenderer {
                         vertex_count: verts.len() as u32,
                         bind_group,
                         _clip_buf: clip_buf,
+                        _instances_buf: instances_buf,
                     });
                 }
             }

@@ -60,6 +60,17 @@ impl GrowBuffer {
     }
 }
 
+/// One retained overlay group's per-frame draw: its cached vertex buffer (a
+/// clone of the `CompiledOverlay` buffer, resolved from the store this frame),
+/// vertex count, and the index of its per-draw instance in the frame's instance
+/// buffer. Rebuilt each frame in the overlay label prepare and consumed in the
+/// ordered overlay emit.
+pub(crate) struct RetainedDraw {
+    pub vertex_buf: crate::gpu::Buffer,
+    pub vertex_count: u32,
+    pub instance_index: u32,
+}
+
 /// Grow the capacity to hold at least `needed` bytes, in 1.5x steps from a small
 /// floor so tiny overlays do not thrash and large ones settle in a few frames.
 /// Kept a multiple of 4 to satisfy the copy alignment.

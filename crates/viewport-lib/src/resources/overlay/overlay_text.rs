@@ -71,6 +71,19 @@ impl crate::resources::DeviceResources {
                     },
                     count: None,
                 },
+                // binding 4: per-draw instance data (translate, opacity, clip),
+                // indexed by the draw's instance index. Slot 0 is the identity used
+                // by immediate draws; retained groups use their own slot.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: crate::gpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -220,4 +233,8 @@ pub(crate) struct LabelGpuData {
     /// Backing clip-shape storage buffer for `bind_group` (binding 2). Kept alive
     /// alongside it.
     pub _clip_buf: crate::gpu::Buffer,
+    /// Per-draw instance storage buffer for `bind_group` (binding 4): the identity
+    /// instance at slot 0 plus one per retained group this frame. Kept alive
+    /// alongside the bind group; retained draws index into it.
+    pub _instances_buf: crate::gpu::Buffer,
 }

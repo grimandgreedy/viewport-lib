@@ -7,6 +7,7 @@ mod instanced;
 mod lighting;
 mod math;
 mod mesh_material;
+mod overlay_compile;
 mod overlay_geometry;
 mod overlay_vector;
 mod per_object;
@@ -921,8 +922,13 @@ impl ViewportRenderer {
         // `overlay_draw_segments`, which `finalize_overlay_draw_order` sorts into
         // a single cross-family paint order; otherwise the emit path keeps its
         // fixed family order and the list stays empty.
-        self.overlay_uses_zorder = frame.overlays.uses_nonzero_z_order();
+        // Retained groups always draw through the sorted segment list (they carry
+        // their own z_order and are separate draws), so force the ordered path
+        // whenever any are present, even if no immediate item sets a z_order.
+        self.overlay_uses_zorder =
+            frame.overlays.uses_nonzero_z_order() || !frame.overlays.retained.is_empty();
         self.overlay_draw_segments.clear();
+        self.overlay_retained_draws.clear();
         self.prepare_overlay_labels(device, queue, frame);
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);

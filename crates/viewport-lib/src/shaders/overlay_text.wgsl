@@ -33,6 +33,16 @@ struct Viewport {
 };
 @group(0) @binding(3) var<uniform> viewport: Viewport;
 
+// Per-draw instance: a group's per-frame translate, opacity, and outer clip.
+// Indexed by @builtin(instance_index); slot 0 is the identity immediate draws use.
+struct OverlayInstance {
+    translate: vec2<f32>,
+    opacity:   f32,
+    pad:       f32,
+    clip_rect: vec4<f32>,
+};
+@group(0) @binding(4) var<storage, read> instances: array<OverlayInstance>;
+
 struct VertexInput {
     @location(0) position:    vec2<f32>,  // local logical pixels
     @location(1) uv:          vec2<f32>,  // atlas UV (ignored for solid quads)
@@ -40,6 +50,7 @@ struct VertexInput {
     @location(3) use_texture: f32,        // 1.0 = sample atlas, 0.0 = solid
     @location(4) clip_index:  f32,        // clip-shape index, or -1 for none
     @location(5) clip_rect:   vec4<f32>,  // framebuffer clip bbox (x0,y0,x1,y1); all zero = none
+    @builtin(instance_index) instance_index: u32,
 };
 
 struct VertexOutput {
@@ -47,8 +58,10 @@ struct VertexOutput {
     @location(0)       uv:           vec2<f32>,
     @location(1)       colour:       vec4<f32>,
     @location(2)       use_texture:  f32,
-    @location(3) @interpolate(flat) clip_index: f32,
-    @location(4) @interpolate(flat) clip_rect:  vec4<f32>,
+    @location(3) @interpolate(flat) clip_index:  f32,
+    @location(4) @interpolate(flat) clip_rect:   vec4<f32>,
+    @location(5) @interpolate(flat) opacity:     f32,
+    @location(6) @interpolate(flat) outer_clip:  vec4<f32>,
 };
 
 // Map a local logical-pixel position to NDC using the viewport size.
@@ -59,12 +72,15 @@ fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = vec4<f32>(px_to_ndc(in.position), 0.0, 1.0);
+    let inst = instances[in.instance_index];
+    out.clip_position = vec4<f32>(px_to_ndc(in.position + inst.translate), 0.0, 1.0);
     out.uv            = in.uv;
     out.colour        = in.colour;
     out.use_texture   = in.use_texture;
     out.clip_index    = in.clip_index;
     out.clip_rect     = in.clip_rect;
+    out.opacity       = inst.opacity;
+    out.outer_clip    = inst.clip_rect;
     return out;
 }
 
@@ -306,17 +322,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (in.clip_index >= 0.0 && clip_outside(in.clip_position.xy, in.clip_index)) {
         discard;
     }
+    // Outer clip: a retained group's per-frame clip rect (the scroll viewport).
+    // Zero rect means no clip, so immediate draws (identity instance) skip it.
+    let oc = in.outer_clip;
+    if (oc.z > oc.x && oc.w > oc.y) {
+        let fp = in.clip_position.xy;
+        if (fp.x < oc.x || fp.x > oc.z || fp.y < oc.y || fp.y > oc.w) {
+            discard;
+        }
+    }
 
+    var result: vec4<f32>;
     if (in.use_texture > 1.5) {
         // Colour glyph (emoji): draw the atlas RGBA as-is. The run colour only
         // carries opacity through its alpha; the tint RGB is ignored.
         let c = textureSample(glyph_atlas, atlas_sampler, in.uv);
-        return vec4<f32>(c.rgb, c.a * in.colour.a);
+        result = vec4<f32>(c.rgb, c.a * in.colour.a);
     } else if (in.use_texture > 0.5) {
         // Coverage glyph: tint the atlas alpha by the run colour.
         let atlas_a = textureSample(glyph_atlas, atlas_sampler, in.uv).a;
-        return vec4<f32>(in.colour.rgb, in.colour.a * atlas_a);
+        result = vec4<f32>(in.colour.rgb, in.colour.a * atlas_a);
     } else {
-        return in.colour;
+        result = in.colour;
     }
+    // Per-draw opacity (1.0 for immediate draws).
+    return vec4<f32>(result.rgb, result.a * in.opacity);
 }

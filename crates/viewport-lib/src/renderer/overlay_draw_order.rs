@@ -49,6 +49,13 @@ pub(crate) enum OverlayDrawSource {
         vertex_start: u32,
         vertex_count: u32,
     },
+    /// A retained overlay group drawn through the text pipeline. `draw_index`
+    /// selects the group's cached buffer and per-frame instance in
+    /// `overlay_retained_draws`. Each retained group is its own draw (its own
+    /// buffer and instance), so these do not coalesce.
+    Retained {
+        draw_index: u32,
+    },
 }
 
 /// A single draw within the overlay pass, tagged with its z-order and family
@@ -177,6 +184,17 @@ impl OverlayDrawSegment {
                 vertex_start,
                 vertex_count,
             },
+        });
+    }
+
+    /// Append a retained-group segment. Ranked with the merged text batch (a
+    /// retained group draws through the text pipeline), and never coalesced: each
+    /// group has its own cached buffer and per-frame instance.
+    pub fn push_retained(segments: &mut Vec<OverlayDrawSegment>, z_order: i32, draw_index: u32) {
+        segments.push(OverlayDrawSegment {
+            z_order,
+            family_rank: family_rank::TEXT_MERGED,
+            source: OverlayDrawSource::Retained { draw_index },
         });
     }
 }
