@@ -14,7 +14,9 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::{OverlayFill, OverlayPolylineItem, RetainedOverlay};
+use viewport_lib::{
+    GlyphRunItem, OverlayFill, OverlayPolylineItem, PositionedGlyph, RetainedOverlay,
+};
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
 fn overlay_frame(size: u32) -> FrameData {
@@ -58,6 +60,63 @@ fn is_background(c: (u8, u8, u8)) -> bool {
     c.0 < 200 && (c.0 as i32 - c.1 as i32).abs() < 30 && (c.1 as i32 - c.2 as i32).abs() < 30
 }
 
+/// A single row of built-in-font glyphs (ids 4.. are letters/digits in Inter),
+/// drawn white.
+fn glyph_run() -> GlyphRunItem {
+    let mut glyphs = Vec::new();
+    let mut id: u16 = 4;
+    for col in 0..8 {
+        glyphs.push(PositionedGlyph::new(id, 6.0 + col as f32 * 12.0, 60.0));
+        id += 1;
+    }
+    GlyphRunItem::new(glyphs)
+        .with_font_size(22.0)
+        .with_colour([1.0, 1.0, 1.0, 1.0])
+}
+
+/// Count near-white pixels (drawn glyph coverage) over the grey background.
+fn bright_pixels(px: &[u8]) -> usize {
+    px.chunks_exact(4)
+        .filter(|p| p[0] > 200 && p[1] > 200 && p[2] > 200)
+        .count()
+}
+
+/// A retained group of glyph runs draws from the cache, and survives a DPI change:
+/// when `pixels_per_point` changes the group's baked glyph UVs go stale, so the
+/// renderer re-emits at the new physical size and the glyphs still draw.
+#[test]
+fn retained_glyphs_survive_dpi_change() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 128u32;
+
+    let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[], &[glyph_run()], 1.0);
+
+    // ppp 1.0 (matches the compile): glyphs draw straight from the cache.
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    let n1 = bright_pixels(&px);
+    assert!(n1 > 10, "glyphs should draw at ppp 1.0, got {n1} bright pixels");
+
+    // ppp 2.0: baked ppp no longer matches, so the group re-emits at the new
+    // physical size; the glyphs still draw. The offscreen target is sized to the
+    // physical resolution (logical size * ppp) so the colour and depth attachments
+    // match.
+    let mut frame = overlay_frame(size);
+    frame.camera.pixels_per_point = 2.0;
+    frame.overlays.retained = vec![RetainedOverlay::new(id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size * 2, size * 2);
+    let n2 = bright_pixels(&px);
+    assert!(
+        n2 > 10,
+        "glyphs should still draw after a DPI change (re-emit), got {n2} bright pixels"
+    );
+}
+
 /// A compiled group draws from its cached buffer, and the per-frame `translate`
 /// moves it without re-compiling.
 #[test]
@@ -69,7 +128,7 @@ fn retained_draws_and_translates() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let size = 64u32;
 
-    let id = renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[]);
+    let id = renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], 1.0);
 
     // No translate: the square covers pixels 16..48, so the centre is red and a
     // point to its left is background.
@@ -107,7 +166,7 @@ fn retained_opacity_and_free() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let size = 64u32;
 
-    let id = renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[]);
+    let id = renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], 1.0);
 
     // Fully transparent: the centre reads the background.
     let mut frame = overlay_frame(size);

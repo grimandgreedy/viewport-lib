@@ -4,9 +4,10 @@
 
 /// A compiled overlay group's GPU geometry.
 ///
-/// Holds the text-pipeline vertex stream (`OverlayTextVertex`: polylines and
-/// vector fills) in a persistent buffer that lives until the group is freed. The
-/// SDF-shape stream is added later; a group may then carry either or both.
+/// Holds the text-pipeline vertex stream (`OverlayTextVertex`: polylines, vector
+/// fills, and glyph runs) in a persistent buffer that lives until the group is
+/// freed. The SDF-shape stream is added later; a group may then carry either or
+/// both.
 pub(crate) struct CompiledOverlay {
     /// Text-pipeline vertices in local logical-pixel space, uploaded once.
     pub vertex_buf: crate::gpu::Buffer,
@@ -14,6 +15,25 @@ pub(crate) struct CompiledOverlay {
     pub vertex_count: u32,
     /// GPU bytes charged for this entry (the vertex buffer size).
     pub bytes: u64,
+    /// Retained source items for re-emission, present only when the group carries
+    /// glyphs. Glyph geometry bakes atlas UVs at a physical size, so it goes stale
+    /// when the atlas grows or `pixels_per_point` changes; the renderer re-emits
+    /// from this source on that event. `None` for polyline/vector-only groups,
+    /// whose geometry is viewport-independent and never invalidates.
+    pub source: Option<CompiledSource>,
+}
+
+/// The source items a glyph-bearing group retains so its geometry can be
+/// re-emitted when its baked atlas UVs go stale.
+#[derive(Clone)]
+pub(crate) struct CompiledSource {
+    pub polylines: Vec<viewport_lib_types::overlay::OverlayPolylineItem>,
+    pub vector_shapes: Vec<viewport_lib_types::overlay::OverlayShapeItem>,
+    pub glyph_runs: Vec<viewport_lib_types::overlay::GlyphRunItem>,
+    /// The atlas growth version the current geometry baked UVs against.
+    pub baked_atlas_version: u64,
+    /// The `pixels_per_point` the current geometry baked glyphs at.
+    pub baked_ppp: f32,
 }
 
 /// Per-draw instance data shared by immediate and retained overlay draws.

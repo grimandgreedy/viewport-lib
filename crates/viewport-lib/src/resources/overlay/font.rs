@@ -145,6 +145,14 @@ pub(crate) struct GlyphAtlas {
     /// Set to `true` whenever new glyphs have been rasterized since the last
     /// GPU upload.  Cleared by [`GlyphAtlas::upload_if_dirty`].
     dirty: bool,
+
+    /// Monotonic counter bumped every time the atlas grows. Growing doubles
+    /// `size`, so every existing glyph's UV (`pixel / size`) changes even though
+    /// its pixel position is unchanged. Cached glyph geometry (retained overlay
+    /// groups) records the version it baked UVs against and re-emits when this
+    /// moves. Unlike `dirty` (a per-frame upload gate reset every frame), this is
+    /// a persistent invalidation signal.
+    atlas_version: u64,
 }
 
 impl GlyphAtlas {
@@ -176,7 +184,14 @@ impl GlyphAtlas {
             texture,
             view,
             dirty: false,
+            atlas_version: 0,
         }
+    }
+
+    /// The atlas growth generation. Bumped each time the atlas grows (which
+    /// changes every glyph's UV). Retained glyph geometry re-emits when this moves.
+    pub fn version(&self) -> u64 {
+        self.atlas_version
     }
 
     /// Register a user-supplied TTF font.  Returns a [`FontHandle`] that can be
@@ -758,6 +773,9 @@ impl GlyphAtlas {
         self.texture = texture;
         self.view = view;
         self.dirty = true; // Full re-upload needed.
+        // Every existing glyph's UV divisor (the atlas size) just changed, so any
+        // cached glyph geometry baked against the old size is now stale.
+        self.atlas_version += 1;
     }
 
     fn create_texture(

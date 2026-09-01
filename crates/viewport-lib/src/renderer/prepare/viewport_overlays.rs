@@ -734,6 +734,9 @@ impl ViewportRenderer {
                 // immediate draw reads.
                 let mut instances = vec![crate::resources::OverlayInstance::IDENTITY];
                 for r in &frame.overlays.retained {
+                    // Re-emit the group first if its baked glyph UVs went stale
+                    // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
+                    self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp);
                     let (vbuf, vcount) = match self.resources.content.overlay_geometry.get(r.id) {
                         Some(c) if c.vertex_count > 0 => (c.vertex_buf.clone(), c.vertex_count),
                         _ => continue,
