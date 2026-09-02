@@ -324,7 +324,7 @@ fn add_world_mesh(scene: &mut RtScene, geo: &Geo, xf: Mat4, albedo: [f32; 3]) {
         &geo.idx,
         Some(&normals),
         RtMaterial {
-            base_colour: albedo,
+            base_colour: albedo.into(),
             roughness: 0.9,
             ..RtMaterial::default()
         },
@@ -364,9 +364,9 @@ fn marker_material(colour: [f32; 3], on: bool) -> Material {
         0.85,
     );
     m.emissive = if on {
-        colour
+        colour.into()
     } else {
-        [colour[0] * 0.1, colour[1] * 0.1, colour[2] * 0.1]
+        [colour[0] * 0.1, colour[1] * 0.1, colour[2] * 0.1].into()
     };
     m
 }

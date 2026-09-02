@@ -397,7 +397,7 @@ impl OverlaysShowcase {
         for (w, h, shape, fill, border) in row1.iter().cloned() {
             out.push(
                 OverlayShapeItem::new(shape, [x, y + (70.0 - h) * 0.5], [w, h])
-                    .with_fill(OverlayFill::Solid(fill))
+                    .with_fill(OverlayFill::Solid(fill.into()))
                     .with_border(border, bw),
             );
             x += w + gap;

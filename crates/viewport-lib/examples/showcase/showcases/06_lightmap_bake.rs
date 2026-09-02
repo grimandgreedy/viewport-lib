@@ -258,7 +258,7 @@ impl LightmapBakeShowcase {
                 &p.idx,
                 Some(&wn),
                 RtMaterial {
-                    base_colour: p.albedo,
+                    base_colour: p.albedo.into(),
                     roughness: 0.9,
                     ..RtMaterial::default()
                 },
@@ -275,8 +275,8 @@ impl LightmapBakeShowcase {
                 &panel.indices,
                 Some(&wn),
                 RtMaterial {
-                    base_colour: [0.0, 0.0, 0.0],
-                    emissive: PANEL_RADIANCE,
+                    base_colour: [0.0, 0.0, 0.0].into(),
+                    emissive: PANEL_RADIANCE.into(),
                     ..RtMaterial::default()
                 },
             );
@@ -775,7 +775,7 @@ impl LightmapBakeShowcase {
         if self.mode == EMISSIVE_MODE {
             if let Some(panel) = self.emissive_panel {
                 let mut mat = Material::pbr([0.0, 0.0, 0.0], 0.0, 1.0);
-                mat.emissive = PANEL_RADIANCE;
+                mat.emissive = PANEL_RADIANCE.into();
                 mat.backface_policy = BackfacePolicy::Identical;
                 let id = session.scene_mut().add(Some(panel), panel_xf(), mat);
                 let mut ap = ItemSettings::default();

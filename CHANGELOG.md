@@ -15,10 +15,11 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
 - **Direct-colour fields are now `Colour`.** `Material.base_colour` / `emissive`,
   `nan_colour`, every render-item and overlay colour (singular and per-element
   `Vec<Colour>`), ground plane, `Layer`, frame background/grid/outline/xray,
-  gizmo widgets, implicit primitives, and the `DebugDraw` API. Constructors and
-  setters take `impl Into<Colour>`, so a bare `[f32; N]` still compiles and is
-  read as linear; pass `Colour::rgb`/`hex` for a faithful sRGB colour. Read a
-  field with `to_linear_rgb()` / `to_linear_rgba()`.
+  gizmo widgets, implicit primitives, the `DebugDraw` API, and the path tracer's
+  `RtMaterial` (`base_colour` / `emissive`). Constructors and setters take
+  `impl Into<Colour>`, so a bare `[f32; N]` still compiles and is read as linear;
+  pass `Colour::rgb`/`hex` for a faithful sRGB colour. Read a field with
+  `to_linear_rgb()` / `to_linear_rgba()`.
 - **Colourmaps render correctly.** Built-in colourmaps are sRGB and now upload as
   `Rgba8UnormSrgb` (decoded on sample), so every colourmapped image is slightly
   brighter and more perceptually uniform. `upload_colourmap` interprets its bytes

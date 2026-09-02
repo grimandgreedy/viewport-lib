@@ -143,15 +143,16 @@ pub fn pick_backend(device: &crate::gpu::Device) -> RtBackend {
 /// metallic-roughness and emissive.
 #[derive(Clone, Copy, Debug)]
 pub struct RtMaterial {
-    /// Linear base colour (albedo for dielectrics, specular tint for metals,
-    /// transmission tint for glass).
-    pub base_colour: [f32; 3],
+    /// Base colour (albedo for dielectrics, specular tint for metals,
+    /// transmission tint for glass). Build with `Colour::rgb`/`hex` for sRGB or
+    /// `Colour::linear_rgb` for a linear value.
+    pub base_colour: crate::Colour,
     /// 0 = dielectric, 1 = metal.
     pub metallic: f32,
     /// Perceptual roughness in [0, 1].
     pub roughness: f32,
-    /// Linear emitted radiance.
-    pub emissive: [f32; 3],
+    /// Emitted radiance (may exceed 1.0). Linear; build with `Colour::linear`.
+    pub emissive: crate::Colour,
     /// Dielectric transmission weight in [0, 1]. 0 is opaque; 1 is clear glass.
     /// Metals (`metallic > 0`) do not transmit; keep it 0 for them.
     pub transmission: f32,
@@ -163,10 +164,10 @@ pub struct RtMaterial {
 impl Default for RtMaterial {
     fn default() -> Self {
         Self {
-            base_colour: [0.8, 0.8, 0.8],
+            base_colour: crate::Colour::linear_rgb(0.8, 0.8, 0.8),
             metallic: 0.0,
             roughness: 0.5,
-            emissive: [0.0, 0.0, 0.0],
+            emissive: crate::Colour::BLACK,
             transmission: 0.0,
             ior: 1.5,
         }

@@ -83,12 +83,9 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + 24.0],
         ];
         swatch.closed = true;
-        swatch.fill = Some(OverlayFill::Solid([
-            0.9 - t * 0.6,
-            0.4 + t * 0.4,
-            0.3 + t * 0.5,
-            1.0,
-        ]));
+        swatch.fill = Some(OverlayFill::Solid(
+            [0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0].into(),
+        ));
         lines.push(swatch);
     }
     lines

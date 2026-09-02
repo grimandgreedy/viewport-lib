@@ -338,7 +338,7 @@ impl PickingShowcase {
                 prim.params[1] = centers[i][1];
                 prim.params[2] = centers[i][2];
                 prim.params[3] = 1.1; // radius
-                prim.colour = colours[i];
+                prim.colour = colours[i].into();
                 item.primitives.push(prim);
             }
             item.blend_mode = ImplicitBlendMode::SmoothUnion;
@@ -534,7 +534,7 @@ impl Showcase for PickingShowcase {
             }
             self.sprites.positions = positions.clone();
             self.sprites.sizes = sizes;
-            self.sprites.colours = colours;
+            self.sprites.colours = colours.into_iter().map(Into::into).collect();
             self.sprites.default_size = 24.0;
             self.sprites.depth_write = true;
             self.sprites.settings.pick_id = PickId(SPRITE);
@@ -841,8 +841,8 @@ impl Showcase for PickingShowcase {
                 .with_curve_families(curve_family_lookup)
                 .with_instances(self.instance_lookup.clone()),
             );
-            fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.3];
-            fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0];
+            fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.3].into();
+            fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0].into();
             fd.interaction.sub_highlight_edge_width_px = 4.0;
             fd.interaction.sub_highlight_vertex_size_px = 13.0;
         }

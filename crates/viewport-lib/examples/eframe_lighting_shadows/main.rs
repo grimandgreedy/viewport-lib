@@ -188,7 +188,7 @@ fn main() -> eframe::Result {
 
             // Dark neutral background so the scene sits on the same plate as before.
             session.viewport_frame_mut().background_colour =
-                Some([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0]);
+                Some([65.0 / 255.0, 65.0 / 255.0, 65.0 / 255.0, 1.0].into());
             session.camera_mut().distance = 18.0;
 
             Ok(Box::new(App::new(
