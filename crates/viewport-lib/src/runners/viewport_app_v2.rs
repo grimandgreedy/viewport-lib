@@ -29,7 +29,7 @@ use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
 use ::winit::window::{Fullscreen, Window, WindowAttributes, WindowId as WinitWindowId};
 
-use crate::interaction::input::adapters::from_winit;
+use crate::interaction::input::adapters::{from_winit, from_winit_device};
 use crate::interaction::input::{ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
 use crate::runners::viewport_app::RedrawMode;
@@ -960,6 +960,26 @@ impl ApplicationHandler for AppHandlerV2 {
                     }
                 }
             }
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: ::winit::event::DeviceId,
+        event: ::winit::event::DeviceEvent,
+    ) {
+        // Raw motion is not tied to a window; route it to the focused one, since
+        // mouselook targets the window with keyboard focus.
+        let Some(ev) = from_winit_device(&event) else {
+            return;
+        };
+        if let Some(state) = self.windows.values_mut().find(|s| s.focused) {
+            if state.input.is_none() {
+                state.session.handle_event(ev.clone());
+            }
+            state.events.push(ev);
+            state.window.request_redraw();
         }
     }
 }

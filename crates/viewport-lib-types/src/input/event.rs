@@ -111,6 +111,15 @@ pub enum ViewportEvent {
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
     TrackpadPan(glam::Vec2),
 
+    /// Raw, unaccelerated relative pointer motion from the input device, not tied to
+    /// the window or surface. `delta` is in raw device units. Use this for
+    /// first-person / mouselook navigation while the cursor is grabbed; the ordinary
+    /// cursor position comes from [`PointerMoved`](ViewportEvent::PointerMoved).
+    RawMotion {
+        /// Relative motion since the last event, in raw device units.
+        delta: glam::Vec2,
+    },
+
     /// The OS colour theme changed. A consumer can follow the system light/dark
     /// preference (for overlay UI colours, for example).
     ThemeChanged(Theme),

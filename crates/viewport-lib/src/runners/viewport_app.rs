@@ -12,7 +12,7 @@ use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
 use ::winit::window::{Window, WindowAttributes, WindowId};
 
-use crate::interaction::input::adapters::from_winit;
+use crate::interaction::input::adapters::{from_winit, from_winit_device};
 use crate::interaction::input::{ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
 use crate::{ExposureMode, FrameData, OrbitCameraController, OverlayFrame};
@@ -749,6 +749,26 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                     state.window.request_redraw();
                 }
             }
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: ::winit::event::DeviceId,
+        event: ::winit::event::DeviceEvent,
+    ) {
+        // Raw relative motion (mouselook) arrives as a DeviceEvent, not a
+        // WindowEvent, so it is routed here rather than through from_winit.
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
+        if let Some(ev) = from_winit_device(&event) {
+            if self.input.is_none() {
+                state.session.handle_event(ev.clone());
+            }
+            self.events.push(ev);
+            state.window.request_redraw();
         }
     }
 }

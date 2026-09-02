@@ -615,6 +615,40 @@ mod tests {
         assert!((frame.navigation.twist - 0.3).abs() < 1e-5);
     }
 
+    // Tier-2 events the resolver does not model (drag-drop, pinch/pan, raw motion,
+    // theme, occlusion, extra mouse buttons) must pass through without perturbing the
+    // resolved navigation or pointer state. They reach a consumer via the raw event
+    // stream instead.
+    #[test]
+    fn unmodelled_events_do_not_perturb_navigation() {
+        use crate::input::event::Theme;
+        use std::path::PathBuf;
+
+        let mut input = ViewportInput::new(viewport_all_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::FileDropped(PathBuf::from("/x")));
+        input.push_event(ViewportEvent::FileHovered(PathBuf::from("/x")));
+        input.push_event(ViewportEvent::FileHoverCancelled);
+        input.push_event(ViewportEvent::TrackpadPinch(0.5));
+        input.push_event(ViewportEvent::TrackpadPan(glam::Vec2::new(5.0, 5.0)));
+        input.push_event(ViewportEvent::RawMotion {
+            delta: glam::Vec2::new(9.0, 9.0),
+        });
+        input.push_event(ViewportEvent::ThemeChanged(Theme::Dark));
+        input.push_event(ViewportEvent::Occluded(true));
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Back,
+            state: ButtonState::Pressed,
+        });
+        let frame = input.resolve();
+        assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.pan, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.zoom, 0.0);
+        assert!(frame.navigation.twist.abs() < 1e-6);
+        assert!(!frame.pointer.clicked);
+        assert!(!frame.pointer.dragging);
+    }
+
     #[test]
     fn key_hold_active_every_frame() {
         let mut input = ViewportInput::new(viewport_all_bindings());

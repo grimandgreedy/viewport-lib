@@ -5,6 +5,11 @@ use crate::input::{ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, Th
 /// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
 /// [`ViewportEvent`], or `None` for events the viewport does not consume.
 ///
+/// This covers window events (pointer, buttons, wheel, keys, modifiers, focus,
+/// gestures, theme, occlusion, file drag-and-drop). Raw relative pointer motion for
+/// mouselook arrives as a device event instead; translate that with
+/// [`from_winit_device`].
+///
 /// winit reports cursor positions in physical pixels; `scale_factor`
 /// (`window.scale_factor()`) divides them down to logical points, the space the
 /// viewport's screen-space math and `viewport_size` use. Pass `1.0` to keep
@@ -69,6 +74,23 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
         WindowEvent::DroppedFile(path) => Some(ViewportEvent::FileDropped(path.clone())),
         WindowEvent::HoveredFile(path) => Some(ViewportEvent::FileHovered(path.clone())),
         WindowEvent::HoveredFileCancelled => Some(ViewportEvent::FileHoverCancelled),
+        _ => None,
+    }
+}
+
+/// Translate a winit [`DeviceEvent`](::winit::event::DeviceEvent) into a
+/// [`ViewportEvent`], or `None` for events the viewport does not consume.
+///
+/// This is the device-level counterpart to [`from_winit`]: raw relative pointer
+/// motion arrives as a `DeviceEvent`, not a `WindowEvent`, so a runner routes its
+/// `device_event` callback through here (typically to the focused window) to get
+/// [`ViewportEvent::RawMotion`] for mouselook.
+pub fn from_winit_device(event: &::winit::event::DeviceEvent) -> Option<ViewportEvent> {
+    use ::winit::event::DeviceEvent;
+    match event {
+        DeviceEvent::MouseMotion { delta } => Some(ViewportEvent::RawMotion {
+            delta: glam::Vec2::new(delta.0 as f32, delta.1 as f32),
+        }),
         _ => None,
     }
 }
@@ -374,5 +396,19 @@ mod tests {
             from_winit(&WindowEvent::HoveredFileCancelled, 1.0),
             Some(ViewportEvent::FileHoverCancelled)
         ));
+    }
+
+    #[test]
+    fn raw_device_motion_translates() {
+        use ::winit::event::DeviceEvent;
+        assert!(matches!(
+            from_winit_device(&DeviceEvent::MouseMotion { delta: (3.0, -4.0) }),
+            Some(ViewportEvent::RawMotion { delta }) if delta == glam::Vec2::new(3.0, -4.0)
+        ));
+        // A device event the viewport does not consume translates to None.
+        assert!(from_winit_device(&DeviceEvent::MouseWheel {
+            delta: ::winit::event::MouseScrollDelta::LineDelta(0.0, 1.0)
+        })
+        .is_none());
     }
 }

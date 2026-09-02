@@ -10,7 +10,7 @@
 #[cfg(feature = "winit-adapter")]
 mod winit;
 #[cfg(feature = "winit-adapter")]
-pub use winit::from_winit;
+pub use winit::{from_winit, from_winit_device};
 
 #[cfg(feature = "egui-adapter")]
 mod egui;
