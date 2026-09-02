@@ -55,6 +55,20 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
             ::winit::window::Theme::Dark => Theme::Dark,
         })),
         WindowEvent::Occluded(occluded) => Some(ViewportEvent::Occluded(*occluded)),
+        // winit reports the rotation gesture in degrees; the viewport convention is
+        // radians (see ViewportEvent::TrackpadRotate).
+        WindowEvent::RotationGesture { delta, .. } => {
+            Some(ViewportEvent::TrackpadRotate(delta.to_radians()))
+        }
+        WindowEvent::PinchGesture { delta, .. } => {
+            Some(ViewportEvent::TrackpadPinch(*delta as f32))
+        }
+        WindowEvent::PanGesture { delta, .. } => Some(ViewportEvent::TrackpadPan(
+            glam::Vec2::new(delta.x, delta.y) * inv_scale,
+        )),
+        WindowEvent::DroppedFile(path) => Some(ViewportEvent::FileDropped(path.clone())),
+        WindowEvent::HoveredFile(path) => Some(ViewportEvent::FileHovered(path.clone())),
+        WindowEvent::HoveredFileCancelled => Some(ViewportEvent::FileHoverCancelled),
         _ => None,
     }
 }
@@ -335,6 +349,30 @@ mod tests {
         assert!(matches!(
             from_winit(&WindowEvent::Occluded(false), 1.0),
             Some(ViewportEvent::Occluded(false))
+        ));
+    }
+
+    // The trackpad gesture events (RotationGesture / PinchGesture / PanGesture) carry
+    // an opaque winit DeviceId with no public constructor, so they cannot be built in
+    // a unit test; their translation is covered by the build and the winit_viewport
+    // example. File drag-and-drop events have no DeviceId and are tested here.
+    #[test]
+    fn file_drag_and_drop_translates() {
+        use ::winit::event::WindowEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("/tmp/model.obj");
+        assert!(matches!(
+            from_winit(&WindowEvent::DroppedFile(path.clone()), 1.0),
+            Some(ViewportEvent::FileDropped(p)) if p == path
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::HoveredFile(path.clone()), 1.0),
+            Some(ViewportEvent::FileHovered(p)) if p == path
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::HoveredFileCancelled, 1.0),
+            Some(ViewportEvent::FileHoverCancelled)
         ));
     }
 }

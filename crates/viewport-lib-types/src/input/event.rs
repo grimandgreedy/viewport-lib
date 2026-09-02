@@ -1,5 +1,7 @@
 //! Viewport events for the new input pipeline.
 
+use std::path::PathBuf;
+
 use super::binding::{KeyCode, Modifiers, MouseButton};
 
 /// Button press or release state.
@@ -91,6 +93,24 @@ pub enum ViewportEvent {
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
     TrackpadRotate(f32),
 
+    /// Two-finger trackpad pinch (magnify) gesture.
+    ///
+    /// `delta` is the change in scale this event (winit's `PinchGesture` delta):
+    /// positive = pinch out / zoom in. Pass-through by default; a consumer maps it to
+    /// camera zoom if desired.
+    ///
+    /// ## Platform-specific
+    /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
+    TrackpadPinch(f32),
+
+    /// Two-finger trackpad pan gesture.
+    ///
+    /// `delta` is the pan this event in logical points. Pass-through by default.
+    ///
+    /// ## Platform-specific
+    /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
+    TrackpadPan(glam::Vec2),
+
     /// The OS colour theme changed. A consumer can follow the system light/dark
     /// preference (for overlay UI colours, for example).
     ThemeChanged(Theme),
@@ -99,4 +119,15 @@ pub enum ViewportEvent {
     /// hidden (behind others, or minimised); `false` when it is visible again. A
     /// consumer can pause rendering while occluded to save power.
     Occluded(bool),
+
+    /// A file was dropped onto the window, at the OS level (not viewport-local).
+    FileDropped(PathBuf),
+
+    /// A file is being dragged over the window but not yet dropped. May arrive more
+    /// than once as the drag moves; a consumer uses it to show a drop target.
+    FileHovered(PathBuf),
+
+    /// A file drag left the window without dropping, cancelling a prior
+    /// [`FileHovered`](ViewportEvent::FileHovered).
+    FileHoverCancelled,
 }
