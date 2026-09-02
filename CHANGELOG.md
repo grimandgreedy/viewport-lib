@@ -28,6 +28,14 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   `ground_colour` are unchanged (physical radiance).
 
 ### Features
+- **`ViewportRenderer::register_overlay_texture_view`.** Register an external,
+  caller-owned colour `TextureView` (an `OffscreenViewportTarget::render_view()`)
+  as an `OverlayTextureId`, so an offscreen viewport composites as an overlay image
+  in the overlay z-order with no CPU round-trip. Draw it with the existing
+  `OverlayShapeItem::with_texture`; re-point it in place on source resize with
+  `update_overlay_texture_view`. The registry borrows the view (no write / resize;
+  `update_overlay_texture` refuses it). Pass the sRGB `render_view()`: the overlay
+  path samples with an sRGB decode, so it round-trips faithfully.
 - **`ViewportRenderer::create_blit` / `blit` / `blit_with_depth`.** Draw a colour
   texture into the current scissor rect of a render pass you own. Completes the
   `OffscreenViewportTarget` story for hosts without a UI framework's texture

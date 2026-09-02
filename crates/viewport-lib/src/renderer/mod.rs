@@ -2437,6 +2437,36 @@ impl ViewportRenderer {
         self.resources.upload_result_overlay_texture(id)
     }
 
+    /// Register an external, caller-owned colour `TextureView` as an
+    /// [`OverlayTextureId`](crate::renderer::OverlayTextureId). See
+    /// [`DeviceResources::register_overlay_texture_view`]. Draw an offscreen
+    /// viewport as an overlay image (an
+    /// [`OverlayShapeItem`](crate::vplt::overlay::OverlayShapeItem) rect with
+    /// `with_texture`) in the overlay z-order, no CPU round-trip. Pass the source's
+    /// sRGB `render_view()`.
+    pub fn register_overlay_texture_view(
+        &mut self,
+        view: &crate::gpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> crate::renderer::OverlayTextureId {
+        self.resources
+            .register_overlay_texture_view(view, width, height)
+    }
+
+    /// Re-point an external overlay texture id at a new `TextureView`, keeping the
+    /// id stable. See [`DeviceResources::update_overlay_texture_view`].
+    pub fn update_overlay_texture_view(
+        &mut self,
+        id: crate::renderer::OverlayTextureId,
+        view: &crate::gpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        self.resources
+            .update_overlay_texture_view(id, view, width, height)
+    }
+
     /// True when no upload jobs are in flight.
     pub fn all_uploads_complete(&self) -> bool {
         self.resources.all_uploads_complete()

@@ -1482,8 +1482,7 @@ impl ViewportRenderer {
                                     .content
                                     .overlay_textures
                                     .get(tex_id)
-                                    .map(|t| t.texture.size())
-                                    .map(|s| (s.width as f32, s.height as f32))
+                                    .map(|t| (t.size[0] as f32, t.size[1] as f32))
                                     .unwrap_or((1.0, 1.0));
                                 let tw = tex_size.0.max(1.0);
                                 let th = tex_size.1.max(1.0);

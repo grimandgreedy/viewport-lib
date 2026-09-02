@@ -371,7 +371,13 @@ impl crate::resources::DeviceResources {
             return false;
         };
 
-        let size = entry.texture.size();
+        // External (borrowed-view) entries are not owned by the registry: the
+        // caller feeds them by rendering into their own texture, not through here.
+        let Some(texture) = entry.texture.as_ref() else {
+            return false;
+        };
+
+        let size = texture.size();
         if size.width != width || size.height != height {
             *entry =
                 build_overlay_texture_entry(device, Some(queue), width, height, Some(rgba_data));
@@ -381,7 +387,7 @@ impl crate::resources::DeviceResources {
             return true;
         }
 
-        write_overlay_texture(queue, &entry.texture, width, height, rgba_data);
+        write_overlay_texture(queue, texture, width, height, rgba_data);
         true
     }
 
@@ -394,6 +400,66 @@ impl crate::resources::DeviceResources {
     /// invalid.
     pub fn free_overlay_texture(&mut self, id: OverlayTextureId) -> bool {
         self.content.overlay_textures.remove(id).is_some()
+    }
+
+    /// Register an external, caller-owned colour `TextureView` as an
+    /// [`OverlayTextureId`], so a GPU texture already on the device can be drawn as
+    /// an overlay image with no CPU round-trip. Point an
+    /// [`OverlayShapeItem`](crate::vplt::overlay::OverlayShapeItem) at the returned
+    /// id with `with_texture` and it composites in the overlay z-order like any
+    /// other overlay image.
+    ///
+    /// The intended source is an
+    /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) that a viewport
+    /// rendered into: pass its `render_view()` (the sRGB view), not `sample_view()`.
+    /// The overlay path samples with an sRGB decode, so the sRGB view round-trips
+    /// the colour faithfully; the non-sRGB view would read too dark.
+    ///
+    /// The registry does not own the texture: it never writes to or resizes it, and
+    /// [`update_overlay_texture`](Self::update_overlay_texture) rejects the returned
+    /// id. When the source view is recreated (for example
+    /// [`OffscreenViewportTarget::resize`](crate::OffscreenViewportTarget::resize)
+    /// returns `true`) re-point the id in place with
+    /// [`update_overlay_texture_view`](Self::update_overlay_texture_view), or free
+    /// this id and register the new view. `width` / `height` are the view's pixel
+    /// size, used for nine-slice UVs.
+    pub fn register_overlay_texture_view(
+        &mut self,
+        view: &crate::gpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> OverlayTextureId {
+        let entry = build_external_overlay_texture_entry(view, width, height);
+        // An external entry borrows the caller's texture, so it carries no resident
+        // GPU-memory charge of its own.
+        self.content.overlay_textures.insert(entry, 0)
+    }
+
+    /// Re-point an external overlay texture id at a new `TextureView`, keeping the
+    /// id stable. Call this when the source view is recreated (a resized
+    /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget)) so existing
+    /// [`OverlayShapeItem`](crate::vplt::overlay::OverlayShapeItem)s keep working
+    /// without re-pointing.
+    ///
+    /// Returns `false` (and does nothing) if `id` does not resolve to a live entry,
+    /// or resolves to an owned (CPU-uploaded / streaming) texture rather than an
+    /// external one: those are updated with
+    /// [`update_overlay_texture`](Self::update_overlay_texture) instead.
+    pub fn update_overlay_texture_view(
+        &mut self,
+        id: OverlayTextureId,
+        view: &crate::gpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(entry) = self.content.overlay_textures.get_mut(id) else {
+            return false;
+        };
+        if entry.texture.is_some() {
+            return false;
+        }
+        *entry = build_external_overlay_texture_entry(view, width, height);
+        true
     }
 
     /// Start an asynchronous overlay texture upload.
@@ -952,11 +1018,18 @@ pub(crate) struct OverlayShapeTexBatch {
 /// Texture entry for an overlay shape texture fill.
 ///
 /// Stored in `DeviceResources::overlay_textures`. The `view` is what the tex
-/// bind group samples; it is rebuilt whenever `texture` is reallocated for a
-/// size change.
+/// bind group samples. For an owned entry (CPU upload / streaming) `texture` is
+/// `Some` and the `view` is rebuilt whenever the texture is reallocated for a
+/// size change. For an external entry the registry borrows a caller-owned view:
+/// `texture` is `None`, the registry never writes to or resizes it, and the
+/// caller re-registers when the source view is recreated.
 pub(crate) struct OverlayShapeTextureEntry {
-    pub texture: crate::gpu::Texture,
+    /// The owned GPU texture, or `None` for an external (borrowed-view) entry.
+    pub texture: Option<crate::gpu::Texture>,
     pub view: crate::gpu::TextureView,
+    /// Pixel size of the sampled view, used for nine-slice UVs. Taken from the
+    /// owned texture, or supplied by the caller for an external view.
+    pub size: [u32; 2],
 }
 
 /// Resident-byte charge for an `RGBA8` overlay texture of the given size.
@@ -1025,7 +1098,30 @@ fn build_overlay_texture_entry(
     }
 
     let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
-    OverlayShapeTextureEntry { texture, view }
+    OverlayShapeTextureEntry {
+        texture: Some(texture),
+        view,
+        size: [width, height],
+    }
+}
+
+/// Build an overlay texture entry that borrows an external, caller-owned
+/// `TextureView` (for example an `OffscreenViewportTarget::render_view()`), so a
+/// GPU texture already on the device can be drawn as an overlay image with no CPU
+/// round-trip. The registry does not own the underlying texture: it never writes
+/// to or resizes it, and the caller must re-register when the view is recreated.
+///
+/// `width` / `height` are the view's pixel size, used only for nine-slice UVs.
+fn build_external_overlay_texture_entry(
+    view: &crate::gpu::TextureView,
+    width: u32,
+    height: u32,
+) -> OverlayShapeTextureEntry {
+    OverlayShapeTextureEntry {
+        texture: None,
+        view: view.clone(),
+        size: [width.max(1), height.max(1)],
+    }
 }
 
 /// Per-frame GPU data for batched SDF overlay shape rendering.
