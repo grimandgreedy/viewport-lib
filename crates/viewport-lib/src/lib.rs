@@ -195,6 +195,7 @@ pub use camera::track::{CameraTrack, interpolate_camera};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
+pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
     ParamVisMode, PatternConfig, ShadingModel,

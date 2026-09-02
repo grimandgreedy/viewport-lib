@@ -47,6 +47,33 @@ impl DeviceResources {
         self.upload_result_texture(id)
     }
 
+    /// Upload a linear (non-sRGB) RGBA8 data texture and return its texture ID.
+    ///
+    /// For 8-bit textures that hold values rather than colour: metallic-roughness
+    /// / ORM, ambient occlusion, and standalone roughness or metallic maps. Uses
+    /// the linear `Rgba8Unorm` format (like [`upload_normal_map`](Self::upload_normal_map))
+    /// so the values are read back unchanged, and builds mips in linear space.
+    /// Store the returned id in the matching `Material` slot
+    /// (`metallic_roughness_texture_id`, `ao_map_id`, ...).
+    ///
+    /// Use [`upload_texture`](Self::upload_texture) instead for base-colour /
+    /// emissive images, which are sRGB. `rgba_data` must be `width * height * 4`
+    /// bytes.
+    pub fn upload_data_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba_data: &[u8],
+    ) -> crate::error::ViewportResult<crate::resources::TextureId> {
+        // Sync wrapper; see `upload_texture` for the worker / apply layout.
+        let id =
+            self.begin_upload_data_texture(device, queue, width, height, rgba_data.to_vec())?;
+        self.drain_until(device, queue, id)?;
+        self.upload_result_texture(id)
+    }
+
     // -----------------------------------------------------------------------
     // Async texture upload (routed through the upload-job runner)
     // -----------------------------------------------------------------------
@@ -130,6 +157,46 @@ impl DeviceResources {
                 height,
                 format: crate::gpu::TextureFormat::Rgba8Unorm,
                 is_normal_map: true,
+                mip_levels: vec![rgba],
+            },
+        ))
+    }
+
+    /// Start an asynchronous linear data-texture upload.
+    ///
+    /// Same shape as [`begin_upload_texture`](Self::begin_upload_texture) but the
+    /// texture is created with the linear `Rgba8Unorm` format (mips built in
+    /// linear space) and bound as a general material texture, not a normal map.
+    /// For metallic-roughness / ORM / AO / roughness / metallic maps. Take the
+    /// result with [`upload_result_texture`](Self::upload_result_texture) once
+    /// `Ready`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`begin_upload_texture`](Self::begin_upload_texture).
+    pub fn begin_upload_data_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        let expected = (width * height * 4) as usize;
+        if rgba.len() != expected {
+            return Err(crate::error::ViewportError::InvalidTextureData {
+                expected,
+                actual: rgba.len(),
+            });
+        }
+        Ok(self.spawn_texture_upload(
+            device,
+            queue,
+            TextureUploadSpec {
+                width,
+                height,
+                format: crate::gpu::TextureFormat::Rgba8Unorm,
+                is_normal_map: false,
                 mip_levels: vec![rgba],
             },
         ))
@@ -1973,6 +2040,9 @@ impl DeviceResources {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
+            // Linear Rgba8Unorm, not sRGB: a matcap is a pre-lit lighting
+            // lookup sampled directly into the renderer's linear working space,
+            // so it must not be sRGB-decoded on sample.
             format: crate::gpu::TextureFormat::Rgba8Unorm,
             usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
@@ -2233,6 +2303,23 @@ mod async_texture_tests {
         let rgba = vec![200u8; 4 * 4 * 4];
         let tex_id = resources
             .upload_texture(&device, &queue, 4, 4, &rgba)
+            .unwrap();
+        assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
+    }
+
+    #[test]
+    fn upload_data_texture_yields_id() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // A metallic-roughness style data map: linear bytes, not colour.
+        let rgba = vec![128u8; 8 * 8 * 4];
+        let tex_id = resources
+            .upload_data_texture(&device, &queue, 8, 8, &rgba)
             .unwrap();
         assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
     }

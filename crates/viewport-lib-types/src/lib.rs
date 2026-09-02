@@ -12,6 +12,7 @@
 #![warn(missing_docs)]
 
 pub mod camera;
+pub mod colour;
 pub mod colourmap;
 pub mod data;
 pub mod effects;
@@ -31,6 +32,7 @@ pub mod prelude {
     //! This is the common set, not the whole surface. Reach into the individual
     //! modules (`data`, `overlay`, `input`, `effects`, ...) for the rest.
     pub use crate::camera::Camera;
+    pub use crate::colour::{Colour, ColourSpace};
     pub use crate::colourmap::BuiltinColourmap;
     pub use crate::data::{attribute::AttributeData, mesh::MeshData};
     pub use crate::error::{ViewportError, ViewportResult};

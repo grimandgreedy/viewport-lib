@@ -306,11 +306,13 @@ impl ViewportRenderer {
         // HDR path.
         let pp = &frame.effects.post_process;
 
-        let hdr_clear_rgb = [
-            bg_colour[0].powf(2.2),
-            bg_colour[1].powf(2.2),
-            bg_colour[2].powf(2.2),
-        ];
+        // The background colour is linear at the pipeline boundary. Clear the
+        // linear HDR scene texture with it directly, matching the tone-map
+        // uniform below (which composites the same linear value) and the LDR
+        // path's clear. An earlier powf(2.2) here treated the value as sRGB and
+        // decoded it a second time, so the HDR and LDR paths disagreed on the
+        // background for the same scene.
+        let hdr_clear_rgb = [bg_colour[0], bg_colour[1], bg_colour[2]];
 
         // Upload tone map uniform into the per-viewport buffer.
         let mode = match frame.effects.display.operator {
@@ -3769,10 +3771,16 @@ impl ViewportRenderer {
             || !slot.selection_outlines.polyline_outline_indices.is_empty()
             || !slot.selection_outlines.volume_outline_indices.is_empty()
             || !slot.selection_outlines.glyph_outline_indices.is_empty()
-            || !slot.selection_outlines.tensor_glyph_outline_indices.is_empty()
+            || !slot
+                .selection_outlines
+                .tensor_glyph_outline_indices
+                .is_empty()
             || !slot.selection_outlines.sprite_outline_indices.is_empty()
             || !slot.selection_outlines.raw_geom_outline_buffers.is_empty()
-            || !slot.selection_outlines.screen_rect_outline_buffers.is_empty()
+            || !slot
+                .selection_outlines
+                .screen_rect_outline_buffers
+                .is_empty()
             || !slot.selection_outlines.implicit_outline_indices.is_empty()
             || !slot.selection_outlines.mc_outline_data.is_empty()
             || slot.selection_outlines.plugin_outline_present
@@ -4599,8 +4607,8 @@ impl ViewportRenderer {
         {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
-            let has_editor_overlays = !slot.constraint_line_buffers.is_empty()
-                || !slot.xray_object_buffers.is_empty();
+            let has_editor_overlays =
+                !slot.constraint_line_buffers.is_empty() || !slot.xray_object_buffers.is_empty();
             if has_editor_overlays {
                 let camera_bg = &slot.camera_bind_group;
                 let mut overlay_pass =
