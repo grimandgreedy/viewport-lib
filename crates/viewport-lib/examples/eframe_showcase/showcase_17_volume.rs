@@ -76,7 +76,7 @@ pub(crate) struct VolumeState {
 
 impl Default for VolumeState {
     fn default() -> Self {
-        let mut iso_material = Material::from_colour([0.16, 0.4, 0.8]);
+        let mut iso_material = Material::from_colour(vpl::Colour::srgb(0.16, 0.4, 0.8, 1.0));
         iso_material.roughness = 0.4;
         Self {
             built: false,

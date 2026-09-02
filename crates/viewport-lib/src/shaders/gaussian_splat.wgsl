@@ -76,6 +76,17 @@ fn quat_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
     );
 }
 
+// The SH-evaluated colour is display-referred (sRGB), the standard 3DGS
+// convention. The pipeline works in linear light and writes to an sRGB target
+// that encodes on write, so decode to linear here or the colour is encoded
+// twice and washes out. Decoding also puts the alpha blend in linear space,
+// which is where it belongs.
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
 // Evaluate degree-0 SH (base RGB only).
 fn eval_sh0(splat_idx: u32) -> vec3<f32> {
     let base = splat_idx * 3u;
@@ -243,9 +254,9 @@ fn vs_main(
     // -- SH colour --
     let view_dir = normalize(world_pos - camera.eye_pos);
     if splat_u.sh_degree == 0u {
-        out.colour = eval_sh0(splat_idx);
+        out.colour = srgb_to_linear(eval_sh0(splat_idx));
     } else {
-        out.colour = eval_sh1(splat_idx, view_dir);
+        out.colour = srgb_to_linear(eval_sh1(splat_idx, view_dir));
     }
     out.opacity = opacity;
 

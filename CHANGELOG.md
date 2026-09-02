@@ -40,6 +40,11 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
 ### Fixes
 - The HDR and LDR pipelines now agree on the background colour (the HDR path no
   longer decodes it a second time).
+- **Gaussian splats render at full saturation.** The splat shader now decodes its
+  SH-evaluated colour (display-referred sRGB, the 3DGS convention) to linear
+  before output, so the sRGB target no longer encodes it a second time. Splats
+  were washed out; they now match their source. The decode also puts the alpha
+  blend in linear space. Uploaded `sh_coeffs` are unchanged.
 
 ## [0.21.0]
 
