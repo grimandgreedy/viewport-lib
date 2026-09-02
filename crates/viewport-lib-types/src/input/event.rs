@@ -11,6 +11,15 @@ pub enum ButtonState {
     Released,
 }
 
+/// OS colour theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Theme {
+    /// Light theme.
+    Light,
+    /// Dark theme.
+    Dark,
+}
+
 /// Scroll delta units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScrollUnits {
@@ -81,4 +90,13 @@ pub enum ViewportEvent {
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
     TrackpadRotate(f32),
+
+    /// The OS colour theme changed. A consumer can follow the system light/dark
+    /// preference (for overlay UI colours, for example).
+    ThemeChanged(Theme),
+
+    /// The window's occlusion state changed. `true` when the window became fully
+    /// hidden (behind others, or minimised); `false` when it is visible again. A
+    /// consumer can pause rendering while occluded to save power.
+    Occluded(bool),
 }

@@ -34,7 +34,7 @@ pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedAct
 pub use binding::{ActivationMode, Binding, KeyCode, Modifiers, MouseButton, Trigger, TriggerKind};
 pub use context::ViewportContext;
 pub use defaults::default_bindings;
-pub use event::{ButtonState, ScrollUnits, ViewportEvent};
+pub use event::{ButtonState, ScrollUnits, Theme, ViewportEvent};
 pub use mode::{InputMode, NavigationMode};
 pub use preset::{BindingPreset, viewport_all_bindings};
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};

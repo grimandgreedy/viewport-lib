@@ -234,7 +234,7 @@ pub use camera::controllers::{
 };
 pub use interaction::input::{
     ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions, PointerFrame,
-    ResolvedActionState, ScrollUnits, ViewportBinding, ViewportContext, ViewportEvent,
+    ResolvedActionState, ScrollUnits, Theme, ViewportBinding, ViewportContext, ViewportEvent,
     ViewportGesture, ViewportInput, viewport_all_bindings,
 };
 pub use interaction::manipulation::solvers::{

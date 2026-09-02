@@ -1,6 +1,6 @@
 //! winit -> [`ViewportEvent`] translation.
 
-use crate::input::{ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, ViewportEvent};
+use crate::input::{ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, Theme, ViewportEvent};
 
 /// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
 /// [`ViewportEvent`], or `None` for events the viewport does not consume.
@@ -50,6 +50,11 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
                 repeat: event.repeat,
             })
         }
+        WindowEvent::ThemeChanged(theme) => Some(ViewportEvent::ThemeChanged(match theme {
+            ::winit::window::Theme::Light => Theme::Light,
+            ::winit::window::Theme::Dark => Theme::Dark,
+        })),
+        WindowEvent::Occluded(occluded) => Some(ViewportEvent::Occluded(*occluded)),
         _ => None,
     }
 }
@@ -66,7 +71,9 @@ fn map_button(button: ::winit::event::MouseButton) -> Option<MouseButton> {
         ::winit::event::MouseButton::Left => Some(MouseButton::Left),
         ::winit::event::MouseButton::Right => Some(MouseButton::Right),
         ::winit::event::MouseButton::Middle => Some(MouseButton::Middle),
-        _ => None,
+        ::winit::event::MouseButton::Back => Some(MouseButton::Back),
+        ::winit::event::MouseButton::Forward => Some(MouseButton::Forward),
+        ::winit::event::MouseButton::Other(n) => Some(MouseButton::Other(n)),
     }
 }
 
@@ -279,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn mouse_buttons_map_and_extras_drop() {
+    fn mouse_buttons_map_including_extras() {
         assert_eq!(map_button(WinitMouseButton::Left), Some(MouseButton::Left));
         assert_eq!(
             map_button(WinitMouseButton::Right),
@@ -289,15 +296,45 @@ mod tests {
             map_button(WinitMouseButton::Middle),
             Some(MouseButton::Middle)
         );
-        // Back/forward and hardware extras are not viewport buttons.
-        assert_eq!(map_button(WinitMouseButton::Back), None);
-        assert_eq!(map_button(WinitMouseButton::Forward), None);
-        assert_eq!(map_button(WinitMouseButton::Other(9)), None);
+        // Back/forward and hardware extras now map through; the resolver ignores
+        // them for gestures, but a consumer can act on them via the raw event stream.
+        assert_eq!(map_button(WinitMouseButton::Back), Some(MouseButton::Back));
+        assert_eq!(
+            map_button(WinitMouseButton::Forward),
+            Some(MouseButton::Forward)
+        );
+        assert_eq!(
+            map_button(WinitMouseButton::Other(9)),
+            Some(MouseButton::Other(9))
+        );
     }
 
     #[test]
     fn element_state_maps() {
         assert_eq!(map_state(ElementState::Pressed), ButtonState::Pressed);
         assert_eq!(map_state(ElementState::Released), ButtonState::Released);
+    }
+
+    #[test]
+    fn theme_and_occlusion_translate() {
+        use ::winit::event::WindowEvent;
+        use ::winit::window::Theme as WinitTheme;
+
+        assert!(matches!(
+            from_winit(&WindowEvent::ThemeChanged(WinitTheme::Dark), 1.0),
+            Some(ViewportEvent::ThemeChanged(Theme::Dark))
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::ThemeChanged(WinitTheme::Light), 1.0),
+            Some(ViewportEvent::ThemeChanged(Theme::Light))
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::Occluded(true), 1.0),
+            Some(ViewportEvent::Occluded(true))
+        ));
+        assert!(matches!(
+            from_winit(&WindowEvent::Occluded(false), 1.0),
+            Some(ViewportEvent::Occluded(false))
+        ));
     }
 }

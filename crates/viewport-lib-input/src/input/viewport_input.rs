@@ -72,11 +72,15 @@ pub struct ViewportInput {
     ctx: ViewportContext,
 }
 
-fn button_index(b: MouseButton) -> usize {
+/// Index into the tracked-button arrays, or `None` for buttons the resolver does
+/// not track for drag/hold (Back, Forward, Other). Those still reach the consumer as
+/// raw events; they just do not drive orbit/pan/click gestures.
+fn button_index(b: MouseButton) -> Option<usize> {
     match b {
-        MouseButton::Left => 0,
-        MouseButton::Right => 1,
-        MouseButton::Middle => 2,
+        MouseButton::Left => Some(0),
+        MouseButton::Right => Some(1),
+        MouseButton::Middle => Some(2),
+        _ => None,
     }
 }
 
@@ -144,28 +148,33 @@ impl ViewportInput {
                 self.pointer_pos = Some(position);
             }
             ViewportEvent::MouseButton { button, state } => {
-                let idx = button_index(button);
-                match state {
-                    ButtonState::Pressed => {
-                        self.button_held[idx] = true;
-                        self.button_press_pos[idx] = self.pointer_pos;
-                        if button == MouseButton::Left {
-                            self.left_drag_started = true;
-                        }
-                    }
-                    ButtonState::Released => {
-                        if button == MouseButton::Left {
-                            // Click if the pointer barely moved since the press.
-                            let is_click = self.button_press_pos[idx]
-                                .zip(self.pointer_pos)
-                                .map(|(origin, cur)| (cur - origin).length() < CLICK_THRESHOLD_PX)
-                                .unwrap_or(false);
-                            if is_click {
-                                self.left_clicked = true;
+                // Untracked buttons (Back/Forward/Other) have no drag/hold slot; they
+                // pass through as raw events without driving gestures.
+                if let Some(idx) = button_index(button) {
+                    match state {
+                        ButtonState::Pressed => {
+                            self.button_held[idx] = true;
+                            self.button_press_pos[idx] = self.pointer_pos;
+                            if button == MouseButton::Left {
+                                self.left_drag_started = true;
                             }
                         }
-                        self.button_held[idx] = false;
-                        self.button_press_pos[idx] = None;
+                        ButtonState::Released => {
+                            if button == MouseButton::Left {
+                                // Click if the pointer barely moved since the press.
+                                let is_click = self.button_press_pos[idx]
+                                    .zip(self.pointer_pos)
+                                    .map(|(origin, cur)| {
+                                        (cur - origin).length() < CLICK_THRESHOLD_PX
+                                    })
+                                    .unwrap_or(false);
+                                if is_click {
+                                    self.left_clicked = true;
+                                }
+                            }
+                            self.button_held[idx] = false;
+                            self.button_press_pos[idx] = None;
+                        }
                     }
                 }
             }
@@ -263,7 +272,9 @@ impl ViewportInput {
                     if !pointer_active {
                         continue;
                     }
-                    let idx = button_index(*button);
+                    let Some(idx) = button_index(*button) else {
+                        continue;
+                    };
                     let held = self.button_held[idx];
                     let press_started = self.button_press_pos[idx].is_some();
                     if held && press_started && modifiers.matches(self.modifiers) {
@@ -359,7 +370,8 @@ impl ViewportInput {
         pointer.delta = self.pointer_delta;
         pointer.clicked = self.left_clicked;
         pointer.drag_started = self.left_drag_started;
-        pointer.dragging = self.button_held[button_index(MouseButton::Left)];
+        pointer.dragging =
+            button_index(MouseButton::Left).is_some_and(|i| self.button_held[i]);
 
         let mut frame = ActionFrame::default();
         frame.navigation = NavigationActions {

@@ -289,8 +289,12 @@ pub enum KeyCode {
 }
 
 /// Mouse buttons.
+///
+/// Non-exhaustive: match with a wildcard arm. New buttons (and the platform-numbered
+/// [`Other`](MouseButton::Other)) can appear on some devices and platforms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum MouseButton {
     /// Primary (left) mouse button.
     Left,
@@ -298,6 +302,12 @@ pub enum MouseButton {
     Right,
     /// Middle mouse button (scroll wheel click).
     Middle,
+    /// Back button (fourth button, often "navigate back").
+    Back,
+    /// Forward button (fifth button, often "navigate forward").
+    Forward,
+    /// Any other button, by its platform button id.
+    Other(u16),
 }
 
 /// What physical input fires the trigger.
