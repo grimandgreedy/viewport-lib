@@ -95,7 +95,7 @@ pub(crate) fn frustum_to_polyline(f: &FrustumData) -> PolylineItem {
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = strip_lengths;
-    item.default_colour = f.colour;
+    item.default_colour = f.colour.into();
     item.line_width = f.line_width;
     item
 }

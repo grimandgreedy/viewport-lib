@@ -972,7 +972,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.transform = transform;
             item.texture_id = rune;
             item.alpha = 1.0;
-            item.emissive = st.rune_emissive;
+            item.emissive = st.rune_emissive.into();
             item.edge_fade = 0.1;
             fd.scene.decals.push(item);
         }
@@ -1035,7 +1035,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.transform = transform;
             item.texture_id = spark;
             item.alpha = 1.0;
-            item.emissive = st.spark_emissive;
+            item.emissive = st.spark_emissive.into();
             fd.scene.decals.push(item);
         }
     }

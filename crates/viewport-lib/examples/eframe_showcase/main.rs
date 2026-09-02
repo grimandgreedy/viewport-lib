@@ -2978,7 +2978,7 @@ impl App {
                         Some(self.scalar_state.range)
                     };
                     item.nan_colour = if self.scalar_state.nan_on {
-                        Some([0.85, 0.1, 0.85, 1.0])
+                        Some([0.85, 0.1, 0.85, 1.0].into())
                     } else {
                         None
                     };
@@ -3437,7 +3437,7 @@ impl App {
                 let dir = self.svol_state.sun_dir;
                 let mut sun = LightSource::default();
                 sun.kind = LightKind::Directional { direction: dir };
-                sun.colour = self.svol_state.sun_colour;
+                sun.colour = self.svol_state.sun_colour.into();
                 sun.intensity = self.svol_state.sun_intensity;
                 let lighting = {
                     let mut _t = LightingSettings::default();
@@ -3601,7 +3601,7 @@ impl App {
         if self.mode == ShowcaseMode::GroundPlane
             && self.gp_state.mode == showcase_03_ground_plane::GpMode::Grid
         {
-            fd.viewport.grid_colour = Some(self.gp_state.grid_colour);
+            fd.viewport.grid_colour = Some(self.gp_state.grid_colour.into());
             fd.viewport.grid_z = self.gp_state.height;
         }
         fd.viewport.show_axes_indicator = true;
@@ -3609,7 +3609,7 @@ impl App {
             self.mode == ShowcaseMode::SceneLights && self.sl_state.force_cluster_fallback;
         fd.effects.debug.cluster_stats_request =
             self.mode == ShowcaseMode::SceneLights && self.sl_state.show_cluster_stats;
-        fd.viewport.background_colour = bg_colour;
+        fd.viewport.background_colour = bg_colour.map(Into::into);
 
         // Ground plane (Showcase 3).
         if self.mode == ShowcaseMode::GroundPlane {
@@ -3622,10 +3622,10 @@ impl App {
                     GpMode::SolidColour => GroundPlaneMode::SolidColour,
                 },
                 height: self.gp_state.height,
-                colour: self.gp_state.colour,
-                tile_colour2: self.gp_state.tile_colour2,
+                colour: self.gp_state.colour.into(),
+                tile_colour2: self.gp_state.tile_colour2.into(),
                 tile_size: self.gp_state.tile_size,
-                shadow_colour: self.gp_state.shadow_colour,
+                shadow_colour: self.gp_state.shadow_colour.into(),
                 shadow_opacity: self.gp_state.shadow_opacity,
             };
         }

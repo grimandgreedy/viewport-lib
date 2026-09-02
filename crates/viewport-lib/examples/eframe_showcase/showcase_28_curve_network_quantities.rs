@@ -131,7 +131,7 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
                         4 => (f, 0.0, 1.0),
                         _ => (1.0, 0.0, 1.0 - f),
                     };
-                    [r, g, b, 1.0]
+                    [r, g, b, 1.0].into()
                 })
                 .collect();
         }
@@ -141,9 +141,9 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
             item.edge_colours = (0..num_segs)
                 .map(|i| {
                     if i % 2 == 0 {
-                        [0.2, 0.6, 1.0, 1.0]
+                        [0.2, 0.6, 1.0, 1.0].into()
                     } else {
-                        [1.0, 0.4, 0.1, 1.0]
+                        [1.0, 0.4, 0.1, 1.0].into()
                     }
                 })
                 .collect();

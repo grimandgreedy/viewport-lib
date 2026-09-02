@@ -234,7 +234,7 @@ impl Default for SpriteState {
                     spin_rate: 0.7,
                     spin_axis: [0.0, 1.0, 0.0], // equatorial (XZ plane)
                     radius: 3.0,
-                    colour: [0.35, 0.75, 1.0].into(),
+                    colour: [0.35, 0.75, 1.0],
                     life: 5.0,
                     max_life: 5.0,
                     particle_phases: Vec::new(),
@@ -245,7 +245,7 @@ impl Default for SpriteState {
                     spin_rate: -0.5,
                     spin_axis: [1.0, 0.0, 0.0], // polar (YZ plane)
                     radius: 3.0,
-                    colour: [1.0, 0.5, 0.15].into(),
+                    colour: [1.0, 0.5, 0.15],
                     life: 2.5, // staggered so they don't expire together
                     max_life: 5.0,
                     particle_phases: Vec::new(),
@@ -535,28 +535,28 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             phase: 0.0,
             radius: 2.6,
             bob: 0.9,
-            colour: [1.0, 0.45, 0.1].into(),
+            colour: [1.0, 0.45, 0.1],
         },
         TrailEmitter {
             history: Vec::new(),
             phase: std::f32::consts::FRAC_PI_2,
             radius: 2.6,
             bob: 0.9,
-            colour: [0.2, 0.8, 1.0].into(),
+            colour: [0.2, 0.8, 1.0],
         },
         TrailEmitter {
             history: Vec::new(),
             phase: std::f32::consts::PI,
             radius: 2.6,
             bob: 0.9,
-            colour: [0.7, 1.0, 0.3].into(),
+            colour: [0.7, 1.0, 0.3],
         },
         TrailEmitter {
             history: Vec::new(),
             phase: 3.0 * std::f32::consts::FRAC_PI_2,
             radius: 2.6,
             bob: 0.9,
-            colour: [1.0, 0.3, 0.85].into(),
+            colour: [1.0, 0.3, 0.85],
         },
     ];
 
@@ -1168,7 +1168,7 @@ fn ring_polyline(ring: &Ring, segments: usize) -> PolylineItem {
     let mut item = PolylineItem::default();
     item.positions = positions;
     item.strip_lengths = vec![n];
-    item.node_colours = node_colours;
+    item.node_colours = node_colours.into_iter().map(Into::into).collect();
     item.line_width = 1.5;
     item
 }
@@ -1224,7 +1224,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 let mut item = SpriteItem::default();
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
-                item.colours = colours;
+                item.colours = colours.into_iter().map(Into::into).collect();
                 item.default_size = 14.0;
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
@@ -1270,7 +1270,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 let mut item = SpriteItem::default();
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
-                item.colours = colours;
+                item.colours = colours.into_iter().map(Into::into).collect();
                 item.sizes = sizes;
                 item.size_mode = SpriteSizeMode::ScreenSpace;
                 item.depth_write = false;
@@ -1305,7 +1305,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 let mut item = SpriteItem::default();
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
-                item.colours = colours;
+                item.colours = colours.into_iter().map(Into::into).collect();
                 item.default_size = 1.6;
                 item.size_mode = SpriteSizeMode::WorldSpace;
                 item.blend = *blend;
@@ -1345,7 +1345,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.glow_tex);
             item.positions = positions;
-            item.colours = colours;
+            item.colours = colours.into_iter().map(Into::into).collect();
             item.default_size = 1.6;
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.blend = SpriteBlend::AlphaBlend;
@@ -1414,7 +1414,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
                 let mut item = SpriteItem::default();
                 item.texture_id = Some(app.sprite_state.glow_tex);
                 item.positions = positions;
-                item.colours = colours;
+                item.colours = colours.into_iter().map(Into::into).collect();
                 item.sizes = sizes;
                 item.default_size = 1.5;
                 item.size_mode = SpriteSizeMode::WorldSpace;
@@ -1452,7 +1452,10 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.shockwave_tex);
             item.positions = vec![[0.0, 0.0, 0.0]];
-            item.colours = vec![[1.0, 1.0, 1.0, fade]];
+            item.colours = vec![[1.0, 1.0, 1.0, fade]]
+                .into_iter()
+                .map(Into::into)
+                .collect();
             item.sizes = vec![radius * 2.0];
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.depth_write = false;
@@ -1477,7 +1480,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.glow_tex);
             item.positions = positions;
-            item.colours = colours;
+            item.colours = colours.into_iter().map(Into::into).collect();
             item.default_size = 24.0;
             item.size_mode = SpriteSizeMode::ScreenSpace;
             item.blend = SpriteBlend::Additive;
@@ -1655,7 +1658,7 @@ pub(crate) fn mesh_instance_items(app: &App) -> Vec<MeshInstanceItem> {
     let mut item = MeshInstanceItem::default();
     item.mesh_id = app.sprite_state.cube_id;
     item.transforms = transforms;
-    item.colours = colours;
+    item.colours = colours.into_iter().map(Into::into).collect();
     item.blend = SpriteBlend::Additive;
     vec![item]
 }
@@ -1872,7 +1875,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             let mut points = SpriteItem::default();
             points.texture_id = Some(app.sprite_state.glow_tex);
             points.positions = positions;
-            points.colours = colours;
+            points.colours = colours.into_iter().map(Into::into).collect();
             points.default_size = 9.0;
             points.size_mode = SpriteSizeMode::ScreenSpace;
             points.blend = SpriteBlend::Additive;
@@ -1903,7 +1906,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             let mut markers = SpriteItem::default();
             markers.texture_id = Some(app.sprite_state.atlas_tex);
             markers.positions = marker_pos;
-            markers.colours = marker_col;
+            markers.colours = marker_col.into_iter().map(Into::into).collect();
             markers.uv_rects = marker_uv;
             markers.default_size = 1.1;
             markers.size_mode = SpriteSizeMode::WorldSpace;
@@ -2019,7 +2022,7 @@ pub(crate) fn trail_ribbon_items(app: &App) -> Vec<RibbonItem> {
             item.strip_lengths = vec![n as u32];
             item.width = head_width;
             item.width_attribute = Some(widths);
-            item.colour_attribute = colours;
+            item.colour_attribute = colours.into_iter().map(Into::into).collect();
             item.blend = blend;
             if app.sprite_state.trail_streak_enabled {
                 item.texture_id = Some(app.sprite_state.streak_tex);

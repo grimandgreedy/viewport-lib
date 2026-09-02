@@ -67,23 +67,23 @@ impl ProbeWidgetState {
         );
         probe.line_width = 3.0;
         probe.colour = [1.0, 0.9, 0.1, 1.0].into();
-        probe.handle_colour = handle_colour;
+        probe.handle_colour = handle_colour.into();
 
         let mut sphere = SphereWidget::new(glam::Vec3::ZERO, 2.0);
         sphere.colour = [1.0, 0.9, 0.1, 0.15].into();
-        sphere.handle_colour = handle_colour;
+        sphere.handle_colour = handle_colour.into();
 
         let mut bw = BoxWidget::new(glam::Vec3::ZERO, glam::Vec3::splat(2.0));
         bw.colour = [1.0, 0.9, 0.1, 1.0].into();
-        bw.handle_colour = handle_colour;
+        bw.handle_colour = handle_colour.into();
 
         let mut plane = PlaneWidget::new(glam::Vec3::ZERO, glam::Vec3::Z);
         plane.colour = [0.4, 0.8, 1.0, 1.0].into();
-        plane.handle_colour = handle_colour;
+        plane.handle_colour = handle_colour.into();
 
         let mut disk = DiskWidget::new(glam::Vec3::ZERO, glam::Vec3::Z, 2.0);
         disk.colour = [1.0, 0.7, 0.2, 1.0].into();
-        disk.handle_colour = handle_colour;
+        disk.handle_colour = handle_colour.into();
 
         let mut cylinder = CylinderWidget::new(
             glam::Vec3::new(0.0, -2.0, 0.0),
@@ -91,7 +91,7 @@ impl ProbeWidgetState {
             1.5,
         );
         cylinder.colour = [0.5, 1.0, 0.5, 1.0].into();
-        cylinder.handle_colour = handle_colour;
+        cylinder.handle_colour = handle_colour.into();
 
         let mut polyline = PolylineWidget::new(vec![
             glam::Vec3::new(-2.0, 0.0, 0.5),
@@ -100,7 +100,7 @@ impl ProbeWidgetState {
             glam::Vec3::new(2.0, 0.0, 0.5),
         ]);
         polyline.colour = [1.0, 0.5, 0.2, 1.0].into();
-        polyline.handle_colour = handle_colour;
+        polyline.handle_colour = handle_colour.into();
 
         let cloud_positions = generate_cloud(CLOUD_N);
         let selected = vec![false; CLOUD_N];

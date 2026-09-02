@@ -209,7 +209,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                             ui.label("Colour:");
                             let mut c = src.colour;
                             if ui.color_edit_button_rgb(&mut c).changed() {
-                                src.colour = c;
+                                src.colour = c.into();
                             }
                         });
 

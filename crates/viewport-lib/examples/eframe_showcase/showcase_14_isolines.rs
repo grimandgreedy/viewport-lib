@@ -259,7 +259,7 @@ pub(crate) fn submit_iso_items(app: &App, fd: &mut FrameData) {
     iso_item.indices = app.iso_state.indices.clone();
     iso_item.scalars = app.iso_state.scalars.clone();
     iso_item.isovalues = isovalues;
-    iso_item.colour = app.iso_state.line_colour;
+    iso_item.colour = app.iso_state.line_colour.into();
     iso_item.line_width = app.iso_state.line_width;
     iso_item.depth_bias = app.iso_state.depth_bias;
     fd.scene.isolines.push(iso_item);

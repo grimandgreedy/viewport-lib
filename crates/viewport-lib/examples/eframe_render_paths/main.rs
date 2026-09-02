@@ -788,7 +788,7 @@ impl eframe::App for App {
             fd.viewport.wireframe_mode = self.wireframe;
             fd.viewport.show_axes_indicator = true;
             fd.interaction.outline_selected = !self.selection.is_empty();
-            fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0];
+            fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0].into();
             fd.interaction.outline_width_px = 3.0;
 
             // Render into the offscreen target (sRGB dual-view keeps the encode

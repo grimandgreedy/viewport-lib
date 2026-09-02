@@ -314,7 +314,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
             range: state.stress_radius,
             radius: 0.1,
         };
-        src.colour = colour;
+        src.colour = colour.into();
         src.intensity = state.stress_intensity;
         src.importance = importance;
 

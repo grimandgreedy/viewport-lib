@@ -607,7 +607,7 @@ fn row_solid_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) -> 
     for (w, h, shape, colour, border_colour) in items.drain(..) {
         shapes.push(
             OverlayShapeItem::new(shape, [x, y_mid - h * 0.5], [w, h])
-                .with_fill(OverlayFill::Solid(colour))
+                .with_fill(OverlayFill::Solid(colour.into()))
                 .with_border(border_colour, bw)
                 .with_z_order(0),
         );

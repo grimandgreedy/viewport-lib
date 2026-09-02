@@ -190,7 +190,7 @@ impl App {
         item.step_scale = s.step_scale;
         item.enable_shading = s.shading;
         item.nan_colour = if s.nan_on {
-            Some([0.9, 0.1, 0.9, 0.8])
+            Some([0.9, 0.1, 0.9, 0.8].into())
         } else {
             None
         };
@@ -377,10 +377,10 @@ pub(crate) fn controls_volume(app: &mut App, ui: &mut egui::Ui, frame: &eframe::
     if s.mode != VolumeMode::VolumeOnly {
         ui.separator();
         ui.label("Isosurface colour:");
-        if ui
-            .color_edit_button_rgb(&mut s.iso_material.base_colour)
-            .changed()
-        {}
+        let mut iso_rgb = s.iso_material.base_colour.to_linear_rgb();
+        if ui.color_edit_button_rgb(&mut iso_rgb).changed() {
+            s.iso_material.base_colour = iso_rgb.into();
+        }
         ui.label("Roughness:");
         ui.add(egui::Slider::new(&mut s.iso_material.roughness, 0.0..=1.0).step_by(0.05));
         ui.label("Metallic:");

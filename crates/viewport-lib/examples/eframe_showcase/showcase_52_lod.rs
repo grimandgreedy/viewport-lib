@@ -175,7 +175,7 @@ pub(crate) fn submit_lod_items(app: &mut App, fd: &mut FrameData) {
 
     let mut item = MeshInstanceItem::default();
     item.transforms = transforms;
-    item.colours = colours;
+    item.colours = colours.into_iter().map(Into::into).collect();
     item.blend = SpriteBlend::AlphaBlend;
     if st.lod_enabled {
         item.lod_group = Some(group);

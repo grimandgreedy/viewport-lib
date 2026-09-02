@@ -431,7 +431,7 @@ impl App {
             prim.params[1] = CENTERS[i][1];
             prim.params[2] = CENTERS[i][2];
             prim.params[3] = 1.3;
-            prim.colour = COLOURS[i];
+            prim.colour = COLOURS[i].into();
             primitives.push(prim);
         }
 

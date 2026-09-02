@@ -159,7 +159,7 @@ pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).to_cols_array_2d();
             item.material.backface_policy = BackfacePolicy::Identical;
-            item.material.base_colour = colour;
+            item.material.base_colour = colour.into();
             item.material.specular = 0.15;
             item.warp_attribute = Some("warp".to_string());
             item.warp_scale = app.warp_state.scale;

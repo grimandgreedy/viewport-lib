@@ -153,7 +153,7 @@ impl App {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.default_colour = s.flat_colour;
+            item.default_colour = s.flat_colour.into();
         }
         item
     }
@@ -171,7 +171,7 @@ impl App {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.colour = s.flat_colour;
+            item.colour = s.flat_colour.into();
         }
         item
     }
@@ -184,7 +184,7 @@ impl App {
         item.positions = positions;
         item.strip_lengths = strip_lengths;
         item.radius = s.tube_radius;
-        item.colour = s.flat_colour;
+        item.colour = s.flat_colour.into();
         item
     }
 
@@ -218,12 +218,12 @@ impl App {
                     colours.push([rgb[0], rgb[1], rgb[2], t]);
                 }
             }
-            item.colour_attribute = colours;
+            item.colour_attribute = colours.into_iter().map(Into::into).collect();
         } else if s.colour_by_speed {
             item.scalars = scalars;
             item.colourmap_id = Some(ColourmapId(s.colourmap as usize));
         } else {
-            item.colour = s.flat_colour;
+            item.colour = s.flat_colour.into();
         }
         item
     }

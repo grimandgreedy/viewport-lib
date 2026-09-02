@@ -1978,8 +1978,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .with_curve_families(curve_family_lookup)
             .with_instances(instance_lookup),
         );
-        fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.25];
-        fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0];
+        fd.interaction.sub_highlight_face_fill_colour = [1.0, 0.85, 0.0, 0.25].into();
+        fd.interaction.sub_highlight_edge_colour = [1.0, 0.85, 0.0, 1.0].into();
         fd.interaction.sub_highlight_edge_width_px = 5.0;
         fd.interaction.sub_highlight_vertex_size_px = 14.0;
     }
@@ -2061,7 +2061,13 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.sprite_positions.clone();
         s.sizes = app.pl_state.sprite_sizes.clone();
-        s.colours = app.pl_state.sprite_colours.clone();
+        s.colours = app
+            .pl_state
+            .sprite_colours
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect();
         s.default_colour = [1.0, 0.90, 0.20, 1.0].into();
         s.default_size = 28.0;
         s.depth_write = true;
@@ -2075,7 +2081,13 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut s = SpriteItem::default();
         s.positions = app.pl_state.xo_sprite_positions.clone();
         s.sizes = app.pl_state.xo_sprite_sizes.clone();
-        s.colours = app.pl_state.xo_sprite_colours.clone();
+        s.colours = app
+            .pl_state
+            .xo_sprite_colours
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect();
         s.default_colour = [0.5, 0.5, 1.0, 1.0].into();
         s.default_size = 30.0;
         s.depth_write = true;
@@ -2178,7 +2190,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             prim.params[1] = centers[i][1];
             prim.params[2] = centers[i][2];
             prim.params[3] = 1.2; // radius
-            prim.colour = colours[i];
+            prim.colour = colours[i].into();
             item.primitives.push(prim);
         }
         item.blend_mode = ImplicitBlendMode::SmoothUnion;
@@ -2234,7 +2246,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
 /// Set wireframe mode and selection outline colour on `fd` for showcase 33.
 pub(crate) fn pl_configure_frame(app: &App, fd: &mut FrameData) {
     fd.viewport.wireframe_mode = app.pl_state.wireframe;
-    fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0];
+    fd.interaction.outline_colour = [1.0, 0.85, 0.0, 1.0].into();
 }
 
 /// Build a standalone `FrameData` for the unified pick handlers.
