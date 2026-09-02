@@ -318,6 +318,11 @@ path = "examples/app_multi_window/main.rs"
 required-features = ["wgpu27", "app"]
 
 [[example]]
+name = "app-in-window-viewports"
+path = "examples/app_in_window_viewports/main.rs"
+required-features = ["wgpu27", "app"]
+
+[[example]]
 name = "winit-multi-viewport"
 path = "examples/winit_multi_viewport/main.rs"
 required-features = ["wgpu27"]

@@ -41,7 +41,9 @@ use crate::interaction::input::adapters::{from_winit, from_winit_device};
 use crate::interaction::input::{ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
 use crate::runners::viewport_app::RedrawMode;
-use crate::{ExposureMode, FrameData, OrbitCameraController, OverlayFrame};
+use crate::{
+    BlitTexture, ExposureMode, FrameData, OrbitCameraController, OverlayFrame, ViewportRenderer,
+};
 
 /// See [`ViewportApp`](crate::ViewportApp)'s equivalent: fill the auto-exposure `dt`
 /// from the frame time so smooth adaptation works under the continuous-frame runner.
@@ -217,6 +219,11 @@ type WindowCallback = Box<dyn FnMut(&mut FrameCtxV2)>;
 /// events and driving orbit for that window; the handler owns the input step.
 type WindowInputHandler = Box<dyn FnMut(&mut InputCtxV2)>;
 
+/// The optional per-window paint hook. Runs after the window's own instance has
+/// rendered, in a render pass over the surface, so a consumer can blit its own
+/// offscreen viewports into rects of the window (in-window viewports).
+type WindowPaint = Box<dyn FnMut(&mut PaintCtxV2)>;
+
 /// A window declared before [`run`](ViewportAppV2::run), or requested at runtime,
 /// realised into a [`WindowState`] when the runner holds the event loop.
 struct WindowBuilder {
@@ -224,6 +231,7 @@ struct WindowBuilder {
     factory: WindowFactory,
     input: Option<WindowInputHandler>,
     callback: WindowCallback,
+    paint: Option<WindowPaint>,
 }
 
 /// A window lifecycle request raised from a callback and applied once the runner
@@ -252,6 +260,8 @@ pub struct FrameCtxV2<'a> {
     device: &'a crate::gpu::Device,
     queue: &'a crate::gpu::Queue,
     viewport_size: [f32; 2],
+    surface_size: [u32; 2],
+    surface_format: crate::gpu::TextureFormat,
     close_requested: bool,
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
@@ -281,6 +291,21 @@ impl FrameCtxV2<'_> {
     /// The logical viewport size in points for this window this frame.
     pub fn viewport_size(&self) -> [f32; 2] {
         self.viewport_size
+    }
+
+    /// The window surface size in physical pixels. Size an
+    /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) to this (or a
+    /// sub-rect of it) so an in-window viewport renders at native resolution.
+    pub fn surface_size(&self) -> [u32; 2] {
+        self.surface_size
+    }
+
+    /// The window surface colour format. Build an
+    /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) and its
+    /// `ViewportInstance` for this format so a blit into the window composites
+    /// correctly.
+    pub fn surface_format(&self) -> crate::gpu::TextureFormat {
+        self.surface_format
     }
 
     /// The shared wgpu device.
@@ -331,6 +356,7 @@ impl FrameCtxV2<'_> {
                 factory: Box::new(factory),
                 input: None,
                 callback: Box::new(callback),
+                paint: None,
             },
         });
         id
@@ -455,6 +481,80 @@ impl std::ops::DerefMut for InputCtxV2<'_> {
     }
 }
 
+/// What a window's paint hook (installed with [`ViewportAppV2::window_with_paint`])
+/// receives: a render pass over the window surface, after the window's own instance
+/// has drawn, so the consumer can composite its own content into rects of the window.
+///
+/// The common use is in-window viewports: render other scenes into
+/// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget)s in the per-frame
+/// callback, build a [`BlitTexture`] for each with
+/// [`create_blit`](crate::ViewportRenderer::create_blit), then draw them here with
+/// [`blit_rect`](Self::blit_rect). The consumer owns the rectangles; the runner only
+/// yields the pass. Rects are in physical pixels (see [`surface_size`](Self::surface_size)).
+pub struct PaintCtxV2<'a, 'rp> {
+    window_id: WindowId,
+    viewport_size: [f32; 2],
+    surface_size: [u32; 2],
+    device: &'a crate::gpu::Device,
+    queue: &'a crate::gpu::Queue,
+    renderer: &'a ViewportRenderer,
+    rp: &'a mut crate::gpu::RenderPass<'rp>,
+}
+
+impl<'rp> PaintCtxV2<'_, 'rp> {
+    /// Which window this paint hook invocation is for.
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    /// The logical viewport size in points.
+    pub fn viewport_size(&self) -> [f32; 2] {
+        self.viewport_size
+    }
+
+    /// The surface size in physical pixels. Blit rects are in these units.
+    pub fn surface_size(&self) -> [u32; 2] {
+        self.surface_size
+    }
+
+    /// The shared wgpu device.
+    pub fn device(&self) -> &crate::gpu::Device {
+        self.device
+    }
+
+    /// The shared wgpu queue.
+    pub fn queue(&self) -> &crate::gpu::Queue {
+        self.queue
+    }
+
+    /// Blit a prepared texture into a physical-pixel rect of the window surface.
+    ///
+    /// Sets the pass viewport and scissor to `(x, y, w, h)` and draws `blit` there.
+    /// Build `blit` once per source with
+    /// [`create_blit`](crate::ViewportRenderer::create_blit) (in the per-frame
+    /// callback, via [`renderer_mut`](ViewportInstance::renderer_mut)), rebuilding it
+    /// when the source view changes.
+    pub fn blit_rect(&mut self, blit: &BlitTexture, x: u32, y: u32, w: u32, h: u32) {
+        self.rp
+            .set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+        self.rp.set_scissor_rect(x, y, w, h);
+        self.renderer.blit(self.rp, blit);
+    }
+
+    /// The window's renderer, for [`blit`](crate::ViewportRenderer::blit) /
+    /// [`blit_with_depth`](crate::ViewportRenderer::blit_with_depth) variants beyond
+    /// [`blit_rect`](Self::blit_rect).
+    pub fn renderer(&self) -> &ViewportRenderer {
+        self.renderer
+    }
+
+    /// The surface render pass (loaded, so the window's own render is preserved), for
+    /// compositing the runner does not wrap in [`blit_rect`](Self::blit_rect).
+    pub fn pass(&mut self) -> &mut crate::gpu::RenderPass<'rp> {
+        self.rp
+    }
+}
+
 /// An experimental multi-window winit runner driving one [`ViewportInstance`] per
 /// OS window.
 ///
@@ -510,7 +610,7 @@ impl ViewportAppV2 {
         factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         callback: impl FnMut(&mut FrameCtxV2) + 'static,
     ) -> Self {
-        self.push_window(config, factory, None, Box::new(callback))
+        self.push_window(config, factory, None, Box::new(callback), None)
     }
 
     /// Like [`window`](Self::window), but installs a per-window input handler. The
@@ -525,7 +625,29 @@ impl ViewportAppV2 {
         input: impl FnMut(&mut InputCtxV2) + 'static,
         callback: impl FnMut(&mut FrameCtxV2) + 'static,
     ) -> Self {
-        self.push_window(config, factory, Some(Box::new(input)), Box::new(callback))
+        self.push_window(config, factory, Some(Box::new(input)), Box::new(callback), None)
+    }
+
+    /// Like [`window`](Self::window), but installs a per-window paint hook that runs
+    /// after this window's own instance has rendered, in a render pass over the
+    /// surface. Use it to composite in-window viewports: render other scenes into
+    /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget)s in `callback`,
+    /// then blit them into rects in `paint` (see [`PaintCtxV2`]). The window's own
+    /// scene draws first (leave it empty to make the window a pure compositor).
+    pub fn window_with_paint(
+        self,
+        config: WindowConfig,
+        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        callback: impl FnMut(&mut FrameCtxV2) + 'static,
+        paint: impl FnMut(&mut PaintCtxV2) + 'static,
+    ) -> Self {
+        self.push_window(
+            config,
+            factory,
+            None,
+            Box::new(callback),
+            Some(Box::new(paint)),
+        )
     }
 
     fn push_window(
@@ -534,12 +656,14 @@ impl ViewportAppV2 {
         factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         input: Option<WindowInputHandler>,
         callback: WindowCallback,
+        paint: Option<WindowPaint>,
     ) -> Self {
         self.windows.push(WindowBuilder {
             config,
             factory: Box::new(factory),
             input,
             callback,
+            paint,
         });
         self
     }
@@ -581,6 +705,7 @@ struct WindowState {
     orbit: OrbitCameraController,
     input: Option<WindowInputHandler>,
     callback: WindowCallback,
+    paint: Option<WindowPaint>,
     /// Events translated for this window since its last frame.
     events: Vec<ViewportEvent>,
     focused: bool,
@@ -618,6 +743,7 @@ impl AppHandlerV2 {
             factory,
             input,
             callback,
+            paint,
         } = builder;
 
         let window = Arc::new(
@@ -713,6 +839,7 @@ impl AppHandlerV2 {
                 orbit: OrbitCameraController::viewport_all(),
                 input,
                 callback,
+                paint,
                 events: Vec::new(),
                 focused,
                 hovered,
@@ -771,6 +898,8 @@ impl AppHandlerV2 {
                 device: &gpu.device,
                 queue: &gpu.queue,
                 viewport_size: [w, h],
+                surface_size: [state.surface_config.width, state.surface_config.height],
+                surface_format: state.surface_config.format,
                 close_requested: std::mem::take(&mut state.close_requested),
                 overlays: OverlayFrame::default(),
                 injects: Vec::new(),
@@ -836,6 +965,48 @@ impl AppHandlerV2 {
                 .create_view(&crate::gpu::TextureViewDescriptor::default());
             let cmd = state.session.render(&gpu.device, &gpu.queue, &view);
             gpu.queue.submit(std::iter::once(cmd));
+
+            // Optional per-window paint hook: composite consumer content (in-window
+            // viewports) over the primary render, in a loaded pass on the surface.
+            if let Some(paint) = state.paint.as_mut() {
+                let mut encoder =
+                    gpu.device
+                        .create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+                            label: Some("viewport_app_v2_paint"),
+                        });
+                {
+                    let mut rp = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                        #[cfg(feature = "wgpu29")]
+                        multiview_mask: None,
+                        label: Some("viewport_app_v2_paint_pass"),
+                        color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: crate::gpu::Operations {
+                                load: crate::gpu::LoadOp::Load,
+                                store: crate::gpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    let renderer: &ViewportRenderer = state.session.renderer_mut();
+                    let mut pctx = PaintCtxV2 {
+                        window_id: id,
+                        viewport_size: [w, h],
+                        surface_size: [state.surface_config.width, state.surface_config.height],
+                        device: &gpu.device,
+                        queue: &gpu.queue,
+                        renderer,
+                        rp: &mut rp,
+                    };
+                    paint(&mut pctx);
+                }
+                gpu.queue.submit(std::iter::once(encoder.finish()));
+            }
+
             frame.present();
 
             state.session.begin_frame(ViewportContext {
