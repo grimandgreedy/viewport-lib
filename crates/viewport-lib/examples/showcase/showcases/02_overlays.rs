@@ -15,8 +15,8 @@ use viewport_lib as vpl;
 use eframe::egui;
 use glam::{Mat4, Vec3};
 use vpl::{
-    AnimTrack, BorderMode, FontHandle, GlyphRunItem, GradientStop, LabelAnchor, LabelItem, LineCap,
-    Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
+    AnimTrack, BorderMode, Colour, FontHandle, GlyphRunItem, GradientStop, LabelAnchor, LabelItem,
+    LineCap, Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PolylineCap,
     PositionedGlyph, RepeatMode, StrokePattern, TextureTransform, TileMode, TriangleDirection,
     primitives,
@@ -209,11 +209,11 @@ impl OverlaysShowcase {
             out.push(
                 LabelItem::new(text)
                     .with_world_anchor(pos)
-                    .with_colour(colour)
+                    .with_colour(Colour::srgb(colour[0], colour[1], colour[2], colour[3]))
                     .with_leader_line(true)
-                    .with_leader_colour([colour[0], colour[1], colour[2], 0.7])
+                    .with_leader_colour(Colour::srgb(colour[0], colour[1], colour[2], 0.7))
                     .with_background(true)
-                    .with_background_colour([0.0, 0.0, 0.0, 0.5])
+                    .with_background_colour(Colour::srgb(0.0, 0.0, 0.0, 0.5))
                     .with_border_radius(4.0)
                     .with_padding(4.0)
                     .with_align_x(LabelAnchor::Left),
@@ -397,8 +397,13 @@ impl OverlaysShowcase {
         for (w, h, shape, fill, border) in row1.iter().cloned() {
             out.push(
                 OverlayShapeItem::new(shape, [x, y + (70.0 - h) * 0.5], [w, h])
-                    .with_fill(OverlayFill::Solid(fill.into()))
-                    .with_border(border, bw),
+                    .with_fill(OverlayFill::Solid(Colour::srgb(
+                        fill[0], fill[1], fill[2], fill[3],
+                    )))
+                    .with_border(
+                        Colour::srgb(border[0], border[1], border[2], border[3]),
+                        bw,
+                    ),
             );
             x += w + gap;
         }
@@ -406,8 +411,8 @@ impl OverlaysShowcase {
         if self.backdrop_blur > 0.0 {
             out.push(
                 OverlayShapeItem::new(OverlayShape::Circle, [x, y - 35.0], [140.0, 140.0])
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.12].into()))
-                    .with_border([1.0, 1.0, 1.0, 0.3], 1.0)
+                    .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.12)))
+                    .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.3), 1.0)
                     .with_backdrop_blur(self.backdrop_blur),
             );
         }
@@ -426,30 +431,30 @@ impl OverlaysShowcase {
                 [120.0, 70.0],
             )
             .with_fill(OverlayFill::LinearGradient {
-                start_colour: [0.05, 0.15, 0.55, 0.9].into(),
-                end_colour: [0.05, 0.65, 0.65, 0.9].into(),
+                start_colour: Colour::srgb(0.05, 0.15, 0.55, 0.9),
+                end_colour: Colour::srgb(0.05, 0.65, 0.65, 0.9),
                 angle: 0.0,
             })
-            .with_border([0.3, 0.7, 1.0, 0.8], bw),
+            .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw),
         );
         x += 136.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::RadialGradient {
-                    centre_colour: [1.0, 0.95, 0.7, 1.0].into(),
-                    edge_colour: [0.2, 0.05, 0.0, 0.9].into(),
+                    centre_colour: Colour::srgb(1.0, 0.95, 0.7, 1.0),
+                    edge_colour: Colour::srgb(0.2, 0.05, 0.0, 0.9),
                 })
-                .with_border([1.0, 0.8, 0.4, 0.8], bw),
+                .with_border(Colour::srgb(1.0, 0.8, 0.4, 0.8), bw),
         );
         x += 86.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::ConicalGradient {
-                    start_colour: [0.95, 0.2, 0.4, 1.0].into(),
-                    end_colour: [0.2, 0.6, 1.0, 1.0].into(),
+                    start_colour: Colour::srgb(0.95, 0.2, 0.4, 1.0),
+                    end_colour: Colour::srgb(0.2, 0.6, 1.0, 1.0),
                     offset_angle: 0.0,
                 })
-                .with_border([0.9, 0.9, 0.9, 0.8], bw),
+                .with_border(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw),
         );
         x += 86.0;
         out.push(
@@ -460,28 +465,28 @@ impl OverlaysShowcase {
             )
             .with_fill(OverlayFill::LinearGradientMulti {
                 stops: vec![
-                    GradientStop::new(0.0, [0.05, 0.05, 0.20, 1.0]),
-                    GradientStop::new(0.4, [0.55, 0.10, 0.45, 1.0]),
-                    GradientStop::new(0.75, [0.95, 0.45, 0.20, 1.0]),
-                    GradientStop::new(1.0, [1.0, 0.95, 0.55, 1.0]),
+                    GradientStop::new(0.0, Colour::srgb(0.05, 0.05, 0.20, 1.0)),
+                    GradientStop::new(0.4, Colour::srgb(0.55, 0.10, 0.45, 1.0)),
+                    GradientStop::new(0.75, Colour::srgb(0.95, 0.45, 0.20, 1.0)),
+                    GradientStop::new(1.0, Colour::srgb(1.0, 0.95, 0.55, 1.0)),
                 ],
                 angle: 0.0,
             })
-            .with_border([1.0, 0.85, 0.4, 0.8], bw),
+            .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.8), bw),
         );
         x += 136.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::ConicalGradientMulti {
                     stops: vec![
-                        GradientStop::new(0.0, [0.95, 0.2, 0.2, 1.0]),
-                        GradientStop::new(0.25, [1.0, 0.85, 0.2, 1.0]),
-                        GradientStop::new(0.6, [0.2, 0.85, 0.45, 1.0]),
-                        GradientStop::new(1.0, [0.3, 0.5, 1.0, 1.0]),
+                        GradientStop::new(0.0, Colour::srgb(0.95, 0.2, 0.2, 1.0)),
+                        GradientStop::new(0.25, Colour::srgb(1.0, 0.85, 0.2, 1.0)),
+                        GradientStop::new(0.6, Colour::srgb(0.2, 0.85, 0.45, 1.0)),
+                        GradientStop::new(1.0, Colour::srgb(0.3, 0.5, 1.0, 1.0)),
                     ],
                     offset_angle: 0.0,
                 })
-                .with_border([0.9, 0.9, 0.9, 0.8], bw),
+                .with_border(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw),
         );
     }
 
@@ -497,23 +502,23 @@ impl OverlaysShowcase {
                 [x, y],
                 [120.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.95].into()))
-            .with_border([0.5, 0.5, 0.6, 0.8], bw)
-            .with_shadow([0.0, 0.0, 0.0, 0.5], 12.0, [4.0, 4.0]),
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.95)))
+            .with_border(Colour::srgb(0.5, 0.5, 0.6, 0.8), bw)
+            .with_shadow(Colour::srgb(0.0, 0.0, 0.0, 0.5), 12.0, [4.0, 4.0]),
         );
         x += 152.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::Solid([0.1, 0.15, 0.35, 0.95].into()))
-                .with_border([0.3, 0.5, 1.0, 0.9], bw)
-                .with_shadow([0.2, 0.4, 1.0, 0.6], 16.0, [0.0, 0.0]),
+                .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.15, 0.35, 0.95)))
+                .with_border(Colour::srgb(0.3, 0.5, 1.0, 0.9), bw)
+                .with_shadow(Colour::srgb(0.2, 0.4, 1.0, 0.6), 16.0, [0.0, 0.0]),
         );
         x += 102.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Capsule, [x, y + 15.0], [120.0, 40.0])
-                .with_fill(OverlayFill::Solid([0.3, 0.15, 0.05, 0.95].into()))
-                .with_border([1.0, 0.6, 0.2, 0.9], bw)
-                .with_shadow([1.0, 0.5, 0.1, 0.45], 14.0, [0.0, 2.0]),
+                .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.15, 0.05, 0.95)))
+                .with_border(Colour::srgb(1.0, 0.6, 0.2, 0.9), bw)
+                .with_shadow(Colour::srgb(1.0, 0.5, 0.1, 0.45), 14.0, [0.0, 2.0]),
         );
         x += 152.0;
         out.push(
@@ -522,9 +527,9 @@ impl OverlaysShowcase {
                 [x, y],
                 [120.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.22, 0.24, 0.30, 1.0].into()))
-            .with_border([0.05, 0.07, 0.12, 0.9], 1.0)
-            .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.22, 0.24, 0.30, 1.0)))
+            .with_border(Colour::srgb(0.05, 0.07, 0.12, 0.9), 1.0)
+            .with_shadow(Colour::srgb(0.0, 0.0, 0.0, 0.7), 14.0, [0.0, 4.0])
             .with_shadow_inset(true),
         );
     }
@@ -546,8 +551,11 @@ impl OverlaysShowcase {
                     [x, y],
                     [90.0, 70.0],
                 )
-                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.9].into()))
-                .with_border(colour, 3.0)
+                .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
+                .with_border(
+                    Colour::srgb(colour[0], colour[1], colour[2], colour[3]),
+                    3.0,
+                )
                 .with_border_mode(mode),
             );
             x += 106.0;
@@ -555,8 +563,8 @@ impl OverlaysShowcase {
         // Pulsing circle (built-in animation, resolved against overlays.time).
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::Solid([0.2, 0.5, 1.0, 0.9].into()))
-                .with_border([0.4, 0.7, 1.0, 0.9], bw)
+                .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 1.0, 0.9)))
+                .with_border(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw)
                 .with_animation(OverlayAnimation::Pulse {
                     start_time: 0.0,
                     period: 2.0,
@@ -568,8 +576,8 @@ impl OverlaysShowcase {
         let fade_start = (self.time as f64 / cycle).floor() * cycle;
         out.push(
             OverlayShapeItem::new(OverlayShape::Capsule, [x, y + 15.0], [120.0, 40.0])
-                .with_fill(OverlayFill::Solid([0.6, 0.2, 0.1, 0.9].into()))
-                .with_border([1.0, 0.5, 0.3, 0.9], bw)
+                .with_fill(OverlayFill::Solid(Colour::srgb(0.6, 0.2, 0.1, 0.9)))
+                .with_border(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw)
                 .with_animation(OverlayAnimation::FadeIn {
                     start_time: fade_start,
                     duration: 3.0,
@@ -583,8 +591,8 @@ impl OverlaysShowcase {
                 [x, y + 20.0],
                 [44.0, 28.0],
             )
-            .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95].into()))
-            .with_border([1.0, 0.85, 0.4, 0.9], bw)
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.65, 0.25, 0.95)))
+            .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw)
             .with_animations(OverlayAnimations::default().with_position(AnimTrack {
                 start_time: 0.0,
                 duration: 1.8,
@@ -611,7 +619,7 @@ impl OverlaysShowcase {
                 [x, y],
                 [100.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.2, 0.7, 1.0, 0.9].into())),
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.7, 1.0, 0.9))),
         );
         x += 116.0;
         out.push(
@@ -623,8 +631,8 @@ impl OverlaysShowcase {
                 [x, y],
                 [70.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([1.0, 0.85, 0.1, 0.9].into()))
-            .with_border([1.0, 1.0, 0.5, 0.9], bw)
+            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 0.85, 0.1, 0.9)))
+            .with_border(Colour::srgb(1.0, 1.0, 0.5, 0.9), bw)
             .with_rotation(t * 0.8),
         );
         x += 86.0;
@@ -634,8 +642,8 @@ impl OverlaysShowcase {
                 [x, y],
                 [70.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.1, 0.5, 0.9, 0.9].into()))
-            .with_border([0.3, 0.7, 1.0, 0.9], bw),
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.5, 0.9, 0.9)))
+            .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.9), bw),
         );
         x += 86.0;
         out.push(
@@ -646,8 +654,8 @@ impl OverlaysShowcase {
                 [x, y],
                 [70.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.3, 0.8, 0.5, 0.9].into()))
-            .with_border([0.5, 1.0, 0.7, 0.9], bw)
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.8, 0.5, 0.9)))
+            .with_border(Colour::srgb(0.5, 1.0, 0.7, 0.9), bw)
             .with_rotation(-t * 1.2),
         );
         x += 86.0;
@@ -668,8 +676,8 @@ impl OverlaysShowcase {
                 clip,
                 [clip_size * 0.5, clip_size],
             )
-            .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
-            .with_border([1.0, 1.0, 1.0, 0.5], 1.0)
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.0, 0.0, 0.0, 0.0)))
+            .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.5), 1.0)
             .with_border_mode(BorderMode::Outer),
         );
         out.push(
@@ -679,8 +687,8 @@ impl OverlaysShowcase {
                 [clip_size, clip_size],
             )
             .with_rotation(t * 0.6)
-            .with_fill(OverlayFill::Solid([0.9, 0.55, 0.2, 0.95].into()))
-            .with_border([1.0, 0.8, 0.3, 0.9], bw)
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.55, 0.2, 0.95)))
+            .with_border(Colour::srgb(1.0, 0.8, 0.3, 0.9), bw)
             .with_clip(7),
         );
     }
@@ -696,16 +704,16 @@ impl OverlaysShowcase {
             if let Some(tid) = self.demo_tex {
                 out.push(
                     OverlayShapeItem::new(OverlayShape::Circle, [x, y], [90.0, 90.0])
-                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
-                        .with_border([1.0, 1.0, 1.0, 0.9], bw)
+                        .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
+                        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw)
                         .with_texture(tid),
                 );
                 x += 106.0;
                 // Same texture spinning inside a static circle.
                 out.push(
                     OverlayShapeItem::new(OverlayShape::Circle, [x, y], [90.0, 90.0])
-                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
-                        .with_border([1.0, 1.0, 1.0, 0.9], bw)
+                        .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
+                        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw)
                         .with_texture(tid)
                         .with_texture_transform(TextureTransform {
                             rotation: t * 0.5,
@@ -720,8 +728,8 @@ impl OverlaysShowcase {
                         [x, y],
                         [150.0, 90.0],
                     )
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
-                    .with_border([1.0, 1.0, 1.0, 0.9], bw)
+                    .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
+                    .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw)
                     .with_texture(tid)
                     .with_texture_transform(TextureTransform {
                         scale: [3.0, 3.0],
@@ -739,8 +747,8 @@ impl OverlaysShowcase {
                         [x, y],
                         [140.0, 90.0],
                     )
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
-                    .with_border([0.8, 0.8, 0.8, 0.9], bw)
+                    .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
+                    .with_border(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw)
                     .with_texture(tid),
                 );
                 x += 156.0;
@@ -754,7 +762,7 @@ impl OverlaysShowcase {
                         [180.0, 90.0],
                     )
                     .with_texture(tid)
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into())),
+                    .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0))),
                 );
                 x += 196.0;
                 out.push(
@@ -764,7 +772,7 @@ impl OverlaysShowcase {
                         [180.0, 90.0],
                     )
                     .with_texture(tid)
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
+                    .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
                     .with_nine_slice(NineSlice {
                         insets_px: [10.0, 10.0, 10.0, 10.0],
                         centre_mode: TileMode::Stretch,
@@ -786,8 +794,8 @@ impl OverlaysShowcase {
                 [p[0] - 11.0, p[1] - 11.0],
                 [22.0, 22.0],
             )
-            .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0].into()))
-            .with_border([1.0, 0.7, 0.95, 0.9], bw),
+            .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.45, 0.85, 1.0)))
+            .with_border(Colour::srgb(1.0, 0.7, 0.95, 0.9), bw),
         );
     }
 
@@ -806,11 +814,11 @@ impl OverlaysShowcase {
                 [x - 36.0, y - 10.0],
             ])
             .with_thickness(2.0)
-            .with_colour([1.0, 1.0, 1.0, 0.8])
+            .with_colour(Colour::srgb(1.0, 1.0, 1.0, 0.8))
             .with_closed(true)
             .with_fill(OverlayFill::LinearGradient {
-                start_colour: [0.12, 0.65, 0.95, 0.78].into(),
-                end_colour: [0.95, 0.35, 0.7, 0.82].into(),
+                start_colour: Colour::srgb(0.12, 0.65, 0.95, 0.78),
+                end_colour: Colour::srgb(0.95, 0.35, 0.7, 0.82),
                 angle: PI * 0.25,
             })
             .with_z_order(1),
@@ -826,7 +834,7 @@ impl OverlaysShowcase {
                 [x, y + 28.0],
             ])
             .with_thickness(2.0)
-            .with_colour([1.0, 1.0, 1.0, 0.85])
+            .with_colour(Colour::srgb(1.0, 1.0, 1.0, 0.85))
             .with_closed(true)
             .with_stroke_pattern(StrokePattern::Dashed {
                 dash_length: 8.0,
@@ -848,7 +856,7 @@ impl OverlaysShowcase {
                     .collect(),
             )
             .with_thickness(5.0)
-            .with_colour([0.3, 0.9, 0.6, 0.9])
+            .with_colour(Colour::srgb(0.3, 0.9, 0.6, 0.9))
             .with_cap(PolylineCap::Round)
             .with_stroke_pattern(StrokePattern::Dashed {
                 dash_length: 18.0,
@@ -870,7 +878,7 @@ impl OverlaysShowcase {
                     .collect(),
             )
             .with_thickness(4.0)
-            .with_colour([1.0, 0.75, 0.3, 0.9])
+            .with_colour(Colour::srgb(1.0, 0.75, 0.3, 0.9))
             .with_closed(true)
             .with_stroke_pattern(StrokePattern::Dotted {
                 spacing: 10.0,
@@ -892,10 +900,10 @@ impl OverlaysShowcase {
                 blob_path,
                 64,
                 Some(OverlayFill::RadialGradient {
-                    centre_colour: [0.9, 0.7, 0.2, 0.85].into(),
-                    edge_colour: [0.7, 0.2, 0.5, 0.85].into(),
+                    centre_colour: Colour::srgb(0.9, 0.7, 0.2, 0.85),
+                    edge_colour: Colour::srgb(0.7, 0.2, 0.5, 0.85),
                 }),
-                [1.0, 1.0, 1.0, 0.85],
+                Colour::srgb(1.0, 1.0, 1.0, 0.85),
                 2.0,
             )
             .with_z_order(1),
@@ -908,7 +916,7 @@ impl OverlaysShowcase {
             |u| infinity_bezier_point(u, FIG8_CX, FIG8_CY),
             160,
             2.0,
-            [1.0, 1.0, 1.0, 0.45],
+            Colour::srgb(1.0, 1.0, 1.0, 0.45),
         );
         out.push(trace.with_closed(true).with_z_order(0));
 
@@ -939,9 +947,9 @@ impl OverlaysShowcase {
             out.push(
                 OverlayPolylineItem::new(heart)
                     .with_thickness(2.0)
-                    .with_colour([1.0, 0.78, 0.9, 0.9])
+                    .with_colour(Colour::srgb(1.0, 0.78, 0.9, 0.9))
                     .with_closed(true)
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95].into()))
+                    .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.95)))
                     .with_texture(tid)
                     .with_uvs(uvs)
                     .with_z_order(1),
@@ -955,8 +963,8 @@ impl OverlaysShowcase {
                     [px + a.cos() * r, y + a.sin() * r]
                 },
                 60,
-                Some(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95].into())),
-                [1.0, 0.9, 0.7, 0.9],
+                Some(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.95))),
+                Colour::srgb(1.0, 0.9, 0.7, 0.9),
                 2.0,
             );
             pentagon.texture = Some(tid);
