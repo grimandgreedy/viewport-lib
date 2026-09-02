@@ -12,6 +12,14 @@
 //! [`ViewportApp`](crate::ViewportApp) is unaffected. See the runners module docs
 //! for the composable [`ViewportInstance`] you drive from your own loop.
 //!
+//! Desktop-only: like [`ViewportApp`](crate::ViewportApp) it blocks on the event loop
+//! and brings the device up synchronously (`pollster::block_on`), and multiple OS
+//! windows are a desktop concept. On the web (one canvas) drive a
+//! [`ViewportInstance`] from your own loop instead. Both `app` runners are written
+//! against the default wgpu leg; the `wgpu29` leg does not build with the `app`
+//! feature. Per-window suspend/resume for mobile is out of scope; per-window surface
+//! loss is handled (the surface is reconfigured on `Lost`/`Outdated`).
+//!
 //! # The winit boundary
 //!
 //! A consumer never touches winit through this runner: windows are named by the
@@ -41,6 +49,24 @@ fn auto_fill_exposure_dt(frame: &mut FrameData, dt: f32) {
     if let ExposureMode::Automatic(ref mut auto) = frame.effects.display.exposure.mode {
         auto.dt = dt;
     }
+}
+
+// --- Pure bookkeeping helpers -------------------------------------------------
+// The multi-window lifecycle decisions that do not touch winit or the GPU live here
+// as free functions so they are unit-testable without spinning up real OS windows
+// (winit's `WindowId` and a live surface cannot be constructed in a test).
+
+/// Allocate the next library window id from a monotonically-increasing counter.
+fn alloc_window_id(counter: &mut u64) -> WindowId {
+    let id = WindowId(*counter);
+    *counter += 1;
+    id
+}
+
+/// Whether the event loop should end after a window closes: only when no windows
+/// remain and the app is configured to exit on the last close.
+fn should_end_loop(remaining_windows: usize, exit_on_last_close: bool) -> bool {
+    remaining_windows == 0 && exit_on_last_close
 }
 
 /// A window handle owned by the runner, not winit's.
@@ -297,8 +323,7 @@ impl FrameCtxV2<'_> {
         factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         callback: impl FnMut(&mut FrameCtxV2) + 'static,
     ) -> WindowId {
-        let id = WindowId(self.next_id);
-        self.next_id += 1;
+        let id = alloc_window_id(&mut self.next_id);
         self.commands.push(WindowCommand::Open {
             id,
             builder: WindowBuilder {
@@ -581,9 +606,7 @@ struct AppHandlerV2 {
 impl AppHandlerV2 {
     /// Allocate the next library window id.
     fn alloc_id(&mut self) -> WindowId {
-        let id = WindowId(self.next_id);
-        self.next_id += 1;
-        id
+        alloc_window_id(&mut self.next_id)
     }
 
     /// Create one window from its builder under a pre-assigned id, configure its
@@ -844,7 +867,7 @@ impl AppHandlerV2 {
         if let Some(state) = self.windows.remove(&id) {
             self.winit_ids.remove(&state.window.id());
         }
-        if self.windows.is_empty() && self.config.exit_on_last_window_close {
+        if should_end_loop(self.windows.len(), self.config.exit_on_last_window_close) {
             event_loop.exit();
         }
     }
@@ -948,6 +971,16 @@ impl ApplicationHandler for AppHandlerV2 {
                 }
             }
 
+            // DPI changed (moved to a display with a different scale, or the OS scale
+            // changed). Redraw so this window re-reads its scale_factor; a Resized
+            // usually follows and reconfigures the surface. Per-window, so only the
+            // affected window redraws.
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(state) = self.windows.get_mut(&id) {
+                    state.window.request_redraw();
+                }
+            }
+
             other => {
                 if let Some(state) = self.windows.get_mut(&id) {
                     let scale = state.window.scale_factor() as f32;
@@ -981,5 +1014,39 @@ impl ApplicationHandler for AppHandlerV2 {
             state.events.push(ev);
             state.window.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The multi-window bookkeeping that does not need winit or a GPU is unit-tested
+    // here. Window creation, event routing (winit's WindowId has no public
+    // constructor), and per-window redraw isolation need a real event loop and are
+    // exercised by the app-multi-window example instead.
+
+    #[test]
+    fn window_ids_are_unique_and_monotonic() {
+        let mut counter = 0u64;
+        let a = alloc_window_id(&mut counter);
+        let b = alloc_window_id(&mut counter);
+        let c = alloc_window_id(&mut counter);
+        assert_eq!(a.raw(), 0);
+        assert_eq!(b.raw(), 1);
+        assert_eq!(c.raw(), 2);
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_eq!(counter, 3);
+    }
+
+    #[test]
+    fn empty_set_exit_policy() {
+        // Exit only when the last window closed and configured to do so.
+        assert!(should_end_loop(0, true));
+        assert!(!should_end_loop(0, false));
+        // Windows remain: never exit on a close.
+        assert!(!should_end_loop(1, true));
+        assert!(!should_end_loop(3, false));
     }
 }
