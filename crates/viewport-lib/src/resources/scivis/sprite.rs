@@ -478,9 +478,9 @@ impl DeviceResources {
         let instances: Vec<GpuSpriteInstance> = (0..item.positions.len())
             .map(|i| GpuSpriteInstance {
                 colour: if i < item.colours.len() {
-                    item.colours[i]
+                    item.colours[i].to_linear_rgba()
                 } else {
-                    item.default_colour
+                    item.default_colour.to_linear_rgba()
                 },
                 size: if i < item.sizes.len() {
                     item.sizes[i]

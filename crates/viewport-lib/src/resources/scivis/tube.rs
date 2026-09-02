@@ -461,7 +461,7 @@ impl DeviceResources {
         }
         let uniform_data = StreamtubeUniform {
             model: item.model,
-            colour: item.colour,
+            colour: item.colour.to_linear_rgba(),
             radius,
             use_vertex_colour: 0,
             unlit: item.settings.unlit as u32,
@@ -619,7 +619,7 @@ impl DeviceResources {
                     c[3] as f32 / 255.0,
                 ]
             } else {
-                item.colour
+                item.colour.to_linear_rgba()
             }
         };
 
@@ -836,7 +836,7 @@ impl DeviceResources {
         }
         let uniform_data = TubeUniform {
             model: item.model,
-            colour: item.colour,
+            colour: item.colour.to_linear_rgba(),
             radius: item.radius.max(f32::EPSILON),
             use_vertex_colour,
             unlit: item.settings.unlit as u32,
@@ -986,7 +986,8 @@ impl DeviceResources {
                     .colour_attribute
                     .get(idx)
                     .copied()
-                    .unwrap_or(item.colour);
+                    .unwrap_or(item.colour)
+                    .to_linear_rgba();
             }
             if let Some(ref lut) = lut_rgba {
                 let s = *item.scalars.get(idx).unwrap_or(&0.0);
@@ -1000,7 +1001,7 @@ impl DeviceResources {
                     c[3] as f32 / 255.0,
                 ]
             } else {
-                item.colour
+                item.colour.to_linear_rgba()
             }
         };
 
@@ -1214,7 +1215,7 @@ impl DeviceResources {
             };
         let uniform_data = RibbonUniform {
             model: item.model,
-            colour: item.colour,
+            colour: item.colour.to_linear_rgba(),
             radius: item.width * 0.5,
             use_vertex_colour,
             unlit: item.settings.unlit as u32,

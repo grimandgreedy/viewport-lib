@@ -34,7 +34,7 @@ pub struct GlyphItem {
     /// Colourmap for scalar colouring. None = use default builtin (viridis).
     pub colourmap_id: Option<ColourmapId>,
     /// Fallback RGBA colour used when `use_default_colour` is true. Default: transparent (unused).
-    pub default_colour: [f32; 4],
+    pub default_colour: crate::colour::Colour,
     /// When true, glyphs are coloured by `default_colour` (with per-instance scalar as brightness)
     /// instead of the LUT. Default: false.
     pub use_default_colour: bool,
@@ -57,7 +57,7 @@ impl Default for GlyphItem {
             scalars: Vec::new(),
             scalar_range: None,
             colourmap_id: None,
-            default_colour: [0.0; 4],
+            default_colour: [0.0; 4].into(),
             use_default_colour: false,
             glyph_type: GlyphType::Arrow,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),

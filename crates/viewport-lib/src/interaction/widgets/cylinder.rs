@@ -42,9 +42,9 @@ pub struct CylinderWidget {
     /// Cylinder radius in world units.
     pub radius: f32,
     /// RGBA colour for the wireframe outline.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// RGBA colour for the drag handles. Non-zero alpha overrides LUT colouring.
-    pub handle_colour: [f32; 4],
+    pub handle_colour: crate::Colour,
 
     hovered_handle: Option<CylinderHandle>,
     active_handle: Option<CylinderHandle>,
@@ -60,8 +60,8 @@ impl CylinderWidget {
             start,
             end,
             radius: radius.max(0.01),
-            colour: [0.4, 0.9, 0.5, 1.0],
-            handle_colour: [0.0; 4],
+            colour: [0.4, 0.9, 0.5, 1.0].into(),
+            handle_colour: [0.0; 4].into(),
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -188,7 +188,7 @@ impl CylinderWidget {
         PolylineItem {
             positions,
             strip_lengths,
-            default_colour: self.colour,
+            default_colour: self.colour.into(),
             line_width: 1.5,
 
             settings: {
@@ -233,8 +233,8 @@ impl CylinderWidget {
             s.pick_id = crate::renderer::PickId(id_base);
             s
         };
-        g.default_colour = self.handle_colour;
-        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g.default_colour = self.handle_colour.into();
+        g.use_default_colour = self.handle_colour.alpha() > 0.0;
         g
     }
 

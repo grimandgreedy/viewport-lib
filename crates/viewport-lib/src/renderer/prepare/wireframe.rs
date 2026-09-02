@@ -49,7 +49,7 @@ pub(super) fn obb_box_polyline(c: &[[f32; 3]]) -> crate::renderer::types::Polyli
     crate::renderer::types::PolylineItem {
         positions,
         strip_lengths,
-        default_colour: [0.75, 0.75, 0.75, 1.0],
+        default_colour: [0.75, 0.75, 0.75, 1.0].into(),
         line_width: 1.0,
         ..crate::renderer::types::PolylineItem::default()
     }
@@ -104,7 +104,7 @@ pub(super) fn splat_rings_polyline(
     crate::renderer::types::PolylineItem {
         positions: all_positions,
         strip_lengths,
-        default_colour: [0.75, 0.75, 0.75, 1.0],
+        default_colour: [0.75, 0.75, 0.75, 1.0].into(),
         line_width: 1.0,
         ..crate::renderer::types::PolylineItem::default()
     }
@@ -335,7 +335,7 @@ pub(super) fn sprite_quad_outlines_polyline(
     crate::renderer::types::PolylineItem {
         positions: all_positions,
         strip_lengths,
-        default_colour: [0.75, 0.75, 0.75, 1.0],
+        default_colour: [0.75, 0.75, 0.75, 1.0].into(),
         line_width: 1.0,
         ..crate::renderer::types::PolylineItem::default()
     }

@@ -73,7 +73,8 @@ pub enum ColourSpace {
 /// // A light colour is already linear:
 /// let warm = Colour::linear_rgb(1.0, 0.9, 0.7);
 /// ```
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Colour([f32; 4]);
@@ -226,6 +227,23 @@ impl From<[f32; 4]> for Colour {
 impl From<[f32; 3]> for Colour {
     fn from(v: [f32; 3]) -> Self {
         Colour([v[0], v[1], v[2], 1.0])
+    }
+}
+
+/// A linear `[f64; 4]` is taken as-is (channels narrowed to `f32`). This mirrors
+/// [`From<[f32; 4]>`] so an untyped array literal, which infers as `f64`, still
+/// converts where a constructor takes `impl Into<Colour>`.
+impl From<[f64; 4]> for Colour {
+    fn from(v: [f64; 4]) -> Self {
+        Colour([v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32])
+    }
+}
+
+/// A linear `[f64; 3]` is taken as-is (channels narrowed to `f32`), alpha 1.0.
+/// See [`From<[f64; 4]>`].
+impl From<[f64; 3]> for Colour {
+    fn from(v: [f64; 3]) -> Self {
+        Colour([v[0] as f32, v[1] as f32, v[2] as f32, 1.0])
     }
 }
 

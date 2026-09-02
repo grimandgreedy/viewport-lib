@@ -1225,7 +1225,7 @@ fn demo_polyline(size: PayloadSize) -> PolylineItem {
     item.positions = positions;
     item.strip_lengths = strip_lengths;
     item.line_width = 3.0;
-    item.default_colour = [0.95, 0.55, 0.35, 1.0];
+    item.default_colour = [0.95, 0.55, 0.35, 1.0].into();
     item
 }
 
@@ -1235,7 +1235,7 @@ fn demo_streamtube(size: PayloadSize) -> StreamtubeItem {
     item.positions = positions;
     item.strip_lengths = strip_lengths;
     item.radius = 0.07;
-    item.colour = [0.45, 0.85, 0.95, 1.0];
+    item.colour = [0.45, 0.85, 0.95, 1.0].into();
     item
 }
 
@@ -1246,7 +1246,7 @@ fn demo_tube(size: PayloadSize) -> TubeItem {
     item.strip_lengths = strip_lengths;
     item.radius = 0.08;
     item.sides = 16;
-    item.colour = [0.95, 0.85, 0.45, 1.0];
+    item.colour = [0.95, 0.85, 0.45, 1.0].into();
     item
 }
 
@@ -1256,7 +1256,7 @@ fn demo_ribbon(size: PayloadSize) -> RibbonItem {
     item.positions = positions;
     item.strip_lengths = strip_lengths;
     item.width = 0.18;
-    item.colour = [0.65, 0.55, 0.95, 1.0];
+    item.colour = [0.65, 0.55, 0.95, 1.0].into();
     item
 }
 
@@ -1279,7 +1279,7 @@ fn demo_point_cloud(size: PayloadSize) -> PointCloudItem {
     }
     item.positions = positions;
     item.point_size = 6.0;
-    item.default_colour = [0.35, 0.85, 0.55, 1.0];
+    item.default_colour = [0.35, 0.85, 0.55, 1.0].into();
     item
 }
 
@@ -1302,7 +1302,7 @@ fn demo_glyph_set() -> GlyphItem {
     item.vectors = vectors;
     item.scale = 0.3;
     item.scale_by_magnitude = false;
-    item.default_colour = [0.9, 0.7, 0.3, 1.0];
+    item.default_colour = [0.9, 0.7, 0.3, 1.0].into();
     item.use_default_colour = true;
     item
 }
@@ -1364,7 +1364,7 @@ fn demo_sprite_set() -> SpriteItem {
     }
     item.positions = positions;
     item.default_size = 16.0;
-    item.default_colour = [0.95, 0.7, 0.4, 1.0];
+    item.default_colour = [0.95, 0.7, 0.4, 1.0].into();
     item
 }
 
@@ -1378,7 +1378,7 @@ fn demo_sprite_instance_set() -> SpriteItem {
     }
     item.positions = positions;
     item.default_size = 12.0;
-    item.default_colour = [0.5, 0.85, 0.95, 1.0];
+    item.default_colour = [0.5, 0.85, 0.95, 1.0].into();
     item
 }
 

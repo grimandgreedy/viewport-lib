@@ -999,7 +999,7 @@ impl DeviceResources {
             // Per-item surface material (one bind group shared by all slabs).
             // ----------------------------------------------------------
             let mat_raw = McSurfaceRaw {
-                base_colour: job.material.base_colour,
+                base_colour: job.material.base_colour.to_linear_rgb(),
                 roughness: job.material.roughness,
                 unlit: job.settings.unlit as u32,
                 opacity: job.settings.opacity,

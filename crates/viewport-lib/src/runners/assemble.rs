@@ -162,7 +162,7 @@ impl ViewportInstance {
         self.frame.scene = SceneFrame::from_scene(&mut self.scene, &self.selection);
         self.frame.interaction = InteractionFrame::from_selection(&self.selection);
         self.frame.interaction.outline_selected = self.outline_selected;
-        self.frame.interaction.outline_colour = self.outline_colour;
+        self.frame.interaction.outline_colour = self.outline_colour.into();
         self.frame.interaction.outline_width_px = self.outline_width_px;
         self.stamp_gizmo();
         self.frame.overlays = OverlayFrame::default();

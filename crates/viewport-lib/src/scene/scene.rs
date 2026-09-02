@@ -42,7 +42,7 @@ pub struct Layer {
     /// When true, nodes on this layer render but cannot appear selected.
     pub locked: bool,
     /// Display colour for this layer (RGBA, each component 0.0-1.0).
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Sort order for layer display. Lower values appear first.
     pub order: u32,
 }
@@ -234,7 +234,7 @@ impl ViewportObject for SceneNode {
     }
 
     fn colour(&self) -> glam::Vec3 {
-        glam::Vec3::from(self.material.base_colour)
+        glam::Vec3::from(self.material.base_colour.to_linear_rgb())
     }
 
     fn show_normals(&self) -> bool {
@@ -362,7 +362,7 @@ impl Scene {
                 name: "Default".to_string(),
                 visible: true,
                 locked: false,
-                colour: [1.0, 1.0, 1.0, 1.0],
+                colour: [1.0, 1.0, 1.0, 1.0].into(),
                 order: 0,
             }],
             next_id: 1,
@@ -775,7 +775,7 @@ impl Scene {
             name: name.to_string(),
             visible: true,
             locked: false,
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             order,
         });
         self.version = self.version.wrapping_add(1);
@@ -815,7 +815,8 @@ impl Scene {
     }
 
     /// Set layer display colour.
-    pub fn set_layer_colour(&mut self, id: LayerId, colour: [f32; 4]) {
+    pub fn set_layer_colour(&mut self, id: LayerId, colour: impl Into<crate::Colour>) {
+        let colour = colour.into();
         if let Some(layer) = self.layers.iter_mut().find(|l| l.id == id) {
             layer.colour = colour;
         }
@@ -1842,7 +1843,7 @@ mod tests {
         let layers = scene.layers();
         let layer = layers.iter().find(|l| l.id == layer_id).unwrap();
         assert!(!layer.locked);
-        assert_eq!(layer.colour, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(layer.colour.to_linear_rgba(), [1.0, 1.0, 1.0, 1.0]);
         assert!(layer.order > 0); // non-default layer has order >= 1
     }
 
@@ -1863,7 +1864,7 @@ mod tests {
         scene.set_layer_colour(layer_id, [1.0, 0.0, 0.0, 1.0]);
         let layers = scene.layers();
         let layer = layers.iter().find(|l| l.id == layer_id).unwrap();
-        assert_eq!(layer.colour, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(layer.colour.to_linear_rgba(), [1.0, 0.0, 0.0, 1.0]);
     }
 
     #[test]

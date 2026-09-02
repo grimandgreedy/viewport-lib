@@ -43,7 +43,7 @@ fn lit_frame(size: u32, mesh: MeshId, intensity: f32, exposure: ExposureSettings
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0]);
+    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
 
     let mut light = LightSource::default();
     light.kind = LightKind::Directional {
@@ -60,7 +60,7 @@ fn lit_frame(size: u32, mesh: MeshId, intensity: f32, exposure: ExposureSettings
     item.mesh_id = mesh;
     // Scale the unit quad up so it covers the whole 1:1 frame.
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(4.0)).to_cols_array_2d();
-    item.material.base_colour = [0.6, 0.6, 0.6];
+    item.material.base_colour = [0.6, 0.6, 0.6].into();
     // Matte, non-metal: minimise the head-on specular highlight so the readback
     // tracks diffuse radiance (which scales cleanly with light intensity).
     item.material.roughness = 1.0;

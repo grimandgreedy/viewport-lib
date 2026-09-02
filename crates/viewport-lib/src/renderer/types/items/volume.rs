@@ -51,7 +51,7 @@ pub struct VolumeItem {
     /// Colour and opacity to use for NaN scalar samples. `None` = skip NaN samples entirely
     /// (same as current behaviour: discard). `Some([r, g, b, a])` = render NaN voxels with
     /// this fixed RGBA colour instead of sampling the transfer function.
-    pub nan_colour: Option<[f32; 4]>,
+    pub nan_colour: Option<crate::Colour>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }

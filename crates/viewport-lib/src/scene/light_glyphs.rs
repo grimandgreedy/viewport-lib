@@ -99,7 +99,7 @@ pub fn build_light_glyphs(
         g.scale = GLYPH_SIZE;
         g.scale_by_magnitude = matches!(glyph_type, GlyphType::Arrow);
         g.use_default_colour = true;
-        g.default_colour = colour_rgba;
+        g.default_colour = colour_rgba.into();
         g.settings = settings;
         glyphs.push(g);
 
@@ -246,7 +246,7 @@ fn spot_cone_polyline(
     PolylineItem {
         positions,
         strip_lengths: strips,
-        default_colour: colour,
+        default_colour: colour.into(),
         line_width: 1.5,
         ..Default::default()
     }

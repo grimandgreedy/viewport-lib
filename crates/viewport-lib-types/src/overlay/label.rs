@@ -35,7 +35,7 @@ pub struct LabelItem {
     pub text: String,
 
     /// RGBA text colour in linear float format.
-    pub colour: [f32; 4],
+    pub colour: crate::colour::Colour,
 
     /// Font size in logical pixels.
     pub font_size: f32,
@@ -47,7 +47,7 @@ pub struct LabelItem {
     pub background: bool,
 
     /// RGBA colour of the background rectangle.
-    pub background_colour: [f32; 4],
+    pub background_colour: crate::colour::Colour,
 
     /// Padding between the text and the background rectangle edge in logical
     /// pixels.  Only used when `background` is `true`.  Default: `3.0`.
@@ -58,7 +58,7 @@ pub struct LabelItem {
     pub leader_line: bool,
 
     /// RGBA colour of the leader line.
-    pub leader_colour: [f32; 4],
+    pub leader_colour: crate::colour::Colour,
 
     /// Horizontal alignment of the label text relative to its anchor.
     pub align_x: AnchorX,
@@ -113,14 +113,14 @@ impl Default for LabelItem {
         Self {
             anchor: OverlayAnchor::default(),
             text: String::new(),
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             font_size: 14.0,
             font: None,
             background: false,
-            background_colour: [0.0, 0.0, 0.0, 0.55],
+            background_colour: [0.0, 0.0, 0.0, 0.55].into(),
             padding: 3.0,
             leader_line: false,
-            leader_colour: [1.0, 1.0, 1.0, 0.6],
+            leader_colour: [1.0, 1.0, 1.0, 0.6].into(),
             align_x: AnchorX::Left,
             align_y: AnchorY::Middle,
             anchor_padding: 6.0,
@@ -171,8 +171,8 @@ impl LabelItem {
     }
 
     /// Set the text colour.
-    pub fn with_colour(mut self, colour: [f32; 4]) -> Self {
-        self.colour = colour;
+    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.colour = colour.into();
         self
     }
 
@@ -195,8 +195,8 @@ impl LabelItem {
     }
 
     /// Set the background rectangle colour.
-    pub fn with_background_colour(mut self, colour: [f32; 4]) -> Self {
-        self.background_colour = colour;
+    pub fn with_background_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.background_colour = colour.into();
         self
     }
 
@@ -213,8 +213,8 @@ impl LabelItem {
     }
 
     /// Set the leader line colour.
-    pub fn with_leader_colour(mut self, colour: [f32; 4]) -> Self {
-        self.leader_colour = colour;
+    pub fn with_leader_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.leader_colour = colour.into();
         self
     }
 

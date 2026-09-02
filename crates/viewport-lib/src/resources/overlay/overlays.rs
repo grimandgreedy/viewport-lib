@@ -29,7 +29,7 @@ impl DeviceResources {
                         position: (*origin + *direction).to_array(),
                     },
                 ],
-                *colour,
+                colour.to_linear_rgba(),
             ),
             crate::interaction::query::snap::ConstraintOverlay::Plane {
                 origin,
@@ -51,7 +51,7 @@ impl DeviceResources {
                         position: (*origin + *axis_b).to_array(),
                     },
                 ],
-                *colour,
+                colour.to_linear_rgba(),
             ),
         };
         let indices: Vec<u32> = (0..vertices.len() as u32).collect();

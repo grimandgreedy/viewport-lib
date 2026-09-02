@@ -406,7 +406,7 @@ impl OverlaysShowcase {
         if self.backdrop_blur > 0.0 {
             out.push(
                 OverlayShapeItem::new(OverlayShape::Circle, [x, y - 35.0], [140.0, 140.0])
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.12]))
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.12].into()))
                     .with_border([1.0, 1.0, 1.0, 0.3], 1.0)
                     .with_backdrop_blur(self.backdrop_blur),
             );
@@ -426,8 +426,8 @@ impl OverlaysShowcase {
                 [120.0, 70.0],
             )
             .with_fill(OverlayFill::LinearGradient {
-                start_colour: [0.05, 0.15, 0.55, 0.9],
-                end_colour: [0.05, 0.65, 0.65, 0.9],
+                start_colour: [0.05, 0.15, 0.55, 0.9].into(),
+                end_colour: [0.05, 0.65, 0.65, 0.9].into(),
                 angle: 0.0,
             })
             .with_border([0.3, 0.7, 1.0, 0.8], bw),
@@ -436,8 +436,8 @@ impl OverlaysShowcase {
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::RadialGradient {
-                    centre_colour: [1.0, 0.95, 0.7, 1.0],
-                    edge_colour: [0.2, 0.05, 0.0, 0.9],
+                    centre_colour: [1.0, 0.95, 0.7, 1.0].into(),
+                    edge_colour: [0.2, 0.05, 0.0, 0.9].into(),
                 })
                 .with_border([1.0, 0.8, 0.4, 0.8], bw),
         );
@@ -445,8 +445,8 @@ impl OverlaysShowcase {
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::ConicalGradient {
-                    start_colour: [0.95, 0.2, 0.4, 1.0],
-                    end_colour: [0.2, 0.6, 1.0, 1.0],
+                    start_colour: [0.95, 0.2, 0.4, 1.0].into(),
+                    end_colour: [0.2, 0.6, 1.0, 1.0].into(),
                     offset_angle: 0.0,
                 })
                 .with_border([0.9, 0.9, 0.9, 0.8], bw),
@@ -497,21 +497,21 @@ impl OverlaysShowcase {
                 [x, y],
                 [120.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.95]))
+            .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.95].into()))
             .with_border([0.5, 0.5, 0.6, 0.8], bw)
             .with_shadow([0.0, 0.0, 0.0, 0.5], 12.0, [4.0, 4.0]),
         );
         x += 152.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::Solid([0.1, 0.15, 0.35, 0.95]))
+                .with_fill(OverlayFill::Solid([0.1, 0.15, 0.35, 0.95].into()))
                 .with_border([0.3, 0.5, 1.0, 0.9], bw)
                 .with_shadow([0.2, 0.4, 1.0, 0.6], 16.0, [0.0, 0.0]),
         );
         x += 102.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Capsule, [x, y + 15.0], [120.0, 40.0])
-                .with_fill(OverlayFill::Solid([0.3, 0.15, 0.05, 0.95]))
+                .with_fill(OverlayFill::Solid([0.3, 0.15, 0.05, 0.95].into()))
                 .with_border([1.0, 0.6, 0.2, 0.9], bw)
                 .with_shadow([1.0, 0.5, 0.1, 0.45], 14.0, [0.0, 2.0]),
         );
@@ -522,7 +522,7 @@ impl OverlaysShowcase {
                 [x, y],
                 [120.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.22, 0.24, 0.30, 1.0]))
+            .with_fill(OverlayFill::Solid([0.22, 0.24, 0.30, 1.0].into()))
             .with_border([0.05, 0.07, 0.12, 0.9], 1.0)
             .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
             .with_shadow_inset(true),
@@ -546,7 +546,7 @@ impl OverlaysShowcase {
                     [x, y],
                     [90.0, 70.0],
                 )
-                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.9]))
+                .with_fill(OverlayFill::Solid([0.15, 0.15, 0.2, 0.9].into()))
                 .with_border(colour, 3.0)
                 .with_border_mode(mode),
             );
@@ -555,7 +555,7 @@ impl OverlaysShowcase {
         // Pulsing circle (built-in animation, resolved against overlays.time).
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
-                .with_fill(OverlayFill::Solid([0.2, 0.5, 1.0, 0.9]))
+                .with_fill(OverlayFill::Solid([0.2, 0.5, 1.0, 0.9].into()))
                 .with_border([0.4, 0.7, 1.0, 0.9], bw)
                 .with_animation(OverlayAnimation::Pulse {
                     start_time: 0.0,
@@ -568,7 +568,7 @@ impl OverlaysShowcase {
         let fade_start = (self.time as f64 / cycle).floor() * cycle;
         out.push(
             OverlayShapeItem::new(OverlayShape::Capsule, [x, y + 15.0], [120.0, 40.0])
-                .with_fill(OverlayFill::Solid([0.6, 0.2, 0.1, 0.9]))
+                .with_fill(OverlayFill::Solid([0.6, 0.2, 0.1, 0.9].into()))
                 .with_border([1.0, 0.5, 0.3, 0.9], bw)
                 .with_animation(OverlayAnimation::FadeIn {
                     start_time: fade_start,
@@ -583,7 +583,7 @@ impl OverlaysShowcase {
                 [x, y + 20.0],
                 [44.0, 28.0],
             )
-            .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95]))
+            .with_fill(OverlayFill::Solid([0.95, 0.65, 0.25, 0.95].into()))
             .with_border([1.0, 0.85, 0.4, 0.9], bw)
             .with_animations(OverlayAnimations::default().with_position(AnimTrack {
                 start_time: 0.0,
@@ -611,7 +611,7 @@ impl OverlaysShowcase {
                 [x, y],
                 [100.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.2, 0.7, 1.0, 0.9])),
+            .with_fill(OverlayFill::Solid([0.2, 0.7, 1.0, 0.9].into())),
         );
         x += 116.0;
         out.push(
@@ -623,7 +623,7 @@ impl OverlaysShowcase {
                 [x, y],
                 [70.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([1.0, 0.85, 0.1, 0.9]))
+            .with_fill(OverlayFill::Solid([1.0, 0.85, 0.1, 0.9].into()))
             .with_border([1.0, 1.0, 0.5, 0.9], bw)
             .with_rotation(t * 0.8),
         );
@@ -634,7 +634,7 @@ impl OverlaysShowcase {
                 [x, y],
                 [70.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.1, 0.5, 0.9, 0.9]))
+            .with_fill(OverlayFill::Solid([0.1, 0.5, 0.9, 0.9].into()))
             .with_border([0.3, 0.7, 1.0, 0.9], bw),
         );
         x += 86.0;
@@ -646,7 +646,7 @@ impl OverlaysShowcase {
                 [x, y],
                 [70.0, 70.0],
             )
-            .with_fill(OverlayFill::Solid([0.3, 0.8, 0.5, 0.9]))
+            .with_fill(OverlayFill::Solid([0.3, 0.8, 0.5, 0.9].into()))
             .with_border([0.5, 1.0, 0.7, 0.9], bw)
             .with_rotation(-t * 1.2),
         );
@@ -668,7 +668,7 @@ impl OverlaysShowcase {
                 clip,
                 [clip_size * 0.5, clip_size],
             )
-            .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]))
+            .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
             .with_border([1.0, 1.0, 1.0, 0.5], 1.0)
             .with_border_mode(BorderMode::Outer),
         );
@@ -679,7 +679,7 @@ impl OverlaysShowcase {
                 [clip_size, clip_size],
             )
             .with_rotation(t * 0.6)
-            .with_fill(OverlayFill::Solid([0.9, 0.55, 0.2, 0.95]))
+            .with_fill(OverlayFill::Solid([0.9, 0.55, 0.2, 0.95].into()))
             .with_border([1.0, 0.8, 0.3, 0.9], bw)
             .with_clip(7),
         );
@@ -696,7 +696,7 @@ impl OverlaysShowcase {
             if let Some(tid) = self.demo_tex {
                 out.push(
                     OverlayShapeItem::new(OverlayShape::Circle, [x, y], [90.0, 90.0])
-                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
                         .with_border([1.0, 1.0, 1.0, 0.9], bw)
                         .with_texture(tid),
                 );
@@ -704,7 +704,7 @@ impl OverlaysShowcase {
                 // Same texture spinning inside a static circle.
                 out.push(
                     OverlayShapeItem::new(OverlayShape::Circle, [x, y], [90.0, 90.0])
-                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                        .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
                         .with_border([1.0, 1.0, 1.0, 0.9], bw)
                         .with_texture(tid)
                         .with_texture_transform(TextureTransform {
@@ -720,7 +720,7 @@ impl OverlaysShowcase {
                         [x, y],
                         [150.0, 90.0],
                     )
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
                     .with_border([1.0, 1.0, 1.0, 0.9], bw)
                     .with_texture(tid)
                     .with_texture_transform(TextureTransform {
@@ -739,7 +739,7 @@ impl OverlaysShowcase {
                         [x, y],
                         [140.0, 90.0],
                     )
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
                     .with_border([0.8, 0.8, 0.8, 0.9], bw)
                     .with_texture(tid),
                 );
@@ -754,7 +754,7 @@ impl OverlaysShowcase {
                         [180.0, 90.0],
                     )
                     .with_texture(tid)
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0])),
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into())),
                 );
                 x += 196.0;
                 out.push(
@@ -764,7 +764,7 @@ impl OverlaysShowcase {
                         [180.0, 90.0],
                     )
                     .with_texture(tid)
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
                     .with_nine_slice(NineSlice {
                         insets_px: [10.0, 10.0, 10.0, 10.0],
                         centre_mode: TileMode::Stretch,
@@ -786,7 +786,7 @@ impl OverlaysShowcase {
                 [p[0] - 11.0, p[1] - 11.0],
                 [22.0, 22.0],
             )
-            .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0]))
+            .with_fill(OverlayFill::Solid([0.95, 0.45, 0.85, 1.0].into()))
             .with_border([1.0, 0.7, 0.95, 0.9], bw),
         );
     }
@@ -809,8 +809,8 @@ impl OverlaysShowcase {
             .with_colour([1.0, 1.0, 1.0, 0.8])
             .with_closed(true)
             .with_fill(OverlayFill::LinearGradient {
-                start_colour: [0.12, 0.65, 0.95, 0.78],
-                end_colour: [0.95, 0.35, 0.7, 0.82],
+                start_colour: [0.12, 0.65, 0.95, 0.78].into(),
+                end_colour: [0.95, 0.35, 0.7, 0.82].into(),
                 angle: PI * 0.25,
             })
             .with_z_order(1),
@@ -892,8 +892,8 @@ impl OverlaysShowcase {
                 blob_path,
                 64,
                 Some(OverlayFill::RadialGradient {
-                    centre_colour: [0.9, 0.7, 0.2, 0.85],
-                    edge_colour: [0.7, 0.2, 0.5, 0.85],
+                    centre_colour: [0.9, 0.7, 0.2, 0.85].into(),
+                    edge_colour: [0.7, 0.2, 0.5, 0.85].into(),
                 }),
                 [1.0, 1.0, 1.0, 0.85],
                 2.0,
@@ -941,7 +941,7 @@ impl OverlaysShowcase {
                     .with_thickness(2.0)
                     .with_colour([1.0, 0.78, 0.9, 0.9])
                     .with_closed(true)
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95]))
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95].into()))
                     .with_texture(tid)
                     .with_uvs(uvs)
                     .with_z_order(1),
@@ -955,7 +955,7 @@ impl OverlaysShowcase {
                     [px + a.cos() * r, y + a.sin() * r]
                 },
                 60,
-                Some(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95])),
+                Some(OverlayFill::Solid([1.0, 1.0, 1.0, 0.95].into())),
                 [1.0, 0.9, 0.7, 0.9],
                 2.0,
             );

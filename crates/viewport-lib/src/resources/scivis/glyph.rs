@@ -241,8 +241,8 @@ impl DeviceResources {
             mag_clamp_min,
             mag_clamp_max,
             has_mag_clamp,
-            default_colour: item.default_colour,
-            use_default_colour: if item.default_colour[3] > 0.0 && item.use_default_colour {
+            default_colour: item.default_colour.to_linear_rgba(),
+            use_default_colour: if item.default_colour.alpha() > 0.0 && item.use_default_colour {
                 1
             } else {
                 0

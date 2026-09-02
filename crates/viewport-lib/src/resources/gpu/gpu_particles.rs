@@ -1145,7 +1145,7 @@ fn build_emit_params(
         cone_half_angle: 0.0,
         vel_axis: [0.0; 3],
         cone_min_speed: 0.0,
-        colour: e.colour,
+        colour: e.colour.to_linear_rgba(),
         spawn_count,
         capacity,
         rng_seed: frame_counter.wrapping_mul(0x9E3779B1),

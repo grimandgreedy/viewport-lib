@@ -19,7 +19,7 @@ pub struct PointCloudItem {
     /// World-space positions (one vec3 per point).
     pub positions: Vec<[f32; 3]>,
     /// Optional per-point RGBA colours in linear `[0,1]`. If empty, uses `default_colour`.
-    pub colours: Vec<[f32; 4]>,
+    pub colours: Vec<crate::Colour>,
     /// Optional per-point scalar values for LUT colouring. If non-empty, overrides `colours`.
     pub scalars: Vec<f32>,
     /// Scalar range for LUT mapping. None = auto from min/max of `scalars`.
@@ -29,7 +29,7 @@ pub struct PointCloudItem {
     /// Screen-space point size in pixels. Default: 4.0.
     pub point_size: f32,
     /// Fallback colour when neither `colours` nor `scalars` are provided.
-    pub default_colour: [f32; 4],
+    pub default_colour: crate::Colour,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
     /// Render mode. Default: ScreenSpaceCircle.
@@ -64,7 +64,7 @@ impl Default for PointCloudItem {
             scalar_range: None,
             colourmap_id: None,
             point_size: 4.0,
-            default_colour: [1.0, 1.0, 1.0, 1.0],
+            default_colour: [1.0, 1.0, 1.0, 1.0].into(),
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_mode: PointRenderMode::ScreenSpaceCircle,
             radii: Vec::new(),

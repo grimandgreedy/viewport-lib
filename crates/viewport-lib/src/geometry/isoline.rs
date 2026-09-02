@@ -50,7 +50,7 @@ pub struct IsolineItem {
     pub isovalues: Vec<f32>,
 
     /// RGBA colour applied to every line segment.  Defaults to opaque white.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
 
     /// Line width in pixels.  Defaults to `1.0`.
     pub line_width: f32,
@@ -71,7 +71,7 @@ impl Default for IsolineItem {
             indices: Vec::new(),
             scalars: Vec::new(),
             isovalues: Vec::new(),
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             line_width: 1.0,
             model_matrix: glam::Mat4::IDENTITY,
             depth_bias: 0.001,

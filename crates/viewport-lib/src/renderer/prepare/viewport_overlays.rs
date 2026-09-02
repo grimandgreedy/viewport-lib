@@ -153,8 +153,8 @@ pub(super) fn emit_vector_shape(
 
     // Border: a vector outline stroke, not an SDF band. Stroke each flattened
     // contour through the same tessellator polylines use.
-    if shape.border_width > 0.0 && shape.border_colour[3] > 0.0 {
-        let mut colour = shape.border_colour;
+    if shape.border_width > 0.0 && shape.border_colour.alpha() > 0.0 {
+        let mut colour = shape.border_colour.to_linear_rgba();
         colour[3] *= shape.opacity;
         for contour in crate::renderer::types::flatten_contours(subpaths) {
             if contour.len() < 2 {
@@ -502,7 +502,7 @@ impl ViewportRenderer {
                         }
                     }
                     if poly.thickness > 0.0 {
-                        let mut colour = poly.colour;
+                        let mut colour = poly.colour.to_linear_rgba();
                         colour[3] *= poly.opacity;
                         emit_polyline_stroke(&mut batch, poly, colour, vp_w, vp_h);
                     }
@@ -617,7 +617,8 @@ impl ViewportRenderer {
                         let by0 = text_y - pad;
                         let bx1 = text_x + layout.total_width + pad;
                         let by1 = text_y + layout.height + pad;
-                        let bg_colour = apply_opacity(label.background_colour, opacity);
+                        let bg_colour =
+                            apply_opacity(label.background_colour.to_linear_rgba(), opacity);
                         if label.border_radius > 0.0 {
                             emit_rounded_quad(
                                 &mut batch,
@@ -646,7 +647,7 @@ impl ViewportRenderer {
                                     text_x,
                                     text_y + layout.height * 0.5,
                                     1.5,
-                                    apply_opacity(label.leader_colour, opacity),
+                                    apply_opacity(label.leader_colour.to_linear_rgba(), opacity),
                                     vp_w,
                                     vp_h,
                                 );
@@ -654,7 +655,7 @@ impl ViewportRenderer {
                         }
                     }
 
-                    let text_colour = apply_opacity(label.colour, opacity);
+                    let text_colour = apply_opacity(label.colour.to_linear_rgba(), opacity);
                     // The label origin is the top-left of the text box; add the
                     // ascent to reach the first baseline the quads are relative to.
                     emit_glyph_quads(
@@ -707,7 +708,12 @@ impl ViewportRenderer {
                     // Glyphs without a per-glyph entry fall back to the run colour.
                     let quads = self.resources.content.glyph_atlas.layout_glyph_run(
                         run.glyphs.iter().enumerate().map(|(i, g)| {
-                            let colour = run.colours.get(i).copied().unwrap_or(run.colour);
+                            let colour = run
+                                .colours
+                                .get(i)
+                                .copied()
+                                .unwrap_or(run.colour)
+                                .to_linear_rgba();
                             (g.glyph_id, g.x, g.y, apply_opacity(colour, opacity))
                         }),
                         run.font_size,
@@ -1103,12 +1109,12 @@ impl ViewportRenderer {
                     if let Some(track) = owned.animations.fill {
                         if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
                             owned.fill = crate::renderer::types::OverlayFill::Solid(
-                                track.sample(overlay_time),
+                                track.sample(overlay_time).into(),
                             );
                         }
                     }
                     if let Some(track) = owned.animations.border {
-                        owned.border_colour = track.sample(overlay_time);
+                        owned.border_colour = track.sample(overlay_time).into();
                     }
                     if let Some(track) = owned.animations.rotation {
                         owned.rotation = track.sample(overlay_time);
@@ -1129,12 +1135,12 @@ impl ViewportRenderer {
                     if let Some(track) = owned.animations.fill_path.clone() {
                         if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
                             owned.fill = crate::renderer::types::OverlayFill::Solid(
-                                track.sample(overlay_time),
+                                track.sample(overlay_time).into(),
                             );
                         }
                     }
                     if let Some(track) = owned.animations.border_path.clone() {
-                        owned.border_colour = track.sample(overlay_time);
+                        owned.border_colour = track.sample(overlay_time).into();
                     }
                     if let Some(track) = owned.animations.rotation_path.clone() {
                         owned.rotation = track.sample(overlay_time);
@@ -1330,8 +1336,8 @@ impl ViewportRenderer {
                     let stop_count: f32;
                     let gradient_params = match &shape.fill {
                         crate::renderer::types::OverlayFill::Solid(c) => {
-                            stop_colours[0] = *c;
-                            stop_colours[1] = *c;
+                            stop_colours[0] = c.to_linear_rgba();
+                            stop_colours[1] = c.to_linear_rgba();
                             stop_count = 0.0;
                             [0.0_f32, 0.0]
                         }
@@ -1340,8 +1346,8 @@ impl ViewportRenderer {
                             end_colour,
                             angle,
                         } => {
-                            stop_colours[0] = *start_colour;
-                            stop_colours[1] = *end_colour;
+                            stop_colours[0] = start_colour.to_linear_rgba();
+                            stop_colours[1] = end_colour.to_linear_rgba();
                             stop_count = 2.0;
                             [1.0_f32, *angle]
                         }
@@ -1349,8 +1355,8 @@ impl ViewportRenderer {
                             centre_colour,
                             edge_colour,
                         } => {
-                            stop_colours[0] = *centre_colour;
-                            stop_colours[1] = *edge_colour;
+                            stop_colours[0] = centre_colour.to_linear_rgba();
+                            stop_colours[1] = edge_colour.to_linear_rgba();
                             stop_count = 2.0;
                             [2.0_f32, 0.0]
                         }
@@ -1359,8 +1365,8 @@ impl ViewportRenderer {
                             end_colour,
                             offset_angle,
                         } => {
-                            stop_colours[0] = *start_colour;
-                            stop_colours[1] = *end_colour;
+                            stop_colours[0] = start_colour.to_linear_rgba();
+                            stop_colours[1] = end_colour.to_linear_rgba();
                             stop_count = 2.0;
                             [3.0_f32, *offset_angle]
                         }
@@ -1398,12 +1404,12 @@ impl ViewportRenderer {
                     let fc = stop_colours[0];
                     let fc2 = stop_colours[1];
                     let _ = (start_colour, end_colour);
-                    let mut bc = shape.border_colour;
+                    let mut bc = shape.border_colour.to_linear_rgba();
                     bc[3] *= resolved_opacity;
 
                     let half_size = [hw, hh];
 
-                    let mut sc = shape.shadow_colour;
+                    let mut sc = shape.shadow_colour.to_linear_rgba();
                     sc[3] *= resolved_opacity;
                     let border_mode_f = match shape.border_mode {
                         crate::renderer::types::BorderMode::Inset => 0.0,
@@ -1593,7 +1599,7 @@ impl ViewportRenderer {
                         let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
                         if !shape.shadows.is_empty() {
                             for l in shape.shadows.iter().take(max_layers) {
-                                let mut col = l.colour;
+                                let mut col = l.colour.to_linear_rgba();
                                 col[3] *= resolved_opacity;
                                 shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                                     colour: col,
@@ -1615,7 +1621,7 @@ impl ViewportRenderer {
                         }
                         if !shape.inner_shadows.is_empty() {
                             for l in shape.inner_shadows.iter().take(max_layers) {
-                                let mut col = l.colour;
+                                let mut col = l.colour.to_linear_rgba();
                                 col[3] *= resolved_opacity;
                                 shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                                     colour: col,
@@ -1729,7 +1735,7 @@ impl ViewportRenderer {
                     let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
                     let half_size = [size[0] * 0.5, size[1] * 0.5];
                     let mut tint = match &poly.fill {
-                        Some(crate::renderer::types::OverlayFill::Solid(c)) => *c,
+                        Some(crate::renderer::types::OverlayFill::Solid(c)) => c.to_linear_rgba(),
                         _ => [1.0, 1.0, 1.0, 1.0],
                     };
                     tint[3] *= poly.opacity;

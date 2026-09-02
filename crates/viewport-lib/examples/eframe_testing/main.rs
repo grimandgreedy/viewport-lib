@@ -11,7 +11,6 @@
 //!   Right drag = pan
 //!   Scroll = zoom
 
-
 use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use vpl::{
@@ -134,7 +133,7 @@ impl App {
             _t.kind = LightKind::Directional {
                 direction: [0.4, 0.3, 1.5],
             };
-            _t.colour = [1.0, 1.0, 1.0];
+            _t.colour = [1.0, 1.0, 1.0].into();
             _t.intensity = 1.0;
             _t
         }];
@@ -425,7 +424,11 @@ impl eframe::App for App {
                 (h * ppp).round().max(1.0) as u32,
             ];
             let mut guard = rs.renderer.write();
-            if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+            if self
+                .target
+                .as_ref()
+                .map_or(true, |t| t.inner.size() != size_px)
+            {
                 let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
                 let id = guard.register_native_texture(
                     &rs.device,

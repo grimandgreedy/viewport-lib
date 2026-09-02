@@ -29,7 +29,7 @@ pub struct MeshInstanceItem {
     pub transforms: Vec<[[f32; 4]; 4]>,
     /// Per-instance RGBA tints. If shorter than `transforms`, missing entries
     /// fall back to opaque white.
-    pub colours: Vec<[f32; 4]>,
+    pub colours: Vec<crate::Colour>,
     /// GPU blend state for this batch. Reuses [`SpriteBlend`] from the sprite
     /// path so both particle systems share one enum.
     pub blend: SpriteBlend,
@@ -172,7 +172,7 @@ pub struct EmitterConfig {
     /// Spawn shape relative to world space.
     pub spawn_shape: SpawnShape,
     /// Per-particle RGBA tint, multiplied with any texture sample at draw time.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Per-particle starting size. Pixels (ScreenSpace) or world units
     /// (WorldSpace) per the system's render config.
     pub size: f32,
@@ -185,7 +185,7 @@ impl Default for EmitterConfig {
             lifetime: (1.0, 2.0),
             initial_velocity: VelocityDist::default(),
             spawn_shape: SpawnShape::default(),
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             size: 16.0,
         }
     }

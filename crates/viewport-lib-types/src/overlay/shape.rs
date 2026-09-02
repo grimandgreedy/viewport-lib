@@ -123,7 +123,7 @@ pub enum OverlayShape {
 pub struct ShadowLayer {
     /// RGBA colour of the shadow, linear float format. The alpha scales the
     /// shadow strength.
-    pub colour: [f32; 4],
+    pub colour: crate::colour::Colour,
     /// Blur spread in logical pixels. `0.0` produces no visible shadow.
     pub radius: f32,
     /// Offset of the shadow from the shape centre in logical pixels.
@@ -133,9 +133,9 @@ pub struct ShadowLayer {
 
 impl ShadowLayer {
     /// Build a shadow layer from colour, blur radius, and offset.
-    pub fn new(colour: [f32; 4], radius: f32, offset: [f32; 2]) -> Self {
+    pub fn new(colour: impl Into<crate::colour::Colour>, radius: f32, offset: [f32; 2]) -> Self {
         Self {
-            colour,
+            colour: colour.into(),
             radius,
             offset,
         }
@@ -189,14 +189,14 @@ impl Default for OverlayShape {
 ///     [20.0, 20.0],
 ///     [300.0, 200.0],
 /// )
-/// .with_fill(OverlayFill::Solid([0.1, 0.1, 0.1, 0.85]))
+/// .with_fill(OverlayFill::Solid([0.1, 0.1, 0.1, 0.85].into()))
 /// .with_border([0.4, 0.4, 0.4, 1.0], 1.0);
 ///
 /// // Circle with a left-to-right gradient.
 /// let grad_dot = OverlayShapeItem::new(OverlayShape::Circle, [100.0, 100.0], [60.0, 60.0])
 ///     .with_fill(OverlayFill::LinearGradient {
-///         start_colour: [0.0, 0.4, 1.0, 1.0],
-///         end_colour: [0.0, 1.0, 0.5, 1.0],
+///         start_colour: [0.0, 0.4, 1.0, 1.0].into(),
+///         end_colour: [0.0, 1.0, 0.5, 1.0].into(),
 ///         angle: 0.0,
 ///     });
 /// ```
@@ -234,7 +234,7 @@ pub struct OverlayShapeItem {
     /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
     pub opacity: f32,
     /// RGBA border colour in linear float format.
-    pub border_colour: [f32; 4],
+    pub border_colour: crate::colour::Colour,
     /// Border thickness in logical pixels. `0.0` disables the border.
     pub border_width: f32,
     /// Where the border sits relative to the shape edge. Default: `Inset`.
@@ -246,7 +246,7 @@ pub struct OverlayShapeItem {
     /// boundary. `fill` acts as a tint when this is `Some`.
     pub texture: Option<OverlayTextureId>,
     /// RGBA colour of the outer shadow/glow halo. Default: transparent (no shadow).
-    pub shadow_colour: [f32; 4],
+    pub shadow_colour: crate::colour::Colour,
     /// Blur spread of the shadow in logical pixels. `0.0` disables the shadow.
     pub shadow_radius: f32,
     /// Offset of the shadow centre from the shape centre in logical pixels.
@@ -357,12 +357,12 @@ impl Default for OverlayShapeItem {
             shape: OverlayShape::default(),
             fill: OverlayFill::default(),
             opacity: 1.0,
-            border_colour: [1.0, 1.0, 1.0, 1.0],
+            border_colour: [1.0, 1.0, 1.0, 1.0].into(),
             border_width: 0.0,
             border_mode: BorderMode::Inset,
             z_order: 0,
             texture: None,
-            shadow_colour: [0.0, 0.0, 0.0, 0.0],
+            shadow_colour: [0.0, 0.0, 0.0, 0.0].into(),
             shadow_radius: 0.0,
             shadow_offset: [0.0, 0.0],
             animation: OverlayAnimation::None,
@@ -637,7 +637,7 @@ impl OverlayShapeItem {
         let position =
             super::anchor::viewport_anchored_top_left(anchor_x, anchor_y, size, viewport_size);
         Self::new(OverlayShape::Rect { corner_radius: 0.0 }, position, size)
-            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
             .with_texture(texture)
     }
 
@@ -680,8 +680,8 @@ impl OverlayShapeItem {
     }
 
     /// Set the border colour and width. A width of `0.0` disables the border.
-    pub fn with_border(mut self, colour: [f32; 4], width: f32) -> Self {
-        self.border_colour = colour;
+    pub fn with_border(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
+        self.border_colour = colour.into();
         self.border_width = width;
         self
     }
@@ -705,8 +705,13 @@ impl OverlayShapeItem {
     }
 
     /// Set the outer (or inset) shadow colour, blur radius, and offset.
-    pub fn with_shadow(mut self, colour: [f32; 4], radius: f32, offset: [f32; 2]) -> Self {
-        self.shadow_colour = colour;
+    pub fn with_shadow(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        radius: f32,
+        offset: [f32; 2],
+    ) -> Self {
+        self.shadow_colour = colour.into();
         self.shadow_radius = radius;
         self.shadow_offset = offset;
         self

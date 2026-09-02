@@ -1815,7 +1815,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut pc = PointCloudItem::default();
         pc.positions = app.pl_state.pc_positions.clone();
         pc.point_size = 18.0;
-        pc.default_colour = [0.10, 0.26, 0.68, 1.0];
+        pc.default_colour = [0.10, 0.26, 0.68, 1.0].into();
         pc.settings.pick_id = PickId(100);
         pc.settings.selected = app.pl_state.selection.contains(100);
         pc.settings.unlit = false;
@@ -1989,7 +1989,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             let mut marker = PointCloudItem::default();
             marker.positions = vec![marker_pos.to_array()];
             marker.point_size = 16.0;
-            marker.default_colour = [1.0, 0.35, 0.0, 1.0];
+            marker.default_colour = [1.0, 0.35, 0.0, 1.0].into();
             fd.scene.point_clouds.push(marker);
         }
     }
@@ -2020,7 +2020,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         let mut pl = PolylineItem::default();
         pl.positions = app.pl_state.polyline_positions.clone();
         pl.strip_lengths = app.pl_state.polyline_strip_lengths.clone();
-        pl.default_colour = [0.2, 0.85, 0.35, 1.0];
+        pl.default_colour = [0.2, 0.85, 0.35, 1.0].into();
         pl.line_width = 3.0;
         pl.settings.pick_id = PickId(30);
         pl.settings.selected = app.pl_state.selection.contains(30);
@@ -2036,7 +2036,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         g.scale = 0.8;
         g.scale_by_magnitude = false;
         g.use_default_colour = true;
-        g.default_colour = [0.75, 0.1, 1.0, 1.0];
+        g.default_colour = [0.75, 0.1, 1.0, 1.0].into();
         g.glyph_type = GlyphType::Arrow;
         g.settings.pick_id = PickId(31);
         g.settings.selected = app.pl_state.selection.contains(31);
@@ -2062,7 +2062,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.positions = app.pl_state.sprite_positions.clone();
         s.sizes = app.pl_state.sprite_sizes.clone();
         s.colours = app.pl_state.sprite_colours.clone();
-        s.default_colour = [1.0, 0.90, 0.20, 1.0];
+        s.default_colour = [1.0, 0.90, 0.20, 1.0].into();
         s.default_size = 28.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(33);
@@ -2076,7 +2076,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.positions = app.pl_state.xo_sprite_positions.clone();
         s.sizes = app.pl_state.xo_sprite_sizes.clone();
         s.colours = app.pl_state.xo_sprite_colours.clone();
-        s.default_colour = [0.5, 0.5, 1.0, 1.0];
+        s.default_colour = [0.5, 0.5, 1.0, 1.0].into();
         s.default_size = 30.0;
         s.depth_write = true;
         s.settings.pick_id = PickId(34);
@@ -2090,7 +2090,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         st.positions = app.pl_state.streamtube_positions.clone();
         st.strip_lengths = app.pl_state.streamtube_strip_lengths.clone();
         st.radius = 0.12;
-        st.colour = [0.10, 0.52, 0.18, 1.0];
+        st.colour = [0.10, 0.52, 0.18, 1.0].into();
         st.settings.pick_id = PickId(40);
         st.settings.selected = app.pl_state.selection.contains(40);
         st.settings.unlit = false;
@@ -2102,7 +2102,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tb.positions = app.pl_state.tube_positions.clone();
         tb.strip_lengths = app.pl_state.tube_strip_lengths.clone();
         tb.radius = 0.15;
-        tb.colour = [0.75, 0.28, 0.05, 1.0];
+        tb.colour = [0.75, 0.28, 0.05, 1.0].into();
         tb.settings.pick_id = PickId(41);
         tb.settings.selected = app.pl_state.selection.contains(41);
         tb.settings.unlit = false;
@@ -2114,7 +2114,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         rb.positions = app.pl_state.ribbon_positions.clone();
         rb.strip_lengths = app.pl_state.ribbon_strip_lengths.clone();
         rb.width = 0.4;
-        rb.colour = [0.6, 0.3, 0.9, 1.0];
+        rb.colour = [0.6, 0.3, 0.9, 1.0].into();
         rb.settings.pick_id = PickId(42);
         rb.settings.selected = app.pl_state.selection.contains(42);
         rb.settings.unlit = false;

@@ -32,7 +32,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0]);
+    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
     frame
 }
 
@@ -42,7 +42,7 @@ fn red_square() -> OverlayPolylineItem {
     p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
     p.closed = true;
     p.thickness = 0.0;
-    p.fill = Some(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0]));
+    p.fill = Some(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()));
     p.opacity = 1.0;
     p
 }
@@ -68,7 +68,7 @@ fn red_sdf_rect() -> OverlayShapeItem {
         [16.0, 16.0],
         [32.0, 32.0],
     )
-    .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0]))
+    .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()))
 }
 
 /// A retained group carrying an analytic SDF shape draws through the shape
@@ -163,7 +163,7 @@ fn retained_shape_per_frame_clip() {
 /// only masks; it does not paint.
 fn circle_mask() -> OverlayShapeItem {
     OverlayShapeItem::new(OverlayShape::Circle, [16.0, 16.0], [32.0, 32.0])
-        .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]))
+        .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
         .with_clip_mask(7)
 }
 

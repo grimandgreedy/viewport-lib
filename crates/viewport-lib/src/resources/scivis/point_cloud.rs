@@ -299,7 +299,7 @@ impl DeviceResources {
         }
         let uniform_data = PointCloudUniform {
             model: item.model,
-            default_colour: item.default_colour,
+            default_colour: item.default_colour.to_linear_rgba(),
             point_size: item.point_size,
             has_scalars,
             scalar_min,

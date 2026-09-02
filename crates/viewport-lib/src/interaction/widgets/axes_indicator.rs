@@ -102,7 +102,13 @@ pub(crate) fn build_axes_overlays(
 
         // Filled circle background: the solid axis colour, so the disc reads as a
         // clean coloured dot rather than a dark hole inside the ring.
-        shapes.push(disc(tip, CIRCLE_RADIUS, OverlayShape::Circle, colour, base_z + 1));
+        shapes.push(disc(
+            tip,
+            CIRCLE_RADIUS,
+            OverlayShape::Circle,
+            colour,
+            base_z + 1,
+        ));
 
         // Letter glyph in a dark tint of the axis colour, so it reads against the
         // solid disc.
@@ -111,7 +117,13 @@ pub(crate) fn build_axes_overlays(
 }
 
 /// A straight stroke from `a` to `b` as a rotated flat rectangle.
-fn segment(a: glam::Vec2, b: glam::Vec2, thickness: f32, colour: [f32; 4], z: i32) -> OverlayShapeItem {
+fn segment(
+    a: glam::Vec2,
+    b: glam::Vec2,
+    thickness: f32,
+    colour: [f32; 4],
+    z: i32,
+) -> OverlayShapeItem {
     let mid = (a + b) * 0.5;
     let d = b - a;
     let len = d.length().max(0.001);
@@ -122,7 +134,7 @@ fn segment(a: glam::Vec2, b: glam::Vec2, thickness: f32, colour: [f32; 4], z: i3
         [mid.x - len * 0.5, mid.y - thickness * 0.5],
         [len, thickness],
     )
-    .with_fill(OverlayFill::Solid(colour))
+    .with_fill(OverlayFill::Solid(colour.into()))
     .with_rotation(angle)
     .with_z_order(z)
 }
@@ -148,7 +160,7 @@ fn disc(
         [centre.x - radius, centre.y - radius],
         [radius * 2.0, radius * 2.0],
     )
-    .with_fill(OverlayFill::Solid(colour))
+    .with_fill(OverlayFill::Solid(colour.into()))
     .with_z_order(z)
 }
 
@@ -299,7 +311,11 @@ mod tests {
     #[test]
     fn hit_test_centre_misses() {
         // A click in the middle of the viewport hits no axis circle.
-        let hit = hit_test([400.0, 300.0], [0.0, 0.0, 800.0, 600.0], glam::Quat::IDENTITY);
+        let hit = hit_test(
+            [400.0, 300.0],
+            [0.0, 0.0, 800.0, 600.0],
+            glam::Quat::IDENTITY,
+        );
         assert!(hit.is_none());
     }
 }

@@ -727,7 +727,10 @@ impl DeviceResources {
                 .copy_from_slice(bytemuck::bytes_of(&use_nan_colour_u32));
             offset += 4;
             offset += 4;
-            let nan_colour = item.nan_colour.unwrap_or([0.0f32; 4]);
+            let nan_colour = item
+                .nan_colour
+                .map(|c| c.to_linear_rgba())
+                .unwrap_or([0.0f32; 4]);
             uniform_data[offset..offset + 16].copy_from_slice(bytemuck::bytes_of(&nan_colour));
             offset += 16;
             for cp in &clip_plane_data {

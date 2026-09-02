@@ -480,7 +480,7 @@ impl App {
                     _t.kind = LightKind::Directional {
                         direction: [0.4, 0.7, 0.9],
                     };
-                    _t.colour = [1.0, 0.97, 0.93];
+                    _t.colour = [1.0, 0.97, 0.93].into();
                     _t.intensity = 1.4;
                     _t
                 },
@@ -489,7 +489,7 @@ impl App {
                     _t.kind = LightKind::Directional {
                         direction: [-0.3, 0.2, -0.5],
                     };
-                    _t.colour = [0.5, 0.6, 0.9];
+                    _t.colour = [0.5, 0.6, 0.9].into();
                     _t.intensity = 0.3;
                     _t
                 },

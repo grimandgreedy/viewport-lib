@@ -101,7 +101,7 @@ impl RuntimePlugin for DebugOverlayPlugin {
                 DebugPrim::Aabb {
                     min: self.bounds.min,
                     max: self.bounds.max,
-                    colour: [0.9, 0.75, 0.2, 0.6],
+                    colour: [0.9, 0.75, 0.2, 0.6].into(),
                     layer: DebugLayer::Overlay,
                 },
             );

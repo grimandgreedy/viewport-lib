@@ -155,7 +155,7 @@ fn main() {
 
     scene.add_light(RtLight::Directional {
         direction: [0.3, -0.4, 0.85],
-        colour: [3.0, 2.9, 2.7],
+        colour: [3.0, 2.9, 2.7].into(),
     });
 
     println!("triangles: {}", scene.triangle_count());

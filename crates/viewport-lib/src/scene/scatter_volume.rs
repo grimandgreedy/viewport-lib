@@ -68,7 +68,7 @@ impl Default for ScatterVolume {
                 max: glam::Vec3::splat(0.5),
             }),
             density: 0.0,
-            colour: ColourSource::Flat([0.8, 0.85, 0.9]),
+            colour: ColourSource::Flat([0.8, 0.85, 0.9].into()),
             anisotropy: 0.0,
             emission: Emission::None,
             density_remap: DensityRemap::Identity,
@@ -82,21 +82,26 @@ impl Default for ScatterVolume {
 
 impl ScatterVolume {
     /// Convenience: a uniform-density box volume with flat colour.
-    pub fn box_uniform(aabb: Aabb, density: f32, colour: [f32; 3]) -> Self {
+    pub fn box_uniform(aabb: Aabb, density: f32, colour: impl Into<crate::Colour>) -> Self {
         Self {
             shape: ScatterShape::Box(aabb),
             density,
-            colour: ColourSource::Flat(colour),
+            colour: ColourSource::Flat(colour.into()),
             ..Default::default()
         }
     }
 
     /// Convenience: a uniform-density sphere volume with flat colour.
-    pub fn sphere_uniform(center: [f32; 3], radius: f32, density: f32, colour: [f32; 3]) -> Self {
+    pub fn sphere_uniform(
+        center: [f32; 3],
+        radius: f32,
+        density: f32,
+        colour: impl Into<crate::Colour>,
+    ) -> Self {
         Self {
             shape: ScatterShape::Sphere { center, radius },
             density,
-            colour: ColourSource::Flat(colour),
+            colour: ColourSource::Flat(colour.into()),
             ..Default::default()
         }
     }
@@ -147,7 +152,7 @@ pub enum ScatterShape {
 #[non_exhaustive]
 pub enum ColourSource {
     /// Single RGB colour applied uniformly throughout the volume.
-    Flat([f32; 3]),
+    Flat(crate::Colour),
     /// Density-indexed lookup through a colourmap LUT.
     Ramp(crate::resources::ColourmapId),
 }
@@ -382,7 +387,7 @@ impl GpuScatterVolume {
         }
         let mut effective_flags = flags;
         let colour = match volume.colour {
-            ColourSource::Flat(rgb) => rgb,
+            ColourSource::Flat(rgb) => rgb.to_linear_rgb(),
             ColourSource::Ramp(_) => {
                 // Tag the volume so the shader samples the bound colourmap
                 // LUT. `colour_density.rgb` becomes a tint applied on top of

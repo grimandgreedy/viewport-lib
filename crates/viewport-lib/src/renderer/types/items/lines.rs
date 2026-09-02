@@ -42,19 +42,19 @@ pub struct PolylineItem {
     /// Colourmap for scalar colouring. None = viridis.
     pub colourmap_id: Option<ColourmapId>,
     /// Fallback colour when no scalar or direct-colour data is provided.
-    pub default_colour: [f32; 4],
+    pub default_colour: crate::Colour,
     /// Global line width in pixels. Used when `node_radii` is empty.
     pub line_width: f32,
     /// Per-node direct RGBA colours. Length must match `positions`. Empty = not used.
     /// Takes priority over scalar-driven colouring when non-empty.
-    pub node_colours: Vec<[f32; 4]>,
+    pub node_colours: Vec<crate::Colour>,
     /// Per-edge scalar values. Length = total segment count across all strips (sum of
     /// `strip_lengths[i] - 1`). Used when `scalars` is empty; both endpoints of each
     /// segment share the same LUT value (flat constant colour per edge).
     pub edge_scalars: Vec<f32>,
     /// Per-edge direct RGBA colours. Length = total segment count. Takes priority over
     /// `edge_scalars` when non-empty.
-    pub edge_colours: Vec<[f32; 4]>,
+    pub edge_colours: Vec<crate::Colour>,
     /// Per-node line width in pixels. Length must match `positions`. When non-empty,
     /// overrides the global `line_width`; adjacent endpoints are linearly interpolated
     /// along each segment.
@@ -90,7 +90,7 @@ impl Default for PolylineItem {
             strip_lengths: Vec::new(),
             scalar_range: None,
             colourmap_id: None,
-            default_colour: [0.9, 0.92, 0.96, 1.0],
+            default_colour: [0.9, 0.92, 0.96, 1.0].into(),
             line_width: 2.0,
             node_colours: Vec::new(),
             edge_scalars: Vec::new(),
@@ -110,7 +110,11 @@ impl Default for PolylineItem {
 ///
 /// Produces 6 strips: bottom face loop (5 pts), top face loop (5 pts), and
 /// 4 vertical edges (2 pts each). Pass `colour` as RGBA in linear space.
-pub fn aabb_wireframe_polyline(aabb: &crate::scene::aabb::Aabb, colour: [f32; 4]) -> PolylineItem {
+pub fn aabb_wireframe_polyline(
+    aabb: &crate::scene::aabb::Aabb,
+    colour: impl Into<crate::Colour>,
+) -> PolylineItem {
+    let colour = colour.into();
     let mn = aabb.min;
     let mx = aabb.max;
     PolylineItem {
@@ -152,8 +156,9 @@ pub fn sphere_wireframe_polyline(
     center: [f32; 3],
     radius: f32,
     segments: u32,
-    colour: [f32; 4],
+    colour: impl Into<crate::Colour>,
 ) -> PolylineItem {
+    let colour = colour.into();
     let n = segments.max(8) as usize;
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(3 * (n + 1));
     let two_pi = std::f32::consts::TAU;
@@ -202,7 +207,7 @@ pub struct StreamtubeItem {
     /// Tube radius in world-space units.  Default: `0.05`.
     pub radius: f32,
     /// RGBA colour for all tube segments in this item.  Default: opaque white.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Per-frame model matrix applied to `positions` in the vertex shader.
     /// Identity (the default) renders the tube at the world-space coordinates
     /// passed in `positions`. Set this to move a pre-uploaded streamtube without
@@ -218,7 +223,7 @@ impl Default for StreamtubeItem {
             positions: Vec::new(),
             strip_lengths: Vec::new(),
             radius: 0.05,
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
@@ -252,7 +257,7 @@ pub struct TubeItem {
     /// Colourmap for scalar colouring. `None` = default builtin (viridis).
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// Flat RGBA colour used when `scalars` is empty.  Default: opaque white.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Per-frame model matrix applied to `positions` in the vertex shader.
     /// Identity (the default) renders the tube at the world-space coordinates
     /// passed in `positions`. Set this to move a pre-uploaded tube without
@@ -273,7 +278,7 @@ impl Default for TubeItem {
             scalars: Vec::new(),
             scalar_range: None,
             colourmap_id: None,
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
@@ -308,11 +313,11 @@ pub struct RibbonItem {
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// Flat RGBA colour used when `scalars` and `colour_attribute` are empty.
     /// Default: opaque white.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Optional per-point RGBA colour. When non-empty this overrides `colour`
     /// and the `scalars`/`colourmap_id` path, and is the natural way to express
     /// a trail that fades along its length (set each entry's alpha directly).
-    pub colour_attribute: Vec<[f32; 4]>,
+    pub colour_attribute: Vec<crate::Colour>,
     /// GPU blend state for this ribbon. Default: [`SpriteBlend::AlphaBlend`].
     /// Use [`SpriteBlend::Additive`] for energy or spark trails.
     pub blend: SpriteBlend,
@@ -345,7 +350,7 @@ impl Default for RibbonItem {
             scalars: Vec::new(),
             scalar_range: None,
             colourmap_id: None,
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             colour_attribute: Vec::new(),
             blend: SpriteBlend::AlphaBlend,
             texture_id: None,

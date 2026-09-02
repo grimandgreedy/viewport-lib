@@ -31,7 +31,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0]);
+    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
     frame
 }
 
@@ -52,7 +52,7 @@ fn textured_shape(tex: viewport_lib::OverlayTextureId) -> OverlayShapeItem {
         [16.0, 16.0],
         [32.0, 32.0],
     )
-    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0]))
+    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
     .with_texture(tex)
 }
 

@@ -80,7 +80,10 @@ pub(super) fn build_object_uniform(
         scalar_min: s_min,
         scalar_max: s_max,
         receive_shadows: cm.receive_shadows,
-        nan_colour: item.nan_colour.unwrap_or([0.0; 4]),
+        nan_colour: item
+            .nan_colour
+            .map(|c| c.to_linear_rgba())
+            .unwrap_or([0.0; 4]),
         use_nan_colour: if item.nan_colour.is_some() { 1 } else { 0 },
         use_matcap: if m.matcap_id().is_some() { 1 } else { 0 },
         matcap_blendable: m
@@ -100,7 +103,10 @@ pub(super) fn build_object_uniform(
             crate::scene::material::BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
         },
         backface_colour: match m.backface_policy {
-            crate::scene::material::BackfacePolicy::DifferentColour(c) => [c[0], c[1], c[2], 1.0],
+            crate::scene::material::BackfacePolicy::DifferentColour(c) => {
+                let c = c.to_linear_rgb();
+                [c[0], c[1], c[2], 1.0]
+            }
             crate::scene::material::BackfacePolicy::Tint(factor) => [factor, 0.0, 0.0, 1.0],
             crate::scene::material::BackfacePolicy::Pattern(cfg) => {
                 let world_extent = resources
@@ -114,7 +120,8 @@ pub(super) fn build_object_uniform(
                     .unwrap_or(1.0)
                     .max(1e-6);
                 let world_scale = cfg.scale / world_extent;
-                [cfg.colour[0], cfg.colour[1], cfg.colour[2], world_scale]
+                let cc = cfg.colour.to_linear_rgb();
+                [cc[0], cc[1], cc[2], world_scale]
             }
             _ => [0.0; 4],
         },

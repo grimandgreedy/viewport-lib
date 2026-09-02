@@ -54,7 +54,7 @@ fn panel_background() -> Vec<OverlayShapeItem> {
             [PANEL_X, PANEL_TOP],
             [PANEL_W, PANEL_H],
         )
-        .with_fill(OverlayFill::Solid([0.11, 0.12, 0.16, 0.96])),
+        .with_fill(OverlayFill::Solid([0.11, 0.12, 0.16, 0.96].into())),
     ]
 }
 
@@ -71,7 +71,7 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + PANEL_W - 20.0, y + ROW_STEP - 8.0],
         ];
         sep.thickness = 1.5;
-        sep.colour = [0.4, 0.45, 0.6, 0.7];
+        sep.colour = [0.4, 0.45, 0.6, 0.7].into();
         lines.push(sep);
         // A small filled swatch, hue cycling down the list.
         let t = i as f32 / ROW_COUNT as f32;
@@ -111,7 +111,7 @@ fn panel_content_shapes() -> Vec<OverlayShapeItem> {
                 [PANEL_X + 12.0, y],
                 [PANEL_W - 24.0, ROW_STEP - 6.0],
             )
-            .with_fill(OverlayFill::Solid([0.18, 0.2, 0.28, 0.55])),
+            .with_fill(OverlayFill::Solid([0.18, 0.2, 0.28, 0.55].into())),
         );
     }
     shapes
@@ -296,7 +296,7 @@ impl eframe::App for App {
                     [PANEL_X, PANEL_TOP],
                     [PANEL_W, PANEL_H],
                 )
-                .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0]))
+                .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
                 .with_clip_mask(CLIP_MASK_ID);
                 self.session.frame_data_mut().overlays.shapes = vec![mask];
 

@@ -139,13 +139,13 @@ impl Showcase for MaterialsShowcase {
         key.kind = LightKind::Directional {
             direction: [0.5, 0.35, 1.2],
         };
-        key.colour = [1.0, 0.97, 0.92];
+        key.colour = [1.0, 0.97, 0.92].into();
         key.intensity = 1.4;
         let mut fill = LightSource::default();
         fill.kind = LightKind::Directional {
             direction: [-0.6, -0.4, 0.5],
         };
-        fill.colour = [0.55, 0.65, 0.9];
+        fill.colour = [0.55, 0.65, 0.9].into();
         fill.intensity = 0.4;
         fill.cast_shadows = false;
         let l = &mut ctx.session.effects_mut().lighting;
@@ -504,7 +504,7 @@ fn surface_maps_family(m: &SurfaceMaps) -> Vec<Material> {
     orm.metallic_roughness_texture_id = Some(m.orm);
     orm.metallic = 1.0;
     let mut emissive = pbr();
-    emissive.emissive = [1.2, 0.5, 0.15];
+    emissive.emissive = [1.2, 0.5, 0.15].into();
     vec![plain, normal, normal_ao, ao, orm, emissive]
 }
 
@@ -586,7 +586,7 @@ fn backface_family() -> Vec<Material> {
     vec![
         base(BackfacePolicy::Cull),
         base(BackfacePolicy::Identical),
-        base(BackfacePolicy::DifferentColour([0.2, 0.6, 0.9])),
+        base(BackfacePolicy::DifferentColour([0.2, 0.6, 0.9].into())),
         base(BackfacePolicy::Tint(0.4)),
         pat(BackfacePattern::Checker),
         pat(BackfacePattern::Hatching),

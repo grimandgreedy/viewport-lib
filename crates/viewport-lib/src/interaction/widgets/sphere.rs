@@ -35,9 +35,9 @@ pub struct SphereWidget {
     /// Radius in world units.
     pub radius: f32,
     /// RGBA fill colour (alpha controls transparency of the fill).
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// RGBA colour for the drag handles. When set (non-zero alpha), overrides the default LUT colouring.
-    pub handle_colour: [f32; 4],
+    pub handle_colour: crate::Colour,
 
     hovered_handle: Option<SphereHandle>,
     active_handle: Option<SphereHandle>,
@@ -53,8 +53,8 @@ impl SphereWidget {
         Self {
             center,
             radius: radius.max(0.01),
-            colour: [0.3, 0.6, 1.0, 0.25],
-            handle_colour: [0.0; 4],
+            colour: [0.3, 0.6, 1.0, 0.25].into(),
+            handle_colour: [0.0; 4].into(),
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -173,11 +173,12 @@ impl SphereWidget {
             strip_lengths.push((STEPS + 1) as u32);
         }
 
-        let line_colour = [self.colour[0], self.colour[1], self.colour[2], 1.0];
+        let lc = self.colour.to_linear_rgb();
+        let line_colour = [lc[0], lc[1], lc[2], 1.0];
         PolylineItem {
             positions,
             strip_lengths,
-            default_colour: line_colour,
+            default_colour: line_colour.into(),
             line_width: 1.5,
 
             settings: {
@@ -224,8 +225,8 @@ impl SphereWidget {
             s.pick_id = crate::renderer::PickId(id_base);
             s
         };
-        g.default_colour = self.handle_colour;
-        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g.default_colour = self.handle_colour.into();
+        g.use_default_colour = self.handle_colour.alpha() > 0.0;
         g
     }
 

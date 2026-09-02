@@ -18,7 +18,10 @@ use crate::App;
 /// Bundled sample art (both public domain). Anchored to the crate directory at
 /// compile time so the files resolve no matter the working directory the example
 /// is launched from.
-const TIGER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/eframe_showcase/assets/tiger.svg");
+const TIGER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/eframe_showcase/assets/tiger.svg"
+);
 const YIN_YANG: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/examples/eframe_showcase/assets/yin_yang.svg"
@@ -141,7 +144,7 @@ fn place_art(
             Some(rgba) => item.with_fill(OverlayFill::Solid(rgba)),
             // Stroke-only paths (fill "none", or gradients we do not resolve)
             // carry no fill; the outline below makes them visible.
-            None => item.with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0])),
+            None => item.with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into())),
         };
         if outline || shape.fill.is_none() {
             item = item.with_border([0.08, 0.08, 0.08, 0.9], 1.0);

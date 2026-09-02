@@ -422,7 +422,7 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // binding 5: LUT (colourmap) texture (256x1 Rgba8Unorm, FRAGMENT, filterable)
+                // binding 5: LUT (colourmap) texture (256x1 Rgba8UnormSrgb, FRAGMENT, filterable)
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,

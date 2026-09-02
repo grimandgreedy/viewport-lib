@@ -74,7 +74,7 @@ fn default_lights() -> [LightSource; 3] {
             range: 14.0,
             radius: 0.1,
         };
-        s.colour = [1.0, 0.6, 0.2];
+        s.colour = [1.0, 0.6, 0.2].into();
         // Candela-scale under inverse-square: intensity ~= E * d^2 for spheres a
         // few units from the orbiting light.
         s.intensity = 40.0;
@@ -90,7 +90,7 @@ fn default_lights() -> [LightSource; 3] {
             outer_angle: 0.4,
             radius: 0.1,
         };
-        s.colour = [0.4, 0.7, 1.0];
+        s.colour = [0.4, 0.7, 1.0].into();
         s.intensity = 80.0;
         s
     };
@@ -99,7 +99,7 @@ fn default_lights() -> [LightSource; 3] {
         s.kind = LightKind::Directional {
             direction: [0.3, 0.2, 1.0],
         };
-        s.colour = [1.0, 1.0, 0.9];
+        s.colour = [1.0, 1.0, 0.9].into();
         s.intensity = 0.4;
         s
     };
@@ -281,7 +281,7 @@ fn rebuild_stress_lights(state: &mut SlState) {
     dir.kind = LightKind::Directional {
         direction: [0.25, 0.3, 1.0],
     };
-    dir.colour = [0.6, 0.7, 0.9];
+    dir.colour = [0.6, 0.7, 0.9].into();
     dir.intensity = 0.15;
     dir.importance = 10.0; // Always survive the cap.
     let dir_id = state.scene.add_light(dir.clone());

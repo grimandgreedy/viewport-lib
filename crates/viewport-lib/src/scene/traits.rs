@@ -55,6 +55,6 @@ pub trait ViewportObject {
     /// `self.colour()` in a [`Material::from_colour`] call so existing
     /// implementations continue to work without any changes.
     fn material(&self) -> Material {
-        Material::from_colour(self.colour().into())
+        Material::from_colour(self.colour().to_array())
     }
 }

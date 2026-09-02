@@ -375,7 +375,7 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
         let mut l = LightSource::default();
         l.kind = vpl::LightKind::Directional { direction: dir2 };
         l.intensity = state.second_light_intensity;
-        l.colour = [1.0, 0.9, 0.7];
+        l.colour = [1.0, 0.9, 0.7].into();
         lights.push(l);
     }
     let mut light = LightingSettings::default();
@@ -438,7 +438,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             ]);
         }
         pc.point_size = 8.0;
-        pc.default_colour = [0.10, 0.26, 0.68, 1.0];
+        pc.default_colour = [0.10, 0.26, 0.68, 1.0].into();
         broadcast(s, &mut pc.settings);
         fd.scene.point_clouds.push(pc);
     }
@@ -458,7 +458,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             g.vectors.push([-theta.sin() * 0.6, 0.0, theta.cos() * 0.6]);
         }
         g.use_default_colour = true;
-        g.default_colour = [0.72, 0.42, 0.04, 1.0];
+        g.default_colour = [0.72, 0.42, 0.04, 1.0].into();
         g.scale = 0.9;
         broadcast(s, &mut g.settings);
         fd.scene.glyphs.push(g);
@@ -494,7 +494,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             ]);
         }
         pl.strip_lengths = vec![n as u32];
-        pl.default_colour = [0.62, 0.55, 0.06, 1.0];
+        pl.default_colour = [0.62, 0.55, 0.06, 1.0].into();
         pl.line_width = 2.5;
         broadcast(s, &mut pl.settings);
         fd.scene.polylines.push(pl);
@@ -515,7 +515,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             ]);
         }
         st.strip_lengths = vec![n as u32];
-        st.colour = [0.05, 0.55, 0.45, 1.0];
+        st.colour = [0.05, 0.55, 0.45, 1.0].into();
         st.radius = 0.08;
         broadcast(s, &mut st.settings);
         fd.scene.streamtube_items.push(st);
@@ -540,7 +540,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         tb.strip_lengths = vec![n as u32];
         tb.radius = 0.06;
         tb.radius_attribute = Some(radii);
-        tb.colour = [0.62, 0.08, 0.35, 1.0];
+        tb.colour = [0.62, 0.08, 0.35, 1.0].into();
         broadcast(s, &mut tb.settings);
         fd.scene.tube_items.push(tb);
     }
@@ -565,7 +565,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         rb.strip_lengths = vec![n as u32];
         rb.width = 0.18;
         rb.twist_attribute = Some(twists);
-        rb.colour = [0.60, 0.35, 0.08, 1.0];
+        rb.colour = [0.60, 0.35, 0.08, 1.0].into();
         broadcast(s, &mut rb.settings);
         fd.scene.ribbon_items.push(rb);
     }
@@ -581,7 +581,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         prim.params[1] = p.y;
         prim.params[2] = p.z;
         prim.params[3] = 0.9; // radius
-        prim.colour = [0.38, 0.12, 0.62, 1.0];
+        prim.colour = [0.38, 0.12, 0.62, 1.0].into();
         item.primitives.push(prim);
         item.blend_mode = ImplicitBlendMode::Union;
         item.march_options = GpuImplicitOptions {

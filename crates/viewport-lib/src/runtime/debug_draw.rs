@@ -104,7 +104,7 @@ pub enum DebugPrim {
         /// End position in world space.
         end: glam::Vec3,
         /// RGBA colour in linear space.
-        colour: [f32; 4],
+        colour: crate::Colour,
         /// Layer controlling visibility in ship vs dev modes.
         layer: DebugLayer,
     },
@@ -115,7 +115,7 @@ pub enum DebugPrim {
         /// Screen-space radius in pixels.
         radius: f32,
         /// RGBA colour in linear space.
-        colour: [f32; 4],
+        colour: crate::Colour,
         /// Layer controlling visibility in ship vs dev modes.
         layer: DebugLayer,
     },
@@ -126,7 +126,7 @@ pub enum DebugPrim {
         /// Maximum corner in world space.
         max: glam::Vec3,
         /// RGBA colour in linear space.
-        colour: [f32; 4],
+        colour: crate::Colour,
         /// Layer controlling visibility in ship vs dev modes.
         layer: DebugLayer,
     },
@@ -137,7 +137,7 @@ pub enum DebugPrim {
         /// Sphere radius in world-space units.
         radius: f32,
         /// RGBA colour in linear space.
-        colour: [f32; 4],
+        colour: crate::Colour,
         /// Layer controlling visibility in ship vs dev modes.
         layer: DebugLayer,
     },
@@ -148,7 +148,7 @@ pub enum DebugPrim {
         /// Text content.
         text: String,
         /// RGBA colour in linear space.
-        colour: [f32; 4],
+        colour: crate::Colour,
         /// Layer controlling visibility in ship vs dev modes.
         layer: DebugLayer,
     },
@@ -246,7 +246,12 @@ impl DebugDraw {
     ///
     /// The default layer is [`DebugLayer::Dev`]. Use [`line_overlay`](Self::line_overlay)
     /// for a line that appears in ship builds.
-    pub fn line(&mut self, start: glam::Vec3, end: glam::Vec3, colour: [f32; 4]) -> &mut Self {
+    pub fn line(
+        &mut self,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        colour: impl Into<crate::Colour>,
+    ) -> &mut Self {
         self.line_layer(start, end, colour, DebugLayer::Dev)
     }
 
@@ -255,7 +260,7 @@ impl DebugDraw {
         &mut self,
         start: glam::Vec3,
         end: glam::Vec3,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
     ) -> &mut Self {
         self.line_layer(start, end, colour, DebugLayer::Overlay)
     }
@@ -265,14 +270,14 @@ impl DebugDraw {
         &mut self,
         start: glam::Vec3,
         end: glam::Vec3,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
             self.transient.push(DebugPrim::Line {
                 start,
                 end,
-                colour,
+                colour: colour.into(),
                 layer,
             });
         }
@@ -282,7 +287,12 @@ impl DebugDraw {
     /// Submit a point marker for this frame.
     ///
     /// `radius` is in screen-space pixels.
-    pub fn point(&mut self, position: glam::Vec3, radius: f32, colour: [f32; 4]) -> &mut Self {
+    pub fn point(
+        &mut self,
+        position: glam::Vec3,
+        radius: f32,
+        colour: impl Into<crate::Colour>,
+    ) -> &mut Self {
         self.point_layer(position, radius, colour, DebugLayer::Dev)
     }
 
@@ -291,7 +301,7 @@ impl DebugDraw {
         &mut self,
         position: glam::Vec3,
         radius: f32,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
     ) -> &mut Self {
         self.point_layer(position, radius, colour, DebugLayer::Overlay)
     }
@@ -301,14 +311,14 @@ impl DebugDraw {
         &mut self,
         position: glam::Vec3,
         radius: f32,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
             self.transient.push(DebugPrim::Point {
                 position,
                 radius,
-                colour,
+                colour: colour.into(),
                 layer,
             });
         }
@@ -316,7 +326,12 @@ impl DebugDraw {
     }
 
     /// Submit an axis-aligned box wireframe for this frame.
-    pub fn aabb(&mut self, min: glam::Vec3, max: glam::Vec3, colour: [f32; 4]) -> &mut Self {
+    pub fn aabb(
+        &mut self,
+        min: glam::Vec3,
+        max: glam::Vec3,
+        colour: impl Into<crate::Colour>,
+    ) -> &mut Self {
         self.aabb_layer(min, max, colour, DebugLayer::Dev)
     }
 
@@ -325,7 +340,7 @@ impl DebugDraw {
         &mut self,
         min: glam::Vec3,
         max: glam::Vec3,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
     ) -> &mut Self {
         self.aabb_layer(min, max, colour, DebugLayer::Overlay)
     }
@@ -335,14 +350,14 @@ impl DebugDraw {
         &mut self,
         min: glam::Vec3,
         max: glam::Vec3,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
             self.transient.push(DebugPrim::Aabb {
                 min,
                 max,
-                colour,
+                colour: colour.into(),
                 layer,
             });
         }
@@ -352,7 +367,12 @@ impl DebugDraw {
     /// Submit a sphere wireframe for this frame.
     ///
     /// The sphere is drawn as three great circles (XY, XZ, and YZ planes).
-    pub fn sphere(&mut self, center: glam::Vec3, radius: f32, colour: [f32; 4]) -> &mut Self {
+    pub fn sphere(
+        &mut self,
+        center: glam::Vec3,
+        radius: f32,
+        colour: impl Into<crate::Colour>,
+    ) -> &mut Self {
         self.sphere_layer(center, radius, colour, DebugLayer::Dev)
     }
 
@@ -361,7 +381,7 @@ impl DebugDraw {
         &mut self,
         center: glam::Vec3,
         radius: f32,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
     ) -> &mut Self {
         self.sphere_layer(center, radius, colour, DebugLayer::Overlay)
     }
@@ -371,14 +391,14 @@ impl DebugDraw {
         &mut self,
         center: glam::Vec3,
         radius: f32,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
             self.transient.push(DebugPrim::Sphere {
                 center,
                 radius,
-                colour,
+                colour: colour.into(),
                 layer,
             });
         }
@@ -390,7 +410,7 @@ impl DebugDraw {
         &mut self,
         position: glam::Vec3,
         text: impl Into<String>,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
     ) -> &mut Self {
         self.label_layer(position, text, colour, DebugLayer::Dev)
     }
@@ -400,7 +420,7 @@ impl DebugDraw {
         &mut self,
         position: glam::Vec3,
         text: impl Into<String>,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
     ) -> &mut Self {
         self.label_layer(position, text, colour, DebugLayer::Overlay)
     }
@@ -410,14 +430,14 @@ impl DebugDraw {
         &mut self,
         position: glam::Vec3,
         text: impl Into<String>,
-        colour: [f32; 4],
+        colour: impl Into<crate::Colour>,
         layer: DebugLayer,
     ) -> &mut Self {
         if self.accept(layer) {
             self.transient.push(DebugPrim::Label {
                 position,
                 text: text.into(),
-                colour,
+                colour: colour.into(),
                 layer,
             });
         }
@@ -507,18 +527,18 @@ impl DebugDraw {
                 DebugPrim::Line {
                     start, end, colour, ..
                 } => {
-                    let key = colour_key(*colour);
+                    let key = colour_key(colour.to_linear_rgba());
                     let entry = groups.entry(key).or_default();
                     entry.0.push((*start).into());
                     entry.0.push((*end).into());
                     entry.1.push(2);
-                    entry.2.push(*colour);
-                    entry.2.push(*colour);
+                    entry.2.push(colour.to_linear_rgba());
+                    entry.2.push(colour.to_linear_rgba());
                 }
                 DebugPrim::Aabb {
                     min, max, colour, ..
                 } => {
-                    let key = colour_key(*colour);
+                    let key = colour_key(colour.to_linear_rgba());
                     let entry = groups.entry(key).or_default();
                     let (positions, strips, colours) = (&mut entry.0, &mut entry.1, &mut entry.2);
                     // 6 strips: bottom loop (5), top loop (5), 4 vertical edges (2 each)
@@ -550,7 +570,7 @@ impl DebugDraw {
                     let strip_lens: &[u32] = &[5, 5, 2, 2, 2, 2];
                     for &p in aabb_positions {
                         positions.push(p);
-                        colours.push(*colour);
+                        colours.push((*colour).into());
                     }
                     strips.extend_from_slice(strip_lens);
                 }
@@ -560,7 +580,7 @@ impl DebugDraw {
                     colour,
                     ..
                 } => {
-                    let key = colour_key(*colour);
+                    let key = colour_key(colour.to_linear_rgba());
                     let entry = groups.entry(key).or_default();
                     let (positions, strips, colours) = (&mut entry.0, &mut entry.1, &mut entry.2);
                     const SEGS: usize = 32;
@@ -587,7 +607,7 @@ impl DebugDraw {
                                 ),
                             };
                             positions.push(p.into());
-                            colours.push(*colour);
+                            colours.push((*colour).into());
                         }
                         strips.push((SEGS + 1) as u32);
                     }
@@ -602,7 +622,7 @@ impl DebugDraw {
             .map(|(positions, strip_lengths, node_colours)| PolylineItem {
                 positions,
                 strip_lengths,
-                node_colours,
+                node_colours: node_colours.into_iter().map(Into::into).collect(),
                 line_width: 1.5,
                 ..PolylineItem::default()
             })
@@ -634,7 +654,7 @@ impl DebugDraw {
             } = prim
             {
                 positions.push((*position).into());
-                colours.push(*colour);
+                colours.push((*colour).into());
                 radii.push(*radius);
             }
         }
@@ -675,7 +695,7 @@ impl DebugDraw {
                 let mut label = LabelItem::default();
                 label.anchor = crate::renderer::OverlayAnchor::World((*position).into());
                 label.text = text.clone();
-                label.colour = *colour;
+                label.colour = (*colour).into();
                 label.leader_line = true;
                 label.font_size = 12.0;
                 out.push(label);
@@ -784,7 +804,7 @@ mod tests {
             DebugPrim::Line {
                 start: glam::Vec3::ZERO,
                 end: glam::Vec3::X,
-                colour: red(),
+                colour: red().into(),
                 layer: DebugLayer::Dev,
             },
         );
@@ -804,7 +824,7 @@ mod tests {
             DebugPrim::Sphere {
                 center: glam::Vec3::ZERO,
                 radius: 1.0,
-                colour: green(),
+                colour: green().into(),
                 layer: DebugLayer::Dev,
             },
         );
@@ -831,7 +851,7 @@ mod tests {
             DebugPrim::Sphere {
                 center: glam::Vec3::ZERO,
                 radius: 1.0,
-                colour: green(),
+                colour: green().into(),
                 layer: DebugLayer::Dev,
             },
         );
@@ -846,7 +866,7 @@ mod tests {
             DebugPrim::Point {
                 position: glam::Vec3::ZERO,
                 radius: 4.0,
-                colour: red(),
+                colour: red().into(),
                 layer: DebugLayer::Dev,
             },
         );
@@ -855,7 +875,7 @@ mod tests {
             DebugPrim::Point {
                 position: glam::Vec3::X,
                 radius: 4.0,
-                colour: green(),
+                colour: green().into(),
                 layer: DebugLayer::Dev,
             },
         );
@@ -910,7 +930,7 @@ mod tests {
             DebugPrim::Line {
                 start: glam::Vec3::ZERO,
                 end: glam::Vec3::X,
-                colour: red(),
+                colour: red().into(),
                 layer: DebugLayer::Dev,
             },
         );

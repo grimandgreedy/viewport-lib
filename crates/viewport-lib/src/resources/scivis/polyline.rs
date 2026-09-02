@@ -319,14 +319,20 @@ impl DeviceResources {
                 // Direct colour: node_colours (per-endpoint) > edge_colours (per-segment)
                 let (colour_a, colour_b) = if !item.node_colours.is_empty() {
                     (
-                        item.node_colours.get(i).copied().unwrap_or([1.0; 4]),
-                        item.node_colours.get(j).copied().unwrap_or([1.0; 4]),
+                        item.node_colours
+                            .get(i)
+                            .map(|c| c.to_linear_rgba())
+                            .unwrap_or([1.0; 4]),
+                        item.node_colours
+                            .get(j)
+                            .map(|c| c.to_linear_rgba())
+                            .unwrap_or([1.0; 4]),
                     )
                 } else if !item.edge_colours.is_empty() {
                     let c = item
                         .edge_colours
                         .get(seg_idx_global)
-                        .copied()
+                        .map(|c| c.to_linear_rgba())
                         .unwrap_or([1.0; 4]);
                     (c, c)
                 } else {
@@ -449,7 +455,7 @@ impl DeviceResources {
         }
         let uniform_data = PolylineUniform {
             model: item.model,
-            default_colour: item.default_colour,
+            default_colour: item.default_colour.to_linear_rgba(),
             line_width: item.line_width,
             scalar_min,
             scalar_max,

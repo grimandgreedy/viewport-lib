@@ -228,13 +228,19 @@ impl ViewportRenderer {
                         spacing_major,
                         snap_origin: [snap_x, snap_y],
                         colour_minor: {
-                            let [r, g, b] =
-                                frame.viewport.grid_colour.unwrap_or([0.55, 0.55, 0.55]);
+                            let [r, g, b] = frame
+                                .viewport
+                                .grid_colour
+                                .map(|c| c.to_linear_rgb())
+                                .unwrap_or([0.55, 0.55, 0.55]);
                             [r, g, b, 0.4 * minor_fade]
                         },
                         colour_major: {
-                            let [r, g, b] =
-                                frame.viewport.grid_colour.unwrap_or([0.60, 0.60, 0.60]);
+                            let [r, g, b] = frame
+                                .viewport
+                                .grid_colour
+                                .map(|c| c.to_linear_rgb())
+                                .unwrap_or([0.60, 0.60, 0.60]);
                             [r, g, b, 0.4 + 0.2 * minor_fade]
                         },
                     };
@@ -275,8 +281,8 @@ impl ViewportRenderer {
                     cam_back: [back.x, back.y, back.z, 0.0],
                     eye_pos: frame.camera.render_camera.eye_position,
                     height: gp.height,
-                    colour: gp.colour,
-                    shadow_colour: gp.shadow_colour,
+                    colour: gp.colour.to_linear_rgba(),
+                    shadow_colour: gp.shadow_colour.to_linear_rgba(),
                     light_vp: gp_cascade0_mat,
                     tan_half_fov,
                     aspect,
@@ -285,7 +291,7 @@ impl ViewportRenderer {
                     mode: mode_u32,
                     shadow_opacity: gp.shadow_opacity,
                     _pad: [0.0; 2],
-                    colour2: gp.tile_colour2,
+                    colour2: gp.tile_colour2.to_linear_rgba(),
                 };
                 queue.write_buffer(
                     &resources.ground.uniform_buf,
@@ -1266,7 +1272,7 @@ impl ViewportRenderer {
                 }
                 let uniform = OutlineUniform {
                     model: item.model,
-                    colour: frame.interaction.xray_colour,
+                    colour: frame.interaction.xray_colour.to_linear_rgba(),
                     pixel_offset: 0.0,
                     has_position_override: 0,
                     position_override_base: 0,
@@ -1343,7 +1349,7 @@ impl ViewportRenderer {
                         if let Some(cap) = crate::geometry::cap_geometry::generate_cap_mesh(
                             pos, idx, &model, plane_n, distance,
                         ) {
-                            let bc = item.material.base_colour;
+                            let bc = item.material.base_colour.to_linear_rgb();
                             let colour = cap_colour.unwrap_or([bc[0], bc[1], bc[2], 1.0]);
                             let buf = self.resources.upload_cap_geometry(device, &cap, colour);
                             cap_buffers.push(buf);
@@ -1489,7 +1495,7 @@ impl ViewportRenderer {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let [scene_w, scene_h] = slot_hdr.scene_size;
                 let edge_uniform = OutlineEdgeUniform {
-                    colour: frame.interaction.outline_colour,
+                    colour: frame.interaction.outline_colour.to_linear_rgba(),
                     radius: frame.interaction.outline_width_px,
                     viewport_w: scene_w as f32,
                     viewport_h: scene_h as f32,
@@ -2023,8 +2029,11 @@ impl ViewportRenderer {
                         queue,
                         sel_ref,
                         &[],
-                        frame.interaction.sub_highlight_face_fill_colour,
-                        frame.interaction.sub_highlight_edge_colour,
+                        frame
+                            .interaction
+                            .sub_highlight_face_fill_colour
+                            .to_linear_rgba(),
+                        frame.interaction.sub_highlight_edge_colour.to_linear_rgba(),
                         frame.interaction.sub_highlight_edge_width_px,
                         frame.interaction.sub_highlight_vertex_size_px,
                         w,

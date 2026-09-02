@@ -234,7 +234,7 @@ impl Default for SpriteState {
                     spin_rate: 0.7,
                     spin_axis: [0.0, 1.0, 0.0], // equatorial (XZ plane)
                     radius: 3.0,
-                    colour: [0.35, 0.75, 1.0],
+                    colour: [0.35, 0.75, 1.0].into(),
                     life: 5.0,
                     max_life: 5.0,
                     particle_phases: Vec::new(),
@@ -245,7 +245,7 @@ impl Default for SpriteState {
                     spin_rate: -0.5,
                     spin_axis: [1.0, 0.0, 0.0], // polar (YZ plane)
                     radius: 3.0,
-                    colour: [1.0, 0.5, 0.15],
+                    colour: [1.0, 0.5, 0.15].into(),
                     life: 2.5, // staggered so they don't expire together
                     max_life: 5.0,
                     particle_phases: Vec::new(),
@@ -535,28 +535,28 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             phase: 0.0,
             radius: 2.6,
             bob: 0.9,
-            colour: [1.0, 0.45, 0.1],
+            colour: [1.0, 0.45, 0.1].into(),
         },
         TrailEmitter {
             history: Vec::new(),
             phase: std::f32::consts::FRAC_PI_2,
             radius: 2.6,
             bob: 0.9,
-            colour: [0.2, 0.8, 1.0],
+            colour: [0.2, 0.8, 1.0].into(),
         },
         TrailEmitter {
             history: Vec::new(),
             phase: std::f32::consts::PI,
             radius: 2.6,
             bob: 0.9,
-            colour: [0.7, 1.0, 0.3],
+            colour: [0.7, 1.0, 0.3].into(),
         },
         TrailEmitter {
             history: Vec::new(),
             phase: 3.0 * std::f32::consts::FRAC_PI_2,
             radius: 2.6,
             bob: 0.9,
-            colour: [1.0, 0.3, 0.85],
+            colour: [1.0, 0.3, 0.85].into(),
         },
     ];
 
@@ -641,7 +641,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
     dir_light.kind = LightKind::Directional {
         direction: [1.0, 0.0, 0.55],
     };
-    dir_light.colour = [1.0, 1.0, 1.0];
+    dir_light.colour = [1.0, 1.0, 1.0].into();
     dir_light.intensity = 1.4;
     app.sprite_state.lit_light_id = app.sprite_state.lit_scene.add_light(dir_light);
 
@@ -1198,7 +1198,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             let mut item = SpriteItem::default();
             item.texture_id = Some(app.sprite_state.sprite_tex);
             item.positions = app.sprite_state.placed_positions.clone();
-            item.default_colour = [1.0, 1.0, 1.0, 1.0];
+            item.default_colour = [1.0, 1.0, 1.0, 1.0].into();
             item.default_size = 0.6;
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.depth_write = true;
@@ -1502,7 +1502,7 @@ pub(crate) fn sprite_items(app: &App) -> Vec<SpriteItem> {
             item.texture_id = Some(app.sprite_state.atlas_tex);
             item.positions = app.sprite_state.atlas_positions.clone();
             item.uv_rects = uv_rects;
-            item.default_colour = [1.0, 1.0, 1.0, 1.0];
+            item.default_colour = [1.0, 1.0, 1.0, 1.0].into();
             item.default_size = 1.2;
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.depth_write = true;
@@ -1525,7 +1525,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
             // opaque geometry the soft-particle fade is measured against.
             let mut item = SceneRenderItem::default();
             item.mesh_id = app.sprite_state.sphere_id;
-            item.material.base_colour = [0.10, 0.26, 0.68];
+            item.material.base_colour = [0.10, 0.26, 0.68].into();
             item.material.specular = 0.2;
             vec![item]
         }
@@ -1546,7 +1546,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                 glam::Vec3::new(0.0, 0.0, 2.0),
             )
             .to_cols_array_2d();
-            item.material.base_colour = [0.35, 0.3, 0.25];
+            item.material.base_colour = [0.35, 0.3, 0.25].into();
             item.material.specular = 0.1;
             vec![item]
         }
@@ -1572,7 +1572,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                     let mut item = SceneRenderItem::default();
                     item.mesh_id = app.sprite_state.wall_id;
                     item.model = m.to_cols_array_2d();
-                    item.material.base_colour = [0.85, 0.85, 0.85];
+                    item.material.base_colour = [0.85, 0.85, 0.85].into();
                     item.material.specular = 0.1;
                     item.material.texture_id = Some(app.sprite_state.atlas_tex);
                     // Render both sides of each wall so the textured surface
@@ -1599,7 +1599,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                     glam::Vec3::new(0.0, 0.0, -0.05),
                 )
                 .to_cols_array_2d();
-                item.material.base_colour = [0.18, 0.12, 0.08];
+                item.material.base_colour = [0.18, 0.12, 0.08].into();
                 vec![item]
             }
             // Rain reads against a darker disc that acts as a puddle.
@@ -1612,7 +1612,7 @@ pub(crate) fn sprite_scene_items(app: &App) -> Vec<SceneRenderItem> {
                     glam::Vec3::new(0.0, 0.0, -0.5),
                 )
                 .to_cols_array_2d();
-                item.material.base_colour = [0.18, 0.22, 0.28];
+                item.material.base_colour = [0.18, 0.22, 0.28].into();
                 vec![item]
             }
         },
@@ -1684,7 +1684,7 @@ pub(crate) fn sprite_lighting(app: &App) -> LightingSettings {
             light.kind = LightKind::Directional {
                 direction: [0.4, 0.7, 0.6],
             };
-            light.colour = [1.0, 1.0, 1.0];
+            light.colour = [1.0, 1.0, 1.0].into();
             light.intensity = 0.8;
             settings.lights = vec![light];
             settings.shadows.enabled = false;
@@ -1736,7 +1736,7 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
         src.kind = LightKind::Directional {
             direction: dir.into(),
         };
-        src.colour = [1.0, 1.0, 1.0];
+        src.colour = [1.0, 1.0, 1.0].into();
         src.intensity = app.sprite_state.lit_intensity;
         app.sprite_state
             .lit_scene
@@ -1780,7 +1780,7 @@ fn gpu_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
         center: [0.0, 0.0, 0.0],
         radius: 0.2,
     };
-    item.emitter.colour = [1.0, 0.55, 0.15, 1.0];
+    item.emitter.colour = [1.0, 0.55, 0.15, 1.0].into();
     item.emitter.size = 18.0;
     item.forces.push(ForceField::Gravity([0.0, 0.0, -2.5]));
     if app.sprite_state.gpu_attractor_enabled {
@@ -1819,7 +1819,7 @@ fn gpu_mesh_particle_item(app: &App, dt: f32) -> Option<GpuParticleSystemItem> {
         center: [0.0, 0.0, 0.0],
         radius: 0.3,
     };
-    item.emitter.colour = [0.85, 0.7, 0.5, 1.0];
+    item.emitter.colour = [0.85, 0.7, 0.5, 1.0].into();
     item.emitter.size = 1.0;
     item.forces.push(ForceField::Gravity([0.0, 0.0, -6.0]));
     item.forces.push(ForceField::Drag(0.15));
@@ -1923,7 +1923,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             item.texture_id = Some(app.sprite_state.streak_tex);
             item.positions = app.sprite_state.rain_positions.clone();
             item.velocities = app.sprite_state.rain_velocities.clone();
-            item.default_colour = [0.75, 0.85, 1.0, 0.85];
+            item.default_colour = [0.75, 0.85, 1.0, 0.85].into();
             item.default_size = 18.0;
             item.size_mode = SpriteSizeMode::ScreenSpace;
             item.blend = SpriteBlend::AlphaBlend;
@@ -1969,7 +1969,7 @@ fn orientation_demo_items(app: &App) -> Vec<SpriteItem> {
             item.texture_id = Some(app.sprite_state.flame_tex);
             item.positions = positions;
             item.sizes = sizes;
-            item.default_colour = [1.0, 0.85, 0.55, 1.0];
+            item.default_colour = [1.0, 0.85, 0.55, 1.0].into();
             item.size_mode = SpriteSizeMode::WorldSpace;
             item.blend = SpriteBlend::Additive;
             item.depth_write = false;

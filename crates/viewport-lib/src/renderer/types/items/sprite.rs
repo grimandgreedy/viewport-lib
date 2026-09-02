@@ -55,7 +55,7 @@ pub struct SpriteItem {
     pub positions: Vec<[f32; 3]>,
     /// Per-instance RGBA colour tints. Empty = use `default_colour` for all.
     /// Multiplied with the texture sample (or used directly when `texture_id` is `None`).
-    pub colours: Vec<[f32; 4]>,
+    pub colours: Vec<crate::Colour>,
     /// Per-instance sizes. Empty = use `default_size` for all.
     /// Interpretation depends on `size_mode`.
     pub sizes: Vec<f32>,
@@ -66,7 +66,7 @@ pub struct SpriteItem {
     /// Empty = full texture `[0.0, 0.0, 1.0, 1.0]` for all.
     pub uv_rects: Vec<[f32; 4]>,
     /// Fallback RGBA colour tint used when `colours` is empty. Default: opaque white.
-    pub default_colour: [f32; 4],
+    pub default_colour: crate::Colour,
     /// Default size when `sizes` is empty. Pixels (ScreenSpace) or world units (WorldSpace).
     pub default_size: f32,
     /// Whether sizes are in screen-space pixels or world-space units.
@@ -211,7 +211,7 @@ impl Default for SpriteItem {
             sizes: Vec::new(),
             rotations: Vec::new(),
             uv_rects: Vec::new(),
-            default_colour: [1.0, 1.0, 1.0, 1.0],
+            default_colour: [1.0, 1.0, 1.0, 1.0].into(),
             default_size: 32.0,
             size_mode: SpriteSizeMode::ScreenSpace,
             model: glam::Mat4::IDENTITY.to_cols_array_2d(),

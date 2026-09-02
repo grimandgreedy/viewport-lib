@@ -212,7 +212,7 @@ impl App {
             s.kind = LightKind::Directional {
                 direction: [0.35, -0.5, 0.78],
             };
-            s.colour = [1.0, 0.97, 0.92];
+            s.colour = [1.0, 0.97, 0.92].into();
             s.intensity = 2.0;
             s
         }];

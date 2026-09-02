@@ -251,14 +251,15 @@ impl ViewportRenderer {
         self.ensure_dyn_res_target(device, vp_idx, [sw, sh], [w, h]);
         self.resources.ensure_dyn_res_ds_pipeline(device);
 
-        let bg_colour = frame.viewport.background_colour.unwrap_or([
-            // Default background #3b3b40, expressed in linear light (the renderer
-            // outputs linear and the sRGB target encodes on write).
-            0.0437,
-            0.0437,
-            0.0513,
-            1.0,
-        ]);
+        let bg_colour = frame
+            .viewport
+            .background_colour
+            .map(|c| c.to_linear_rgba())
+            .unwrap_or([
+                // Default background #3b3b40, expressed in linear light (the renderer
+                // outputs linear and the sRGB target encodes on write).
+                0.0437, 0.0437, 0.0513, 1.0,
+            ]);
 
         {
             let slot = &self.viewport_slots[vp_idx];
@@ -806,14 +807,15 @@ impl ViewportRenderer {
         };
         let scene_items: &[SceneRenderItem] = &scene_items_owned;
 
-        let bg_colour = frame.viewport.background_colour.unwrap_or([
-            // Default background #3b3b40, expressed in linear light (the renderer
-            // outputs linear and the sRGB target encodes on write).
-            0.0437,
-            0.0437,
-            0.0513,
-            1.0,
-        ]);
+        let bg_colour = frame
+            .viewport
+            .background_colour
+            .map(|c| c.to_linear_rgba())
+            .unwrap_or([
+                // Default background #3b3b40, expressed in linear light (the renderer
+                // outputs linear and the sRGB target encodes on write).
+                0.0437, 0.0437, 0.0513, 1.0,
+            ]);
         let ppp = frame.camera.pixels_per_point;
         let w = (frame.camera.viewport_size[0] * ppp).round() as u32;
         let h = (frame.camera.viewport_size[1] * ppp).round() as u32;

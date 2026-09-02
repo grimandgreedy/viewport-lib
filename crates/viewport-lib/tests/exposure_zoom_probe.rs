@@ -81,7 +81,7 @@ fn auto_exposure_stable_across_zoom() {
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.15, 0.15, 0.17, 1.0]);
+        frame.viewport.background_colour = Some([0.15, 0.15, 0.17, 1.0].into());
 
         let mut light = LightSource::default();
         light.kind = LightKind::Directional {
@@ -191,7 +191,7 @@ fn probe_example_scene() {
         frame.camera.viewport_size = [size as f32, size as f32];
         frame.viewport.show_grid = false;
         frame.viewport.show_axes_indicator = false;
-        frame.viewport.background_colour = Some([0.12, 0.12, 0.14, 1.0]);
+        frame.viewport.background_colour = Some([0.12, 0.12, 0.14, 1.0].into());
         let mut light = LightSource::default();
         light.cast_shadows = true;
         light.kind = LightKind::Directional {

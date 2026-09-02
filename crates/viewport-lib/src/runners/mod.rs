@@ -172,7 +172,7 @@ impl ViewportInstance {
             viewport_size: [1.0, 1.0],
             pixels_per_point: 1.0,
             outline_selected: defaults.outline_selected,
-            outline_colour: defaults.outline_colour,
+            outline_colour: defaults.outline_colour.to_linear_rgba(),
             outline_width_px: defaults.outline_width_px,
             extras: Vec::new(),
             next_extra_id: 0,

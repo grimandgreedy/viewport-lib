@@ -150,9 +150,9 @@ fn per_object_items_select_distinct_object_data() {
     let make = |x: f32, colour: [f32; 3]| {
         let mut it = SceneRenderItem::default();
         it.mesh_id = mesh_id;
-        it.material.base_colour = colour;
+        it.material.base_colour = colour.into();
         // Styled back faces => is_instanceable is false => per-object path.
-        it.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0]);
+        it.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0].into());
         it.settings.unlit = true;
         it.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
         it
@@ -215,7 +215,7 @@ fn renderer_fits_recommended_device_limits() {
     // pass (default lighting casts shadows) all build under the capped limits.
     let mut opaque = SceneRenderItem::default();
     opaque.mesh_id = mesh_id;
-    opaque.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0]);
+    opaque.material.backface_policy = BackfacePolicy::DifferentColour([0.0, 0.0, 0.0].into());
     let mut transparent = SceneRenderItem::default();
     transparent.mesh_id = mesh_id;
     transparent.settings.opacity = 0.5;
@@ -287,7 +287,7 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0]);
+    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
 
     // A shape with two outer shadow layers plus two inner shadow layers,
     // rotated about an off-centre pivot. Fill is bright so it stands out.
@@ -297,7 +297,7 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
             [24.0, 24.0],
             [48.0, 48.0],
         )
-        .with_fill(OverlayFill::Solid([0.9, 0.2, 0.1, 1.0]))
+        .with_fill(OverlayFill::Solid([0.9, 0.2, 0.1, 1.0].into()))
         .with_border([1.0, 1.0, 1.0, 1.0], 2.0)
         .with_rotation(0.5)
         .with_rotation_pivot([10.0, 6.0])
@@ -349,11 +349,11 @@ fn overlay_shape_backdrop_filters_render() {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.2, 0.5, 0.8, 1.0]);
+    frame.viewport.background_colour = Some([0.2, 0.5, 0.8, 1.0].into());
 
     frame.overlays.shapes = vec![
         OverlayShapeItem::new(OverlayShape::Circle, [24.0, 24.0], [48.0, 48.0])
-            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1]))
+            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1].into()))
             .with_backdrop_blur(8.0)
             .with_backdrop_filters(0.4, 0.9, 1.0),
     ];
@@ -390,13 +390,13 @@ fn overlay_shape_pivot_rotation_not_clipped() {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.1, 0.1, 0.1, 1.0]);
+    frame.viewport.background_colour = Some([0.1, 0.1, 0.1, 1.0].into());
 
     // Tall narrow capsule: box x in [60, 76], centre (68, 80). Pivot at the
     // bottom end; rotate 90 degrees so the hand swings out horizontally.
     frame.overlays.shapes = vec![
         OverlayShapeItem::new(OverlayShape::Capsule, [60.0, 20.0], [16.0, 120.0])
-            .with_fill(OverlayFill::Solid([0.95, 0.75, 0.2, 1.0]))
+            .with_fill(OverlayFill::Solid([0.95, 0.75, 0.2, 1.0].into()))
             .with_rotation(std::f32::consts::FRAC_PI_2)
             .with_rotation_pivot([0.0, 60.0]),
     ];

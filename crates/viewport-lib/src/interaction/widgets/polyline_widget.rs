@@ -29,11 +29,11 @@ pub struct PolylineWidget {
     /// Control point positions in world space.
     pub points: Vec<glam::Vec3>,
     /// RGBA colour for the line segments.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Line width in pixels.
     pub line_width: f32,
     /// RGBA colour for the drag handles.
-    pub handle_colour: [f32; 4],
+    pub handle_colour: crate::Colour,
     /// Index of the currently hovered control point.
     pub hovered_point: Option<usize>,
     /// Index of the point actively being dragged.
@@ -55,9 +55,9 @@ impl PolylineWidget {
         }
         Self {
             points,
-            colour: [0.9, 0.5, 0.1, 1.0],
+            colour: [0.9, 0.5, 0.1, 1.0].into(),
             line_width: 2.0,
-            handle_colour: [0.0; 4],
+            handle_colour: [0.0; 4].into(),
             hovered_point: None,
             active_point: None,
             drag_plane_normal: glam::Vec3::Y,
@@ -176,7 +176,7 @@ impl PolylineWidget {
         PolylineItem {
             positions: self.points.iter().map(|p| p.to_array()).collect(),
             strip_lengths: if n > 0 { vec![n] } else { vec![] },
-            default_colour: self.colour,
+            default_colour: self.colour.into(),
             line_width: self.line_width,
 
             settings: {
@@ -219,8 +219,8 @@ impl PolylineWidget {
             s.pick_id = crate::renderer::PickId(id_base);
             s
         };
-        g.default_colour = self.handle_colour;
-        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g.default_colour = self.handle_colour.into();
+        g.use_default_colour = self.handle_colour.alpha() > 0.0;
         g
     }
 

@@ -21,7 +21,7 @@ const OUTLINE_WIDTH: f32 = 2.0;
 /// Tag an outline polyline as a clip indicator: give it its colour and width, and
 /// exempt it from the clip volumes so it stays visible through active clips.
 fn finish_outline(mut item: PolylineItem, colour: [f32; 4]) -> PolylineItem {
-    item.default_colour = colour;
+    item.default_colour = colour.into();
     item.line_width = OUTLINE_WIDTH;
     item.settings.ignore_clip = true;
     item
@@ -202,8 +202,7 @@ pub fn outline(shape: &ClipShape, extent: f32, colour: [f32; 4]) -> PolylineItem
             // Foot of the normal from the world origin. A host that translates the
             // plane laterally (its own display centre) calls `plane_outline`
             // directly with that centre instead.
-            let center =
-                (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
+            let center = (glam::Vec3::from(normal).normalize_or_zero() * -distance).to_array();
             plane_outline(center, normal, extent, colour)
         }
         ClipShape::Box {

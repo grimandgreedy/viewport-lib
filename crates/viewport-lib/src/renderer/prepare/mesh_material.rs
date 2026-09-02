@@ -166,12 +166,10 @@ pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
     let m = &item.material;
     CommonMaterial {
         model: item.model,
-        colour: [
-            m.base_colour[0],
-            m.base_colour[1],
-            m.base_colour[2],
-            item.settings.opacity,
-        ],
+        colour: {
+            let bc = m.base_colour.to_linear_rgb();
+            [bc[0], bc[1], bc[2], item.settings.opacity]
+        },
         selected: if item.settings.selected { 1 } else { 0 },
         ambient: m.ambient,
         diffuse: m.diffuse,
@@ -281,7 +279,7 @@ mod tests {
     #[test]
     fn common_material_carries_emissive() {
         let mut item = SceneRenderItem::default();
-        item.material.emissive = [1.5, 0.25, 4.0];
+        item.material.emissive = [1.5, 0.25, 4.0].into();
         let cm = common_material(&item);
         assert_eq!(cm.emissive, [1.5, 0.25, 4.0]);
     }
@@ -302,7 +300,7 @@ mod tests {
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
         // A plain emissive factor stays instanceable: the instanced path carries it.
-        item.material.emissive = [2.0, 2.0, 2.0];
+        item.material.emissive = [2.0, 2.0, 2.0].into();
         assert!(
             is_instanceable(&item, &resources, &[]),
             "a plain emissive item should still instance",

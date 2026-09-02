@@ -1302,7 +1302,11 @@ impl DeviceResources {
         let build = |i: usize| -> GpuInstanceData {
             GpuInstanceData {
                 model: item.transforms[i],
-                colour: item.colours.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                colour: item
+                    .colours
+                    .get(i)
+                    .map(|c| c.to_linear_rgba())
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]),
                 selected: 0,
                 wireframe: 0,
                 ambient: 1.0,

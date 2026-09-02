@@ -120,7 +120,7 @@ fn main() {
         l.lights = vec![{
             let mut src = LightSource::default();
             src.kind = LightKind::Directional { direction: dir };
-            src.colour = [1.0, 0.97, 0.90];
+            src.colour = [1.0, 0.97, 0.90].into();
             src.intensity = 0.8;
             src
         }];

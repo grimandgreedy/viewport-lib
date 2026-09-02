@@ -161,8 +161,8 @@ impl FrameData {
     }
 
     /// Set the viewport background clear colour.
-    pub fn with_background(mut self, colour: [f32; 4]) -> Self {
-        self.viewport.background_colour = Some(colour);
+    pub fn with_background(mut self, colour: impl Into<crate::Colour>) -> Self {
+        self.viewport.background_colour = Some(colour.into());
         self
     }
 
@@ -948,7 +948,10 @@ macro_rules! emit_outline_composite {
                 || !slot.selection_outlines.polyline_outline_indices.is_empty()
                 || !slot.selection_outlines.volume_outline_indices.is_empty()
                 || !slot.selection_outlines.glyph_outline_indices.is_empty()
-                || !slot.selection_outlines.tensor_glyph_outline_indices.is_empty()
+                || !slot
+                    .selection_outlines
+                    .tensor_glyph_outline_indices
+                    .is_empty()
                 || !slot.selection_outlines.sprite_outline_indices.is_empty()
                 || slot.selection_outlines.plugin_outline_present
             {

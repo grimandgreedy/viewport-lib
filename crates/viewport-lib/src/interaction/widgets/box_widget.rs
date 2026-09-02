@@ -46,9 +46,9 @@ pub struct BoxWidget {
     /// Orientation of the box (rotates the local axes).
     pub rotation: glam::Quat,
     /// RGBA colour for the wireframe outline.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// RGBA colour for the drag handles. When set (non-zero alpha), overrides the default LUT colouring.
-    pub handle_colour: [f32; 4],
+    pub handle_colour: crate::Colour,
 
     hovered_handle: Option<BoxHandle>,
     active_handle: Option<BoxHandle>,
@@ -64,8 +64,8 @@ impl BoxWidget {
             center,
             half_extents: half_extents.max(glam::Vec3::splat(0.01)),
             rotation: glam::Quat::IDENTITY,
-            colour: [0.3, 0.8, 0.4, 1.0],
-            handle_colour: [0.0; 4],
+            colour: [0.3, 0.8, 0.4, 1.0].into(),
+            handle_colour: [0.0; 4].into(),
             hovered_handle: None,
             active_handle: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -258,7 +258,7 @@ impl BoxWidget {
                 p(-h.x, h.y, h.z),
             ],
             strip_lengths: vec![5, 5, 2, 2, 2, 2],
-            default_colour: self.colour,
+            default_colour: self.colour.into(),
 
             settings: {
                 let mut s = crate::scene::material::ItemSettings::default();
@@ -303,7 +303,7 @@ impl BoxWidget {
         PolylineItem {
             positions,
             strip_lengths,
-            default_colour: self.colour,
+            default_colour: self.colour.into(),
             line_width: 1.2,
 
             settings: {
@@ -366,8 +366,8 @@ impl BoxWidget {
             s.pick_id = crate::renderer::PickId(id_base);
             s
         };
-        g.default_colour = self.handle_colour;
-        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g.default_colour = self.handle_colour.into();
+        g.use_default_colour = self.handle_colour.alpha() > 0.0;
         g
     }
 

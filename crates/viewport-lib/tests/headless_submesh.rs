@@ -51,7 +51,7 @@ fn submesh_frame(mesh_id: MeshId, materials: Option<Vec<Material>>) -> FrameData
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     // Unlit so pixels carry the raw material base colour.
     item.settings.unlit = true;
-    item.material.base_colour = [0.0, 0.0, 1.0];
+    item.material.base_colour = [0.0, 0.0, 1.0].into();
     item.submesh_materials = materials;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
     frame
@@ -84,9 +84,9 @@ fn submesh_materials_draw_per_range_colours_ldr() {
     let mesh_id = two_range_quad(renderer.resources_mut(), &device);
 
     let mut red = Material::default();
-    red.base_colour = [1.0, 0.0, 0.0];
+    red.base_colour = [1.0, 0.0, 0.0].into();
     let mut green = Material::default();
-    green.base_colour = [0.0, 1.0, 0.0];
+    green.base_colour = [0.0, 1.0, 0.0].into();
     let frame = submesh_frame(mesh_id, Some(vec![red, green]));
     let pixels = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
 
@@ -113,7 +113,7 @@ fn submesh_materials_fall_back_to_item_material() {
 
     // Length mismatch (3 materials, 2 ranges): falls back, item material only.
     let mut red = Material::default();
-    red.base_colour = [1.0, 0.0, 0.0];
+    red.base_colour = [1.0, 0.0, 0.0].into();
     let frame = submesh_frame(
         mesh_id,
         Some(vec![red, Material::default(), Material::default()]),
@@ -138,9 +138,9 @@ fn submesh_materials_split_across_hdr_and_oit() {
     let mesh_id = two_range_quad(renderer.resources_mut(), &device);
 
     let mut red = Material::default();
-    red.base_colour = [1.0, 0.0, 0.0];
+    red.base_colour = [1.0, 0.0, 0.0].into();
     let mut green = Material::default();
-    green.base_colour = [0.0, 1.0, 0.0];
+    green.base_colour = [0.0, 1.0, 0.0].into();
     green.alpha_mode = AlphaMode::Blend;
     let mut frame = submesh_frame(mesh_id, Some(vec![red, green]));
     frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
@@ -169,13 +169,13 @@ fn scene_submesh_materials_reach_render_items_and_draw() {
     let mesh_id = two_range_quad(renderer.resources_mut(), &device);
 
     let mut red = Material::default();
-    red.base_colour = [1.0, 0.0, 0.0];
+    red.base_colour = [1.0, 0.0, 0.0].into();
     let mut green = Material::default();
-    green.base_colour = [0.0, 1.0, 0.0];
+    green.base_colour = [0.0, 1.0, 0.0].into();
 
     let mut scene = Scene::new();
     let mut base = Material::default();
-    base.base_colour = [0.0, 0.0, 1.0];
+    base.base_colour = [0.0, 0.0, 1.0].into();
     let node = scene.add(Some(mesh_id), glam::Mat4::IDENTITY, base);
     let mut settings = ItemSettings::default();
     settings.unlit = true;

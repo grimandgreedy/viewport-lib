@@ -31,8 +31,10 @@ fn main() -> eframe::Result {
 
             // Render into the sRGB variant of egui's surface format; the offscreen
             // target hands egui a non-sRGB view so the encode survives its sample.
-            let mut renderer =
-                ViewportRenderer::new(device, OffscreenViewportTarget::render_format(rs.target_format));
+            let mut renderer = ViewportRenderer::new(
+                device,
+                OffscreenViewportTarget::render_format(rs.target_format),
+            );
             let res = renderer.resources_mut();
 
             macro_rules! mesh {
@@ -242,7 +244,7 @@ impl eframe::App for App {
                             _t.kind = LightKind::Directional {
                                 direction: [0.4, -0.5, 1.2],
                             };
-                            _t.colour = [1.0, 0.97, 0.92];
+                            _t.colour = [1.0, 0.97, 0.92].into();
                             _t.intensity = 1.0;
                             _t
                         },
@@ -251,7 +253,7 @@ impl eframe::App for App {
                             _t.kind = LightKind::Directional {
                                 direction: [-0.8, 0.6, 0.3],
                             };
-                            _t.colour = [0.70, 0.82, 1.0];
+                            _t.colour = [0.70, 0.82, 1.0].into();
                             _t.intensity = 0.35;
                             _t
                         },
@@ -274,7 +276,11 @@ impl eframe::App for App {
                     (w * ppp).round().max(1.0) as u32,
                     (h * ppp).round().max(1.0) as u32,
                 ];
-                if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+                if self
+                    .target
+                    .as_ref()
+                    .map_or(true, |t| t.inner.size() != size_px)
+                {
                     let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
                     let id = rs.renderer.write().register_native_texture(
                         &rs.device,

@@ -531,7 +531,7 @@ impl SceneFrame {
 #[non_exhaustive]
 pub struct ViewportFrame {
     /// Optional background/clear colour [r, g, b, a]. None = adapter default.
-    pub background_colour: Option<[f32; 4]>,
+    pub background_colour: Option<crate::Colour>,
     /// Whether to render the scene in wireframe mode. Default: false.
     pub wireframe_mode: bool,
     /// Whether to render the ground-plane grid. Default: false.
@@ -543,7 +543,7 @@ pub struct ViewportFrame {
     /// World-space Z coordinate of the grid plane (3D mode only, Z-up). Default: 0.0.
     pub grid_z: f32,
     /// RGB colour for the grid lines. None = renderer default (mid-grey).
-    pub grid_colour: Option<[f32; 3]>,
+    pub grid_colour: Option<crate::Colour>,
     /// Whether to draw the axes orientation indicator overlay. Default: true.
     pub show_axes_indicator: bool,
 }
@@ -588,13 +588,13 @@ pub struct InteractionFrame {
     /// Draw a stencil-outline ring around selected objects. Default: false.
     pub outline_selected: bool,
     /// RGBA colour of the selection outline ring. Default: white [1.0, 1.0, 1.0, 1.0].
-    pub outline_colour: [f32; 4],
+    pub outline_colour: crate::Colour,
     /// Width of the outline ring in pixels. Default: 2.0.
     pub outline_width_px: f32,
     /// Render selected objects as a semi-transparent x-ray overlay. Default: false.
     pub xray_selected: bool,
     /// RGBA colour of the x-ray tint (should have alpha < 1). Default: [0.3, 0.7, 1.0, 0.25].
-    pub xray_colour: [f32; 4],
+    pub xray_colour: crate::Colour,
 
     // --- Sub-object highlight ---
     /// Sub-object selection to highlight this frame.
@@ -605,10 +605,10 @@ pub struct InteractionFrame {
     pub sub_selection: Option<SubSelectionRef>,
     /// Fill colour (RGBA) for selected faces. The alpha component controls
     /// fill opacity. Default: translucent yellow `[1.0, 0.85, 0.0, 0.25]`.
-    pub sub_highlight_face_fill_colour: [f32; 4],
+    pub sub_highlight_face_fill_colour: crate::Colour,
     /// Edge colour (RGBA) for selected face outlines. Default: opaque yellow
     /// `[1.0, 0.85, 0.0, 1.0]`.
-    pub sub_highlight_edge_colour: [f32; 4],
+    pub sub_highlight_edge_colour: crate::Colour,
     /// Line width in pixels for face edge outlines. Default: `2.0`.
     pub sub_highlight_edge_width_px: f32,
     /// Point sprite size in pixels for selected vertices and point cloud
@@ -626,13 +626,13 @@ impl Default for InteractionFrame {
             gizmo_space_orientation: glam::Quat::IDENTITY,
             constraint_overlays: Vec::new(),
             outline_selected: false,
-            outline_colour: [1.0, 1.0, 1.0, 1.0],
+            outline_colour: [1.0, 1.0, 1.0, 1.0].into(),
             outline_width_px: 2.0,
             xray_selected: false,
-            xray_colour: [0.3, 0.7, 1.0, 0.25],
+            xray_colour: [0.3, 0.7, 1.0, 0.25].into(),
             sub_selection: None,
-            sub_highlight_face_fill_colour: [1.0, 0.85, 0.0, 0.25],
-            sub_highlight_edge_colour: [1.0, 0.85, 0.0, 1.0],
+            sub_highlight_face_fill_colour: [1.0, 0.85, 0.0, 0.25].into(),
+            sub_highlight_edge_colour: [1.0, 0.85, 0.0, 1.0].into(),
             sub_highlight_edge_width_px: 2.0,
             sub_highlight_vertex_size_px: 10.0,
         }

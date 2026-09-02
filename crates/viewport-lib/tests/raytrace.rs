@@ -65,7 +65,7 @@ fn output_is_finite() {
     add_quad(&mut scene, 1.5, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.0, -0.4, 1.0],
-        colour: [3.0, 3.0, 3.0],
+        colour: [3.0, 3.0, 3.0].into(),
     });
     let cam = camera(64, 64);
     let img = trace(
@@ -142,7 +142,7 @@ fn lit_and_emissive_deposit_radiance() {
     );
     lit.add_light(RtLight::Directional {
         direction: [0.0, -0.3, 1.0],
-        colour: [4.0, 4.0, 4.0],
+        colour: [4.0, 4.0, 4.0].into(),
     });
     let lit_img = trace(&device, &queue, &lit, &cam, &settings);
 
@@ -215,7 +215,7 @@ fn instancing_matches_expanded_scene() {
 
     let light = RtLight::Directional {
         direction: [0.2, -0.5, 1.0],
-        colour: [3.0, 3.0, 3.0],
+        colour: [3.0, 3.0, 3.0].into(),
     };
 
     // Scene A: one registered mesh, instanced.
@@ -430,7 +430,7 @@ fn tracer_reuse_across_cameras_and_sizes() {
     );
     scene.add_light(RtLight::Directional {
         direction: [0.0, -0.3, 1.0],
-        colour: [4.0, 4.0, 4.0],
+        colour: [4.0, 4.0, 4.0].into(),
     });
 
     let settings = RtSettings {

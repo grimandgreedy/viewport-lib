@@ -283,14 +283,14 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
     sun.kind = LightKind::Directional {
         direction: [0.4, 0.3, 1.0],
     };
-    sun.colour = [1.0, 0.96, 0.88];
+    sun.colour = [1.0, 0.96, 0.88].into();
     sun.intensity = 1.2;
 
     let mut fill = LightSource::default();
     fill.kind = LightKind::Directional {
         direction: [-0.5, -0.2, 0.4],
     };
-    fill.colour = [0.65, 0.78, 1.0];
+    fill.colour = [0.65, 0.78, 1.0].into();
     fill.intensity = 0.35;
 
     let lighting = {
@@ -335,7 +335,7 @@ pub(crate) fn submit_wave_items(
                 .shown_buoys
                 .min((BUOY_GRID * BUOY_GRID) as u32),
         );
-        item.colour = [1.0, 0.40, 0.04, 1.0];
+        item.colour = [1.0, 0.40, 0.04, 1.0].into();
         fd.scene.external_instances.push(item);
     }
 

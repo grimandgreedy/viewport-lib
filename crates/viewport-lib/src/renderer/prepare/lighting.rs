@@ -133,10 +133,13 @@ impl ViewportRenderer {
             fn lut_sample(lut: &[[u8; 4]; 256], t: f32) -> [f32; 3] {
                 let idx = (t.clamp(0.0, 1.0) * 255.0).round() as usize;
                 let p = lut[idx];
+                // Colourmap bytes are sRGB (see `upload_colourmap`); decode to
+                // linear here so this CPU tint matches the GPU sampler, which
+                // decodes an `Rgba8UnormSrgb` LUT on read.
                 [
-                    p[0] as f32 / 255.0,
-                    p[1] as f32 / 255.0,
-                    p[2] as f32 / 255.0,
+                    crate::srgb_to_linear(p[0] as f32 / 255.0),
+                    crate::srgb_to_linear(p[1] as f32 / 255.0),
+                    crate::srgb_to_linear(p[2] as f32 / 255.0),
                 ]
             }
             let mut lights: Vec<LightSource> = Vec::new();
@@ -166,7 +169,7 @@ impl ViewportRenderer {
                     ScatterShape::Sphere { radius, .. } => (radius, radius),
                 };
                 let tint: [f32; 3] = match item.volume.colour {
-                    ColourSource::Flat(rgb) => rgb,
+                    ColourSource::Flat(rgb) => rgb.to_linear_rgb(),
                     ColourSource::Ramp(_) => [1.0, 1.0, 1.0],
                 };
                 let ramp_sample: [f32; 3] = match item.volume.colour {

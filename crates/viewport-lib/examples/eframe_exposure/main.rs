@@ -123,7 +123,7 @@ fn main() -> eframe::Result {
             }
 
             // Background is a persistent viewport setting.
-            session.viewport_frame_mut().background_colour = Some([0.12, 0.12, 0.14, 1.0]);
+            session.viewport_frame_mut().background_colour = Some([0.12, 0.12, 0.14, 1.0].into());
 
             let cam = session.camera_mut();
             cam.center = glam::Vec3::new((COLUMNS as f32 - 1.0) * COL_SPACING * 0.5, 0.4, 0.7);

@@ -12,11 +12,11 @@ pub struct SplineWidget {
     /// Control point positions.
     pub points: Vec<glam::Vec3>,
     /// Colour of the spline curve.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Width of the spline curve in pixels.
     pub line_width: f32,
     /// Colour of the control point handles.
-    pub handle_colour: [f32; 4],
+    pub handle_colour: crate::Colour,
     /// Number of samples between each pair of adjacent control points.
     pub resolution: u32,
     hovered_point: Option<usize>,
@@ -30,9 +30,9 @@ impl SplineWidget {
     pub fn new(points: Vec<glam::Vec3>) -> Self {
         Self {
             points,
-            colour: [0.4, 0.8, 1.0, 1.0],
+            colour: [0.4, 0.8, 1.0, 1.0].into(),
             line_width: 2.0,
-            handle_colour: [1.0, 0.8, 0.2, 1.0],
+            handle_colour: [1.0, 0.8, 0.2, 1.0].into(),
             resolution: 16,
             hovered_point: None,
             active_point: None,
@@ -107,7 +107,7 @@ impl SplineWidget {
         PolylineItem {
             positions: sampled,
             strip_lengths: if n > 0 { vec![n] } else { vec![] },
-            default_colour: self.colour,
+            default_colour: self.colour.into(),
             line_width: self.line_width,
 
             settings: {
@@ -131,7 +131,7 @@ impl SplineWidget {
         g.glyph_type = GlyphType::Sphere;
         g.scale = radius;
         g.use_default_colour = true;
-        g.default_colour = self.handle_colour;
+        g.default_colour = self.handle_colour.into();
         g.settings = {
             let mut s = crate::scene::material::ItemSettings::default();
             s.pick_id = crate::renderer::PickId(id_base);

@@ -18,6 +18,7 @@ default = ["serde"]
 serde = ["dep:serde", "glam/serde"]
 
 [dependencies]
+bytemuck = { version = "1.25", features = ["derive"] }
 glam = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
 thiserror = "2.0"

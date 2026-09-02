@@ -113,8 +113,10 @@ const DEFAULT_CROWD_PICK_PADDING: f32 = 0.35;
 /// Path the glTF character demo looks for. Drop a `.glb` (or `.gltf` with its
 /// buffers/textures next to it) at this path to enable the demo. See the
 /// in-app help text for details.
-pub(crate) const GLTF_DEMO_PATH: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/examples/eframe_showcase/assets/character.glb");
+pub(crate) const GLTF_DEMO_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/eframe_showcase/assets/character.glb"
+);
 
 use crate::App;
 

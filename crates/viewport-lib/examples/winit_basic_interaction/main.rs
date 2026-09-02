@@ -128,7 +128,7 @@ fn main() {
                 QUIT_POS,
                 QUIT_SIZE,
             )
-            .with_fill(OverlayFill::Solid([0.7, 0.2, 0.2, 0.9])),
+            .with_fill(OverlayFill::Solid([0.7, 0.2, 0.2, 0.9].into())),
         );
         // Center the label in the quit box: anchor at the box center, then
         // Center alignment centers horizontally and the anchor is already the

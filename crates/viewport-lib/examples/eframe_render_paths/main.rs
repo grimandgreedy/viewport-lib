@@ -21,7 +21,6 @@
 //!   Right drag   : pan
 //!   Scroll       : zoom
 
-
 use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use vpl::{
@@ -493,44 +492,45 @@ impl App {
 
         // 1: instanced opaque, one-sided.
         place(self.meshes.cube, 1, &|it| {
-            it.material.base_colour = [0.85, 0.10, 0.10]; // red
+            it.material.base_colour = [0.85, 0.10, 0.10].into(); // red
             it.material.backface_policy = BackfacePolicy::Cull;
         });
         // 2: instanced opaque, two-sided (the path the two-sided shadow fix covers).
         place(self.meshes.hemisphere, 2, &|it| {
-            it.material.base_colour = [0.95, 0.45, 0.05]; // orange
+            it.material.base_colour = [0.95, 0.45, 0.05].into(); // orange
             it.material.backface_policy = BackfacePolicy::Identical;
         });
         // 3: instanced transparent, one-sided.
         place(self.meshes.sphere_t, 3, &|it| {
-            it.material.base_colour = [0.93, 0.83, 0.10]; // yellow
+            it.material.base_colour = [0.93, 0.83, 0.10].into(); // yellow
             it.material.backface_policy = BackfacePolicy::Cull;
             it.material.alpha_mode = AlphaMode::Blend;
             it.settings.opacity = 0.5;
         });
         // 4: per-object transparent, two-sided (OIT is back-culled, so this stays per-object).
         place(self.meshes.torus, 4, &|it| {
-            it.material.base_colour = [0.15, 0.80, 0.25]; // green
+            it.material.base_colour = [0.15, 0.80, 0.25].into(); // green
             it.material.backface_policy = BackfacePolicy::Identical;
             it.material.alpha_mode = AlphaMode::Blend;
             it.settings.opacity = 0.5;
         });
         // 5: per-object two-sided, DifferentColour backface.
         place(self.meshes.cone, 5, &|it| {
-            it.material.base_colour = [0.05, 0.70, 0.65]; // teal (front)
-            it.material.backface_policy = BackfacePolicy::DifferentColour([0.95, 0.35, 0.10]);
+            it.material.base_colour = [0.05, 0.70, 0.65].into(); // teal (front)
+            it.material.backface_policy =
+                BackfacePolicy::DifferentColour([0.95, 0.35, 0.10].into());
         });
         // 6: per-object two-sided, Tint backface.
         place(self.meshes.cylinder, 6, &|it| {
-            it.material.base_colour = [0.15, 0.35, 0.95]; // blue
+            it.material.base_colour = [0.15, 0.35, 0.95].into(); // blue
             it.material.backface_policy = BackfacePolicy::Tint(0.4);
         });
         // 7: per-object two-sided, Pattern backface.
         place(self.meshes.ring, 7, &|it| {
-            it.material.base_colour = [0.60, 0.20, 0.90]; // violet (front)
+            it.material.base_colour = [0.60, 0.20, 0.90].into(); // violet (front)
             it.material.backface_policy = BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
-                colour: [0.1, 0.4, 0.8],
+                colour: [0.1, 0.4, 0.8].into(),
                 ..Default::default()
             });
         });
@@ -548,7 +548,7 @@ impl App {
         });
         // 10: per-object UV param-vis.
         place(self.meshes.ellipsoid, 10, &|it| {
-            it.material.base_colour = [0.95, 0.15, 0.65]; // magenta
+            it.material.base_colour = [0.95, 0.15, 0.65].into(); // magenta
             it.material.param_vis = Some(ParamVis {
                 mode: ParamVisMode::Checker,
                 scale: 8.0,
@@ -556,7 +556,7 @@ impl App {
         });
         // 11: per-object compute-filter (handled below; the pending filter result forces per-object).
         place(self.meshes.filter, 11, &|it| {
-            it.material.base_colour = [0.10, 0.75, 0.90]; // cyan
+            it.material.base_colour = [0.10, 0.75, 0.90].into(); // cyan
             it.material.backface_policy = BackfacePolicy::Identical; // show the cut interior
         });
         // 12: per-object GPU skinning. deform_instance binds the per-instance palette.
@@ -579,7 +579,7 @@ impl App {
         });
         // 14: per-object via a bound position-override buffer.
         place(self.meshes.override_pos, 14, &|it| {
-            it.material.base_colour = [0.55, 0.85, 0.20]; // lime
+            it.material.base_colour = [0.55, 0.85, 0.20].into(); // lime
             it.material.backface_policy = BackfacePolicy::Cull;
         });
 
@@ -804,7 +804,11 @@ impl eframe::App for App {
                 (h * ppp).round().max(1.0) as u32,
             ];
             let mut guard = rs.renderer.write();
-            if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+            if self
+                .target
+                .as_ref()
+                .map_or(true, |t| t.inner.size() != size_px)
+            {
                 let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
                 let id = guard.register_native_texture(
                     &rs.device,

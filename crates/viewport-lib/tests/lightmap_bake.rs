@@ -110,7 +110,7 @@ fn direct_irradiance_follows_the_cosine_law() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0], // straight up, toward the light
-        colour: [2.0, 2.0, 2.0],
+        colour: [2.0, 2.0, 2.0].into(),
     });
 
     let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
@@ -149,7 +149,7 @@ fn occluder_casts_a_shadow() {
     add_floor(&mut scene, 5.0, black);
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0],
-        colour: [2.0, 2.0, 2.0],
+        colour: [2.0, 2.0, 2.0].into(),
     });
     // A ceiling quad at z=1 over the texel, blocking the light.
     let p = [
@@ -229,7 +229,7 @@ fn empty_texels_stay_black() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0],
-        colour: [2.0, 2.0, 2.0],
+        colour: [2.0, 2.0, 2.0].into(),
     });
 
     // Left half covered, right half empty.
@@ -286,7 +286,7 @@ fn directional_bake_points_at_the_light() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0],
-        colour: [2.0, 2.0, 2.0],
+        colour: [2.0, 2.0, 2.0].into(),
     });
 
     let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
@@ -434,7 +434,7 @@ fn shadowmask_bakes_per_light_visibility() {
     );
     scene.add_light(RtLight::Directional {
         direction: [0.0, 0.0, 1.0], // straight up, toward the light
-        colour: [1.0, 1.0, 1.0],
+        colour: [1.0, 1.0, 1.0].into(),
     });
 
     let bake_at = |p: [f32; 3]| {
@@ -494,7 +494,7 @@ fn bake_is_bit_for_bit_reproducible() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.3, 0.2, 0.9],
-        colour: [2.0, 1.9, 1.7],
+        colour: [2.0, 1.9, 1.7].into(),
     });
     // A small occluder above the texels, so shadow rays actually miss/hit.
     let occ = [
@@ -539,7 +539,7 @@ fn different_seeds_vary_the_noise_but_not_the_signal() {
     add_floor(&mut scene, 5.0, RtMaterial::default());
     scene.add_light(RtLight::Directional {
         direction: [0.2, 0.1, 0.95],
-        colour: [1.5, 1.5, 1.5],
+        colour: [1.5, 1.5, 1.5].into(),
     });
 
     let (pos, nrm) = uniform_surfaces(32, 32, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);

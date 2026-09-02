@@ -40,9 +40,9 @@ pub struct PlaneWidget {
     /// Unit normal vector of the plane (always normalized on output).
     pub normal: glam::Vec3,
     /// RGBA colour for the wireframe square outline and normal line.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// RGBA colour for the drag handles. Non-zero alpha overrides LUT colouring.
-    pub handle_colour: [f32; 4],
+    pub handle_colour: crate::Colour,
     /// Half-size of the visual square in world space.
     pub display_half_size: f32,
     /// Distance from center to the normal-tip handle sphere.
@@ -69,8 +69,8 @@ impl PlaneWidget {
         Self {
             center,
             normal,
-            colour: [0.3, 0.7, 1.0, 1.0],
-            handle_colour: [0.0; 4],
+            colour: [0.3, 0.7, 1.0, 1.0].into(),
+            handle_colour: [0.0; 4].into(),
             display_half_size: 1.5,
             normal_display_length: 2.0,
             hovered_handle: None,
@@ -174,7 +174,7 @@ impl PlaneWidget {
         PolylineItem {
             positions,
             strip_lengths: vec![5, 2],
-            default_colour: self.colour,
+            default_colour: self.colour.into(),
             line_width: 1.5,
 
             settings: {
@@ -220,8 +220,8 @@ impl PlaneWidget {
             s.pick_id = crate::renderer::PickId(id_base);
             s
         };
-        g.default_colour = self.handle_colour;
-        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g.default_colour = self.handle_colour.into();
+        g.use_default_colour = self.handle_colour.alpha() > 0.0;
         g
     }
 

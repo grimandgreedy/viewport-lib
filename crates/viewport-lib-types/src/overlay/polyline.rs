@@ -92,7 +92,7 @@ pub struct OverlayPolylineItem {
     /// Stroke thickness in logical pixels.
     pub thickness: f32,
     /// RGBA colour in linear float format.
-    pub colour: [f32; 4],
+    pub colour: crate::colour::Colour,
     /// How segment joints are drawn.
     pub join: LineJoin,
     /// Mitre limit: when the mitre extension exceeds this multiple of
@@ -139,7 +139,7 @@ impl Default for OverlayPolylineItem {
             align_x: AnchorX::Left,
             align_y: AnchorY::Top,
             thickness: 2.0,
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             join: LineJoin::Mitre,
             mitre_limit: 4.0,
             cap: PolylineCap::Butt,
@@ -232,8 +232,8 @@ impl OverlayPolylineItem {
     }
 
     /// Set the stroke colour.
-    pub fn with_colour(mut self, colour: [f32; 4]) -> Self {
-        self.colour = colour;
+    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.colour = colour.into();
         self
     }
 
@@ -316,12 +316,12 @@ impl OverlayPolylineItem {
         path: impl Fn(f32) -> [f32; 2],
         samples: u32,
         thickness: f32,
-        colour: [f32; 4],
+        colour: impl Into<crate::colour::Colour>,
     ) -> Self {
         Self {
             points: sample_open_path(path, samples),
             thickness,
-            colour,
+            colour: colour.into(),
             ..Default::default()
         }
     }
@@ -337,13 +337,13 @@ impl OverlayPolylineItem {
         path: impl Fn(f32) -> [f32; 2],
         samples: u32,
         fill: Option<OverlayFill>,
-        stroke_colour: [f32; 4],
+        stroke_colour: impl Into<crate::colour::Colour>,
         thickness: f32,
     ) -> Self {
         Self {
             points: sample_closed_path(path, samples),
             thickness,
-            colour: stroke_colour,
+            colour: stroke_colour.into(),
             closed: true,
             fill,
             ..Default::default()
@@ -415,7 +415,7 @@ mod path_sample_tests {
 
     #[test]
     fn closed_from_path_skips_duplicate_endpoint() {
-        let fill = Some(OverlayFill::Solid([0.2, 0.4, 0.6, 1.0]));
+        let fill = Some(OverlayFill::Solid([0.2, 0.4, 0.6, 1.0].into()));
         let item = OverlayPolylineItem::closed_from_path(circle, 4, fill.clone(), [1.0; 4], 3.0);
         assert!(item.closed);
         assert_eq!(item.fill, fill);

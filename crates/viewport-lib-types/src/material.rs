@@ -173,9 +173,10 @@ pub enum BackfacePattern {
 ///
 /// ```rust
 /// # use viewport_lib_types::material::{PatternConfig, BackfacePattern};
+/// # use viewport_lib_types::colour::Colour;
 /// let cfg = PatternConfig {
 ///     pattern: BackfacePattern::Hatching,
-///     colour: [1.0, 0.5, 0.0],
+///     colour: Colour::rgb(255, 128, 0),
 ///     ..Default::default()
 /// };
 /// ```
@@ -184,8 +185,8 @@ pub enum BackfacePattern {
 pub struct PatternConfig {
     /// Which procedural pattern to draw on back faces.
     pub pattern: BackfacePattern,
-    /// RGB foreground colour for the pattern (linear 0..1).
-    pub colour: [f32; 3],
+    /// Foreground colour for the pattern.
+    pub colour: crate::colour::Colour,
     /// Number of pattern cells across the object's longest bounding-box dimension.
     ///
     /// Default 20.0. Increase for finer detail, decrease for coarser.
@@ -196,7 +197,7 @@ impl Default for PatternConfig {
     fn default() -> Self {
         Self {
             pattern: BackfacePattern::Checker,
-            colour: [1.0, 0.5, 0.0],
+            colour: crate::colour::Colour::linear_rgb(1.0, 0.5, 0.0),
             scale: 20.0,
         }
     }
@@ -215,12 +216,12 @@ pub enum BackfacePolicy {
     Cull,
     /// Back faces are visible and shaded identically to front faces.
     Identical,
-    /// Back faces are visible and shaded in the given RGB colour (linear 0..1).
+    /// Back faces are visible and shaded in the given colour.
     ///
     /// Front faces receive normal shading; back faces receive Blinn-Phong shading
     /// with the supplied colour and the same ambient/diffuse/specular coefficients.
     /// The normal is flipped so lighting is computed from the back-face perspective.
-    DifferentColour([f32; 3]),
+    DifferentColour(crate::colour::Colour),
     /// Back faces are visible and tinted darker by the given factor (0.0..1.0).
     ///
     /// The base colour is multiplied by `(1.0 - factor)`, so `Tint(0.3)` means
@@ -273,8 +274,11 @@ impl Default for AlphaMode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Material {
-    /// Base diffuse colour [r, g, b] in linear 0..1 range. Default [0.7, 0.7, 0.7].
-    pub base_colour: [f32; 3],
+    /// Base diffuse colour. Build it with [`Colour::rgb`](crate::colour::Colour::rgb)
+    /// / [`hex`](crate::colour::Colour::hex) for an sRGB value, or
+    /// [`Colour::linear_rgb`](crate::colour::Colour::linear_rgb) for one already in
+    /// linear space. Default is linear `[0.7, 0.7, 0.7]`.
+    pub base_colour: crate::colour::Colour,
     /// Ambient light coefficient. Default 0.15.
     pub ambient: f32,
     /// Diffuse light coefficient. Default 0.75.
@@ -321,7 +325,7 @@ pub struct Material {
     /// `emissive_strength` sets the brightness. Applied to both the Blinn-Phong
     /// and PBR paths. When `emissive_texture_id` is set, it is multiplied by the
     /// texture sample.
-    pub emissive: [f32; 3],
+    pub emissive: crate::colour::Colour,
     /// Emissive luminance in **nits**, multiplying [`Self::emissive`]. Default
     /// `1.0`.
     ///
@@ -463,7 +467,7 @@ fn default_normal_strength() -> f32 {
 impl Default for Material {
     fn default() -> Self {
         Self {
-            base_colour: [0.7, 0.7, 0.7],
+            base_colour: crate::colour::Colour::linear_rgb(0.7, 0.7, 0.7),
             ambient: 0.15,
             diffuse: 0.75,
             specular: 0.4,
@@ -475,7 +479,7 @@ impl Default for Material {
             normal_strength: 1.0,
             ao_map_id: None,
             metallic_roughness_texture_id: None,
-            emissive: [0.0, 0.0, 0.0],
+            emissive: crate::colour::Colour::BLACK,
             emissive_strength: 1.0,
             emissive_texture_id: None,
             alpha_mode: AlphaMode::Opaque,
@@ -525,26 +529,31 @@ impl Material {
     /// outgoing radiance (an emissive texture, when present, multiplies it too).
     #[doc(hidden)]
     pub fn emissive_nits(&self) -> [f32; 3] {
+        let e = self.emissive.to_linear_rgb();
         [
-            self.emissive[0] * self.emissive_strength,
-            self.emissive[1] * self.emissive_strength,
-            self.emissive[2] * self.emissive_strength,
+            e[0] * self.emissive_strength,
+            e[1] * self.emissive_strength,
+            e[2] * self.emissive_strength,
         ]
     }
 
-    /// Construct from a plain colour, all other parameters at their defaults.
-    pub fn from_colour(colour: [f32; 3]) -> Self {
+    /// Construct from a base colour, all other parameters at their defaults.
+    ///
+    /// Pass a [`Colour`](crate::colour::Colour) (`Colour::rgb` / `hex` for sRGB,
+    /// `Colour::linear_rgb` for linear); a bare `[f32; 3]` is taken as linear.
+    pub fn from_colour(colour: impl Into<crate::colour::Colour>) -> Self {
         Self {
-            base_colour: colour,
+            base_colour: colour.into(),
             ..Default::default()
         }
     }
 
-    /// A self-illuminated material glowing in the given `colour` (0..1 hue) at
-    /// `nits` luminance. `base_colour` is set to the same hue so the surface
-    /// reads consistently where the emission is dim. All other parameters take
-    /// their defaults.
-    pub fn emissive(colour: [f32; 3], nits: f32) -> Self {
+    /// A self-illuminated material glowing in the given `colour` at `nits`
+    /// luminance. `base_colour` is set to the same colour so the surface reads
+    /// consistently where the emission is dim. All other parameters take their
+    /// defaults.
+    pub fn emissive(colour: impl Into<crate::colour::Colour>, nits: f32) -> Self {
+        let colour = colour.into();
         Self {
             base_colour: colour,
             emissive: colour,
@@ -560,9 +569,13 @@ impl Material {
     ///
     /// All other parameters take their defaults. Enable post-processing
     /// (`PostProcessSettings::enabled = true`) for correct HDR tone mapping.
-    pub fn pbr(base_colour: [f32; 3], metallic: f32, roughness: f32) -> Self {
+    pub fn pbr(
+        base_colour: impl Into<crate::colour::Colour>,
+        metallic: f32,
+        roughness: f32,
+    ) -> Self {
         Self {
-            base_colour,
+            base_colour: base_colour.into(),
             shading_model: ShadingModel::Pbr,
             metallic,
             roughness,
@@ -585,9 +598,9 @@ impl Material {
     /// normal recovered from screen-space derivatives, so polygon edges
     /// remain visible on otherwise smooth meshes. Everything else takes
     /// material defaults.
-    pub fn flat(base_colour: [f32; 3]) -> Self {
+    pub fn flat(base_colour: impl Into<crate::colour::Colour>) -> Self {
         Self {
-            base_colour,
+            base_colour: base_colour.into(),
             shading_model: ShadingModel::Flat,
             ..Default::default()
         }
@@ -606,7 +619,7 @@ impl Material {
     /// Returns a material with the given base colour and all other fields at defaults.
     /// "solid" is a more familiar name in some graphics contexts; both names are kept
     /// so existing `from_colour` call sites do not need updating.
-    pub fn solid(colour: [f32; 3]) -> Self {
+    pub fn solid(colour: impl Into<crate::colour::Colour>) -> Self {
         Self::from_colour(colour)
     }
 
@@ -632,13 +645,13 @@ impl Material {
     /// Sets `shading_model = ShadingModel::Pbr`. All other fields take defaults.
     /// Use [`Material::pbr`] when no AO map is needed.
     pub fn pbr_with_ao(
-        base_colour: [f32; 3],
+        base_colour: impl Into<crate::colour::Colour>,
         metallic: f32,
         roughness: f32,
         ao_map: Option<crate::ids::TextureId>,
     ) -> Self {
         Self {
-            base_colour,
+            base_colour: base_colour.into(),
             shading_model: ShadingModel::Pbr,
             metallic,
             roughness,
@@ -680,7 +693,10 @@ mod tests {
         assert!(!m.is_pbr());
         assert!(m.matcap_id().is_none());
         assert!(matches!(m.shading_model, ShadingModel::Flat));
-        assert_eq!(m.base_colour, [0.4, 0.5, 0.6]);
+        assert_eq!(
+            m.base_colour,
+            crate::colour::Colour::linear_rgb(0.4, 0.5, 0.6)
+        );
 
         let p = Material::default();
         assert!(!p.is_flat());
@@ -689,7 +705,7 @@ mod tests {
     #[test]
     fn default_values() {
         let m = Material::default();
-        assert!((m.base_colour[0] - 0.7).abs() < 1e-6);
+        assert!((m.base_colour.to_linear_rgb()[0] - 0.7).abs() < 1e-6);
         assert!((m.ambient - 0.15).abs() < 1e-6);
         assert!((m.diffuse - 0.75).abs() < 1e-6);
         assert!(!m.is_pbr());
@@ -703,9 +719,9 @@ mod tests {
     #[test]
     fn from_colour_sets_base_colour() {
         let m = Material::from_colour([1.0, 0.0, 0.5]);
-        assert!((m.base_colour[0] - 1.0).abs() < 1e-6);
-        assert!((m.base_colour[1]).abs() < 1e-6);
-        assert!((m.base_colour[2] - 0.5).abs() < 1e-6);
+        assert!((m.base_colour.to_linear_rgb()[0] - 1.0).abs() < 1e-6);
+        assert!((m.base_colour.to_linear_rgb()[1]).abs() < 1e-6);
+        assert!((m.base_colour.to_linear_rgb()[2] - 0.5).abs() < 1e-6);
         // Other fields should be defaults
         assert!((m.ambient - 0.15).abs() < 1e-6);
     }
@@ -716,7 +732,7 @@ mod tests {
         assert!(m.is_pbr());
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
-        assert!((m.base_colour[0] - 0.8).abs() < 1e-6);
+        assert!((m.base_colour.to_linear_rgb()[0] - 0.8).abs() < 1e-6);
     }
 
     #[test]
@@ -737,7 +753,9 @@ mod tests {
     #[test]
     fn is_two_sided_different_colour() {
         let m = Material {
-            backface_policy: BackfacePolicy::DifferentColour([1.0, 0.0, 0.0]),
+            backface_policy: BackfacePolicy::DifferentColour(crate::colour::Colour::linear_rgb(
+                1.0, 0.0, 0.0,
+            )),
             ..Default::default()
         };
         assert!(m.is_two_sided());
@@ -757,7 +775,7 @@ mod tests {
         let m = Material {
             backface_policy: BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
-                colour: [0.5, 0.5, 0.5],
+                colour: crate::colour::Colour::linear_rgb(0.5, 0.5, 0.5),
                 ..Default::default()
             }),
             ..Default::default()
@@ -777,9 +795,9 @@ mod tests {
         let colour = [1.0_f32, 0.0, 0.5];
         let a = Material::solid(colour);
         let b = Material::from_colour(colour);
-        assert!((a.base_colour[0] - b.base_colour[0]).abs() < 1e-6);
-        assert!((a.base_colour[1] - b.base_colour[1]).abs() < 1e-6);
-        assert!((a.base_colour[2] - b.base_colour[2]).abs() < 1e-6);
+        assert!((a.base_colour.to_linear_rgb()[0] - b.base_colour.to_linear_rgb()[0]).abs() < 1e-6);
+        assert!((a.base_colour.to_linear_rgb()[1] - b.base_colour.to_linear_rgb()[1]).abs() < 1e-6);
+        assert!((a.base_colour.to_linear_rgb()[2] - b.base_colour.to_linear_rgb()[2]).abs() < 1e-6);
         assert_eq!(a.is_pbr(), b.is_pbr());
         assert_eq!(a.texture_id, b.texture_id);
         assert_eq!(a.ao_map_id, b.ao_map_id);
@@ -791,7 +809,9 @@ mod tests {
         let m = Material::textured(crate::ids::TextureId::from_raw(42));
         assert_eq!(m.texture_id, Some(crate::ids::TextureId::from_raw(42)));
         let def = Material::default();
-        assert!((m.base_colour[0] - def.base_colour[0]).abs() < 1e-6);
+        assert!(
+            (m.base_colour.to_linear_rgb()[0] - def.base_colour.to_linear_rgb()[0]).abs() < 1e-6
+        );
         assert!(!m.is_pbr());
     }
 
@@ -807,7 +827,7 @@ mod tests {
         assert!((m.metallic - 0.9).abs() < 1e-6);
         assert!((m.roughness - 0.3).abs() < 1e-6);
         assert_eq!(m.ao_map_id, Some(crate::ids::TextureId::from_raw(7)));
-        assert!((m.base_colour[0] - 0.8).abs() < 1e-6);
+        assert!((m.base_colour.to_linear_rgb()[0] - 0.8).abs() < 1e-6);
     }
 
     #[test]

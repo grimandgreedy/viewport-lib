@@ -75,13 +75,13 @@ pub struct GlyphRunItem {
 
     /// RGBA tint in linear float, applied to every glyph in the run that does
     /// not have its own entry in `colours`.
-    pub colour: [f32; 4],
+    pub colour: crate::colour::Colour,
 
     /// Optional per-glyph tint, parallel to `glyphs`. When non-empty, glyph `i`
     /// uses `colours[i]`; glyphs past the end of this list (or all glyphs when it
     /// is empty) fall back to `colour`. Use it for runs where glyphs differ in
     /// colour, such as syntax highlighting.
-    pub colours: Vec<[f32; 4]>,
+    pub colours: Vec<crate::colour::Colour>,
 
     /// Overall opacity multiplier applied to the run. Range 0.0 (invisible) to
     /// 1.0 (fully opaque).
@@ -109,7 +109,7 @@ impl Default for GlyphRunItem {
             align_x: crate::overlay::AnchorX::Left,
             align_y: crate::overlay::AnchorY::Top,
             glyphs: Vec::new(),
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             colours: Vec::new(),
             opacity: 1.0,
             z_order: 0,
@@ -181,15 +181,18 @@ impl GlyphRunItem {
 
     /// Set the run tint colour, used for any glyph without a per-glyph entry in
     /// `colours`.
-    pub fn with_colour(mut self, colour: [f32; 4]) -> Self {
-        self.colour = colour;
+    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.colour = colour.into();
         self
     }
 
     /// Set per-glyph tint colours, parallel to the glyphs. Glyphs past the end of
     /// this list fall back to the run `colour`.
-    pub fn with_colours(mut self, colours: impl Into<Vec<[f32; 4]>>) -> Self {
-        self.colours = colours.into();
+    pub fn with_colours(
+        mut self,
+        colours: impl IntoIterator<Item = impl Into<crate::colour::Colour>>,
+    ) -> Self {
+        self.colours = colours.into_iter().map(Into::into).collect();
         self
     }
 
@@ -248,8 +251,14 @@ mod tests {
         assert_eq!(run.glyphs, glyphs);
         assert_eq!(run.font_size, 20.0);
         assert_eq!(run.position, [10.0, 12.0]);
-        assert_eq!(run.colour, [1.0, 0.0, 0.0, 1.0]);
-        assert_eq!(run.colours, vec![[0.0, 1.0, 0.0, 1.0]]);
+        assert_eq!(run.colour.to_linear_rgba(), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            run.colours
+                .iter()
+                .map(|c| c.to_linear_rgba())
+                .collect::<Vec<_>>(),
+            vec![[0.0, 1.0, 0.0, 1.0]]
+        );
         assert_eq!(run.opacity, 0.5);
         assert_eq!(run.z_order, 3);
         assert_eq!(run.clip_id, Some(7));

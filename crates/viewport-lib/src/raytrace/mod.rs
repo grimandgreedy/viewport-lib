@@ -956,9 +956,9 @@ impl Tracer {
             .materials
             .iter()
             .map(|m| GpuMaterial {
-                base: m.base_colour,
+                base: m.base_colour.to_linear_rgb(),
                 metallic: m.metallic,
-                emissive: m.emissive,
+                emissive: m.emissive.to_linear_rgb(),
                 roughness: m.roughness,
                 transmission: m.transmission.clamp(0.0, 1.0),
                 ior: m.ior.max(1.0),

@@ -143,7 +143,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                 _t.kind = LightKind::Directional {
                     direction: [0.4, 0.3, 1.5],
                 };
-                _t.colour = [1.0, 1.0, 1.0];
+                _t.colour = [1.0, 1.0, 1.0].into();
                 _t.intensity = 1.0;
                 _t
             });
@@ -156,7 +156,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     range: 15.0,
                     radius: 0.1,
                 };
-                _t.colour = [1.0, 0.9, 0.7];
+                _t.colour = [1.0, 0.9, 0.7].into();
                 // Candela-scale: inverse-square falloff means intensity ~= E * d^2,
                 // so lighting spheres a few units away needs tens, not single digits.
                 _t.intensity = 30.0;
@@ -174,7 +174,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                     outer_angle: 0.45,
                     radius: 0.1,
                 };
-                _t.colour = [0.8, 0.95, 1.0];
+                _t.colour = [0.8, 0.95, 1.0].into();
                 _t.intensity = 70.0;
                 _t
             });

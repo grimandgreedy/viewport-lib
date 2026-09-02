@@ -408,7 +408,7 @@ pub(crate) fn custom_shading_lighting() -> LightingSettings {
     sun.kind = LightKind::Directional {
         direction: [0.5, 0.35, 1.0],
     };
-    sun.colour = [1.0, 0.97, 0.9];
+    sun.colour = [1.0, 0.97, 0.9].into();
     sun.intensity = 1.2;
 
     let mut t = LightingSettings::default();

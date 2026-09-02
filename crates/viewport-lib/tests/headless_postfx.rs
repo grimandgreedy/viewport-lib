@@ -37,7 +37,7 @@ fn tonemap_frame(size: u32, background: [f32; 4]) -> FrameData {
     frame.camera.viewport_size = [size as f32, size as f32];
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some(background);
+    frame.viewport.background_colour = Some(background.into());
     frame
 }
 
@@ -126,7 +126,7 @@ fn bloom_glows_into_empty_background() {
         item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
         // Emissive well above the bloom threshold; opaque (sharp alpha edge).
         item.material = Material::from_colour([0.02, 0.02, 0.02]);
-        item.material.emissive = [6.0, 6.0, 6.0];
+        item.material.emissive = [6.0, 6.0, 6.0].into();
         frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
         frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
         frame.effects.post_process.bloom.enabled = bloom;
@@ -193,7 +193,7 @@ fn coloured_item(mesh_id: MeshId, colour: [f32; 3], model: glam::Mat4) -> SceneR
     let mut item = SceneRenderItem::default();
     item.mesh_id = mesh_id;
     item.material = Material::default();
-    item.material.base_colour = colour;
+    item.material.base_colour = colour.into();
     item.model = model.to_cols_array_2d();
     item
 }
@@ -663,7 +663,7 @@ fn bloom_firefly_cap_bounds_blob_size() {
     item.mesh_id = mesh_id;
     item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
     let mut mat = Material::from_colour([1.0, 1.0, 1.0]);
-    mat.emissive = [400.0, 400.0, 400.0];
+    mat.emissive = [400.0, 400.0, 400.0].into();
     item.material = mat;
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
 

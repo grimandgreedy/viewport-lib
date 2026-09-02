@@ -714,7 +714,7 @@ fn render_swarm(
             item.model = inst.model;
             item.material = Material::from_colour(inst.color);
             if inst.selected {
-                item.material.emissive = [1.6, 1.1, 0.25];
+                item.material.emissive = [1.6, 1.1, 0.25].into();
             }
             item
         })

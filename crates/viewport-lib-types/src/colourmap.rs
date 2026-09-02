@@ -1,8 +1,10 @@
 //! Built-in colourmaps and their CPU lookup tables.
 //!
-//! Each preset resolves to a `[[u8; 4]; 256]` linear (non-sRGB) RGBA table
-//! (see [`BuiltinColourmap::lut_rgba`]) suitable for uploading to a 256x1
-//! `Rgba8Unorm` GPU texture. The same tables back the CPU sampling API
+//! Each preset resolves to a `[[u8; 4]; 256]` sRGB RGBA table (see
+//! [`BuiltinColourmap::lut_rgba`]), the display values these colourmaps are
+//! authored in (e.g. the matplotlib and ParaView tables). The renderer uploads
+//! them to a 256x1 `Rgba8UnormSrgb` GPU texture, so the sampler decodes to
+//! linear on read. The same tables back the CPU sampling API
 //! ([`BuiltinColourmap::sample`], [`BuiltinColourmap::bake_lut`]) so a legend,
 //! export, or thumbnail matches exactly what the renderer draws.
 

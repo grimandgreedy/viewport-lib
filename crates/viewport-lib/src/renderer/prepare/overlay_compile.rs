@@ -29,7 +29,7 @@ fn emit_base(
             }
         }
         if poly.thickness > 0.0 {
-            let mut colour = poly.colour;
+            let mut colour = poly.colour.to_linear_rgba();
             colour[3] *= poly.opacity;
             overlay_geometry::emit_polyline_stroke(verts, poly, colour, 0.0, 0.0);
         }
@@ -73,7 +73,12 @@ fn emit_glyph_run(
     let opacity = run.opacity.clamp(0.0, 1.0);
     let quads = atlas.layout_glyph_run(
         run.glyphs.iter().enumerate().map(|(i, g)| {
-            let colour = run.colours.get(i).copied().unwrap_or(run.colour);
+            let colour = run
+                .colours
+                .get(i)
+                .copied()
+                .unwrap_or(run.colour)
+                .to_linear_rgba();
             (
                 g.glyph_id,
                 g.x,
@@ -146,7 +151,7 @@ fn emit_label(
             text_x + layout.total_width + pad,
             text_y + layout.height + pad,
         );
-        let bg = overlay_geometry::apply_opacity(label.background_colour, opacity);
+        let bg = overlay_geometry::apply_opacity(label.background_colour.to_linear_rgba(), opacity);
         if label.border_radius > 0.0 {
             overlay_geometry::emit_rounded_quad(
                 verts,
@@ -172,13 +177,13 @@ fn emit_label(
             text_x,
             text_y + layout.height * 0.5,
             1.5,
-            overlay_geometry::apply_opacity(label.leader_colour, opacity),
+            overlay_geometry::apply_opacity(label.leader_colour.to_linear_rgba(), opacity),
             0.0,
             0.0,
         );
     }
 
-    let text_colour = overlay_geometry::apply_opacity(label.colour, opacity);
+    let text_colour = overlay_geometry::apply_opacity(label.colour.to_linear_rgba(), opacity);
     // The label origin is the text-box top-left; add the ascent to reach the
     // first baseline the quads are relative to.
     overlay_geometry::emit_glyph_quads(
@@ -383,8 +388,8 @@ fn emit_sdf_shape(
     let stop_count: f32;
     let gradient_params = match &shape.fill {
         OverlayFill::Solid(c) => {
-            stop_colours[0] = *c;
-            stop_colours[1] = *c;
+            stop_colours[0] = c.to_linear_rgba();
+            stop_colours[1] = c.to_linear_rgba();
             stop_count = 0.0;
             [0.0f32, 0.0]
         }
@@ -393,8 +398,8 @@ fn emit_sdf_shape(
             end_colour,
             angle,
         } => {
-            stop_colours[0] = *start_colour;
-            stop_colours[1] = *end_colour;
+            stop_colours[0] = start_colour.to_linear_rgba();
+            stop_colours[1] = end_colour.to_linear_rgba();
             stop_count = 2.0;
             [1.0f32, *angle]
         }
@@ -402,8 +407,8 @@ fn emit_sdf_shape(
             centre_colour,
             edge_colour,
         } => {
-            stop_colours[0] = *centre_colour;
-            stop_colours[1] = *edge_colour;
+            stop_colours[0] = centre_colour.to_linear_rgba();
+            stop_colours[1] = edge_colour.to_linear_rgba();
             stop_count = 2.0;
             [2.0f32, 0.0]
         }
@@ -412,8 +417,8 @@ fn emit_sdf_shape(
             end_colour,
             offset_angle,
         } => {
-            stop_colours[0] = *start_colour;
-            stop_colours[1] = *end_colour;
+            stop_colours[0] = start_colour.to_linear_rgba();
+            stop_colours[1] = end_colour.to_linear_rgba();
             stop_count = 2.0;
             [3.0f32, *offset_angle]
         }
@@ -445,9 +450,9 @@ fn emit_sdf_shape(
     }
     let fc = stop_colours[0];
     let fc2 = stop_colours[1];
-    let mut bc = shape.border_colour;
+    let mut bc = shape.border_colour.to_linear_rgba();
     bc[3] *= op;
-    let mut sc = shape.shadow_colour;
+    let mut sc = shape.shadow_colour.to_linear_rgba();
     sc[3] *= op;
     let border_mode_f = match shape.border_mode {
         BorderMode::Inset => 0.0,
@@ -461,7 +466,7 @@ fn emit_sdf_shape(
     let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
     if !shape.shadows.is_empty() {
         for l in shape.shadows.iter().take(max_layers) {
-            let mut col = l.colour;
+            let mut col = l.colour.to_linear_rgba();
             col[3] *= op;
             out_shadows.push(crate::resources::OverlayShadowLayerGpu {
                 colour: col,
@@ -483,7 +488,7 @@ fn emit_sdf_shape(
     }
     if !shape.inner_shadows.is_empty() {
         for l in shape.inner_shadows.iter().take(max_layers) {
-            let mut col = l.colour;
+            let mut col = l.colour.to_linear_rgba();
             col[3] *= op;
             out_shadows.push(crate::resources::OverlayShadowLayerGpu {
                 colour: col,

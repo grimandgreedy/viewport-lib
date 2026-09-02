@@ -56,14 +56,14 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (BackfacePolicy::Cull, "Cull"),
         (BackfacePolicy::Identical, "Identical"),
         (
-            BackfacePolicy::DifferentColour([0.65, 0.09, 0.07]),
+            BackfacePolicy::DifferentColour([0.65, 0.09, 0.07].into()),
             "DifferentColour",
         ),
         (BackfacePolicy::Tint(0.4), "Tint"),
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Checker,
-                colour: [0.75, 0.28, 0.05],
+                colour: [0.75, 0.28, 0.05].into(),
                 ..Default::default()
             }),
             "Checker",
@@ -71,7 +71,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Hatching,
-                colour: [0.10, 0.26, 0.68],
+                colour: [0.10, 0.26, 0.68].into(),
                 ..Default::default()
             }),
             "Hatching",
@@ -79,7 +79,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Crosshatch,
-                colour: [0.10, 0.52, 0.18],
+                colour: [0.10, 0.52, 0.18].into(),
                 ..Default::default()
             }),
             "Crosshatch",
@@ -87,7 +87,7 @@ fn policies() -> Vec<(BackfacePolicy, &'static str)> {
         (
             BackfacePolicy::Pattern(PatternConfig {
                 pattern: BackfacePattern::Stripes,
-                colour: [0.72, 0.42, 0.04],
+                colour: [0.72, 0.42, 0.04].into(),
                 ..Default::default()
             }),
             "Stripes",

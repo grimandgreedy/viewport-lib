@@ -285,7 +285,7 @@ impl LightmapBakeShowcase {
             // radiance feeds the renderer's tonemapper once (linear upload).
             scene.add_light(RtLight::Directional {
                 direction: LIGHT_DIR.normalize().to_array(),
-                colour: [2.1, 2.05, 1.9],
+                colour: [2.1, 2.05, 1.9].into(),
             });
         }
         scene
@@ -686,7 +686,7 @@ impl LightmapBakeShowcase {
                 key.kind = LightKind::Directional {
                     direction: LIGHT_DIR.to_array(),
                 };
-                key.colour = [1.0, 0.98, 0.95];
+                key.colour = [1.0, 0.98, 0.95].into();
                 key.intensity = 1.1;
                 key.cast_shadows = true;
                 l.lights = vec![key];
@@ -705,7 +705,7 @@ impl LightmapBakeShowcase {
                 key.kind = LightKind::Directional {
                     direction: LIGHT_DIR.to_array(),
                 };
-                key.colour = [1.0, 0.98, 0.95];
+                key.colour = [1.0, 0.98, 0.95].into();
                 key.intensity = 1.1;
                 // The light always keeps its shadow cascades; whether a shadow
                 // actually appears is gated per-object below, so the toggle is

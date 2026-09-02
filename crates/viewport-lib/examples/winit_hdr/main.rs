@@ -131,7 +131,7 @@ impl ApplicationHandler for App {
             // Mild emissive just above 1.0 puts a small amount of HDR energy into
             // the scene. Bloom extracts this and makes the glow visible without
             // washing out the object colour.
-            item.material.emissive = [colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2];
+            item.material.emissive = [colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2].into();
             item
         };
 
@@ -332,7 +332,7 @@ impl ApplicationHandler for App {
                         [w * 0.5 - 100.0, h * 0.5 - 100.0],
                         [200.0, 200.0],
                     )
-                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1]))
+                    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1].into()))
                     .with_border([1.0, 1.0, 1.0, 0.4], 1.5)
                     .with_backdrop_blur(20.0),
                 );

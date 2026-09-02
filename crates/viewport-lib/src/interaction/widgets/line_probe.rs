@@ -36,11 +36,11 @@ pub struct LineProbeWidget {
     /// World-space position of the second endpoint.
     pub end: glam::Vec3,
     /// RGBA line and handle colour.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Line width in pixels.
     pub line_width: f32,
     /// RGBA colour for the drag handles. When set (non-zero alpha), overrides the default LUT colouring.
-    pub handle_colour: [f32; 4],
+    pub handle_colour: crate::Colour,
 
     hovered_endpoint: Option<usize>,
     active_endpoint: Option<usize>,
@@ -55,9 +55,9 @@ impl LineProbeWidget {
         Self {
             start,
             end,
-            colour: [1.0, 0.6, 0.1, 1.0],
+            colour: [1.0, 0.6, 0.1, 1.0].into(),
             line_width: 2.0,
-            handle_colour: [0.0; 4],
+            handle_colour: [0.0; 4].into(),
             hovered_endpoint: None,
             active_endpoint: None,
             drag_plane_normal: glam::Vec3::Z,
@@ -133,7 +133,7 @@ impl LineProbeWidget {
         PolylineItem {
             positions: vec![self.start.to_array(), self.end.to_array()],
             strip_lengths: vec![2],
-            default_colour: self.colour,
+            default_colour: self.colour.into(),
             line_width: self.line_width,
 
             settings: {
@@ -179,8 +179,8 @@ impl LineProbeWidget {
             s.pick_id = crate::renderer::PickId(id_base);
             s
         };
-        g.default_colour = self.handle_colour;
-        g.use_default_colour = self.handle_colour[3] > 0.0;
+        g.default_colour = self.handle_colour.into();
+        g.use_default_colour = self.handle_colour.alpha() > 0.0;
         g
     }
 

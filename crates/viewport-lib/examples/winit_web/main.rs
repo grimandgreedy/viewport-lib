@@ -343,7 +343,7 @@ async fn build_state(window: Arc<Window>) -> State {
         item.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, z)).to_cols_array_2d();
         item.material = Material::from_colour(colour);
         // A little emissive above 1.0 gives bloom some HDR energy to extract.
-        item.material.emissive = [colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2];
+        item.material.emissive = [colour[0] * 1.2, colour[1] * 1.2, colour[2] * 1.2].into();
         item
     };
     let scene_items = vec![

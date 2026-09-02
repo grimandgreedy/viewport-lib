@@ -179,7 +179,7 @@ pub(crate) fn warp_lighting() -> LightingSettings {
                 _t.kind = LightKind::Directional {
                     direction: [0.3, 0.8, 0.5],
                 };
-                _t.colour = [1.0, 1.0, 1.0];
+                _t.colour = [1.0, 1.0, 1.0].into();
                 _t.intensity = 0.7;
                 _t
             },
@@ -188,7 +188,7 @@ pub(crate) fn warp_lighting() -> LightingSettings {
                 _t.kind = LightKind::Directional {
                     direction: [-0.3, -0.5, -0.5],
                 };
-                _t.colour = [0.8, 0.85, 1.0];
+                _t.colour = [0.8, 0.85, 1.0].into();
                 _t.intensity = 0.3;
                 _t
             },

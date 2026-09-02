@@ -7,7 +7,7 @@
 #[non_exhaustive]
 pub enum OverlayFill {
     /// Uniform solid colour in linear RGBA float format.
-    Solid([f32; 4]),
+    Solid(crate::colour::Colour),
     /// Linear gradient between two colours.
     ///
     /// The gradient runs along `angle` across the bounding box. `angle = 0.0`
@@ -17,9 +17,9 @@ pub enum OverlayFill {
     /// a top-to-bottom gradient (start at top, end at bottom).
     LinearGradient {
         /// RGBA colour at the start of the gradient (left when angle is 0).
-        start_colour: [f32; 4],
+        start_colour: crate::colour::Colour,
         /// RGBA colour at the end of the gradient (right when angle is 0).
-        end_colour: [f32; 4],
+        end_colour: crate::colour::Colour,
         /// Gradient direction in radians. `0.0` = left-to-right.
         angle: f32,
     },
@@ -30,9 +30,9 @@ pub enum OverlayFill {
     /// `length(local_pos) / max_half_size`.
     RadialGradient {
         /// RGBA colour at the centre of the shape.
-        centre_colour: [f32; 4],
+        centre_colour: crate::colour::Colour,
         /// RGBA colour at the bounding-box edge.
-        edge_colour: [f32; 4],
+        edge_colour: crate::colour::Colour,
     },
     /// Conical (sweep) gradient rotating around the shape centre.
     ///
@@ -41,9 +41,9 @@ pub enum OverlayFill {
     /// `start_colour`) counter-clockwise in math coordinates.
     ConicalGradient {
         /// RGBA colour at the sweep start.
-        start_colour: [f32; 4],
+        start_colour: crate::colour::Colour,
         /// RGBA colour at the sweep end (wraps back to start).
-        end_colour: [f32; 4],
+        end_colour: crate::colour::Colour,
         /// Rotation offset in radians. `0.0` places the seam to the right.
         offset_angle: f32,
     },
@@ -76,7 +76,7 @@ pub enum OverlayFill {
 
 impl Default for OverlayFill {
     fn default() -> Self {
-        OverlayFill::Solid([0.0, 0.0, 0.0, 0.55])
+        OverlayFill::Solid([0.0, 0.0, 0.0, 0.55].into())
     }
 }
 
@@ -87,13 +87,16 @@ pub struct GradientStop {
     /// range are clamped at evaluation time.
     pub position: f32,
     /// Linear RGBA colour at this stop.
-    pub colour: [f32; 4],
+    pub colour: crate::colour::Colour,
 }
 
 impl GradientStop {
     /// Construct a stop at the given position and colour.
-    pub const fn new(position: f32, colour: [f32; 4]) -> Self {
-        Self { position, colour }
+    pub fn new(position: f32, colour: impl Into<crate::colour::Colour>) -> Self {
+        Self {
+            position,
+            colour: colour.into(),
+        }
     }
 }
 

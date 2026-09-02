@@ -1416,9 +1416,7 @@ impl eframe::App for App {
                         self.viewport_target = Some(Target { inner, id });
                     }
                     let target = self.viewport_target.as_ref().unwrap();
-                    if let Some(renderer) =
-                        guard.callback_resources.get_mut::<ViewportRenderer>()
-                    {
+                    if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
                         let cmd = renderer.owned().render(
                             &self.device,
                             &self.queue,
@@ -2777,7 +2775,7 @@ impl App {
                             range: 15.0,
                             radius: 0.1,
                         };
-                        _t.colour = [1.0, 0.9, 0.7];
+                        _t.colour = [1.0, 0.9, 0.7].into();
                         _t.intensity = 20.0;
                         // Warm fill only. With two hard casters the shadows
                         // overlap as a two-tone shape with a seam; one key
@@ -2828,7 +2826,7 @@ impl App {
                                 range: 15.0,
                                 radius: 0.1,
                             };
-                            _t.colour = [1.0, 0.97, 0.93];
+                            _t.colour = [1.0, 0.97, 0.93].into();
                             _t.intensity = 20.0;
                             // Fill light for the normal-map highlights; not a
                             // shadow caster, so the directional's shadow stays
@@ -3172,13 +3170,9 @@ impl App {
                 (items, None, lighting, sg, ss)
             }
 
-            ShowcaseMode::DepthCompositeImages => (
-                self.dc_scene_items(),
-                None,
-                App::dc_lighting(),
-                0,
-                0,
-            ),
+            ShowcaseMode::DepthCompositeImages => {
+                (self.dc_scene_items(), None, App::dc_lighting(), 0, 0)
+            }
 
             ShowcaseMode::ImplicitSurface => (
                 self.implicit_scene_items(),
@@ -3221,22 +3215,10 @@ impl App {
                 (items, None, lighting, sg, 0)
             }
 
-            ShowcaseMode::Overlay => (
-                Vec::new(),
-                None,
-                LightingSettings::default(),
-                0,
-                0,
-            ),
+            ShowcaseMode::Overlay => (Vec::new(), None, LightingSettings::default(), 0, 0),
 
             // The artwork is a 2-D overlay; the 3-D scene is empty.
-            ShowcaseMode::VectorArt => (
-                Vec::new(),
-                None,
-                LightingSettings::default(),
-                0,
-                0,
-            ),
+            ShowcaseMode::VectorArt => (Vec::new(), None, LightingSettings::default(), 0, 0),
 
             ShowcaseMode::PlaybackRuntime => {
                 // Apply renderer settings and update deforming mesh.
@@ -3345,13 +3327,7 @@ impl App {
 
             ShowcaseMode::VertexWarp => {
                 let items = showcase_40_vertex_warp::warp_scene_items(self);
-                (
-                    items,
-                    None,
-                    showcase_40_vertex_warp::warp_lighting(),
-                    0,
-                    0,
-                )
+                (items, None, showcase_40_vertex_warp::warp_lighting(), 0, 0)
             }
 
             ShowcaseMode::Sprites => {

@@ -58,7 +58,7 @@ pub enum ConstraintOverlay {
         /// Unit direction vector of the line.
         direction: glam::Vec3,
         /// RGBA display colour.
-        colour: [f32; 4],
+        colour: crate::Colour,
     },
     /// A plane through `origin` spanned by `axis_a` and `axis_b`.
     Plane {
@@ -69,7 +69,7 @@ pub enum ConstraintOverlay {
         /// Second tangent axis of the plane.
         axis_b: glam::Vec3,
         /// RGBA display colour.
-        colour: [f32; 4],
+        colour: crate::Colour,
     },
 }
 

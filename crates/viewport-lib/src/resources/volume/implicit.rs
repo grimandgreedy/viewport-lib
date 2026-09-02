@@ -38,7 +38,7 @@ pub struct ImplicitPrimitive {
     pub params: [f32; 8],
     /// Linear RGBA colour for this primitive.
     /// Colours are blended by proximity weight at the hit point.
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
 }
 
 /// How multiple primitives are combined into a single SDF.

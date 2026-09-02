@@ -292,7 +292,7 @@ impl crate::resources::DeviceResources {
             }
             let uniform = ExternalInstancesUniform {
                 model: item.model,
-                colour: item.colour,
+                colour: item.colour.to_linear_rgba(),
                 scale: item.scale,
                 _pad: [0.0; 3],
             };

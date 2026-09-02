@@ -1354,7 +1354,7 @@ fn gpu_pick_hits_implicit_surface() {
         blend: 0.0,
         _pad: [0.0; 2],
         params: [0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0],
-        colour: [1.0, 1.0, 1.0, 1.0],
+        colour: [1.0, 1.0, 1.0, 1.0].into(),
     };
     let mut item = viewport_lib::GpuImplicitItem::default();
     item.primitives.push(prim);

@@ -29,7 +29,7 @@ pub struct ExternalInstancesItem {
     /// Uniform scale applied to the mesh per instance.
     pub scale: f32,
     /// Instance colour (RGBA albedo).
-    pub colour: [f32; 4],
+    pub colour: crate::Colour,
     /// Per-item settings; only `hidden` is honoured.
     pub settings: ItemSettings,
 }
@@ -44,7 +44,7 @@ impl ExternalInstancesItem {
             first_instance: 0,
             instance_count,
             scale: 1.0,
-            colour: [1.0, 1.0, 1.0, 1.0],
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
             settings: ItemSettings::default(),
         }
     }

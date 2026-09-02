@@ -2339,7 +2339,7 @@ impl ViewportRenderer {
         // buffer, bind group) is reused frame to frame and rebuilt only when the
         // viewport size changes, so the pass allocates nothing per frame.
         let edge_uniform = crate::resources::OutlineEdgeUniform {
-            colour: ctx.frame.interaction.outline_colour,
+            colour: ctx.frame.interaction.outline_colour.to_linear_rgba(),
             radius: ctx.frame.interaction.outline_width_px,
             viewport_w: target_w as f32,
             viewport_h: target_h as f32,

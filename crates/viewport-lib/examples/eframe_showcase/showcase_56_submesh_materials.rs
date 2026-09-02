@@ -213,22 +213,22 @@ fn material_for(state: &SubmeshState, id: u32) -> Material {
     let mut m = Material::default();
     match id {
         MAT_METAL => {
-            m.base_colour = [0.75, 0.77, 0.8];
+            m.base_colour = [0.75, 0.77, 0.8].into();
             m.metallic = state.metallic;
             m.roughness = 0.35;
         }
         MAT_PLASTIC => {
-            m.base_colour = [0.82, 0.15, 0.12];
+            m.base_colour = [0.82, 0.15, 0.12].into();
             m.metallic = 0.0;
             m.roughness = 0.5;
         }
         MAT_CHECKER => {
-            m.base_colour = [1.0, 1.0, 1.0];
+            m.base_colour = [1.0, 1.0, 1.0].into();
             m.texture_id = state.checker_tex;
             m.roughness = 0.7;
         }
         MAT_GLASS => {
-            m.base_colour = [1.0, 1.0, 1.0];
+            m.base_colour = [1.0, 1.0, 1.0].into();
             m.texture_id = state.glass_tex;
             m.alpha_mode = AlphaMode::Blend;
             m.roughness = 0.1;
@@ -249,7 +249,7 @@ pub(crate) fn submesh_scene_items(app: &App) -> Vec<SceneRenderItem> {
     item.model = glam::Mat4::from_rotation_z(s.angle).to_cols_array_2d();
     // The single-material fallback look, and the whole look when per-range
     // materials are toggled off.
-    item.material.base_colour = [0.4, 0.4, 0.45];
+    item.material.base_colour = [0.4, 0.4, 0.45].into();
     item.material.roughness = 0.5;
     if s.per_range {
         item.submesh_materials = Some(s.range_ids.iter().map(|&id| material_for(s, id)).collect());
@@ -273,7 +273,7 @@ pub(crate) fn submesh_lighting() -> LightingSettings {
             l.kind = LightKind::Directional {
                 direction: [-0.5, -0.4, -0.3],
             };
-            l.colour = [0.85, 0.9, 1.0];
+            l.colour = [0.85, 0.9, 1.0].into();
             l.intensity = 0.35;
             l
         },

@@ -39,7 +39,7 @@ pub(super) fn sample_overlay_fill(
     let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
     let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
     match fill {
-        crate::renderer::types::OverlayFill::Solid(c) => *c,
+        crate::renderer::types::OverlayFill::Solid(c) => c.to_linear_rgba(),
         crate::renderer::types::OverlayFill::LinearGradient {
             start_colour,
             end_colour,
@@ -49,7 +49,11 @@ pub(super) fn sample_overlay_fill(
             let rel = [p[0] - centre[0], p[1] - centre[1]];
             let extent = (dir[0].abs() * size[0] + dir[1].abs() * size[1]).max(1e-6);
             let t = (rel[0] * dir[0] + rel[1] * dir[1]) / extent + 0.5;
-            gradient_lerp(*start_colour, *end_colour, t)
+            gradient_lerp(
+                start_colour.to_linear_rgba(),
+                end_colour.to_linear_rgba(),
+                t,
+            )
         }
         crate::renderer::types::OverlayFill::RadialGradient {
             centre_colour,
@@ -61,8 +65,8 @@ pub(super) fn sample_overlay_fill(
                 .sqrt()
                 .max(1e-6);
             gradient_lerp(
-                *centre_colour,
-                *edge_colour,
+                centre_colour.to_linear_rgba(),
+                edge_colour.to_linear_rgba(),
                 (dx * dx + dy * dy).sqrt() / radius,
             )
         }
@@ -73,7 +77,11 @@ pub(super) fn sample_overlay_fill(
         } => {
             let a = (p[1] - centre[1]).atan2(p[0] - centre[0]) - offset_angle;
             let t = ((a / std::f32::consts::TAU) % 1.0 + 1.0) % 1.0;
-            gradient_lerp(*start_colour, *end_colour, t)
+            gradient_lerp(
+                start_colour.to_linear_rgba(),
+                end_colour.to_linear_rgba(),
+                t,
+            )
         }
         crate::renderer::types::OverlayFill::LinearGradientMulti { stops, angle } => {
             let dir = [angle.cos(), angle.sin()];
@@ -652,13 +660,13 @@ pub(super) fn pack_stops(
     }
     let n = buf.len().min(cap);
     for i in 0..n {
-        colours[i] = buf[i].colour;
+        colours[i] = buf[i].colour.to_linear_rgba();
         positions[i] = buf[i].position.clamp(0.0, 1.0);
     }
     // Fill remaining slots with the last stop so iteration past `count`
     // returns the same colour and produces a no-op interpolation.
     for i in n..cap {
-        colours[i] = buf[n - 1].colour;
+        colours[i] = buf[n - 1].colour.to_linear_rgba();
         positions[i] = positions[n - 1];
     }
     n as f32

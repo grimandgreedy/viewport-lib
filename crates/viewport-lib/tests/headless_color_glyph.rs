@@ -29,7 +29,7 @@ fn overlay_frame(size: u32) -> FrameData {
     frame.camera.pixels_per_point = 1.0;
     frame.viewport.show_grid = false;
     frame.viewport.show_axes_indicator = false;
-    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0]);
+    frame.viewport.background_colour = Some([0.3, 0.3, 0.3, 1.0].into());
     frame
 }
 

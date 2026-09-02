@@ -1864,6 +1864,11 @@ impl DeviceResources {
     ///
     /// The returned ID can be stored in `SceneRenderItem::colourmap_id`.
     /// Use `BuiltinColourmap` variants + [`Self::builtin_colourmap_id`] for the built-in presets.
+    ///
+    /// The bytes are treated as sRGB (matching how colourmaps are authored, e.g.
+    /// matplotlib/ParaView tables). The texture is created `Rgba8UnormSrgb`, so
+    /// the sampler decodes to linear on read and the sampled colour lands in the
+    /// renderer's linear working space with full perceptual precision.
     pub fn upload_colourmap(
         &mut self,
         device: &crate::gpu::Device,
@@ -1880,7 +1885,7 @@ impl DeviceResources {
             mip_level_count: 1,
             sample_count: 1,
             dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba8Unorm,
+            format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
             usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

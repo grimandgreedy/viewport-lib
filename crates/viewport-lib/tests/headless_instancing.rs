@@ -321,7 +321,7 @@ fn external_instances_render_with_instance_range_slice() {
         let mut item = viewport_lib::ExternalInstancesItem::new(set_id, count);
         item.first_instance = first;
         item.scale = 0.4;
-        item.colour = [1.0, 0.2, 0.2, 1.0];
+        item.colour = [1.0, 0.2, 0.2, 1.0].into();
         frame.scene.external_instances = vec![item];
         frame
     };
@@ -811,7 +811,7 @@ fn lod_culled_per_object_item_is_not_drawn() {
     let mut item = SceneRenderItem::default();
     item.mesh_id = full;
     item.lod_group = Some(group);
-    item.material.backface_policy = BackfacePolicy::DifferentColour([1.0, 0.2, 0.2]);
+    item.material.backface_policy = BackfacePolicy::DifferentColour([1.0, 0.2, 0.2].into());
     item.model = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
 
     // Empty scene baseline.

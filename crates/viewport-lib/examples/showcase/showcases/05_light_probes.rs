@@ -496,7 +496,7 @@ impl IndirectLightingShowcase {
         }
         scene.add_light(RtLight::Directional {
             direction: Vec3::new(0.35, -0.2, 1.0).normalize().to_array(),
-            colour: [3.2, 3.1, 2.9],
+            colour: [3.2, 3.1, 2.9].into(),
         });
 
         let img = bake_lightmap(
@@ -547,7 +547,7 @@ impl IndirectLightingShowcase {
             key.kind = LightKind::Directional {
                 direction: [0.3, 0.2, 1.0],
             };
-            key.colour = [1.0, 1.0, 1.0];
+            key.colour = [1.0, 1.0, 1.0].into();
             key.intensity = 0.32;
             key.cast_shadows = false;
             let l = &mut session.effects_mut().lighting;
@@ -829,7 +829,7 @@ impl Showcase for IndirectLightingShowcase {
         key.kind = LightKind::Directional {
             direction: [0.3, 0.2, 1.0],
         };
-        key.colour = [1.0, 1.0, 1.0];
+        key.colour = [1.0, 1.0, 1.0].into();
         key.intensity = 0.32;
         key.cast_shadows = false;
         let l = &mut ctx.session.effects_mut().lighting;

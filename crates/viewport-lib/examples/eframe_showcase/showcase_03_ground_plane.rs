@@ -38,10 +38,10 @@ impl Default for GroundPlaneState {
             built: false,
             mode: GpMode::Grid,
             height: 0.0,
-            colour: [0.85, 0.15, 0.10, 1.0],
-            tile_colour2: [1.0, 1.0, 1.0, 1.0],
+            colour: [0.85, 0.15, 0.10, 1.0].into(),
+            tile_colour2: [1.0, 1.0, 1.0, 1.0].into(),
             tile_size: 1.0,
-            shadow_colour: [0.0, 0.0, 0.0, 1.0],
+            shadow_colour: [0.0, 0.0, 0.0, 1.0].into().into(),
             shadow_opacity: 0.5,
             grid_colour: [0.55, 0.55, 0.55],
         }

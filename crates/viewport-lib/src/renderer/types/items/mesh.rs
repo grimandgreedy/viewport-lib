@@ -58,7 +58,7 @@ pub struct SceneRenderItem {
     /// Colourmap to use for scalar colouring. Ignored when `active_attribute` is `None`.
     pub colourmap_id: Option<crate::resources::ColourmapId>,
     /// RGBA colour for NaN scalar values. `None` = discard (fully transparent).
-    pub nan_colour: Option<[f32; 4]>,
+    pub nan_colour: Option<crate::Colour>,
     /// Named vector attribute (from `AttributeData::VertexVector`) used to displace
     /// vertex positions in the vertex shader. `None` = no warp. See also `warp_scale`.
     ///
