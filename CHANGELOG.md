@@ -28,6 +28,15 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   `ground_colour` are unchanged (physical radiance).
 
 ### Features
+- **`ViewportRenderer::create_blit` / `blit` / `blit_with_depth`.** Draw a colour
+  texture into the current scissor rect of a render pass you own. Completes the
+  `OffscreenViewportTarget` story for hosts without a UI framework's texture
+  registration: render a viewport into an offscreen target, then blit its
+  `render_view()` into a pane. `create_blit` returns a reusable `BlitTexture`
+  (rebuild it when the source view is recreated); `blit` targets a pass with no
+  depth attachment, `blit_with_depth` a pass carrying `Depth24PlusStencil8`. The
+  source is sampled as linear, so an sRGB source view round-trips exactly through
+  an sRGB target. The pass colour format must match the renderer's build format.
 - **`upload_data_texture`.** A linear (`Rgba8Unorm`) 8-bit upload path for data
   textures (metallic-roughness / ORM, occlusion, roughness, metallic), so they
   are not sRGB-decoded like a colour image. Keep `upload_texture` for base-colour

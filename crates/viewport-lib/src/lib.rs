@@ -296,7 +296,7 @@ pub use renderer::{
     ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSelectionInfo,
     VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
-pub use renderer::{DeviceLostInfo, DeviceLostWatcher};
+pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 
 pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
 
