@@ -39,6 +39,11 @@ pub use offscreen::OffscreenViewportTarget;
 #[cfg(feature = "app")]
 pub mod viewport_app;
 
+/// The experimental multi-window winit runner: `ViewportAppV2` owns a set of OS
+/// windows, one `ViewportInstance` each (feature-gated behind `app`).
+#[cfg(feature = "app")]
+pub mod viewport_app_v2;
+
 use crate::camera::Camera;
 use crate::interaction::input::{ActionFrame, BindingPreset, ViewportContext, ViewportEvent};
 use crate::interaction::manipulation::{ManipResult, ManipulationController};

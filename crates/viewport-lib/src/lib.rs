@@ -91,6 +91,13 @@ pub mod gpu;
 /// versions stay in one place.
 pub use crate::gpu as wgpu;
 
+/// winit, re-exported so a consumer of the built-in runners uses the exact winit
+/// version they do (via `viewport_lib::winit`) rather than adding a second,
+/// possibly-mismatched winit dependency. Available whenever the `from_winit` adapter
+/// or a winit runner is compiled in.
+#[cfg(feature = "winit-adapter")]
+pub use ::winit;
+
 /// The pure-data types crate (`viewport-lib-types`), re-exported under the short
 /// `vplt` alias: `viewport_lib::vplt::overlay::OverlayShape`. Most renderer
 /// consumers can use the crate-root re-exports instead (`viewport_lib::MeshData`).
@@ -302,6 +309,11 @@ pub use runners::{ExtraId, OffscreenViewportTarget, ViewportInstance};
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app::{AppConfig, FrameCtx, RedrawMode, ViewportApp};
+
+#[cfg(feature = "app")]
+pub use runners::viewport_app_v2::{
+    AppConfigV2, FrameCtxV2, ViewportAppV2, WindowConfig, WindowId,
+};
 
 pub use quantities::{
     edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,
