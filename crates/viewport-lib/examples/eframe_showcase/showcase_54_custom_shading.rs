@@ -315,7 +315,8 @@ impl App {
                 }
                 (
                     resources
-                        .upload_texture(&self.device, &self.queue, 64, 64, &height)
+                        // Height is linear data, not colour: no sRGB decode.
+                        .upload_data_texture(&self.device, &self.queue, 64, 64, &height)
                         .expect("upload parallax height"),
                     resources
                         .upload_texture(&self.device, &self.queue, 64, 64, &albedo)

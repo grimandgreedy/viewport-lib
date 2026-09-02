@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased]
+
+This release adopts an sRGB colour-input contract: the colour you pass is now
+rendered faithfully. Breaking, and on-screen colour changes on upgrade (the
+repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
+
+### Breaking
+- **`Colour` type.** `viewport_lib::Colour` carries a colour's space and stores
+  it linear. Build from a hex/picker value with `Colour::rgb` / `hex` / `srgb` /
+  `hsl` (decoded to linear), or from an already-linear value with
+  `Colour::linear_rgb` / `linear`. It is `Copy`, `repr(transparent)` over
+  `[f32; 4]`, and `bytemuck::Pod`.
+- **Direct-colour fields are now `Colour`.** `Material.base_colour` / `emissive`,
+  `nan_colour`, every render-item and overlay colour (singular and per-element
+  `Vec<Colour>`), ground plane, `Layer`, frame background/grid/outline/xray,
+  gizmo widgets, implicit primitives, and the `DebugDraw` API. Constructors and
+  setters take `impl Into<Colour>`, so a bare `[f32; N]` still compiles and is
+  read as linear; pass `Colour::rgb`/`hex` for a faithful sRGB colour. Read a
+  field with `to_linear_rgb()` / `to_linear_rgba()`.
+- **Colourmaps render correctly.** Built-in colourmaps are sRGB and now upload as
+  `Rgba8UnormSrgb` (decoded on sample), so every colourmapped image is slightly
+  brighter and more perceptually uniform. `upload_colourmap` interprets its bytes
+  as sRGB.
+- **Light colours stay linear.** `LightSource.colour`, `sky_colour`,
+  `ground_colour` are unchanged (physical radiance).
+
+### Features
+- **`upload_data_texture`.** A linear (`Rgba8Unorm`) 8-bit upload path for data
+  textures (metallic-roughness / ORM, occlusion, roughness, metallic), so they
+  are not sRGB-decoded like a colour image. Keep `upload_texture` for base-colour
+  and emissive.
+- **viewport-lib-io texture routing.** `MaterialData::textures()` pairs each
+  present texture with its `MaterialTextureSlot`; `slot.colour_space()`
+  (`ColourSpace::Srgb` / `Linear`) says whether to upload via `upload_texture` or
+  `upload_data_texture`. Imported `base_color` / `emissive` factors are linear.
+
+### Fixes
+- The HDR and LDR pipelines now agree on the background colour (the HDR path no
+  longer decodes it a second time).
+
 ## [0.21.0]
 
 This release: photometric lighting units (lux / candela / nits) with a physical-camera exposure model, a faithful "colour is data" default lighting posture, the per-frame effects config regrouped by concern, and the renderer running in the browser on WebGPU.

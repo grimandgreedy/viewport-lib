@@ -282,7 +282,7 @@ fn build_matcaps(ctx: &mut SetupCtx) -> Vec<(MatcapId, &'static str)> {
 fn build_custom_materials(ctx: &mut SetupCtx) -> Vec<Material> {
     // Plugin-owned textures (uploaded before the long-lived resources borrow).
     let detail_tex = upload(ctx, detail_texture());
-    let height_tex = upload(ctx, brick_height_texture());
+    let height_tex = upload_data(ctx, brick_height_texture());
     let brick_tex = upload(ctx, brick_albedo_texture());
 
     let device = ctx.device;
@@ -366,12 +366,22 @@ fn build_custom_materials(ctx: &mut SetupCtx) -> Vec<Material> {
     ]
 }
 
-/// Upload a `(w, h, rgba)` texture through the session.
+/// Upload a `(w, h, rgba)` sRGB colour texture (albedo, alpha) through the session.
 fn upload(ctx: &mut SetupCtx, tex: (u32, u32, Vec<u8>)) -> TextureId {
     let (w, h, rgba) = tex;
     ctx.session
         .resources_mut()
         .upload_texture(ctx.device, ctx.queue, w, h, &rgba)
+        .unwrap()
+}
+
+/// Upload a `(w, h, rgba)` linear data texture (ORM, AO, height) through the
+/// session. Data maps must not be sRGB-decoded like a colour image.
+fn upload_data(ctx: &mut SetupCtx, tex: (u32, u32, Vec<u8>)) -> TextureId {
+    let (w, h, rgba) = tex;
+    ctx.session
+        .resources_mut()
+        .upload_data_texture(ctx.device, ctx.queue, w, h, &rgba)
         .unwrap()
 }
 
@@ -486,8 +496,8 @@ fn build_surface_maps(ctx: &mut SetupCtx) -> SurfaceMaps {
         .resources_mut()
         .upload_normal_map(ctx.device, ctx.queue, w, h, &rgba)
         .unwrap();
-    let ao = upload(ctx, bump_ao_texture());
-    let orm = upload(ctx, orm_texture());
+    let ao = upload_data(ctx, bump_ao_texture());
+    let orm = upload_data(ctx, orm_texture());
     SurfaceMaps { normal, ao, orm }
 }
 
