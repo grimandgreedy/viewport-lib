@@ -312,7 +312,7 @@ pub use runners::viewport_app::{AppConfig, FrameCtx, RedrawMode, ViewportApp};
 
 #[cfg(feature = "app")]
 pub use runners::viewport_app_v2::{
-    AppConfigV2, FrameCtxV2, ViewportAppV2, WindowConfig, WindowId,
+    AppConfigV2, FrameCtxV2, InputCtxV2, ViewportAppV2, WindowConfig, WindowId,
 };
 
 pub use quantities::{

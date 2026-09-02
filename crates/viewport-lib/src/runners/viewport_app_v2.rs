@@ -5,7 +5,8 @@
 //! set of OS windows keyed by a library [`WindowId`], each driving its own
 //! [`ViewportInstance`] against its own surface, over a single shared wgpu device.
 //! Events are routed to the right window; each window redraws, navigates, and times
-//! its frames independently.
+//! its frames independently. Windows can be opened and closed at runtime from a
+//! callback.
 //!
 //! This type is experimental and its API may change. The stable single-window
 //! [`ViewportApp`](crate::ViewportApp) is unaffected. See the runners module docs
@@ -16,7 +17,7 @@
 //! A consumer never touches winit through this runner: windows are named by the
 //! library-owned [`WindowId`], configured with [`WindowConfig`], and the per-frame
 //! callback receives viewport-lib types. For direct winit access the runner does not
-//! model, reach the raw window (a later addition) or use the re-exported
+//! model, reach the raw window with [`FrameCtxV2::raw_window`] or use the re-exported
 //! `viewport_lib::winit` so you never add a second, mismatched winit dependency.
 
 use std::collections::HashMap;
@@ -26,7 +27,7 @@ use web_time::Instant;
 use ::winit::application::ApplicationHandler;
 use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
-use ::winit::window::{Window, WindowAttributes, WindowId as WinitWindowId};
+use ::winit::window::{Fullscreen, Window, WindowAttributes, WindowId as WinitWindowId};
 
 use crate::interaction::input::adapters::from_winit;
 use crate::interaction::input::{ViewportContext, ViewportEvent};
@@ -146,12 +147,19 @@ pub struct AppConfigV2 {
     /// End the event loop when the last window closes. Default: `true`. Set `false`
     /// to keep the loop alive with no windows (for example to reopen one later).
     pub exit_on_last_window_close: bool,
+    /// Hand the OS close button to the callback instead of closing immediately.
+    /// Default: `false` (the close button closes the window). When `true`, a
+    /// close request sets [`FrameCtxV2::close_requested`] on the next frame and does
+    /// not close the window; the callback decides whether to call
+    /// [`FrameCtxV2::close_window`] (for example after a save prompt).
+    pub intercept_close: bool,
 }
 
 impl Default for AppConfigV2 {
     fn default() -> Self {
         Self {
             exit_on_last_window_close: true,
+            intercept_close: false,
         }
     }
 }
@@ -160,6 +168,13 @@ impl AppConfigV2 {
     /// Set whether the loop ends when the last window closes.
     pub fn with_exit_on_last_window_close(mut self, exit: bool) -> Self {
         self.exit_on_last_window_close = exit;
+        self
+    }
+
+    /// Set whether the OS close button is handed to the callback (see
+    /// [`intercept_close`](Self::intercept_close)).
+    pub fn with_intercept_close(mut self, intercept: bool) -> Self {
+        self.intercept_close = intercept;
         self
     }
 }
@@ -172,32 +187,51 @@ type WindowFactory = Box<dyn FnOnce(&mut ViewportInstance, &crate::gpu::Device)>
 /// The per-window per-frame callback.
 type WindowCallback = Box<dyn FnMut(&mut FrameCtxV2)>;
 
-/// A window declared before [`run`](ViewportAppV2::run), realised in `resumed`.
+/// The optional per-window input handler. When set, the runner stops auto-feeding
+/// events and driving orbit for that window; the handler owns the input step.
+type WindowInputHandler = Box<dyn FnMut(&mut InputCtxV2)>;
+
+/// A window declared before [`run`](ViewportAppV2::run), or requested at runtime,
+/// realised into a [`WindowState`] when the runner holds the event loop.
 struct WindowBuilder {
     config: WindowConfig,
     factory: WindowFactory,
+    input: Option<WindowInputHandler>,
     callback: WindowCallback,
 }
 
+/// A window lifecycle request raised from a callback and applied once the runner
+/// holds the [`ActiveEventLoop`] (winit windows can only be created from it).
+enum WindowCommand {
+    Open {
+        id: WindowId,
+        builder: WindowBuilder,
+    },
+    Close(WindowId),
+}
+
 /// What a window's per-frame callback receives: that window's [`ViewportInstance`]
-/// (via deref) plus timing and the window's identity.
+/// (via deref) plus timing, the window's identity, and the app controls (open/close
+/// windows, current-window control).
 ///
 /// The callback is per window: it drives one window's instance, and is called once
 /// per frame for that window. Frame-global work that must run once regardless of
 /// window count does not belong here.
 pub struct FrameCtxV2<'a> {
     session: &'a mut ViewportInstance,
+    window: &'a Window,
     window_id: WindowId,
-    /// Seconds since this window's previous frame.
     dt: f32,
-    /// Seconds since the app started.
     time: f32,
     device: &'a crate::gpu::Device,
     queue: &'a crate::gpu::Queue,
     viewport_size: [f32; 2],
+    close_requested: bool,
     overlays: OverlayFrame,
     injects: Vec<Box<dyn FnOnce(&mut FrameData)>>,
     events: Vec<ViewportEvent>,
+    commands: Vec<WindowCommand>,
+    next_id: u64,
     request_exit: bool,
     request_redraw: bool,
 }
@@ -246,6 +280,77 @@ impl FrameCtxV2<'_> {
         self.request_redraw = true;
     }
 
+    /// True when the OS asked to close this window since the last frame and
+    /// [`AppConfigV2::intercept_close`] is set. The window has not been closed:
+    /// call [`close_window`](Self::close_window) with this window's id to close it,
+    /// or ignore it to keep the window open (for example while a save prompt is up).
+    pub fn close_requested(&self) -> bool {
+        self.close_requested
+    }
+
+    /// Open a new window at runtime. Returns its [`WindowId`] immediately; the window
+    /// is realised after this frame. Takes the same setup and per-frame callbacks as
+    /// [`ViewportAppV2::window`].
+    pub fn open_window(
+        &mut self,
+        config: WindowConfig,
+        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        callback: impl FnMut(&mut FrameCtxV2) + 'static,
+    ) -> WindowId {
+        let id = WindowId(self.next_id);
+        self.next_id += 1;
+        self.commands.push(WindowCommand::Open {
+            id,
+            builder: WindowBuilder {
+                config,
+                factory: Box::new(factory),
+                input: None,
+                callback: Box::new(callback),
+            },
+        });
+        id
+    }
+
+    /// Close a window at runtime. Applied after this frame. Closing the last window
+    /// ends the loop unless [`AppConfigV2::exit_on_last_window_close`] is `false`.
+    pub fn close_window(&mut self, id: WindowId) {
+        self.commands.push(WindowCommand::Close(id));
+    }
+
+    /// Set this window's title.
+    pub fn set_title(&self, title: &str) {
+        self.window.set_title(title);
+    }
+
+    /// Toggle borderless fullscreen for this window. Exclusive fullscreen (with a
+    /// chosen video mode) is available through [`raw_window`](Self::raw_window).
+    pub fn set_fullscreen(&self, fullscreen: bool) {
+        self.window
+            .set_fullscreen(fullscreen.then(|| Fullscreen::Borderless(None)));
+    }
+
+    /// Show or hide this window's decorations (title bar and border).
+    pub fn set_decorations(&self, decorations: bool) {
+        self.window.set_decorations(decorations);
+    }
+
+    /// Show or hide the cursor over this window.
+    pub fn set_cursor_visible(&self, visible: bool) {
+        self.window.set_cursor_visible(visible);
+    }
+
+    /// Ask the OS to give this window keyboard focus.
+    pub fn focus_window(&self) {
+        self.window.focus_window();
+    }
+
+    /// The raw winit window, for platform-specific control the runner does not model
+    /// (window icon, exact monitor video modes, drag_window, and so on). This is the
+    /// escape hatch: prefer the modelled methods above where they exist.
+    pub fn raw_window(&self) -> &Window {
+        self.window
+    }
+
     /// Overlays to draw this frame for this window: shapes, labels, polylines, and
     /// images. Installed after assembly and before render, so they survive the
     /// overlay reset assembly performs. Per-frame: starts empty each callback.
@@ -277,6 +382,49 @@ impl std::ops::Deref for FrameCtxV2<'_> {
 }
 
 impl std::ops::DerefMut for FrameCtxV2<'_> {
+    fn deref_mut(&mut self) -> &mut ViewportInstance {
+        self.session
+    }
+}
+
+/// What a window's input handler receives when installed with
+/// [`ViewportAppV2::window_with_input`]: the raw events buffered for this window
+/// since its last frame plus the instance (via deref). Forward the ones the viewport
+/// should act on with [`forward`](Self::forward) and drop the ones the UI consumed.
+pub struct InputCtxV2<'a> {
+    session: &'a mut ViewportInstance,
+    window_id: WindowId,
+    events: &'a [ViewportEvent],
+}
+
+impl InputCtxV2<'_> {
+    /// Which window this input handler invocation is for.
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    /// The input events that arrived for this window since its last frame, in order.
+    /// These have not been sent to the viewport: forward the ones it should process.
+    pub fn events(&self) -> &[ViewportEvent] {
+        self.events
+    }
+
+    /// Send one event to this window's viewport so it drives picking, selection, and
+    /// manipulation this frame. Skip an event to keep it from the viewport.
+    pub fn forward(&mut self, event: ViewportEvent) {
+        self.session.handle_event(event);
+    }
+}
+
+impl std::ops::Deref for InputCtxV2<'_> {
+    type Target = ViewportInstance;
+
+    fn deref(&self) -> &ViewportInstance {
+        self.session
+    }
+}
+
+impl std::ops::DerefMut for InputCtxV2<'_> {
     fn deref_mut(&mut self) -> &mut ViewportInstance {
         self.session
     }
@@ -328,17 +476,45 @@ impl ViewportAppV2 {
     ///
     /// Call once per window before [`run`](Self::run). The setup callback is the
     /// per-window equivalent of [`ViewportApp::setup`](crate::ViewportApp::setup);
-    /// the frame callback is per window and runs once per frame for that window.
+    /// the frame callback is per window and runs once per frame for that window. The
+    /// runner drives a built-in orbit controller for this window; take input over
+    /// with [`window_with_input`](Self::window_with_input).
     pub fn window(
-        mut self,
+        self,
         config: WindowConfig,
         factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
         callback: impl FnMut(&mut FrameCtxV2) + 'static,
     ) -> Self {
+        self.push_window(config, factory, None, Box::new(callback))
+    }
+
+    /// Like [`window`](Self::window), but installs a per-window input handler. The
+    /// runner stops auto-feeding events and driving orbit for this window; the
+    /// handler runs once per frame with the events buffered since the last frame and
+    /// forwards the ones the viewport should see (see [`InputCtxV2`]). Drive your own
+    /// camera against [`camera_mut`](ViewportInstance::camera_mut).
+    pub fn window_with_input(
+        self,
+        config: WindowConfig,
+        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        input: impl FnMut(&mut InputCtxV2) + 'static,
+        callback: impl FnMut(&mut FrameCtxV2) + 'static,
+    ) -> Self {
+        self.push_window(config, factory, Some(Box::new(input)), Box::new(callback))
+    }
+
+    fn push_window(
+        mut self,
+        config: WindowConfig,
+        factory: impl FnOnce(&mut ViewportInstance, &crate::gpu::Device) + 'static,
+        input: Option<WindowInputHandler>,
+        callback: WindowCallback,
+    ) -> Self {
         self.windows.push(WindowBuilder {
             config,
             factory: Box::new(factory),
-            callback: Box::new(callback),
+            input,
+            callback,
         });
         self
     }
@@ -378,11 +554,15 @@ struct WindowState {
     session: ViewportInstance,
     redraw_mode: RedrawMode,
     orbit: OrbitCameraController,
+    input: Option<WindowInputHandler>,
     callback: WindowCallback,
     /// Events translated for this window since its last frame.
     events: Vec<ViewportEvent>,
     focused: bool,
     hovered: bool,
+    /// Set when the OS asked to close and `intercept_close` is on; surfaced to the
+    /// callback once, then cleared.
+    close_requested: bool,
     last_frame: Instant,
 }
 
@@ -399,12 +579,21 @@ struct AppHandlerV2 {
 }
 
 impl AppHandlerV2 {
-    /// Create one window from its builder, configure its surface against the shared
-    /// device, build its instance, and insert it into the window set.
-    fn create_window(&mut self, event_loop: &ActiveEventLoop, builder: WindowBuilder) {
+    /// Allocate the next library window id.
+    fn alloc_id(&mut self) -> WindowId {
+        let id = WindowId(self.next_id);
+        self.next_id += 1;
+        id
+    }
+
+    /// Create one window from its builder under a pre-assigned id, configure its
+    /// surface against the shared device (bringing the device up on the first
+    /// window), build its instance, and insert it into the window set.
+    fn create_window(&mut self, event_loop: &ActiveEventLoop, id: WindowId, builder: WindowBuilder) {
         let WindowBuilder {
             config,
             factory,
+            input,
             callback,
         } = builder;
 
@@ -418,17 +607,13 @@ impl AppHandlerV2 {
                 .expect("window"),
         );
 
-        // The surface must be created before the adapter request so it can be the
-        // compatibility target for the first window. Subsequent windows reuse the
-        // instance already in `gpu`.
+        // Reuse the shared instance if the device is already up; otherwise this is
+        // the first window and it seeds the shared device from its own surface.
         let surface = if let Some(gpu) = self.gpu.as_ref() {
             gpu.instance.create_surface(window.clone()).expect("surface")
         } else {
-            // First window: create a temporary instance-less path is not possible,
-            // so build the instance here via ensure_gpu after making the surface.
             let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
             let surface = instance.create_surface(window.clone()).expect("surface");
-            // Seed the shared gpu from this instance/surface.
             let adapter = pollster::block_on(instance.request_adapter(
                 &crate::gpu::RequestAdapterOptions {
                     power_preference: crate::gpu::PowerPreference::HighPerformance,
@@ -491,8 +676,6 @@ impl AppHandlerV2 {
             ],
         });
 
-        let id = WindowId(self.next_id);
-        self.next_id += 1;
         self.winit_ids.insert(window.id(), id);
         window.request_redraw();
 
@@ -505,99 +688,153 @@ impl AppHandlerV2 {
                 session,
                 redraw_mode: config.redraw_mode,
                 orbit: OrbitCameraController::viewport_all(),
+                input,
                 callback,
                 events: Vec::new(),
                 focused,
                 hovered,
+                close_requested: false,
                 last_frame: Instant::now(),
             },
         );
     }
 
-    /// Draw one window: sync size/DPI, run its callback, assemble, and present.
+    /// Draw one window: sync size/DPI, run its input handler and callback, assemble,
+    /// present, then apply any window commands the callback raised.
     fn redraw(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
-        let Some(state) = self.windows.get_mut(&id) else {
-            return;
-        };
-        let Some(gpu) = self.gpu.as_ref() else {
-            return;
-        };
+        let commands: Vec<WindowCommand>;
+        let next_id: u64;
+        let do_exit: bool;
 
-        let scale = state.window.scale_factor() as f32;
-        let w = state.surface_config.width as f32 / scale;
-        let h = state.surface_config.height as f32 / scale;
-
-        let now = Instant::now();
-        let dt = (now - state.last_frame).as_secs_f32();
-        state.last_frame = now;
-        let time = (now - self.start).as_secs_f32();
-
-        state.session.set_viewport_size([w, h]);
-        state.session.set_pixels_per_point(scale);
-        state.session.resolve();
-
-        let mut ctx = FrameCtxV2 {
-            session: &mut state.session,
-            window_id: id,
-            dt,
-            time,
-            device: &gpu.device,
-            queue: &gpu.queue,
-            viewport_size: [w, h],
-            overlays: OverlayFrame::default(),
-            injects: Vec::new(),
-            events: std::mem::take(&mut state.events),
-            request_exit: false,
-            request_redraw: false,
-        };
-        (state.callback)(&mut ctx);
-        let FrameCtxV2 {
-            overlays,
-            injects,
-            request_exit,
-            request_redraw,
-            ..
-        } = ctx;
-
-        state.session.step_runtime(dt);
-        state.session.update_orbit_with(&mut state.orbit, move |frame| {
-            frame.overlays = overlays;
-            for inject in injects {
-                inject(frame);
-            }
-            auto_fill_exposure_dt(frame, dt);
-        });
-
-        let frame = match state.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(crate::gpu::SurfaceError::Lost | crate::gpu::SurfaceError::Outdated) => {
-                state.surface.configure(&gpu.device, &state.surface_config);
+        {
+            let Some(state) = self.windows.get_mut(&id) else {
                 return;
-            }
-            Err(e) => {
-                tracing::error!("surface error: {e:?}");
+            };
+            let Some(gpu) = self.gpu.as_ref() else {
                 return;
-            }
-        };
-        let view = frame
-            .texture
-            .create_view(&crate::gpu::TextureViewDescriptor::default());
-        let cmd = state.session.render(&gpu.device, &gpu.queue, &view);
-        gpu.queue.submit(std::iter::once(cmd));
-        frame.present();
+            };
 
-        if request_exit {
-            event_loop.exit();
-            return;
+            let scale = state.window.scale_factor() as f32;
+            let w = state.surface_config.width as f32 / scale;
+            let h = state.surface_config.height as f32 / scale;
+
+            let now = Instant::now();
+            let dt = (now - state.last_frame).as_secs_f32();
+            state.last_frame = now;
+            let time = (now - self.start).as_secs_f32();
+
+            state.session.set_viewport_size([w, h]);
+            state.session.set_pixels_per_point(scale);
+
+            // An installed input handler owns this window's input this frame: it
+            // forwards the events the viewport should see. Run it before resolve so
+            // the forwarded events land in this frame's ActionFrame.
+            if let Some(handler) = state.input.as_mut() {
+                let mut ictx = InputCtxV2 {
+                    session: &mut state.session,
+                    window_id: id,
+                    events: &state.events,
+                };
+                handler(&mut ictx);
+            }
+            state.session.resolve();
+
+            let mut ctx = FrameCtxV2 {
+                session: &mut state.session,
+                window: &state.window,
+                window_id: id,
+                dt,
+                time,
+                device: &gpu.device,
+                queue: &gpu.queue,
+                viewport_size: [w, h],
+                close_requested: std::mem::take(&mut state.close_requested),
+                overlays: OverlayFrame::default(),
+                injects: Vec::new(),
+                events: std::mem::take(&mut state.events),
+                commands: Vec::new(),
+                next_id: self.next_id,
+                request_exit: false,
+                request_redraw: false,
+            };
+            (state.callback)(&mut ctx);
+            let FrameCtxV2 {
+                overlays,
+                injects,
+                commands: raised,
+                next_id: advanced,
+                request_exit,
+                request_redraw,
+                ..
+            } = ctx;
+            commands = raised;
+            next_id = advanced;
+            do_exit = request_exit;
+
+            state.session.step_runtime(dt);
+            // With an input handler the app already drove the camera, so assemble
+            // without touching it; otherwise drive the built-in orbit.
+            if state.input.is_some() {
+                let vctx = ViewportContext {
+                    hovered: state.hovered,
+                    focused: state.focused,
+                    viewport_size: [w, h],
+                };
+                state.session.frame_with(vctx, move |frame| {
+                    frame.overlays = overlays;
+                    for inject in injects {
+                        inject(frame);
+                    }
+                    auto_fill_exposure_dt(frame, dt);
+                });
+            } else {
+                state.session.update_orbit_with(&mut state.orbit, move |frame| {
+                    frame.overlays = overlays;
+                    for inject in injects {
+                        inject(frame);
+                    }
+                    auto_fill_exposure_dt(frame, dt);
+                });
+            }
+
+            let frame = match state.surface.get_current_texture() {
+                Ok(f) => f,
+                Err(crate::gpu::SurfaceError::Lost | crate::gpu::SurfaceError::Outdated) => {
+                    state.surface.configure(&gpu.device, &state.surface_config);
+                    return;
+                }
+                Err(e) => {
+                    tracing::error!("surface error: {e:?}");
+                    return;
+                }
+            };
+            let view = frame
+                .texture
+                .create_view(&crate::gpu::TextureViewDescriptor::default());
+            let cmd = state.session.render(&gpu.device, &gpu.queue, &view);
+            gpu.queue.submit(std::iter::once(cmd));
+            frame.present();
+
+            state.session.begin_frame(ViewportContext {
+                hovered: state.hovered,
+                focused: state.focused,
+                viewport_size: [w, h],
+            });
+            if state.redraw_mode == RedrawMode::Continuous || request_redraw {
+                state.window.request_redraw();
+            }
         }
 
-        state.session.begin_frame(ViewportContext {
-            hovered: state.hovered,
-            focused: state.focused,
-            viewport_size: [w, h],
-        });
-        if state.redraw_mode == RedrawMode::Continuous || request_redraw {
-            state.window.request_redraw();
+        // The window borrow has ended; apply the callback's window commands.
+        self.next_id = next_id;
+        for command in commands {
+            match command {
+                WindowCommand::Open { id, builder } => self.create_window(event_loop, id, builder),
+                WindowCommand::Close(id) => self.close_window(event_loop, id),
+            }
+        }
+        if do_exit {
+            event_loop.exit();
         }
     }
 
@@ -620,7 +857,8 @@ impl ApplicationHandler for AppHandlerV2 {
         }
         let builders = std::mem::take(&mut self.pending);
         for builder in builders {
-            self.create_window(event_loop, builder);
+            let id = self.alloc_id();
+            self.create_window(event_loop, id, builder);
         }
         self.start = Instant::now();
     }
@@ -636,8 +874,8 @@ impl ApplicationHandler for AppHandlerV2 {
         };
 
         // Typed characters: winit resolves layout/shift/dead keys into `text`. Feed
-        // the window's session directly (its numeric-input buffer keeps only digits,
-        // `.`, `-`) and buffer for the callback.
+        // the window's session directly (unless an input handler owns forwarding) and
+        // buffer for the callback.
         if let WindowEvent::KeyboardInput {
             event: key_event, ..
         } = &event
@@ -647,9 +885,12 @@ impl ApplicationHandler for AppHandlerV2 {
                     let chars: Vec<char> = text.chars().filter(|c| !c.is_control()).collect();
                     if !chars.is_empty() {
                         if let Some(state) = self.windows.get_mut(&id) {
+                            let auto_feed = state.input.is_none();
                             for c in chars {
                                 let ev = ViewportEvent::Character(c);
-                                state.session.handle_event(ev.clone());
+                                if auto_feed {
+                                    state.session.handle_event(ev.clone());
+                                }
                                 state.events.push(ev);
                             }
                             state.window.request_redraw();
@@ -660,7 +901,16 @@ impl ApplicationHandler for AppHandlerV2 {
         }
 
         match event {
-            WindowEvent::CloseRequested => self.close_window(event_loop, id),
+            WindowEvent::CloseRequested => {
+                if self.config.intercept_close {
+                    if let Some(state) = self.windows.get_mut(&id) {
+                        state.close_requested = true;
+                        state.window.request_redraw();
+                    }
+                } else {
+                    self.close_window(event_loop, id);
+                }
+            }
 
             WindowEvent::Resized(size) => {
                 if size.width > 0 && size.height > 0 {
@@ -702,7 +952,9 @@ impl ApplicationHandler for AppHandlerV2 {
                 if let Some(state) = self.windows.get_mut(&id) {
                     let scale = state.window.scale_factor() as f32;
                     if let Some(ev) = from_winit(&other, scale) {
-                        state.session.handle_event(ev.clone());
+                        if state.input.is_none() {
+                            state.session.handle_event(ev.clone());
+                        }
                         state.events.push(ev);
                         state.window.request_redraw();
                     }
