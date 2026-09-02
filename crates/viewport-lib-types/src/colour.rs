@@ -58,6 +58,14 @@ pub enum ColourSpace {
 /// [`to_linear_rgba`](Self::to_linear_rgba) and
 /// [`to_linear_rgb`](Self::to_linear_rgb) hand the pipeline the array it wants.
 ///
+/// Channels must be finite. Values above 1.0 are valid and meaningful: an
+/// emissive or otherwise HDR colour carries radiance beyond the display range,
+/// so `Colour` never clamps. A NaN or infinite channel, by contrast, is never a
+/// valid colour and produces undefined output when written to the target; the
+/// constructors do not reject it (a `sRGB` build from finite input can never
+/// manufacture one), so guard external data with [`is_finite`](Self::is_finite)
+/// if its provenance is uncertain.
+///
 /// ```
 /// use viewport_lib_types::colour::Colour;
 /// // Navy #183054 from a hex code renders faithfully:
@@ -180,6 +188,15 @@ impl Colour {
     /// The alpha channel (linear coverage, 0..=1).
     pub const fn alpha(self) -> f32 {
         self.0[3]
+    }
+
+    /// Whether every channel (including alpha) is finite. A NaN or infinite
+    /// channel is never a valid colour and writes undefined output to the
+    /// target. Values above 1.0 are finite and valid (HDR / emissive), so this
+    /// returns `true` for them. Use it to screen colours built from external or
+    /// computed data before handing them to the renderer.
+    pub fn is_finite(self) -> bool {
+        self.0.iter().all(|c| c.is_finite())
     }
 
     /// Re-encode to opaque-agnostic 8-bit sRGB channels `[r, g, b, a]`, the
@@ -325,6 +342,17 @@ mod tests {
         // The whole point: sRGB 0.5 decodes to a smaller linear value.
         let s = Colour::srgb_rgb(0.5, 0.5, 0.5).to_linear_rgb();
         assert!(s[0] < 0.5 - 0.05);
+    }
+
+    #[test]
+    fn is_finite_flags_bad_channels() {
+        assert!(Colour::rgb(24, 48, 84).is_finite());
+        // HDR values above 1.0 are valid, not flagged.
+        assert!(Colour::linear(2.5, 0.0, 0.0, 1.0).is_finite());
+        assert!(!Colour::linear(f32::NAN, 0.0, 0.0, 1.0).is_finite());
+        assert!(!Colour::linear(0.0, f32::INFINITY, 0.0, 1.0).is_finite());
+        // A finite sRGB build never manufactures a NaN.
+        assert!(Colour::srgb(-0.1, 0.5, 1.2, 1.0).is_finite());
     }
 
     #[test]
