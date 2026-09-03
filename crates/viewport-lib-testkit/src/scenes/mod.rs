@@ -132,7 +132,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     sf.glyphs = scene.glyphs.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
-    fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND));
+    fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
     fd.viewport.show_axes_indicator = false;
     fd
 }
