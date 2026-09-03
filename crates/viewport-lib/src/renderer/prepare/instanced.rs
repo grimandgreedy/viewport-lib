@@ -398,10 +398,18 @@ impl ViewportRenderer {
         cull_state.ensure_outputs(device, instance_count, batch_count);
         // Drop cull bind groups whose binding-0 instance storage buffer was
         // rebuilt this frame; `ensure_outputs` already handles a resized vis
-        // buffer.
-        if cull_state.built_gen != instancing.instance_gen {
+        // buffer. Also drop them when the free epoch moved: these bind groups
+        // sample the albedo/normal/ao views (bindings 1/3/4) and double as the
+        // indirect draw's group-1, and `replace_texture` swaps the view under a
+        // stable id without changing the cache key, so a texture update would
+        // otherwise keep drawing the old pixels. Mirrors the eviction
+        // `replace_texture` already does for the non-culled instance bind groups.
+        if cull_state.built_gen != instancing.instance_gen
+            || cull_state.built_free_epoch != resources.resource_free_epoch
+        {
             cull_state.instance_cull_bind_groups.clear();
             cull_state.built_gen = instancing.instance_gen;
+            cull_state.built_free_epoch = resources.resource_free_epoch;
         }
         for batch in &instancing.batches.clone() {
             resources.get_instance_cull_bind_group(

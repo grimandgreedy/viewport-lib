@@ -68,6 +68,13 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   Previously a scene with a stable item set (same mesh and texture id) kept sampling
   the old texture after a replace or external-view re-point, so a per-frame updated
   texture never changed on screen.
+- **A replaced texture now updates on the GPU-culling instanced path too.** When
+  GPU-driven culling is active (devices with `INDIRECT_FIRST_INSTANCE`, i.e. the
+  indirect draw path), a batch's cull bind group doubles as the draw's texture bind
+  group but was only invalidated when the instance buffer was rebuilt, never on a
+  texture change. So `replace_texture` under a stable instanced scene kept drawing
+  the old view, even though the per-object and direct instanced paths already
+  updated. The cull bind groups now rebuild when the resource-free epoch moves.
 - The HDR and LDR pipelines now agree on the background colour (the HDR path no
   longer decodes it a second time).
 - **Gaussian splats render at full saturation.** The splat shader now decodes its

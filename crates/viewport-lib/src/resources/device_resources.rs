@@ -878,9 +878,12 @@ pub(crate) struct ViewportCullState {
     pub(crate) indirect_args_buf: Option<crate::gpu::Buffer>,
     /// Capacity (in batches) of the counter and indirect-args buffers.
     pub(crate) batch_output_capacity: usize,
-    /// Per-texture-key bind groups for the main cull pipelines.
-    /// Keyed by (albedo_id, normal_map_id, ao_map_id); invalidated when
-    /// `visibility_index_buf` is resized.
+    /// Per-texture-key bind groups for the main cull pipelines. These also serve
+    /// as the group-1 bind for the indirect draw, so they sample the albedo,
+    /// normal, and ao views (bindings 1/3/4). Keyed by
+    /// (albedo_id, normal_map_id, ao_map_id); invalidated when
+    /// `visibility_index_buf` is resized, when the instance buffer is rebuilt, or
+    /// when a texture behind a key is replaced or freed (see `built_free_epoch`).
     pub(crate) instance_cull_bind_groups:
         std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
     /// Generation of the shared instance buffers the main cull bind groups were
@@ -888,6 +891,11 @@ pub(crate) struct ViewportCullState {
     /// shared instance storage buffer was rebuilt, so those bind groups (which
     /// bind it at binding 0) are stale and get cleared.
     pub(crate) built_gen: u64,
+    /// `DeviceResources::resource_free_epoch` the cull bind groups were built at.
+    /// When it falls behind, a texture was replaced or freed, so a bind group
+    /// keyed by that texture's id now samples the old view (the id is unchanged)
+    /// and must be rebuilt. Keying alone cannot catch this, so it is tracked here.
+    pub(crate) built_free_epoch: u64,
     /// Hierarchical-Z max-depth pyramid for this viewport's occlusion test.
     /// Lazily created the first frame occlusion culling stores depth here, and
     /// rebuilt when the depth target changes size. Per-viewport so two viewports
@@ -906,6 +914,7 @@ impl ViewportCullState {
             batch_output_capacity: 0,
             instance_cull_bind_groups: std::collections::HashMap::new(),
             built_gen: u64::MAX,
+            built_free_epoch: u64::MAX,
             hiz: None,
         }
     }
