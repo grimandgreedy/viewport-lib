@@ -564,7 +564,7 @@ impl PickTargets {
         encoder: &'e mut crate::gpu::CommandEncoder,
     ) -> crate::gpu::RenderPass<'e> {
         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(feature = "wgpu29")]
+            #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("pick_pass"),
             color_attachments: &[
@@ -2539,13 +2539,13 @@ impl ViewportRenderer {
         let mut seen_elem: std::collections::HashSet<(u64, SubObjectRef)> =
             std::collections::HashSet::new();
         {
-            let id_data = id_staging.slice(..).get_mapped_range();
+            let id_data = crate::gpu::mapped_range(id_staging.slice(..));
             let prim_view = prim_staging
                 .as_ref()
-                .map(|s| s.slice(..).get_mapped_range());
+                .map(|s| crate::gpu::mapped_range(s.slice(..)));
             let depth_view = depth_staging
                 .as_ref()
-                .map(|s| s.slice(..).get_mapped_range());
+                .map(|s| crate::gpu::mapped_range(s.slice(..)));
             let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
@@ -2763,9 +2763,9 @@ impl ViewportRenderer {
         // exact feature coordinate is resolved after the staging maps are freed.
         let mut best: Option<(i32, f32, u64, Option<SubObjectRef>, glam::Vec3)> = None;
         {
-            let id_data = id_staging.slice(..).get_mapped_range();
-            let prim_data = prim_staging.slice(..).get_mapped_range();
-            let depth_data = depth_staging.slice(..).get_mapped_range();
+            let id_data = crate::gpu::mapped_range(id_staging.slice(..));
+            let prim_data = crate::gpu::mapped_range(prim_staging.slice(..));
+            let depth_data = crate::gpu::mapped_range(depth_staging.slice(..));
             for row in 0..rh as usize {
                 let row_start = row * bytes_per_row as usize;
                 for col in 0..rw as usize {
@@ -3407,19 +3407,19 @@ impl PendingPick {
     /// so means empty space or a non-pickable surface.
     fn read_hit(&self) -> Option<GpuPickHit> {
         let object_id = {
-            let data = self.id_staging.slice(..).get_mapped_range();
+            let data = crate::gpu::mapped_range(self.id_staging.slice(..));
             u32::from_le_bytes([data[0], data[1], data[2], data[3]])
         };
         self.id_staging.unmap();
 
         let sub_primitive = {
-            let data = self.prim_staging.slice(..).get_mapped_range();
+            let data = crate::gpu::mapped_range(self.prim_staging.slice(..));
             u32::from_le_bytes([data[0], data[1], data[2], data[3]])
         };
         self.prim_staging.unmap();
 
         let depth = {
-            let data = self.depth_staging.slice(..).get_mapped_range();
+            let data = crate::gpu::mapped_range(self.depth_staging.slice(..));
             f32::from_le_bytes([data[0], data[1], data[2], data[3]])
         };
         self.depth_staging.unmap();

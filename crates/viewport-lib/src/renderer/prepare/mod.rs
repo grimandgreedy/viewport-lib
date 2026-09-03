@@ -1027,7 +1027,7 @@ impl ViewportRenderer {
             match self.ts_map_status.load(Ordering::Acquire) {
                 1 => {
                     if let Some(ref stg_buf) = self.ts_staging_buf {
-                        let data = stg_buf.slice(..).get_mapped_range();
+                        let data = crate::gpu::mapped_range(stg_buf.slice(..));
                         // Read one begin/end pair per slot. Only slots whose bit is
                         // set in the resolved mask hold valid data this frame; the
                         // rest are passes that did not run, left at 0 ms.
@@ -1121,7 +1121,7 @@ impl ViewportRenderer {
             match self.instancing.indirect_map_status.load(Ordering::Acquire) {
                 1 => {
                     if let Some(ref stg_buf) = self.instancing.indirect_readback_buf {
-                        let data = stg_buf.slice(..bytes).get_mapped_range();
+                        let data = crate::gpu::mapped_range(stg_buf.slice(..bytes));
                         let mut visible: u32 = 0;
                         for i in 0..self.instancing.indirect_readback_batch_count as usize {
                             // DrawIndexedIndirect layout: [index_count, instance_count, first_index, base_vertex, first_instance]
@@ -1449,6 +1449,8 @@ mod lod_resolve_tests {
                 power_preference: crate::gpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
             },
         ))
         .ok()?;

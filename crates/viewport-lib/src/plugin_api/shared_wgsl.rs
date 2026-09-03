@@ -833,7 +833,7 @@ pub const PICK_PRIM_ENABLE_WGSL: &str = "";
 /// constant at the very top of the shader source (before any declaration, so
 /// ahead of the vertex stage too) and it resolves to the right text for the
 /// active leg.
-#[cfg(wgpu29)]
+#[cfg(any(wgpu29, wgpu30))]
 pub const PICK_PRIM_ENABLE_WGSL: &str = "enable primitive_index;\n";
 
 /// Fragment helper for the pick-id pass that reports the hit triangle.

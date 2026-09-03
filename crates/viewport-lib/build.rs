@@ -9,8 +9,9 @@ fn main() {
     // `not(feature = "...")` term to each existing alias plus its own alias, and
     // every `#[cfg(wgpuNN)]` site stays correct without edits.
     cfg_aliases::cfg_aliases! {
-        wgpu27: { all(feature = "wgpu27", not(feature = "wgpu29")) },
-        wgpu29: { all(feature = "wgpu29", not(feature = "wgpu27")) },
+        wgpu27: { all(feature = "wgpu27", not(feature = "wgpu29"), not(feature = "wgpu30")) },
+        wgpu29: { all(feature = "wgpu29", not(feature = "wgpu27"), not(feature = "wgpu30")) },
+        wgpu30: { all(feature = "wgpu30", not(feature = "wgpu27"), not(feature = "wgpu29")) },
     }
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();

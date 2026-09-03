@@ -129,11 +129,9 @@ pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// adapter is available or the adapter lacks a required feature.
 pub fn headless_device_with(profile: &DeviceProfile) -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: profile.power_preference,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
+    let adapter = pollster::block_on(
+        instance.request_adapter(&wgpu::headless_adapter_options(profile.power_preference)),
+    )
     .ok()?;
 
     if !adapter.features().contains(profile.required_features) {

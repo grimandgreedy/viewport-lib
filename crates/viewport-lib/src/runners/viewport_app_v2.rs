@@ -15,8 +15,8 @@
 //! Desktop-only: like [`ViewportApp`](crate::ViewportApp) it blocks on the event loop
 //! and brings the device up synchronously (`pollster::block_on`), and multiple OS
 //! windows are a desktop concept. On the web (one canvas) drive a
-//! [`ViewportInstance`] from your own loop instead. It builds on both the default and
-//! the `wgpu29` legs. Per-window suspend/resume for mobile is out of scope; per-window
+//! [`ViewportInstance`] from your own loop instead. It builds on every wgpu leg.
+//! Per-window suspend/resume for mobile is out of scope; per-window
 //! surface loss is handled (the surface is reconfigured on `Lost`/`Outdated`).
 //!
 //! # The winit boundary
@@ -987,7 +987,7 @@ impl AppHandlerV2 {
                         });
                 {
                     let mut rp = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("viewport_app_v2_paint_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1018,7 +1018,7 @@ impl AppHandlerV2 {
                 gpu.queue.submit(std::iter::once(encoder.finish()));
             }
 
-            frame.present();
+            crate::gpu::present(&gpu.queue, frame);
 
             state.session.begin_frame(ViewportContext {
                 hovered: state.hovered,

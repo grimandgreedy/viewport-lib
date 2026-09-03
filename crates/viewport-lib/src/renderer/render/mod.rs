@@ -270,7 +270,7 @@ impl ViewportRenderer {
             let grid_bg = &slot.grid_bind_group;
 
             let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("ldr_dyn_res_render_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1083,7 +1083,7 @@ impl ViewportRenderer {
 
         let mut pixels: Vec<u8> = Vec::with_capacity((width * height * 4) as usize);
         {
-            let mapped = staging_buf.slice(..).get_mapped_range();
+            let mapped = crate::gpu::mapped_range(staging_buf.slice(..));
             let data: &[u8] = &mapped;
             if padded_row == unpadded_row {
                 // No padding : copy entire slice directly.
@@ -1254,7 +1254,7 @@ impl ViewportRenderer {
         });
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("backdrop_downsample"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1304,7 +1304,7 @@ impl ViewportRenderer {
         });
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("backdrop_blur_h"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1351,7 +1351,7 @@ impl ViewportRenderer {
         });
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("backdrop_blur_v"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {

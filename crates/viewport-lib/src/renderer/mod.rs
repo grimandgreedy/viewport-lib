@@ -15,8 +15,8 @@ mod per_object_state;
 use per_object_state::PerObjectState;
 mod shadow_state;
 use shadow_state::ShadowState;
-mod paths;
 mod blit;
+mod paths;
 pub use blit::BlitTexture;
 pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
@@ -68,15 +68,14 @@ pub use self::types::{
     NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor,
     OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
     OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
-    POINT_SHADOW_FACE_SIZE, RetainedOverlay,
-    ParticleMeshAlign, PathSegment, PathTrack, PickId, PipelineMode, PointCloudItem,
-    PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
-    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RibbonItem,
-    RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame,
-    SceneRenderItem, ScreenImageItem, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis,
-    SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
+    POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathSegment, PathTrack, PickId, PipelineMode,
+    PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem,
+    SceneEffects, SceneFrame, SceneRenderItem, ScreenImageItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
+    SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
+    StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
     TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
     TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
     VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
@@ -1090,7 +1089,7 @@ impl ViewportRenderer {
             timeout: Some(std::time::Duration::from_secs(5)),
         });
         let out = {
-            let data = slice.get_mapped_range();
+            let data = crate::gpu::mapped_range(slice);
             let st: &crate::resources::gpu::exposure::ExposureState =
                 &bytemuck::cast_slice(&data)[0];
             ExposureReadback {
@@ -2076,7 +2075,7 @@ impl ViewportRenderer {
             timeout: Some(std::time::Duration::from_secs(5)),
         });
         rx.recv().ok()?.ok()?;
-        let data = slice.get_mapped_range();
+        let data = crate::gpu::mapped_range(slice);
         Some(bytemuck::pod_read_unaligned::<[f32; 4]>(&data))
     }
 

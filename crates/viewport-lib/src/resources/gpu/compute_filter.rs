@@ -382,7 +382,7 @@ impl crate::resources::DeviceResources {
             });
 
             let index_count = {
-                let data = slice.get_mapped_range();
+                let data = crate::gpu::mapped_range(slice);
                 u32::from_le_bytes([data[0], data[1], data[2], data[3]])
             };
             staging_buf.unmap();

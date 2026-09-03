@@ -385,12 +385,13 @@ pub(crate) fn repeat_linear_sampler(
 }
 
 /// Wrap a mip filter for the current wgpu version's `SamplerDescriptor`. 27
-/// reuses `FilterMode` for the mip filter; 28 split it into `MipmapFilterMode`.
-#[cfg(feature = "wgpu27")]
+/// reuses `FilterMode` for the mip filter; 28 split it into `MipmapFilterMode`,
+/// which 29 and 30 keep.
+#[cfg(wgpu27)]
 pub fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::FilterMode {
     filter
 }
-#[cfg(feature = "wgpu29")]
+#[cfg(any(wgpu29, wgpu30))]
 pub fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::MipmapFilterMode {
     match filter {
         crate::gpu::FilterMode::Nearest => crate::gpu::MipmapFilterMode::Nearest,
@@ -642,14 +643,15 @@ pub fn pipeline_layout<'a>(
     bind_group_layouts: &[&crate::gpu::BindGroupLayout],
 ) -> crate::gpu::PipelineLayout {
     // 27 takes `push_constant_ranges` and a `&[&BindGroupLayout]`; 29 replaced
-    // push constants with `immediate_size` and takes `&[Option<&BindGroupLayout>]`.
-    #[cfg(feature = "wgpu27")]
+    // push constants with `immediate_size` and takes `&[Option<&BindGroupLayout>]`,
+    // which 30 keeps.
+    #[cfg(wgpu27)]
     let layout = device.create_pipeline_layout(&crate::gpu::PipelineLayoutDescriptor {
         label: label.into(),
         bind_group_layouts,
         push_constant_ranges: &[],
     });
-    #[cfg(feature = "wgpu29")]
+    #[cfg(any(wgpu29, wgpu30))]
     let layout = {
         let bgls: Vec<Option<&crate::gpu::BindGroupLayout>> =
             bind_group_layouts.iter().map(|b| Some(*b)).collect();
@@ -712,10 +714,19 @@ pub fn render_pipeline(
     device: &crate::gpu::Device,
     desc: RenderPipelineDesc,
 ) -> crate::gpu::RenderPipeline {
+    // wgpu 30 changed `VertexState::buffers` to `&[Option<VertexBufferLayout>]`;
+    // 27 and 29 take `&[VertexBufferLayout]`. The wrapped Vec is a local here so
+    // it outlives the `VertexState` it is borrowed into.
+    #[cfg(wgpu30)]
+    let vbufs: Vec<Option<crate::gpu::VertexBufferLayout>> =
+        desc.vertex_buffers.iter().cloned().map(Some).collect();
     let vertex = crate::gpu::VertexState {
         module: desc.vertex_module,
         entry_point: Some(desc.vertex_entry),
+        #[cfg(not(wgpu30))]
         buffers: desc.vertex_buffers,
+        #[cfg(wgpu30)]
+        buffers: &vbufs,
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
     };
     device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
@@ -726,34 +737,34 @@ pub fn render_pipeline(
         primitive: desc.primitive,
         depth_stencil: desc.depth_stencil,
         multisample: desc.multisample,
-        // 29 renamed `multiview` to the `multiview_mask` bitmask form.
-        #[cfg(feature = "wgpu27")]
+        // 29 renamed `multiview` to the `multiview_mask` bitmask form, which 30 keeps.
+        #[cfg(wgpu27)]
         multiview: None,
-        #[cfg(feature = "wgpu29")]
+        #[cfg(any(wgpu29, wgpu30))]
         multiview_mask: None,
         cache: desc.cache,
     })
 }
 
 /// Wrap a depth-write flag for the current wgpu version's `DepthStencilState`.
-/// 27 takes a bare `bool`; 29 takes `Option<bool>`.
-#[cfg(feature = "wgpu27")]
+/// 27 takes a bare `bool`; 29 and 30 take `Option<bool>`.
+#[cfg(wgpu27)]
 pub fn dwrite(enabled: bool) -> bool {
     enabled
 }
-#[cfg(feature = "wgpu29")]
+#[cfg(any(wgpu29, wgpu30))]
 pub fn dwrite(enabled: bool) -> Option<bool> {
     Some(enabled)
 }
 
 /// Wrap a depth-compare function for the current wgpu version's
-/// `DepthStencilState`. 27 takes a bare `CompareFunction`; 29 takes
+/// `DepthStencilState`. 27 takes a bare `CompareFunction`; 29 and 30 take
 /// `Option<CompareFunction>`.
-#[cfg(feature = "wgpu27")]
+#[cfg(wgpu27)]
 pub fn dcompare(compare: crate::gpu::CompareFunction) -> crate::gpu::CompareFunction {
     compare
 }
-#[cfg(feature = "wgpu29")]
+#[cfg(any(wgpu29, wgpu30))]
 pub fn dcompare(compare: crate::gpu::CompareFunction) -> Option<crate::gpu::CompareFunction> {
     Some(compare)
 }
@@ -816,13 +827,20 @@ pub(crate) fn render_bundle_encoder<'a>(
 /// written. This is the one place the crate maps a buffer for writing, so the
 /// mapped-view API change across wgpu versions is audited here.
 pub fn write_mapped(slice: crate::gpu::BufferSlice, bytes: &[u8]) {
-    // 27's mapped view derefs to `[u8]` and is indexed directly; 29's
-    // `BufferViewMut` is write-only and exposes a `slice(..)` -> `WriteOnly`.
-    #[cfg(feature = "wgpu27")]
+    // 27's mapped view derefs to `[u8]` and is indexed directly; 29 and 30's
+    // `BufferViewMut` is write-only and exposes a `slice(..)` -> `WriteOnly`. 30
+    // additionally returns the view as a `Result`.
+    #[cfg(wgpu27)]
     slice.get_mapped_range_mut()[..bytes.len()].copy_from_slice(bytes);
-    #[cfg(feature = "wgpu29")]
+    #[cfg(wgpu29)]
     slice
         .get_mapped_range_mut()
+        .slice(..bytes.len())
+        .copy_from_slice(bytes);
+    #[cfg(wgpu30)]
+    slice
+        .get_mapped_range_mut()
+        .expect("buffer slice was not mapped for writing")
         .slice(..bytes.len())
         .copy_from_slice(bytes);
 }
@@ -870,16 +888,16 @@ pub(crate) fn capture_validation<T>(
     device: &crate::gpu::Device,
     f: impl FnOnce() -> T,
 ) -> (T, Option<crate::gpu::Error>) {
-    // 27 pops the scope through a `Device::pop_error_scope` future; 29's
+    // 27 pops the scope through a `Device::pop_error_scope` future; 29 and 30's
     // `push_error_scope` returns a guard whose `pop()` is the future.
-    #[cfg(feature = "wgpu27")]
+    #[cfg(wgpu27)]
     {
         device.push_error_scope(crate::gpu::ErrorFilter::Validation);
         let value = f();
         let captured = block_on_simple(device.pop_error_scope());
         (value, captured)
     }
-    #[cfg(feature = "wgpu29")]
+    #[cfg(any(wgpu29, wgpu30))]
     {
         let guard = device.push_error_scope(crate::gpu::ErrorFilter::Validation);
         let value = f();

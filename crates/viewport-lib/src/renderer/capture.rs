@@ -766,7 +766,7 @@ impl ViewportRenderer {
 
         let mut out: Vec<f32> = Vec::with_capacity((width * height * 4) as usize);
         {
-            let mapped = staging.slice(..).get_mapped_range();
+            let mapped = crate::gpu::mapped_range(staging.slice(..));
             let data: &[u8] = &mapped;
             for row in 0..height as usize {
                 let start = row * padded_row as usize;
@@ -980,7 +980,7 @@ fn resolve_faces_to_equirect(
     });
     {
         let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(feature = "wgpu29")]
+            #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("capture_resolve_pass"),
             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1021,6 +1021,8 @@ mod tests {
                 power_preference: crate::gpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
             },
         ))
         .ok()?;

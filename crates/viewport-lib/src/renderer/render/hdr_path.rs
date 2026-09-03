@@ -662,7 +662,7 @@ impl ViewportRenderer {
                 }
             });
             let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("hdr_scene_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1534,7 +1534,7 @@ impl ViewportRenderer {
         };
 
         let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(feature = "wgpu29")]
+            #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("external_instances_pass"),
             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1715,7 +1715,7 @@ impl ViewportRenderer {
             if any_depth_write {
                 if let Some(fallback_soft_bg) = fallback_soft_bg {
                     let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("sprite_depth_write_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1805,7 +1805,7 @@ impl ViewportRenderer {
 
                 if let Some(real_soft_bg) = real_soft_bg.as_ref() {
                     let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("sprite_transparent_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -1889,7 +1889,7 @@ impl ViewportRenderer {
             };
 
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("gpu_particle_sprite_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2111,7 +2111,7 @@ impl ViewportRenderer {
 
             if let Some(pipeline) = resources.sprite.refraction_pipeline.as_ref() {
                 let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("sprite_refraction_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2160,7 +2160,7 @@ impl ViewportRenderer {
             ) {
                 let mut resolve_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("ssaa_resolve_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2195,7 +2195,7 @@ impl ViewportRenderer {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
                 let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("decal_exclude_pass"),
                     color_attachments: &[],
@@ -2258,7 +2258,7 @@ impl ViewportRenderer {
                 || additive_pipeline.is_some()
             {
                 let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("decal_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2363,7 +2363,7 @@ impl ViewportRenderer {
         // Mask pass: stamp each selected decal's footprint.
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("decal_outline_mask_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2436,7 +2436,7 @@ impl ViewportRenderer {
         // Edge pass: ring edge-detect blended onto the HDR colour target.
         {
             let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("decal_outline_edge_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2481,7 +2481,7 @@ impl ViewportRenderer {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let camera_bg = &self.viewport_slots[vp_idx].camera_bind_group;
                 let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("sub_highlight_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2602,7 +2602,7 @@ impl ViewportRenderer {
         // Depth attachment read-only (`depth_ops: None`) so `depth_only_view`,
         // a depth-aspect view of the same buffer, can be sampled in the pass.
         let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(feature = "wgpu29")]
+            #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("hdr_depth_read_pass"),
             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -2699,7 +2699,7 @@ impl ViewportRenderer {
                 });
                 // Clear accum to (0,0,0,0), reveal to 1.0 (no contribution yet).
                 let mut oit_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("oit_pass"),
                     color_attachments: &[
@@ -3208,7 +3208,7 @@ impl ViewportRenderer {
                 let hdr_view = &slot_hdr.hdr_view;
                 let mut composite_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("oit_composite_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3430,7 +3430,7 @@ impl ViewportRenderer {
                     {
                         let mut pass =
                             encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                #[cfg(feature = "wgpu29")]
+                                #[cfg(any(wgpu29, wgpu30))]
                                 multiview_mask: None,
                                 label: Some("scatter_refraction_blit_pass"),
                                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3461,7 +3461,7 @@ impl ViewportRenderer {
                     ) {
                         let mut pass =
                             encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                #[cfg(feature = "wgpu29")]
+                                #[cfg(any(wgpu29, wgpu30))]
                                 multiview_mask: None,
                                 label: Some("scatter_refraction_pass"),
                                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3546,7 +3546,7 @@ impl ViewportRenderer {
                     self.resources.scatter.frame_bg.as_ref(),
                 ) {
                     let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("scatter_volume_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3596,7 +3596,7 @@ impl ViewportRenderer {
                     {
                         let mut pass =
                             encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                #[cfg(feature = "wgpu29")]
+                                #[cfg(any(wgpu29, wgpu30))]
                                 multiview_mask: None,
                                 label: Some("scatter_temporal_resolve_pass"),
                                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3627,7 +3627,7 @@ impl ViewportRenderer {
                 if let Some(composite_pipeline) = self.resources.scatter.composite_pipeline.as_ref()
                 {
                     let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("scatter_composite_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3678,7 +3678,7 @@ impl ViewportRenderer {
                 // Pass 1: surface vector pass (clears lic_vector_texture first).
                 {
                     let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("lic_surface_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3721,7 +3721,7 @@ impl ViewportRenderer {
                 // Pass 2: advect pass (fullscreen, writes LIC intensity to lic_output_texture).
                 {
                     let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("lic_advect_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3798,7 +3798,7 @@ impl ViewportRenderer {
                 let hdr_depth_view = &slot_hdr.hdr_depth_view;
                 let mut outline_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("hdr_outline_composite_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3897,7 +3897,7 @@ impl ViewportRenderer {
         });
 
         let mut render_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(feature = "wgpu29")]
+            #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("hdr_foreground_pass"),
             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -3983,7 +3983,7 @@ impl ViewportRenderer {
                     let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, true, !has_blur);
                     let mut ssao_pass =
                         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(feature = "wgpu29")]
+                            #[cfg(any(wgpu29, wgpu30))]
                             multiview_mask: None,
                             label: Some("ssao_pass"),
                             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4009,7 +4009,7 @@ impl ViewportRenderer {
                     let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, false, true);
                     let mut ssao_blur_pass =
                         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(feature = "wgpu29")]
+                            #[cfg(any(wgpu29, wgpu30))]
                             multiview_mask: None,
                             label: Some("ssao_blur_pass"),
                             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4038,7 +4038,7 @@ impl ViewportRenderer {
         if pp.contact_shadows.enabled && !throttle_effects {
             if let Some(cs_pipeline) = &self.resources.post.contact_shadow_pipeline {
                 let mut cs_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("contact_shadow_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4073,7 +4073,7 @@ impl ViewportRenderer {
                     let ts = self.ts_writes_for(crate::renderer::GPU_TS_BLOOM, true, !has_blur);
                     let mut threshold_pass =
                         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(feature = "wgpu29")]
+                            #[cfg(any(wgpu29, wgpu30))]
                             multiview_mask: None,
                             label: Some("bloom_threshold_pass"),
                             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4109,7 +4109,7 @@ impl ViewportRenderer {
                         {
                             let mut h_pass =
                                 encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                    #[cfg(feature = "wgpu29")]
+                                    #[cfg(any(wgpu29, wgpu30))]
                                     multiview_mask: None,
                                     label: Some("bloom_blur_h_pass"),
                                     color_attachments: &[Some(
@@ -4143,7 +4143,7 @@ impl ViewportRenderer {
                                 .flatten();
                             let mut v_pass =
                                 encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                    #[cfg(feature = "wgpu29")]
+                                    #[cfg(any(wgpu29, wgpu30))]
                                     multiview_mask: None,
                                     label: Some("bloom_blur_v_pass"),
                                     color_attachments: &[Some(
@@ -4178,7 +4178,7 @@ impl ViewportRenderer {
         if pp.dof.enabled && !throttle_effects {
             if let Some(dof_pipeline) = &self.resources.post.dof_pipeline {
                 let mut dof_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("dof_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4306,7 +4306,7 @@ impl ViewportRenderer {
                 }
             });
             let mut tone_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("tone_map_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4339,7 +4339,7 @@ impl ViewportRenderer {
                 };
                 let ts = self.ts_writes_for(crate::renderer::GPU_TS_FXAA, true, true);
                 let mut fxaa_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("fxaa_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4371,7 +4371,7 @@ impl ViewportRenderer {
                 if let Some(pipeline) = &self.resources.post.dyn_res_upscale_pipeline {
                     let mut upscale_pass =
                         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(feature = "wgpu29")]
+                            #[cfg(any(wgpu29, wgpu30))]
                             multiview_mask: None,
                             label: Some("hdr_upscale_pass"),
                             color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4405,7 +4405,7 @@ impl ViewportRenderer {
                 if let Some(blit_pipeline) = &self.resources.post.depth_blit_pipeline {
                     let mut blit_pass =
                         encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(feature = "wgpu29")]
+                            #[cfg(any(wgpu29, wgpu30))]
                             multiview_mask: None,
                             label: Some("depth_blit_pass"),
                             color_attachments: &[],
@@ -4453,7 +4453,7 @@ impl ViewportRenderer {
                         }],
                     });
                 let mut stamp_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("foreground_depth_stamp_pass"),
                     color_attachments: &[],
@@ -4488,7 +4488,7 @@ impl ViewportRenderer {
             let slot_hdr = slot.hdr.as_ref().unwrap();
             let grid_bg = &slot.grid_bind_group;
             let mut grid_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("hdr_grid_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4525,7 +4525,7 @@ impl ViewportRenderer {
             let slot = &self.viewport_slots[vp_idx];
             let slot_hdr = slot.hdr.as_ref().unwrap();
             let mut gp_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("hdr_ground_plane_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4565,7 +4565,7 @@ impl ViewportRenderer {
                 let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
                 let dc_pipeline = self.resources.screen_image.dc_pipeline.as_ref();
                 let mut img_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(feature = "wgpu29")]
+                    #[cfg(any(wgpu29, wgpu30))]
                     multiview_mask: None,
                     label: Some("screen_image_pass"),
                     color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4613,7 +4613,7 @@ impl ViewportRenderer {
                 let camera_bg = &slot.camera_bind_group;
                 let mut overlay_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                        #[cfg(feature = "wgpu29")]
+                        #[cfg(any(wgpu29, wgpu30))]
                         multiview_mask: None,
                         label: Some("hdr_editor_overlay_pass"),
                         color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
@@ -4724,7 +4724,7 @@ impl ViewportRenderer {
                 .unwrap()
                 .output_depth_view;
             let mut overlay_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(feature = "wgpu29")]
+                #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
                 label: Some("overlay_pass"),
                 color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {

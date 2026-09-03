@@ -14,6 +14,8 @@ pub(crate) fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue
             power_preference: crate::gpu::PowerPreference::LowPower,
             compatible_surface: None,
             force_fallback_adapter: false,
+            #[cfg(wgpu30)]
+            apply_limit_buckets: false,
         },
     ))
     .ok()?;

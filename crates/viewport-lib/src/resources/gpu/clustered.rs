@@ -445,7 +445,7 @@ impl ClusteredResources {
         });
 
         let stats = {
-            let data = slice.get_mapped_range();
+            let data = crate::gpu::mapped_range(slice);
             let cells: &[ClusterCell] = bytemuck::cast_slice(&data);
             compute_stats(cells, active_light_count, fallback_active)
         };

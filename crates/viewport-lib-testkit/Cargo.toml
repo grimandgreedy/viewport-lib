@@ -61,6 +61,7 @@ counters = []
 # via Cargo feature unification.
 wgpu27 = ["viewport-lib/wgpu27"]
 wgpu29 = ["viewport-lib/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30"]
 # Load real models (Suzanne, Stanford bunny, CAD parts) through viewport-lib-io.
 # Off by default so the base build needs no external model files. Implies
 # `scenes` because the loaders build catalogue scenes.

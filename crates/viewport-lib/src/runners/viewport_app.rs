@@ -694,7 +694,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                     .create_view(&crate::gpu::TextureViewDescriptor::default());
                 let cmd = state.session.render(&state.device, &state.queue, &view);
                 state.queue.submit(std::iter::once(cmd));
-                frame.present();
+                crate::gpu::present(&state.queue, frame);
 
                 if request_exit {
                     event_loop.exit();
@@ -779,6 +779,8 @@ mod tests {
                 power_preference: crate::gpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
             },
         ))
         .ok()?;

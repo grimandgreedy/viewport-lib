@@ -29,6 +29,7 @@ cfg_aliases = "0.2"
 # types match across the boundary.
 wgpu = { version = "27.0", features = ["metal", "vulkan"], optional = true }
 wgpu29 = { package = "wgpu", version = "29.0", features = ["metal", "vulkan"], optional = true }
+wgpu30 = { package = "wgpu", version = "30.0", features = ["metal", "vulkan"], optional = true }
 glam = { workspace = true }
 viewport-lib-types = { path = "../viewport-lib-types", version = "0.1.0" }
 viewport-lib-geometry = { path = "../viewport-lib-geometry", version = "0.1.0" }
@@ -69,6 +70,10 @@ eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "d
 # the wgpu29 example can pair egui 0.35 with viewport-lib's 29 leg without
 # moving the other eframe examples (still on 0.33 / the 27 leg).
 eframe035 = { package = "eframe", version = "0.35", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
+# eframe / egui 0.36 pairs with wgpu 30. Kept as a renamed dep alongside the 0.33
+# and 0.35 aliases so the wgpu30 example can pair egui 0.36 with viewport-lib's 30
+# leg without moving the other eframe examples.
+eframe036 = { package = "eframe", version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
 # Slint pairs with wgpu 29 through its unstable-wgpu-29 feature (tilde
 # requirement per Slint's own guidance: the feature is re-issued per wgpu
 # major).
@@ -113,6 +118,7 @@ serde = ["dep:serde", "glam/serde", "bitflags/serde"]
 # 29 crate.
 wgpu27 = ["dep:wgpu"]
 wgpu29 = ["dep:wgpu29"]
+wgpu30 = ["dep:wgpu30"]
 # Offscreen path tracer (src/raytrace/). Off by default, so the default build
 # is unchanged for non-users. Compute only, no hardware ray query; reuses the
 # shared helpers/brdf.wgsl.
@@ -143,6 +149,7 @@ egui-adapter = ["dep:egui", "viewport-lib-input/egui-adapter"]
 # consumers.
 example-egui = ["dep:eframe"]
 example-egui-wgpu29 = ["dep:eframe035"]
+example-egui-wgpu30 = ["dep:eframe036"]
 example-iced = ["dep:iced"]
 example-slint = ["dep:slint"]
 example-bevy = ["dep:bevy"]
@@ -220,6 +227,11 @@ required-features = ["wgpu27", "example-egui", "egui-adapter", "raytrace", "bake
 name = "eframe-minimal-wgpu29"
 path = "examples/eframe_minimal_wgpu29/main.rs"
 required-features = ["wgpu29", "example-egui-wgpu29"]
+
+[[example]]
+name = "eframe-minimal-wgpu30"
+path = "examples/eframe_minimal_wgpu30/main.rs"
+required-features = ["wgpu30", "example-egui-wgpu30"]
 
 [[example]]
 name = "app-minimal-wgpu29"

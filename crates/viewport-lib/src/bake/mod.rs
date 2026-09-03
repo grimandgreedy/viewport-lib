@@ -245,7 +245,7 @@ pub fn rasterize_texel_gbuffer(
             store: crate::gpu::StoreOp::Store,
         };
         let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(feature = "wgpu29")]
+            #[cfg(any(wgpu29, wgpu30))]
             multiview_mask: None,
             label: Some("texel_gbuffer_pass"),
             color_attachments: &[
@@ -348,7 +348,7 @@ fn readback_rgba32f(
 
     let mut out: Vec<[f32; 4]> = Vec::with_capacity((width * height) as usize);
     {
-        let mapped = staging.slice(..).get_mapped_range();
+        let mapped = crate::gpu::mapped_range(staging.slice(..));
         let data: &[u8] = &mapped;
         for row in 0..height as usize {
             let start = row * padded_row as usize;

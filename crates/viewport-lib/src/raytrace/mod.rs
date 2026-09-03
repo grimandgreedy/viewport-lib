@@ -1540,7 +1540,7 @@ impl Tracer {
             timeout: Some(std::time::Duration::from_secs(30)),
         });
         let rgba: Vec<f32> = {
-            let data = slice.get_mapped_range();
+            let data = crate::gpu::mapped_range(slice);
             bytemuck::cast_slice::<u8, f32>(&data).to_vec()
         };
         s.staging_buf.unmap();
@@ -1955,7 +1955,7 @@ fn readback_f32(
         timeout: Some(std::time::Duration::from_secs(60)),
     });
     let out: Vec<f32> = {
-        let data = slice.get_mapped_range();
+        let data = crate::gpu::mapped_range(slice);
         bytemuck::cast_slice::<u8, f32>(&data).to_vec()
     };
     staging.unmap();

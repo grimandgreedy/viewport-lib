@@ -1100,6 +1100,8 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
                 power_preference: crate::gpu::PowerPreference::default(),
                 force_fallback_adapter: false,
                 compatible_surface: None,
+                #[cfg(wgpu30)]
+                apply_limit_buckets: false,
             },
         ))
         .ok()?;
