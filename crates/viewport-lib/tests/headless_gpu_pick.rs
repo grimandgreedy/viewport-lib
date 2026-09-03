@@ -1537,12 +1537,9 @@ impl ItemTypePlugin for MockPickPlugin {
             viewport_lib::wgpu::RenderPipelineDesc {
                 label: "mock_pick_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs",
+                vertex_buffers: &[],
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("viewport_pick_fs"),
@@ -1809,12 +1806,9 @@ impl ItemTypePlugin for SubPickPlugin {
             viewport_lib::wgpu::RenderPipelineDesc {
                 label: "sub_pick_pipeline",
                 layout: &layout,
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs",
+                vertex_buffers: &[],
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("viewport_pick_prim_fs"),

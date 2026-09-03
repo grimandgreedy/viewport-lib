@@ -824,7 +824,7 @@ fn viewport_pick_fs(
 /// constant at the very top of the shader source (before any declaration, so
 /// ahead of the vertex stage too) and it resolves to the right text for the
 /// active leg.
-#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+#[cfg(wgpu27)]
 pub const PICK_PRIM_ENABLE_WGSL: &str = "";
 /// Module directive required by [`SHARED_PICK_PRIM_WGSL`], per wgpu leg.
 ///
@@ -833,7 +833,7 @@ pub const PICK_PRIM_ENABLE_WGSL: &str = "";
 /// constant at the very top of the shader source (before any declaration, so
 /// ahead of the vertex stage too) and it resolves to the right text for the
 /// active leg.
-#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+#[cfg(wgpu29)]
 pub const PICK_PRIM_ENABLE_WGSL: &str = "enable primitive_index;\n";
 
 /// Fragment helper for the pick-id pass that reports the hit triangle.

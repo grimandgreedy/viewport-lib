@@ -498,16 +498,13 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(caps.formats[0]);
-        let surface_config = crate::gpu::SurfaceConfiguration {
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+        let surface_config = crate::gpu::runner_surface_config(
             format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: self.config.present_mode,
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
+            size.width.max(1),
+            size.height.max(1),
+            self.config.present_mode,
+            caps.alpha_modes[0],
+        );
         surface.configure(&device, &surface_config);
 
         let mut session = ViewportInstance::new(&device, format);

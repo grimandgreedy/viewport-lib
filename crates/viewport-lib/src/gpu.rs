@@ -14,16 +14,16 @@ compile_error!(
 );
 
 // The 27 crate keeps its real name `wgpu`; only 29 is aliased.
-#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+#[cfg(wgpu27)]
 pub use wgpu::*;
-#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+#[cfg(wgpu29)]
 pub use wgpu29::*;
 
 // The globs above do not bring in macros, so re-export by name the wgpu macros
 // the crate uses.
-#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+#[cfg(wgpu27)]
 pub use wgpu::vertex_attr_array;
-#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+#[cfg(wgpu29)]
 pub use wgpu29::vertex_attr_array;
 
 /// Construct a wgpu `Instance` with default options. This papers over the
@@ -31,13 +31,13 @@ pub use wgpu29::vertex_attr_array;
 /// derives `Default`, while 29 gained a display-handle field and constructs
 /// through `new_without_display_handle`. Used for headless setup and by the
 /// test harness (in this crate and the testkit).
-#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+#[cfg(wgpu27)]
 #[doc(hidden)]
 pub fn default_instance() -> Instance {
     Instance::new(&InstanceDescriptor::default())
 }
 // 29 also takes the descriptor by value rather than by reference.
-#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+#[cfg(wgpu29)]
 #[doc(hidden)]
 pub fn default_instance() -> Instance {
     Instance::new(InstanceDescriptor::new_without_display_handle())
@@ -60,7 +60,7 @@ pub enum SurfaceFrame {
 
 /// Acquire the next surface texture, mapping each wgpu leg's result to
 /// [`SurfaceFrame`]. Non-recoverable errors are logged here.
-#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+#[cfg(wgpu27)]
 pub fn acquire_surface(surface: &Surface<'_>) -> SurfaceFrame {
     match surface.get_current_texture() {
         Ok(texture) => SurfaceFrame::Acquired(texture),
@@ -74,7 +74,7 @@ pub fn acquire_surface(surface: &Surface<'_>) -> SurfaceFrame {
 
 /// See the wgpu 27 sibling: on wgpu 29 `get_current_texture` returns a
 /// `CurrentSurfaceTexture` enum rather than a `Result`.
-#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+#[cfg(wgpu29)]
 pub fn acquire_surface(surface: &Surface<'_>) -> SurfaceFrame {
     match surface.get_current_texture() {
         CurrentSurfaceTexture::Success(texture) | CurrentSurfaceTexture::Suboptimal(texture) => {
@@ -86,14 +86,39 @@ pub fn acquire_surface(surface: &Surface<'_>) -> SurfaceFrame {
     }
 }
 
+/// Build the swapchain [`SurfaceConfiguration`] the built-in winit runners use:
+/// a render-attachment surface with empty view formats and a frame latency of 2.
+/// The runners share this so the `SurfaceConfiguration` is constructed in one
+/// place; a wgpu upgrade that adds a field (wgpu 30 adds a required colour space)
+/// is then absorbed here rather than at each runner.
+#[cfg(any(feature = "wgpu27", feature = "wgpu29"))]
+pub fn runner_surface_config(
+    format: TextureFormat,
+    width: u32,
+    height: u32,
+    present_mode: PresentMode,
+    alpha_mode: CompositeAlphaMode,
+) -> SurfaceConfiguration {
+    SurfaceConfiguration {
+        usage: TextureUsages::RENDER_ATTACHMENT,
+        format,
+        width,
+        height,
+        present_mode,
+        alpha_mode,
+        view_formats: vec![],
+        desired_maximum_frame_latency: 2,
+    }
+}
+
 /// The device feature that enables `@builtin(primitive_index)` in fragment
 /// shaders, named per wgpu leg: `SHADER_PRIMITIVE_INDEX` on wgpu 27,
 /// `PRIMITIVE_INDEX` on wgpu 29. Used by the GPU pick pass to resolve the hit
 /// triangle for sub-object picking.
-#[cfg(all(feature = "wgpu27", not(feature = "wgpu29")))]
+#[cfg(wgpu27)]
 #[doc(hidden)]
 pub const PRIMITIVE_INDEX_FEATURE: Features = Features::SHADER_PRIMITIVE_INDEX;
-#[cfg(all(feature = "wgpu29", not(feature = "wgpu27")))]
+#[cfg(wgpu29)]
 #[doc(hidden)]
 pub const PRIMITIVE_INDEX_FEATURE: Features = Features::PRIMITIVE_INDEX;
 

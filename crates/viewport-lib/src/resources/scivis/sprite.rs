@@ -303,12 +303,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "sprite_refraction_pipeline",
                 layout: &refraction_layout,
-                vertex: crate::gpu::VertexState {
-                    module: &refraction_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &vertex_buffers,
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &refraction_shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &vertex_buffers,
                 fragment: Some(crate::gpu::FragmentState {
                     module: &refraction_shader,
                     entry_point: Some("fs_main"),

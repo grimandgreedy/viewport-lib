@@ -104,12 +104,9 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_text_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[OverlayTextVertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[OverlayTextVertex::buffer_layout()],
                 primitive: crate::gpu::PrimitiveState {
                     topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()

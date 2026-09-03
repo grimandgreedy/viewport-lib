@@ -14,6 +14,12 @@ rust-version = "1.85"
 publish = true
 exclude = ["examples/"]
 
+[build-dependencies]
+# Defines the `wgpu27` / `wgpu29` cfg aliases (see build.rs) so the version-seam
+# modules can write `#[cfg(wgpu27)]` for "the 27 leg, and only the 27 leg" rather
+# than spelling the exclusive `all(feature = "wgpu27", not(feature = "wgpu29"))`.
+cfg_aliases = "0.2"
+
 [dependencies]
 # Exactly one wgpu version is compiled, picked by the mutually exclusive
 # `wgpu27` / `wgpu29` features (see `src/gpu.rs`). The primary (27) version keeps

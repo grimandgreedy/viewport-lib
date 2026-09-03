@@ -164,12 +164,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "outline_composite_pipeline_single",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -210,12 +207,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "outline_composite_pipeline_msaa",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -1063,12 +1057,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "hdr_overlay_pipeline",
                 layout: &hdr_overlay_layout,
-                vertex: crate::gpu::VertexState {
-                    module: &hdr_overlay_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[OverlayVertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &hdr_overlay_shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[OverlayVertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &hdr_overlay_shader,
                     entry_point: Some("fs_main"),
@@ -1130,12 +1121,9 @@ impl DeviceResources {
                     crate::resources::builders::RenderPipelineDesc {
                         label,
                         layout: &outline_comp_layout,
-                        vertex: crate::gpu::VertexState {
-                            module: &outline_comp_shader,
-                            entry_point: Some("vs_main"),
-                            buffers: &[],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        },
+                        vertex_module: &outline_comp_shader,
+                        vertex_entry: "vs_main",
+                        vertex_buffers: &[],
                         fragment: Some(crate::gpu::FragmentState {
                             module: &outline_comp_shader,
                             entry_point: Some("fs_main"),
@@ -1443,12 +1431,9 @@ impl DeviceResources {
                     crate::resources::builders::RenderPipelineDesc {
                         label: "lic_surface_pipeline",
                         layout: &layout,
-                        vertex: crate::gpu::VertexState {
-                            module: &shader,
-                            entry_point: Some("vs_main"),
-                            buffers: &[lic_vertex_layout, lic_flow_layout],
-                            compilation_options: Default::default(),
-                        },
+                        vertex_module: &shader,
+                        vertex_entry: "vs_main",
+                        vertex_buffers: &[lic_vertex_layout, lic_flow_layout],
                         fragment: Some(crate::gpu::FragmentState {
                             module: &shader,
                             entry_point: Some("fs_main"),
@@ -1527,12 +1512,9 @@ impl DeviceResources {
                 crate::resources::builders::RenderPipelineDesc {
                     label: "depth_blit_pipeline",
                     layout: &layout,
-                    vertex: crate::gpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
+                    vertex_module: &shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[],
                     fragment: Some(crate::gpu::FragmentState {
                         module: &shader,
                         entry_point: Some("fs_main"),
@@ -1587,12 +1569,9 @@ impl DeviceResources {
                 crate::resources::builders::RenderPipelineDesc {
                     label: "foreground_stamp_pipeline",
                     layout: &layout,
-                    vertex: crate::gpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
+                    vertex_module: &shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[],
                     fragment: Some(crate::gpu::FragmentState {
                         module: &shader,
                         entry_point: Some("fs_main"),

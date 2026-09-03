@@ -282,12 +282,9 @@ impl DeviceResources {
                     crate::resources::builders::RenderPipelineDesc {
                         label,
                         layout: &shadow_instanced_layout,
-                        vertex: crate::gpu::VertexState {
-                            module: &shadow_instanced_shader,
-                            entry_point: Some("vs_main"),
-                            buffers: &[Vertex::buffer_layout()],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        },
+                        vertex_module: &shadow_instanced_shader,
+                        vertex_entry: "vs_main",
+                        vertex_buffers: &[Vertex::buffer_layout()],
                         fragment: None,
                         primitive: crate::gpu::PrimitiveState {
                             topology: crate::gpu::PrimitiveTopology::TriangleList,
@@ -330,12 +327,9 @@ impl DeviceResources {
                     crate::resources::builders::RenderPipelineDesc {
                         label,
                         layout: &shadow_instanced_layout,
-                        vertex: crate::gpu::VertexState {
-                            module: &shadow_instanced_shader,
-                            entry_point: Some("vs_cutout"),
-                            buffers: &[Vertex::buffer_layout()],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        },
+                        vertex_module: &shadow_instanced_shader,
+                        vertex_entry: "vs_cutout",
+                        vertex_buffers: &[Vertex::buffer_layout()],
                         fragment: Some(crate::gpu::FragmentState {
                             module: &shadow_instanced_shader,
                             entry_point: Some("fs_cutout"),
@@ -845,12 +839,9 @@ impl DeviceResources {
                     crate::resources::builders::RenderPipelineDesc {
                         label,
                         layout: &shadow_cull_layout,
-                        vertex: crate::gpu::VertexState {
-                            module: &shadow_cull_shader,
-                            entry_point: Some("vs_shadow_cull"),
-                            buffers: &[Vertex::buffer_layout()],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        },
+                        vertex_module: &shadow_cull_shader,
+                        vertex_entry: "vs_shadow_cull",
+                        vertex_buffers: &[Vertex::buffer_layout()],
                         fragment: None,
                         primitive: crate::gpu::PrimitiveState {
                             topology: crate::gpu::PrimitiveTopology::TriangleList,
@@ -900,12 +891,9 @@ impl DeviceResources {
                     crate::resources::builders::RenderPipelineDesc {
                         label,
                         layout: &shadow_cutout_cull_layout,
-                        vertex: crate::gpu::VertexState {
-                            module: &shadow_cull_shader,
-                            entry_point: Some("vs_cutout_cull"),
-                            buffers: &[Vertex::buffer_layout()],
-                            compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        },
+                        vertex_module: &shadow_cull_shader,
+                        vertex_entry: "vs_cutout_cull",
+                        vertex_buffers: &[Vertex::buffer_layout()],
                         fragment: Some(crate::gpu::FragmentState {
                             module: &shadow_cull_shader,
                             entry_point: Some("fs_cutout"),

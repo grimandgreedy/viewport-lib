@@ -36,12 +36,9 @@ pub(crate) fn build_ldr_mesh_pipelines(
             crate::resources::builders::RenderPipelineDesc {
                 label,
                 layout,
-                vertex: crate::gpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: shader,
                     entry_point: Some("fs_main"),
@@ -142,12 +139,9 @@ pub(crate) fn build_hdr_mesh_pipelines(
             crate::resources::builders::RenderPipelineDesc {
                 label,
                 layout,
-                vertex: crate::gpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: shader,
                     entry_point: Some("fs_main"),
@@ -248,12 +242,9 @@ pub(crate) fn build_oit_pipeline(
         crate::resources::builders::RenderPipelineDesc {
             label: "oit_pipeline",
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[Vertex::buffer_layout()],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_oit_main"),
@@ -366,12 +357,9 @@ pub(crate) fn build_shadow_pipeline(
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[Vertex::buffer_layout()],
             fragment: None,
             primitive: crate::gpu::PrimitiveState {
                 topology: crate::gpu::PrimitiveTopology::TriangleList,
@@ -426,12 +414,9 @@ pub(crate) fn build_shadow_point_pipeline(
         crate::resources::builders::RenderPipelineDesc {
             label: "shadow_point_pipeline",
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[Vertex::buffer_layout()],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
@@ -487,12 +472,9 @@ pub(crate) fn build_outline_mask_pipelines(
             crate::resources::builders::RenderPipelineDesc {
                 label,
                 layout,
-                vertex: crate::gpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: shader,
                     entry_point: Some("fs_main"),
@@ -554,12 +536,9 @@ pub(crate) fn build_ldr_instanced_mesh_pipelines(
             crate::resources::builders::RenderPipelineDesc {
                 label,
                 layout,
-                vertex: crate::gpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: shader,
                     entry_point: Some("fs_main"),
@@ -654,12 +633,9 @@ pub(crate) fn build_hdr_instanced_mesh_pipelines(
             crate::resources::builders::RenderPipelineDesc {
                 label,
                 layout,
-                vertex: crate::gpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: shader,
                     entry_point: Some("fs_main"),
@@ -736,12 +712,9 @@ pub(crate) fn build_instanced_solid_pipelines(
             crate::resources::builders::RenderPipelineDesc {
                 label,
                 layout,
-                vertex: crate::gpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: shader,
                     entry_point: Some("fs_main"),
@@ -820,12 +793,9 @@ pub(crate) fn build_hdr_instanced_cull_pipeline_with(
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main_cull"),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: "vs_main_cull",
+            vertex_buffers: &[Vertex::buffer_layout()],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
@@ -893,12 +863,9 @@ pub(crate) fn build_oit_instanced_pipeline(
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some(vs_entry),
-                buffers: &[Vertex::buffer_layout()],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: vs_entry,
+            vertex_buffers: &[Vertex::buffer_layout()],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_oit_main"),

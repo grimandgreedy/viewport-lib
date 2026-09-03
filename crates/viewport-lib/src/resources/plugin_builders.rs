@@ -239,12 +239,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: opts.label.unwrap_or_default(),
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: opts.shader,
-                    entry_point: Some(opts.vs_entry),
-                    buffers: opts.vertex_layouts,
-                    compilation_options: Default::default(),
-                },
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
@@ -289,12 +286,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: opts.label.unwrap_or_default(),
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: opts.shader,
-                    entry_point: Some(opts.vs_entry),
-                    buffers: opts.vertex_layouts,
-                    compilation_options: Default::default(),
-                },
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
@@ -337,12 +331,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: opts.label.unwrap_or_default(),
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: opts.shader,
-                    entry_point: Some(opts.vs_entry),
-                    buffers: opts.vertex_layouts,
-                    compilation_options: Default::default(),
-                },
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
@@ -402,12 +393,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: opts.label.unwrap_or_default(),
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: opts.shader,
-                    entry_point: Some(opts.vs_entry),
-                    buffers: opts.vertex_layouts,
-                    compilation_options: Default::default(),
-                },
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
@@ -450,12 +438,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: opts.label.unwrap_or_default(),
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: opts.shader,
-                    entry_point: Some(opts.vs_entry),
-                    buffers: opts.vertex_layouts,
-                    compilation_options: Default::default(),
-                },
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
@@ -512,12 +497,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: opts.label.unwrap_or_default(),
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: opts.shader,
-                    entry_point: Some(opts.vs_entry),
-                    buffers: opts.vertex_layouts,
-                    compilation_options: Default::default(),
-                },
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
                 fragment: Some(crate::gpu::FragmentState {
                     module: opts.shader,
                     entry_point: Some(opts.fs_entry),
@@ -571,12 +553,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: opts.label.unwrap_or_default(),
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: opts.shader,
-                    entry_point: Some(opts.vs_entry),
-                    buffers: opts.vertex_layouts,
-                    compilation_options: Default::default(),
-                },
+                vertex_module: opts.shader,
+                vertex_entry: opts.vs_entry,
+                vertex_buffers: opts.vertex_layouts,
                 fragment,
                 primitive: opts.primitive,
                 depth_stencil: Some(crate::gpu::DepthStencilState {

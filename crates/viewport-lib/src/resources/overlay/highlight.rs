@@ -73,16 +73,13 @@ impl DeviceResources {
                 crate::resources::builders::RenderPipelineDesc {
                     label,
                     layout: &layout,
-                    vertex: crate::gpu::VertexState {
-                        module: &fill_shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        buffers: &[crate::gpu::VertexBufferLayout {
-                            array_stride: 12,
-                            step_mode: crate::gpu::VertexStepMode::Vertex,
-                            attributes: &crate::gpu::vertex_attr_array![0 => Float32x3],
-                        }],
-                    },
+                    vertex_module: &fill_shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[crate::gpu::VertexBufferLayout {
+                        array_stride: 12,
+                        step_mode: crate::gpu::VertexStepMode::Vertex,
+                        attributes: &crate::gpu::vertex_attr_array![0 => Float32x3],
+                    }],
                     fragment: Some(crate::gpu::FragmentState {
                         module: &fill_shader,
                         entry_point: Some("fs_main"),
@@ -125,16 +122,13 @@ impl DeviceResources {
                 crate::resources::builders::RenderPipelineDesc {
                     label,
                     layout: &layout,
-                    vertex: crate::gpu::VertexState {
-                        module: &edge_shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        buffers: &[crate::gpu::VertexBufferLayout {
-                            array_stride: 24,
-                            step_mode: crate::gpu::VertexStepMode::Instance,
-                            attributes: &crate::gpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                        }],
-                    },
+                    vertex_module: &edge_shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[crate::gpu::VertexBufferLayout {
+                        array_stride: 24,
+                        step_mode: crate::gpu::VertexStepMode::Instance,
+                        attributes: &crate::gpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    }],
                     fragment: Some(crate::gpu::FragmentState {
                         module: &edge_shader,
                         entry_point: Some("fs_main"),
@@ -171,16 +165,13 @@ impl DeviceResources {
                 crate::resources::builders::RenderPipelineDesc {
                     label,
                     layout: &layout,
-                    vertex: crate::gpu::VertexState {
-                        module: &sprite_shader,
-                        entry_point: Some("vs_main"),
-                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                        buffers: &[crate::gpu::VertexBufferLayout {
-                            array_stride: 12,
-                            step_mode: crate::gpu::VertexStepMode::Instance,
-                            attributes: &crate::gpu::vertex_attr_array![0 => Float32x3],
-                        }],
-                    },
+                    vertex_module: &sprite_shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[crate::gpu::VertexBufferLayout {
+                        array_stride: 12,
+                        step_mode: crate::gpu::VertexStepMode::Instance,
+                        attributes: &crate::gpu::vertex_attr_array![0 => Float32x3],
+                    }],
                     fragment: Some(crate::gpu::FragmentState {
                         module: &sprite_shader,
                         entry_point: Some("fs_main"),

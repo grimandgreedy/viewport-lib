@@ -120,12 +120,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[pick_vertex_layout],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[pick_vertex_layout],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -243,12 +240,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "pick_vertex_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[pick_vertex_layout],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[pick_vertex_layout],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -347,12 +341,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "pick_edge_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[pick_vertex_layout],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[pick_vertex_layout],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -462,12 +453,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "pick_node_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[pick_vertex_layout],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[pick_vertex_layout],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -684,12 +672,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "sprite_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &vertex_buffers,
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &vertex_buffers,
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -818,12 +803,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "polyline_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &vertex_buffers,
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &vertex_buffers,
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -929,12 +911,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "volume_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[vert_layout],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[vert_layout],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_pick"),
@@ -1033,12 +1012,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "implicit_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_pick"),
@@ -1140,12 +1116,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "mc_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[vert_layout],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[vert_layout],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -1258,12 +1231,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "point_cloud_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &vertex_buffers,
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &vertex_buffers,
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -1365,12 +1335,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "gaussian_splat_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -1469,12 +1436,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "image_slice_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -1576,12 +1540,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "volume_surface_slice_pick_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[Vertex::buffer_layout()],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
@@ -1644,12 +1605,9 @@ fn build_glyph_pick_pipeline(
         crate::resources::builders::RenderPipelineDesc {
             label,
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[vertex_layout],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[vertex_layout],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),

@@ -3,6 +3,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    // Exclusive selectors for the wgpu version legs, so the seam modules read
+    // `#[cfg(wgpu27)]` ("27 and only 27") instead of the verbose
+    // `all(feature = "wgpu27", not(feature = "wgpu29"))`. A new leg adds a
+    // `not(feature = "...")` term to each existing alias plus its own alias, and
+    // every `#[cfg(wgpuNN)]` site stays correct without edits.
+    cfg_aliases::cfg_aliases! {
+        wgpu27: { all(feature = "wgpu27", not(feature = "wgpu29")) },
+        wgpu29: { all(feature = "wgpu29", not(feature = "wgpu27")) },
+    }
+
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let shaders_dir = PathBuf::from(&manifest_dir).join("src/shaders");

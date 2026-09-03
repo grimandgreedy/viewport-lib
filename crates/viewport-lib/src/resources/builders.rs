@@ -481,12 +481,9 @@ pub(crate) fn build_dual_pipeline(
             RenderPipelineDesc {
                 label: desc.label,
                 layout: desc.layout,
-                vertex: crate::gpu::VertexState {
-                    module: desc.shader,
-                    entry_point: Some(desc.vertex_entry),
-                    buffers: desc.vertex_buffers,
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: desc.shader,
+                vertex_entry: desc.vertex_entry,
+                vertex_buffers: desc.vertex_buffers,
                 fragment: Some(crate::gpu::FragmentState {
                     module: desc.shader,
                     entry_point: Some(desc.fragment_entry),
@@ -537,12 +534,9 @@ pub(crate) fn build_fullscreen_pipeline(
         RenderPipelineDesc {
             label,
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: &[],
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
@@ -592,12 +586,9 @@ pub(crate) fn build_outline_mask_pipeline(
         RenderPipelineDesc {
             label,
             layout,
-            vertex: crate::gpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: vertex_buffers,
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            },
+            vertex_module: shader,
+            vertex_entry: "vs_main",
+            vertex_buffers: vertex_buffers,
             fragment: Some(crate::gpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
@@ -682,17 +673,23 @@ pub(crate) fn standard_scene_layout(
     pipeline_layout(device, label, &[camera_bgl, per_item_bgl])
 }
 
-/// The parts of a render pipeline that vary between call sites. The two fields
-/// that churn across wgpu versions (`multiview`, always `None`; `cache`, passed
-/// through) are filled by [`render_pipeline`], so a version bump only touches
-/// that one function instead of every descriptor literal.
+/// The parts of a render pipeline that vary between call sites. The vertex
+/// stage is given as its inputs (module, entry point, buffer layouts) rather
+/// than a built `VertexState`, so [`render_pipeline`] can construct the
+/// `VertexState` itself: that keeps the `buffers` field, whose shape churns
+/// across wgpu versions, behind the one function. The `multiview` and `cache`
+/// fields are likewise filled by [`render_pipeline`].
 pub struct RenderPipelineDesc<'a> {
     /// Debug label for the pipeline.
     pub label: &'a str,
     /// Pipeline layout (bind group layouts). See [`pipeline_layout`].
     pub layout: &'a crate::gpu::PipelineLayout,
-    /// Vertex stage: shader module, entry point, and vertex buffer layouts.
-    pub vertex: crate::gpu::VertexState<'a>,
+    /// Vertex shader module.
+    pub vertex_module: &'a crate::gpu::ShaderModule,
+    /// Vertex shader entry point.
+    pub vertex_entry: &'a str,
+    /// Vertex buffer layouts (empty when the shader generates its vertices).
+    pub vertex_buffers: &'a [crate::gpu::VertexBufferLayout<'a>],
     /// Fragment stage and its color targets, or `None` for a depth-only pass.
     pub fragment: Option<crate::gpu::FragmentState<'a>>,
     /// Primitive topology, cull mode, and front face.
@@ -707,17 +704,24 @@ pub struct RenderPipelineDesc<'a> {
 }
 
 /// Create a render pipeline from the parts that vary ([`RenderPipelineDesc`]),
-/// filling `multiview: None`. This is the one place the crate calls
-/// `create_render_pipeline`, so the `multiview` field that changes shape across
-/// wgpu versions only has to be audited here.
+/// building the `VertexState` and filling `multiview: None`. This is the one
+/// place the crate calls `create_render_pipeline` and the one place a
+/// `VertexState` is constructed, so the `buffers` and `multiview` fields that
+/// change shape across wgpu versions only have to be audited here.
 pub fn render_pipeline(
     device: &crate::gpu::Device,
     desc: RenderPipelineDesc,
 ) -> crate::gpu::RenderPipeline {
+    let vertex = crate::gpu::VertexState {
+        module: desc.vertex_module,
+        entry_point: Some(desc.vertex_entry),
+        buffers: desc.vertex_buffers,
+        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+    };
     device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
         label: Some(desc.label),
         layout: Some(desc.layout),
-        vertex: desc.vertex,
+        vertex,
         fragment: desc.fragment,
         primitive: desc.primitive,
         depth_stencil: desc.depth_stencil,

@@ -624,7 +624,13 @@ impl ViewportAppV2 {
         input: impl FnMut(&mut InputCtxV2) + 'static,
         callback: impl FnMut(&mut FrameCtxV2) + 'static,
     ) -> Self {
-        self.push_window(config, factory, Some(Box::new(input)), Box::new(callback), None)
+        self.push_window(
+            config,
+            factory,
+            Some(Box::new(input)),
+            Box::new(callback),
+            None,
+        )
     }
 
     /// Like [`window`](Self::window), but installs a per-window paint hook that runs
@@ -736,7 +742,12 @@ impl AppHandlerV2 {
     /// Create one window from its builder under a pre-assigned id, configure its
     /// surface against the shared device (bringing the device up on the first
     /// window), build its instance, and insert it into the window set.
-    fn create_window(&mut self, event_loop: &ActiveEventLoop, id: WindowId, builder: WindowBuilder) {
+    fn create_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        builder: WindowBuilder,
+    ) {
         let WindowBuilder {
             config,
             factory,
@@ -750,7 +761,10 @@ impl AppHandlerV2 {
                 .create_window(
                     WindowAttributes::default()
                         .with_title(config.title.clone())
-                        .with_inner_size(::winit::dpi::LogicalSize::new(config.width, config.height)),
+                        .with_inner_size(::winit::dpi::LogicalSize::new(
+                            config.width,
+                            config.height,
+                        )),
                 )
                 .expect("window"),
         );
@@ -758,7 +772,9 @@ impl AppHandlerV2 {
         // Reuse the shared instance if the device is already up; otherwise this is
         // the first window and it seeds the shared device from its own surface.
         let surface = if let Some(gpu) = self.gpu.as_ref() {
-            gpu.instance.create_surface(window.clone()).expect("surface")
+            gpu.instance
+                .create_surface(window.clone())
+                .expect("surface")
         } else {
             let instance = crate::gpu::default_instance();
             let surface = instance.create_surface(window.clone()).expect("surface");
@@ -796,16 +812,13 @@ impl AppHandlerV2 {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(caps.formats[0]);
-        let surface_config = crate::gpu::SurfaceConfiguration {
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+        let surface_config = crate::gpu::runner_surface_config(
             format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: config.present_mode,
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
+            size.width.max(1),
+            size.height.max(1),
+            config.present_mode,
+            caps.alpha_modes[0],
+        );
         surface.configure(&gpu.device, &surface_config);
 
         let mut session = ViewportInstance::new(&gpu.device, format);
@@ -939,13 +952,15 @@ impl AppHandlerV2 {
                     auto_fill_exposure_dt(frame, dt);
                 });
             } else {
-                state.session.update_orbit_with(&mut state.orbit, move |frame| {
-                    frame.overlays = overlays;
-                    for inject in injects {
-                        inject(frame);
-                    }
-                    auto_fill_exposure_dt(frame, dt);
-                });
+                state
+                    .session
+                    .update_orbit_with(&mut state.orbit, move |frame| {
+                        frame.overlays = overlays;
+                        for inject in injects {
+                            inject(frame);
+                        }
+                        auto_fill_exposure_dt(frame, dt);
+                    });
             }
 
             let frame = match crate::gpu::acquire_surface(&state.surface) {

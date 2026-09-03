@@ -121,12 +121,9 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_shape_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[OverlayShapeVertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[OverlayShapeVertex::buffer_layout()],
                 primitive: crate::gpu::PrimitiveState {
                     topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
@@ -234,12 +231,9 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "overlay_shape_tex_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[OverlayShapeTexVertex::buffer_layout()],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[OverlayShapeTexVertex::buffer_layout()],
                 primitive: crate::gpu::PrimitiveState {
                     topology: crate::gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()

@@ -708,12 +708,9 @@ impl DeviceResources {
             crate::resources::builders::RenderPipelineDesc {
                 label: "decal_exclude_pipeline",
                 layout: &layout,
-                vertex: crate::gpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[vertex_layout],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                },
+                vertex_module: &shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[vertex_layout],
                 fragment: Some(crate::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
