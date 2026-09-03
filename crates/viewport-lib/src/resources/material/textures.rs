@@ -937,6 +937,10 @@ impl DeviceResources {
             return false;
         }
         self.evict_texture_bind_group_caches(id.raw());
+        // Bump the free epoch so the renderer-side per-object bind-group cache and
+        // cached render bundle rebuild against the new view, exactly as for
+        // `replace_texture`; without it a stable item set keeps sampling the old view.
+        self.resource_free_epoch += 1;
         true
     }
 

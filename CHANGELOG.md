@@ -62,6 +62,12 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   `upload_data_texture`. Imported `base_color` / `emissive` factors are linear.
 
 ### Fixes
+- **`replace_texture` and `update_texture_view` now show the new pixels
+  immediately.** They bump the resource-free epoch like `free_texture`, so the
+  per-object bind-group cache and cached render bundle rebuild against the new view.
+  Previously a scene with a stable item set (same mesh and texture id) kept sampling
+  the old texture after a replace or external-view re-point, so a per-frame updated
+  texture never changed on screen.
 - The HDR and LDR pipelines now agree on the background colour (the HDR path no
   longer decodes it a second time).
 - **Gaussian splats render at full saturation.** The splat shader now decodes its
