@@ -75,6 +75,13 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   texture change. So `replace_texture` under a stable instanced scene kept drawing
   the old view, even though the per-object and direct instanced paths already
   updated. The cull bind groups now rebuild when the resource-free epoch moves.
+- **Freeing a mesh no longer blanks the instanced scene.** The instanced batch
+  cache is rebuilt when the resource-free epoch moves, matching the per-object
+  path. Previously the cache key tracked only the instanceable count, scene
+  generation, selection generation, and item count, so a scene rebuilt after
+  `free_mesh` with an unchanged item count and scene generation kept its cached
+  batches pointing at the freed meshes and skipped every draw, rendering the
+  whole instanced scene empty until the scene generation changed.
 - The HDR and LDR pipelines now agree on the background colour (the HDR path no
   longer decodes it a second time).
 - **Gaussian splats render at full saturation.** The splat shader now decodes its

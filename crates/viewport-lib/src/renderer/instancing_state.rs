@@ -44,6 +44,13 @@ pub(crate) struct InstancingState {
     /// non-instanced items still hit the instanced batch cache on frames where the
     /// filtered set is unchanged.
     pub(crate) last_instancable_count: usize,
+    /// `DeviceResources::resource_free_epoch` at the last rebuild. Included in the
+    /// cache key so freeing a mesh invalidates the cached batches, which reference
+    /// mesh ids by slot: a scene rebuilt after a free with an unchanged item
+    /// count and scene generation would otherwise keep batches pointing at the
+    /// freed meshes and skip every draw. Mirrors the per-object path, which
+    /// already rebuilds on this epoch.
+    pub(crate) last_resource_free_epoch: u64,
     /// Total instance count from the last rebuild. Fast length check in
     /// `structure_preserved` and `instance_count` for GPU cull dispatches.
     pub(crate) cached_instance_count: usize,
@@ -108,6 +115,7 @@ impl InstancingState {
             last_selection_generation: u64::MAX,
             last_scene_items_count: usize::MAX,
             last_instancable_count: usize::MAX,
+            last_resource_free_epoch: u64::MAX,
             cached_instance_count: 0,
             cached_instance_hashes: Vec::new(),
             cached_batches: Vec::new(),

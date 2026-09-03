@@ -42,7 +42,11 @@ impl ViewportRenderer {
         let cache_valid = instancable_count == instancing.last_instancable_count
             && frame.scene.generation == instancing.last_scene_generation
             && frame.interaction.selection_generation == instancing.last_selection_generation
-            && scene_items.len() == instancing.last_scene_items_count;
+            && scene_items.len() == instancing.last_scene_items_count
+            // Cached batches reference mesh ids by slot; a free (which bumps this
+            // epoch) can leave them pointing at freed meshes, so every instanced
+            // draw is skipped. Rebuild when it moves, as the per-object path does.
+            && resources.resource_free_epoch == instancing.last_resource_free_epoch;
 
         if !cache_valid {
             // Cache miss : rebuild batches and upload instance data.
@@ -337,6 +341,7 @@ impl ViewportRenderer {
             instancing.last_selection_generation = frame.interaction.selection_generation;
             instancing.last_scene_items_count = scene_items.len();
             instancing.last_instancable_count = sorted_items.len();
+            instancing.last_resource_free_epoch = resources.resource_free_epoch;
 
             for batch in &instancing.batches {
                 resources.get_instance_bind_group(
