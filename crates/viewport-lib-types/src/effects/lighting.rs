@@ -1,3 +1,5 @@
+//! Lighting configuration: light sources and their photometric units.
+
 // ---------------------------------------------------------------------------
 // Lighting configuration types
 // ---------------------------------------------------------------------------

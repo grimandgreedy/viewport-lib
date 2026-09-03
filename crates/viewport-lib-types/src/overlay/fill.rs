@@ -1,3 +1,5 @@
+//! Fill styles for overlay shapes (solid colour and gradients).
+
 /// Fill style for an [`OverlayShapeItem`](crate::overlay::OverlayShapeItem).
 ///
 /// `Solid` is the default, a single flat colour.

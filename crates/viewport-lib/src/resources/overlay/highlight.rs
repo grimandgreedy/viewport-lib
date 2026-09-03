@@ -519,7 +519,6 @@ impl DeviceResources {
                             }
                         }
                     }
-                    _ => {}
                 }
             }
         } // end if let Some(sel)

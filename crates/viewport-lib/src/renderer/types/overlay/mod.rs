@@ -5,10 +5,6 @@
 //! `FontHandle` is re-exported from `crate::resources::overlay::font` to
 //! preserve its existing path; it is intentionally not globbed here.
 
-pub use viewport_lib_types::overlay::{
-    anchor, animation, fill, frame, geometry, glyph_run, label, polyline, shape, texture, vector,
-};
-
 pub use viewport_lib_types::overlay::anchor::*;
 pub use viewport_lib_types::overlay::animation::*;
 pub use viewport_lib_types::overlay::fill::*;

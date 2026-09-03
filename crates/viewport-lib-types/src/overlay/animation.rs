@@ -1,3 +1,5 @@
+//! Time-varying animation parameters for overlay items.
+
 /// Animation applied to shape opacity each frame.
 ///
 /// The animation is resolved during `prepare()` using the `time` field on

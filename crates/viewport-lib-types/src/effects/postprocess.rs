@@ -1,3 +1,5 @@
+//! Post-process configuration such as tone mapping applied at display time.
+
 /// Tone mapping operator used by the HDR pipeline.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

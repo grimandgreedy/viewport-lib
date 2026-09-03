@@ -62,6 +62,7 @@ pub struct ExposureParams {
     /// of its real brightness difference (more eye-like) and every framing-driven
     /// swing shrinks proportionally.
     pub adaptation: f32,
+    /// Padding to the 16-byte alignment the GPU uniform layout requires.
     pub _pad: [f32; 3],
 }
 

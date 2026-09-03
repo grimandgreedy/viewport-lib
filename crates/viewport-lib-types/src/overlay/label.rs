@@ -1,3 +1,5 @@
+//! Text label overlay items.
+
 use super::anchor::{AnchorX, AnchorY, OverlayAnchor};
 
 /// A text label rendered as a screen-space overlay.

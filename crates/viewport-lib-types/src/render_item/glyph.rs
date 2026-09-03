@@ -1,3 +1,5 @@
+//! Frame-facing glyph render-item descriptors (glyph type and placement).
+
 use crate::colourmap::ColourmapId;
 use crate::material::ItemSettings;
 

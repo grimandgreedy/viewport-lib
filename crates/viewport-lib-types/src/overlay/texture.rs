@@ -1,3 +1,5 @@
+//! Texture-sampling parameters and ids for textured overlay items.
+
 /// Handle to an overlay shape texture.
 ///
 /// Pass this to `OverlayShapeItem::texture` (or `OverlayPolylineItem::texture`)

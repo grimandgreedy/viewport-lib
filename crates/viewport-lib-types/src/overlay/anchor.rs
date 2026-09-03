@@ -1,3 +1,5 @@
+//! Anchor points that place an overlay item relative to the viewport or a reference rect.
+
 /// Horizontal alignment of an item's box relative to its anchor point.
 ///
 /// Also names a horizontal position on the viewport rect when used as part of a

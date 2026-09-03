@@ -1,3 +1,5 @@
+//! The per-frame collection of overlay items a consumer submits for a frame.
+
 use crate::overlay::*;
 
 /// Screen-space overlays rendered after post-processing: shapes, labels, glyph

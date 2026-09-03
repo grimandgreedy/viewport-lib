@@ -1,3 +1,5 @@
+//! Per-item material and rendering settings.
+
 /// Per-item render settings: visibility, appearance overrides, pick identity, and selection state.
 ///
 /// Always use `Default::default()` as the base, then set individual fields:

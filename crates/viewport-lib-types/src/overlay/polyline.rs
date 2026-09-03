@@ -1,3 +1,5 @@
+//! Polyline overlay geometry and its join and cap styles.
+
 use crate::overlay::*;
 
 /// How an [`OverlayPolylineItem`] handles each joint between segments.

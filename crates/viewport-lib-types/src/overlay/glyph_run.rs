@@ -1,3 +1,5 @@
+//! Positioned glyph runs: shaped, laid-out text ready for the overlay atlas.
+
 /// One glyph placed at an explicit position within a [`GlyphRunItem`].
 ///
 /// `glyph_id` is an index into the font's glyph table, not a Unicode codepoint.

@@ -1,3 +1,5 @@
+//! Vector shape overlay items (rectangles, ellipses, and paths).
+
 use crate::overlay::*;
 
 /// Shape type for an `OverlayShapeItem`.

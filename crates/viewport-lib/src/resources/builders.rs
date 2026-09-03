@@ -391,6 +391,7 @@ pub(crate) fn repeat_linear_sampler(
 pub fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::FilterMode {
     filter
 }
+/// See the wgpu 27 sibling: 29 and 30 take a distinct `MipmapFilterMode`.
 #[cfg(any(wgpu29, wgpu30))]
 pub fn dmipmap(filter: crate::gpu::FilterMode) -> crate::gpu::MipmapFilterMode {
     match filter {
@@ -752,6 +753,7 @@ pub fn render_pipeline(
 pub fn dwrite(enabled: bool) -> bool {
     enabled
 }
+/// See the wgpu 27 sibling: 29 and 30 take `Option<bool>`.
 #[cfg(any(wgpu29, wgpu30))]
 pub fn dwrite(enabled: bool) -> Option<bool> {
     Some(enabled)
@@ -764,6 +766,7 @@ pub fn dwrite(enabled: bool) -> Option<bool> {
 pub fn dcompare(compare: crate::gpu::CompareFunction) -> crate::gpu::CompareFunction {
     compare
 }
+/// See the wgpu 27 sibling: 29 and 30 take `Option<CompareFunction>`.
 #[cfg(any(wgpu29, wgpu30))]
 pub fn dcompare(compare: crate::gpu::CompareFunction) -> Option<crate::gpu::CompareFunction> {
     Some(compare)
