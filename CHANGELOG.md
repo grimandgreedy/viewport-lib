@@ -28,6 +28,13 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   `ground_colour` are unchanged (physical radiance).
 
 ### Features
+- **`ViewportGpuResources::register_texture_view`.** Point a `Material` texture slot
+  at an external, caller-owned GPU `TextureView` (a dma-buf import, a video-decode
+  surface, a compute-pass output, another renderer's target) as a `TextureId`, with
+  no CPU copy. Draw it on a mesh like any texture; re-point on source recreate with
+  `update_texture_view`, free with `free_texture`. The store borrows the view
+  (`replace_texture` refuses the id). Pass the sRGB view and draw unlit for a
+  faithful 1:1. The material-side twin of `register_overlay_texture_view`.
 - **`ViewportRenderer::register_overlay_texture_view`.** Register an external,
   caller-owned colour `TextureView` (an `OffscreenViewportTarget::render_view()`)
   as an `OverlayTextureId`, so an offscreen viewport composites as an overlay image

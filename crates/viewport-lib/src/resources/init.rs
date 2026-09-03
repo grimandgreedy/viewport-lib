@@ -1841,7 +1841,7 @@ impl DeviceResources {
                 ],
             });
             GpuTexture {
-                texture: tex,
+                texture: Some(tex),
                 view,
                 sampler,
                 bind_group,
@@ -1851,14 +1851,15 @@ impl DeviceResources {
         // A D2Array view of the same 1x1 fallback texture. Lightmap bindings 17
         // and 18 are texture_2d_array (a lightmap can spill across atlas pages),
         // so every mesh without a lightmap binds this single-layer array view.
-        let fallback_texture_array_view =
-            fallback_texture
-                .texture
-                .create_view(&crate::gpu::TextureViewDescriptor {
-                    label: Some("fallback_lightmap_array_view"),
-                    dimension: Some(crate::gpu::TextureViewDimension::D2Array),
-                    ..Default::default()
-                });
+        let fallback_texture_array_view = fallback_texture
+            .texture
+            .as_ref()
+            .expect("fallback lightmap texture is owned")
+            .create_view(&crate::gpu::TextureViewDescriptor {
+                label: Some("fallback_lightmap_array_view"),
+                dimension: Some(crate::gpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
 
         // ------------------------------------------------------------------
         // Colourmap / LUT fallback resources

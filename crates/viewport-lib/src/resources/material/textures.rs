@@ -386,7 +386,7 @@ impl DeviceResources {
             ],
         });
         let gpu_texture = GpuTexture {
-            texture,
+            texture: Some(texture),
             view,
             sampler,
             bind_group,
@@ -864,6 +864,76 @@ impl DeviceResources {
         Ok(())
     }
 
+    /// Register an external, caller-owned colour `TextureView` as a material
+    /// [`TextureId`](crate::resources::TextureId), so a GPU texture already on the
+    /// device textures a mesh with no CPU upload. Set the returned id on
+    /// `Material::texture_id` (a quad mesh so textured is a window / video plane).
+    ///
+    /// Intended for a texture another part of the GPU produced: an imported
+    /// dma-buf, a hardware video-decode surface, a compute-pass output, or another
+    /// renderer's target. Pass an sRGB view (the material path samples with an sRGB
+    /// decode); draw it with an unlit material for a faithful 1:1 blit. `width` /
+    /// `height` are informational.
+    ///
+    /// The store borrows the view: it never writes to or resizes it, and
+    /// [`replace_texture`](Self::replace_texture) (the CPU-write path) should not be
+    /// used on the returned id. When the source view is recreated, re-point the id
+    /// in place with [`update_texture_view`](Self::update_texture_view); call
+    /// [`free_texture`](Self::free_texture) when the source stops. The entry holds a
+    /// clone of the view, which keeps the underlying texture alive until then.
+    pub fn register_texture_view(
+        &mut self,
+        device: &crate::gpu::Device,
+        view: &crate::gpu::TextureView,
+        _width: u32,
+        _height: u32,
+    ) -> crate::resources::TextureId {
+        let entry = build_external_gpu_texture(
+            device,
+            view,
+            &self.material.texture_bgl,
+            &self.material.normal_map_view,
+            &self.material.ao_map_view,
+        );
+        // External entries borrow the caller's texture, so they carry no resident
+        // GPU-memory charge of their own.
+        self.content.textures.insert(entry, 0)
+    }
+
+    /// Re-point an external texture id at a new `TextureView`, keeping the id stable
+    /// and evicting the bind-group caches so draws rebind to the new view. Call this
+    /// when the source view is recreated (a resized offscreen target, a new
+    /// swapchain image).
+    ///
+    /// Returns `false` (and does nothing) if `id` does not resolve to a live
+    /// texture, or resolves to an owned (CPU-uploaded) texture rather than an
+    /// external one: update those with [`replace_texture`](Self::replace_texture).
+    pub fn update_texture_view(
+        &mut self,
+        device: &crate::gpu::Device,
+        id: crate::resources::TextureId,
+        view: &crate::gpu::TextureView,
+        _width: u32,
+        _height: u32,
+    ) -> bool {
+        match self.content.textures.get(id) {
+            Some(entry) if entry.texture.is_none() => {}
+            _ => return false,
+        }
+        let entry = build_external_gpu_texture(
+            device,
+            view,
+            &self.material.texture_bgl,
+            &self.material.normal_map_view,
+            &self.material.ao_map_view,
+        );
+        if self.content.textures.replace(id, entry, 0).is_none() {
+            return false;
+        }
+        self.evict_texture_bind_group_caches(id.raw());
+        true
+    }
+
     /// Drop cached bind groups that named user texture slot `raw` so they rebuild
     /// against the current occupant (or the fallback). Shared by `free_texture`
     /// (slot now empty) and `replace_texture` (slot holds a new view).
@@ -1147,8 +1217,53 @@ fn finish_gpu_texture(
         ],
     });
     GpuTexture {
-        texture,
+        texture: Some(texture),
         view,
+        sampler,
+        bind_group,
+    }
+}
+
+/// Build a [`GpuTexture`] around an external, caller-owned `view`: no owned
+/// texture, a clamp-to-edge linear sampler (a window / video source should not
+/// wrap or bleed at its edges), and the standard material bind group with `view`
+/// as the albedo slot and the fallbacks for normal / AO. That cached bind group
+/// is not read by the draw path (it builds per-object bind groups from the
+/// entry's `view` + `sampler`), but building it keeps the entry uniform.
+fn build_external_gpu_texture(
+    device: &crate::gpu::Device,
+    view: &crate::gpu::TextureView,
+    bgl: &crate::gpu::BindGroupLayout,
+    fallback_normal_view: &crate::gpu::TextureView,
+    fallback_ao_view: &crate::gpu::TextureView,
+) -> GpuTexture {
+    let sampler =
+        crate::resources::builders::clamp_linear_sampler(device, "external_texture_sampler");
+    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        label: Some("external_texture_bg"),
+        layout: bgl,
+        entries: &[
+            crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: crate::gpu::BindingResource::TextureView(view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 1,
+                resource: crate::gpu::BindingResource::Sampler(&sampler),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 2,
+                resource: crate::gpu::BindingResource::TextureView(fallback_normal_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 3,
+                resource: crate::gpu::BindingResource::TextureView(fallback_ao_view),
+            },
+        ],
+    });
+    GpuTexture {
+        texture: None,
+        view: view.clone(),
         sampler,
         bind_group,
     }
@@ -1384,13 +1499,21 @@ impl DeviceResources {
         };
         let lightmap_owned = lightmap_tex_id
             .and_then(|id| self.content.textures.get(id))
-            .map(|t| t.texture.create_view(&lightmap_array_desc));
+            .and_then(|t| {
+                t.texture
+                    .as_ref()
+                    .map(|tx| tx.create_view(&lightmap_array_desc))
+            });
         let lightmap_view: &crate::gpu::TextureView = lightmap_owned
             .as_ref()
             .unwrap_or(&self.material.texture_array_view);
         let lightmap_dir_owned = lightmap_dir_tex_id
             .and_then(|id| self.content.textures.get(id))
-            .map(|t| t.texture.create_view(&lightmap_array_desc));
+            .and_then(|t| {
+                t.texture
+                    .as_ref()
+                    .map(|tx| tx.create_view(&lightmap_array_desc))
+            });
         let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
             .as_ref()
             .unwrap_or(&self.material.texture_array_view);
@@ -1752,7 +1875,11 @@ impl DeviceResources {
             .as_ref()
             .map(|lm| lm.texture_id)
             .and_then(|id| self.content.textures.get(id))
-            .map(|t| t.texture.create_view(&lightmap_array_desc));
+            .and_then(|t| {
+                t.texture
+                    .as_ref()
+                    .map(|tx| tx.create_view(&lightmap_array_desc))
+            });
         let lightmap_view: &crate::gpu::TextureView = lightmap_owned
             .as_ref()
             .unwrap_or(&self.material.texture_array_view);
@@ -1761,7 +1888,11 @@ impl DeviceResources {
             .as_ref()
             .and_then(|lm| lm.direction_texture_id)
             .and_then(|id| self.content.textures.get(id))
-            .map(|t| t.texture.create_view(&lightmap_array_desc));
+            .and_then(|t| {
+                t.texture
+                    .as_ref()
+                    .map(|tx| tx.create_view(&lightmap_array_desc))
+            });
         let lightmap_dir_view: &crate::gpu::TextureView = lightmap_dir_owned
             .as_ref()
             .unwrap_or(&self.material.texture_array_view);
@@ -2092,6 +2223,8 @@ impl DeviceResources {
                 self.material
                     .texture
                     .texture
+                    .as_ref()
+                    .expect("fallback albedo texture is owned")
                     .create_view(&crate::gpu::TextureViewDescriptor::default()),
             );
         }
@@ -2620,8 +2753,10 @@ mod async_texture_tests {
 
 /// A GPU texture with its view, sampler, and bind group for shader binding.
 pub struct GpuTexture {
-    /// Underlying wgpu texture object.
-    pub texture: crate::gpu::Texture,
+    /// Underlying wgpu texture object, or `None` for an external entry that
+    /// borrows a caller-owned view the store does not own (see
+    /// [`register_texture_view`](crate::ViewportGpuResources::register_texture_view)).
+    pub texture: Option<crate::gpu::Texture>,
     /// Full-texture view used for sampling.
     pub view: crate::gpu::TextureView,
     /// Sampler bound alongside the view.

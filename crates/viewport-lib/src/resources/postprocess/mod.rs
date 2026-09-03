@@ -314,7 +314,11 @@ impl DeviceResources {
             upload(&self.material.normal_map, &[128u8, 128u8, 255u8, 255u8]);
             upload(&self.material.ao_map, &[255u8, 255u8, 255u8, 255u8]);
             upload(
-                &self.material.texture.texture,
+                self.material
+                    .texture
+                    .texture
+                    .as_ref()
+                    .expect("fallback albedo texture is owned"),
                 &[255u8, 255u8, 255u8, 255u8],
             );
             self.material.uploaded = true;
