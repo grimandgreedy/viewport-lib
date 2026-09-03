@@ -861,6 +861,12 @@ impl DeviceResources {
         // sample the old texture. Evict them exactly as `free_texture` does; they
         // rebuild against the new view on the next `prepare`.
         self.evict_texture_bind_group_caches(id.raw());
+        // Bump the free epoch too, like `free_texture`: the per-object bind-group
+        // cache (`PerObjectState::material_bind_groups`) lives on the renderer and is
+        // purged only when this epoch moves. Without this a scene that keeps a stable
+        // item set (same mesh and texture id) never rebuilds those bind groups or the
+        // cached render bundle, so a replaced texture keeps showing its old pixels.
+        self.resource_free_epoch += 1;
         Ok(())
     }
 
