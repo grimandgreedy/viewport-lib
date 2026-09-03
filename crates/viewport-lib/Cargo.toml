@@ -216,6 +216,11 @@ path = "examples/eframe_minimal_wgpu29/main.rs"
 required-features = ["wgpu29", "example-egui-wgpu29"]
 
 [[example]]
+name = "app-minimal-wgpu29"
+path = "examples/app_minimal_wgpu29/main.rs"
+required-features = ["wgpu29", "app"]
+
+[[example]]
 name = "slint-minimal"
 path = "examples/slint_minimal/main.rs"
 required-features = ["wgpu29", "example-slint"]

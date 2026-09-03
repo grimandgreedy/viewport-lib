@@ -15,10 +15,9 @@
 //! Desktop-only: like [`ViewportApp`](crate::ViewportApp) it blocks on the event loop
 //! and brings the device up synchronously (`pollster::block_on`), and multiple OS
 //! windows are a desktop concept. On the web (one canvas) drive a
-//! [`ViewportInstance`] from your own loop instead. Both `app` runners are written
-//! against the default wgpu leg; the `wgpu29` leg does not build with the `app`
-//! feature. Per-window suspend/resume for mobile is out of scope; per-window surface
-//! loss is handled (the surface is reconfigured on `Lost`/`Outdated`).
+//! [`ViewportInstance`] from your own loop instead. It builds on both the default and
+//! the `wgpu29` legs. Per-window suspend/resume for mobile is out of scope; per-window
+//! surface loss is handled (the surface is reconfigured on `Lost`/`Outdated`).
 //!
 //! # The winit boundary
 //!
@@ -761,7 +760,7 @@ impl AppHandlerV2 {
         let surface = if let Some(gpu) = self.gpu.as_ref() {
             gpu.instance.create_surface(window.clone()).expect("surface")
         } else {
-            let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+            let instance = crate::gpu::default_instance();
             let surface = instance.create_surface(window.clone()).expect("surface");
             let adapter = pollster::block_on(instance.request_adapter(
                 &crate::gpu::RequestAdapterOptions {
@@ -949,16 +948,13 @@ impl AppHandlerV2 {
                 });
             }
 
-            let frame = match state.surface.get_current_texture() {
-                Ok(f) => f,
-                Err(crate::gpu::SurfaceError::Lost | crate::gpu::SurfaceError::Outdated) => {
+            let frame = match crate::gpu::acquire_surface(&state.surface) {
+                crate::gpu::SurfaceFrame::Acquired(f) => f,
+                crate::gpu::SurfaceFrame::Recreate => {
                     state.surface.configure(&gpu.device, &state.surface_config);
                     return;
                 }
-                Err(e) => {
-                    tracing::error!("surface error: {e:?}");
-                    return;
-                }
+                crate::gpu::SurfaceFrame::Skip => return,
             };
             let view = frame
                 .texture

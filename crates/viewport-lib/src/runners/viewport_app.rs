@@ -471,7 +471,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                 .expect("window"),
         );
 
-        let instance = crate::gpu::Instance::new(&crate::gpu::InstanceDescriptor::default());
+        let instance = crate::gpu::default_instance();
         let surface = instance.create_surface(window.clone()).expect("surface");
         let adapter = pollster::block_on(instance.request_adapter(
             &crate::gpu::RequestAdapterOptions {
@@ -682,18 +682,15 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                         });
                 }
 
-                let frame = match state.surface.get_current_texture() {
-                    Ok(f) => f,
-                    Err(crate::gpu::SurfaceError::Lost | crate::gpu::SurfaceError::Outdated) => {
+                let frame = match crate::gpu::acquire_surface(&state.surface) {
+                    crate::gpu::SurfaceFrame::Acquired(f) => f,
+                    crate::gpu::SurfaceFrame::Recreate => {
                         state
                             .surface
                             .configure(&state.device, &state.surface_config);
                         return;
                     }
-                    Err(e) => {
-                        tracing::error!("surface error: {e:?}");
-                        return;
-                    }
+                    crate::gpu::SurfaceFrame::Skip => return,
                 };
                 let view = frame
                     .texture
