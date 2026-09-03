@@ -423,6 +423,14 @@ impl crate::resources::DeviceResources {
     /// [`update_overlay_texture_view`](Self::update_overlay_texture_view), or free
     /// this id and register the new view. `width` / `height` are the view's pixel
     /// size, used for nine-slice UVs.
+    ///
+    /// The entry holds a clone of `view`, which keeps the underlying texture alive
+    /// for as long as the id is registered. Dropping your
+    /// [`OffscreenViewportTarget`](crate::OffscreenViewportTarget) (or otherwise
+    /// releasing the source texture) does not reclaim its GPU memory while an
+    /// overlay id still references it: call
+    /// [`free_overlay_texture`](Self::free_overlay_texture) when the source stops,
+    /// the same as for an owned overlay texture.
     pub fn register_overlay_texture_view(
         &mut self,
         view: &crate::gpu::TextureView,
