@@ -152,22 +152,30 @@ pub(super) fn emit_vector_shape(
     }
 
     // Border: a vector outline stroke, not an SDF band. Stroke each flattened
-    // contour through the same tessellator polylines use.
+    // contour through the same tessellator polylines use, honouring the subpath's
+    // `closed` flag: an open subpath strokes as an open line (a wireframe edge, a
+    // bare polyline), a closed one strokes its whole boundary. An open contour
+    // takes round caps so its ends read cleanly.
     if shape.border_width > 0.0 && shape.border_colour.alpha() > 0.0 {
         let mut colour = shape.border_colour.to_linear_rgba();
         colour[3] *= shape.opacity;
-        for contour in crate::renderer::types::flatten_contours(subpaths) {
+        for (contour, closed) in crate::renderer::types::flatten_contours(subpaths) {
             if contour.len() < 2 {
                 continue;
             }
             let pts = transform_vector_positions(&contour, shape);
+            let cap = if closed {
+                crate::renderer::types::PolylineCap::Butt
+            } else {
+                crate::renderer::types::PolylineCap::Round
+            };
             batch.extend(tessellate_polyline(
                 &pts,
                 shape.border_width,
-                true,
+                closed,
                 crate::renderer::types::LineJoin::Mitre,
                 VECTOR_BORDER_MITRE_LIMIT,
-                crate::renderer::types::PolylineCap::Butt,
+                cap,
                 colour,
                 vp_w,
                 vp_h,
