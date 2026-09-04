@@ -75,6 +75,12 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   texture change. So `replace_texture` under a stable instanced scene kept drawing
   the old view, even though the per-object and direct instanced paths already
   updated. The cull bind groups now rebuild when the resource-free epoch moves.
+- **Alpha-cutout shadows track a replaced caster texture.** The shadow cull bind
+  groups sample a cutout caster's albedo (to discard alpha-masked fragments and carve
+  the silhouette) but, like the culling bind groups above, were only invalidated on an
+  instance-buffer rebuild. An alpha-mask caster whose texture was replaced under a
+  stable id kept casting the first frame's silhouette. They now rebuild, and the
+  cached shadow bundle re-records, when the resource-free epoch moves.
 - **Freeing a mesh no longer blanks the instanced scene.** The instanced batch
   cache is rebuilt when the resource-free epoch moves, matching the per-object
   path. Previously the cache key tracked only the instanceable count, scene

@@ -133,6 +133,202 @@ fn two_textured_planes(
     )
 }
 
+// ---------------------------------------------------------------------------
+// Alpha-cutout shadow regression.
+// ---------------------------------------------------------------------------
+
+// Framebuffer size for the cutout-shadow scene. Wider than tall so the ground
+// receiver fills the frame at the camera angle below.
+const EW: u32 = 256;
+const EH: u32 = 144;
+
+// The receiver region that catches the caster's shadow but never the caster
+// itself. Found by rendering the scene three ways (caster + shadow, caster
+// without shadow, ground only) and classifying each cell: the caster paints the
+// upper band (x >= 128, y < 48) while its shadow lands here, well clear of it.
+// Sampling only this rectangle isolates the shadow from the caster's own
+// surface, so a change here can only come from the shadow silhouette.
+const SHADOW_X0: usize = 64;
+const SHADOW_X1: usize = 120;
+const SHADOW_Y0: usize = 48;
+const SHADOW_Y1: usize = 80;
+
+// Channel-weighted checksum over a sub-rectangle of an RGBA framebuffer.
+fn region_checksum(bytes: &[u8], width: usize, x0: usize, x1: usize, y0: usize, y1: usize) -> u64 {
+    const WEIGHT: [u64; 4] = [2, 3, 5, 7];
+    let mut sum = 0u64;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let i = (y * width + x) * 4;
+            for c in 0..4 {
+                sum += WEIGHT[c] * bytes[i + c] as u64;
+            }
+        }
+    }
+    sum
+}
+
+/// Two alpha-mask shadow casters share one mesh (so the instanced draw path is
+/// selected) and drop a shadow onto a large ground receiver. The cutout shadow
+/// silhouette is produced by sampling the caster's albedo alpha in the shadow
+/// depth pass. Replacing the caster's albedo (an opaque mask -> a fully
+/// transparent one) under a stable `TextureId` must change the shadow: the solid
+/// shadow the opaque mask casts disappears once the mask is transparent.
+///
+/// The shadow cull bind groups carry the albedo view sampled during the shadow
+/// pass. They were only rebuilt on an instance-buffer rebuild, so a
+/// `replace_texture` (which swaps the view under an unchanged id) used to leave
+/// the shadow frozen at the first frame's cutout while the lit surface updated.
+///
+/// Only the receiver region that the shadow falls on is checksummed, and the
+/// caster never paints there, so the measured change comes from the shadow
+/// silhouette rather than the caster's own surface. The CPU-cull shadow path
+/// (devices without `INDIRECT_FIRST_INSTANCE`, e.g. Metal) is exercised here
+/// too, so this is not gated on GPU culling.
+#[test]
+fn instanced_cutout_shadow_reflects_replace_texture() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping instanced_cutout_shadow_reflects_replace_texture: no GPU adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    let ground = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::cuboid(24.0, 24.0, 0.5))
+        .unwrap();
+    let caster_mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::plane(4.0, 4.0))
+        .unwrap();
+    // Start opaque: alpha 255 everywhere, so the cutout keeps every texel and the
+    // caster throws a solid shadow.
+    let tex = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            2,
+            2,
+            &solid_rgba(2, 2, [255, 255, 255, 255]),
+        )
+        .unwrap();
+
+    use crate::scene::material::AlphaMode;
+    // `with_casters` toggles the casters for the shadow-present sanity check.
+    let build = |with_casters: bool| -> FrameData {
+        let mut items = Vec::new();
+        let mut g = crate::SceneRenderItem::default();
+        g.mesh_id = ground;
+        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        g.material = Material::from_colour([0.85, 0.85, 0.85]);
+        items.push(g);
+        if with_casters {
+            // Two casters sharing one mesh and one texture -> a single instanced
+            // batch of 2, which forces the instanced path.
+            for x in [-1.0f32, 1.0] {
+                let mut c = crate::SceneRenderItem::default();
+                c.mesh_id = caster_mesh;
+                c.model =
+                    glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
+                let mut m = Material::textured(tex);
+                m.backface_policy = BackfacePolicy::Identical;
+                m.alpha_mode = AlphaMode::Mask(0.5);
+                c.material = m;
+                items.push(c);
+            }
+        }
+        let mut cam = Camera {
+            distance: 16.0,
+            ..Camera::default()
+        };
+        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
+        cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
+        cam.set_aspect_ratio(EW as f32, EH as f32);
+        let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);
+        let mut fd = FrameData::new(cf, SceneFrame::from_surface_items(items));
+        // One low, offset sun so the shadow lands beside the casters (not under
+        // them), plus a faint hemisphere fill so the shadow reads as clearly
+        // darker than the lit ground.
+        let mut l = crate::LightingSettings::default();
+        l.lights = vec![{
+            let mut s = crate::LightSource::default();
+            s.kind = crate::LightKind::Directional {
+                direction: [1.6, 0.0, 1.0],
+            };
+            s.intensity = 1.0;
+            s
+        }];
+        l.shadows.enabled = true;
+        l.hemisphere_intensity = 0.05;
+        fd.effects.lighting = l;
+        fd
+    };
+
+    let region = |bytes: &[u8]| {
+        region_checksum(
+            bytes,
+            EW as usize,
+            SHADOW_X0,
+            SHADOW_X1,
+            SHADOW_Y0,
+            SHADOW_Y1,
+        )
+    };
+
+    // Frame 1: opaque caster -> a solid shadow in the sampled region.
+    let frame1 = renderer.render_offscreen(&device, &queue, &build(true), EW, EH);
+    assert!(
+        renderer.is_using_instanced_path(),
+        "two casters sharing one mesh must select the instanced path"
+    );
+    let sum1 = region(&frame1);
+
+    // Sanity: the region actually holds a shadow. Compare against the same scene
+    // with the casters removed (ground only, shadows still on). If the region did
+    // not darken, there is no shadow to guard and the test would be vacuous.
+    let ground_only = renderer.render_offscreen(&device, &queue, &build(false), EW, EH);
+    let sum_lit = region(&ground_only);
+    assert!(
+        sum1 + 5_000 < sum_lit,
+        "frame 1 must show a shadow in the sampled region (shadowed={sum1} lit={sum_lit}); \
+         without a visible shadow the test cannot guard the cutout update"
+    );
+
+    // Swap the albedo under the same id for a fully transparent mask (alpha 0
+    // everywhere). The cutout now discards every texel, so the caster throws no
+    // shadow. The item set is unchanged (same meshes, same TextureId).
+    renderer
+        .resources_mut()
+        .replace_texture(
+            &device,
+            &queue,
+            tex,
+            2,
+            2,
+            &solid_rgba(2, 2, [255, 255, 255, 0]),
+        )
+        .unwrap();
+
+    // Frame 2: transparent caster -> the shadow is gone.
+    let frame2 = renderer.render_offscreen(&device, &queue, &build(true), EW, EH);
+    let sum2 = region(&frame2);
+
+    assert_ne!(
+        sum1, sum2,
+        "replace_texture on an alpha-cutout shadow caster must update the shadow \
+         (shadowed={sum1} after-swap={sum2}); a frozen shadow means the cull bind \
+         groups were not invalidated on the texture change"
+    );
+    // The transparent mask casts no shadow, so the region must brighten back
+    // toward the fully-lit ground.
+    assert!(
+        sum2 > sum1 + 5_000,
+        "the shadow must disappear when the mask becomes transparent \
+         (shadowed={sum1} after-swap={sum2})"
+    );
+}
+
 /// The direct instanced draw path (no GPU culling) reflects a `replace_texture`.
 /// Runs on every backend; on Metal this is the only instanced path available.
 #[test]

@@ -1015,6 +1015,12 @@ pub(crate) struct ShadowCullState {
     /// `InstancingState::instance_gen` the instance storage buffer was rebuilt, so
     /// the bind groups (which bind it at binding 0) are stale.
     pub(crate) built_gen: u64,
+    /// `DeviceResources::resource_free_epoch` the shadow cull bind groups were built
+    /// at. The cutout cull bind groups sample a caster's albedo view (for the alpha
+    /// discard that carves gaps in the shadow), and `replace_texture` swaps that view
+    /// under a stable id. Mirrors `ViewportCullState::built_free_epoch`: when it falls
+    /// behind, the cutout bind groups (and any bundle that baked them) are stale.
+    pub(crate) built_free_epoch: u64,
     /// Per-cascade render bundles replaying the indirect shadow draw sequence.
     /// The batch loop encodes hundreds of set/draw calls per cascade; for a
     /// stable batch list that sequence is identical every frame (per-frame
@@ -1049,6 +1055,7 @@ impl ShadowCullState {
             vis_capacity: 0,
             batch_output_capacity: 0,
             built_gen: u64::MAX,
+            built_free_epoch: u64::MAX,
             shadow_bundles: [None, None, None, None],
             bundle_key: None,
             bundle_draws: 0,
