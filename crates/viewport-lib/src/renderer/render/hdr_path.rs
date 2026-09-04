@@ -2995,7 +2995,11 @@ impl ViewportRenderer {
                                     }
                                     match self.resources.material_plugin_draw(mat.shading_plugin) {
                                         Some((pp, mat_bg)) => {
-                                            oit_pass.set_pipeline(&pp.oit);
+                                            oit_pass.set_pipeline(if mat.is_two_sided() {
+                                                &pp.oit_two_sided
+                                            } else {
+                                                &pp.oit
+                                            });
                                             bind_material_group!(oit_pass, mat_bg);
                                             plugin_pipeline_active = true;
                                         }
@@ -3040,7 +3044,11 @@ impl ViewportRenderer {
                                 .material_plugin_draw(item.material.shading_plugin)
                             {
                                 Some((pp, mat_bg)) => {
-                                    oit_pass.set_pipeline(&pp.oit);
+                                    oit_pass.set_pipeline(if item.material.is_two_sided() {
+                                        &pp.oit_two_sided
+                                    } else {
+                                        &pp.oit
+                                    });
                                     bind_material_group!(oit_pass, mat_bg);
                                     plugin_pipeline_active = true;
                                 }
@@ -3112,7 +3120,11 @@ impl ViewportRenderer {
                                 }
                                 match self.resources.material_plugin_draw(mat.shading_plugin) {
                                     Some((pp, mat_bg)) => {
-                                        oit_pass.set_pipeline(&pp.oit);
+                                        oit_pass.set_pipeline(if mat.is_two_sided() {
+                                            &pp.oit_two_sided
+                                        } else {
+                                            &pp.oit
+                                        });
                                         bind_material_group!(oit_pass, mat_bg);
                                         plugin_pipeline_active = true;
                                     }
@@ -3157,7 +3169,11 @@ impl ViewportRenderer {
                             .material_plugin_draw(item.material.shading_plugin)
                         {
                             Some((pp, mat_bg)) => {
-                                oit_pass.set_pipeline(&pp.oit);
+                                oit_pass.set_pipeline(if item.material.is_two_sided() {
+                                    &pp.oit_two_sided
+                                } else {
+                                    &pp.oit
+                                });
                                 bind_material_group!(oit_pass, mat_bg);
                                 plugin_pipeline_active = true;
                             }

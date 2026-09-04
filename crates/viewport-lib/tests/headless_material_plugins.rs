@@ -97,7 +97,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 
     // Drawing through the plugin lazily built its full pipeline set.
     let stats = renderer.resources().material_plugin_stats();
-    assert_eq!(stats[0].pipelines_built, 9);
+    assert_eq!(stats[0].pipelines_built, 10);
 
     // Live params: raising the band count and ambient changes the image.
     let params = renderer
@@ -122,7 +122,7 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     // Variants share the plugin's pipeline set; only the variant count grows.
     let stats = renderer.resources().material_plugin_stats();
     assert_eq!(stats[0].variants, 2);
-    assert_eq!(stats[0].pipelines_built, 9);
+    assert_eq!(stats[0].pipelines_built, 10);
     item.material.shading_plugin = Some(variant_b);
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![item.clone()].into());
     let toon_variant_b = renderer.render_offscreen(&device, &queue, &frame, 64, 64);

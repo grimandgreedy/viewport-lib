@@ -108,3 +108,76 @@ fn two_sided_transparent_draws_back_faces_on_hdr_oit() {
          (coverage {two_sided_transparent}); the OIT pipeline is back-face culled"
     );
 }
+
+/// A material-plugin material must also keep its back faces on the OIT path: the
+/// per-plugin OIT pipeline needs the same two-sided twin as the base pipeline.
+#[test]
+fn two_sided_transparent_material_plugin_draws_back_faces_on_hdr_oit() {
+    struct FlatPlugin;
+    impl viewport_lib::MaterialPlugin for FlatPlugin {
+        fn name(&self) -> &'static str {
+            "flat_oit_test"
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return surf.base_colour * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour;
+}
+"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let size = 128u32;
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &back_facing_quad())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &FlatPlugin)
+        .expect("register material plugin");
+
+    let cam = {
+        let mut c = Camera::default();
+        c.center = glam::Vec3::ZERO;
+        c.distance = 6.0;
+        c.orientation = glam::Quat::from_rotation_x(0.15);
+        c
+    };
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [size as f32, size as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material.base_colour = [1.0, 0.0, 0.0].into();
+    item.material.shading_plugin = Some(plugin_id);
+    item.material.backface_policy = BackfacePolicy::Identical;
+    item.settings.opacity = 0.75;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    let covered = coverage(&px);
+    assert!(
+        covered > 1000,
+        "two-sided transparent material-plugin quad lost its back faces on the HDR/OIT path \
+         (coverage {covered}); the per-plugin OIT pipeline is back-face culled"
+    );
+}

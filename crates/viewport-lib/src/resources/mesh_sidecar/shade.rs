@@ -551,14 +551,17 @@ pub(crate) struct MaterialPluginPipelines {
     pub ldr: crate::resources::mesh::mesh_pipelines::LdrMeshPipelines,
     pub hdr: crate::resources::mesh::mesh_pipelines::HdrMeshPipelines,
     pub oit: crate::gpu::RenderPipeline,
+    /// Two-sided (`cull_mode: None`) OIT twin, selected for a two-sided material
+    /// so its back faces draw through the OIT pass.
+    pub oit_two_sided: crate::gpu::RenderPipeline,
 }
 
 impl MaterialPluginPipelines {
     /// Pipelines in one plugin's set: 4 LDR (solid, two-sided, transparent,
-    /// wireframe) + 4 HDR (same variants) + 1 OIT accumulate. This is the
-    /// whole per-plugin pipeline cost; shadow / outline / pick passes reuse
-    /// the shared depth-only pipelines.
-    pub(crate) const COUNT: u32 = 9;
+    /// wireframe) + 4 HDR (same variants) + 2 OIT accumulate (culled +
+    /// two-sided). This is the whole per-plugin pipeline cost; shadow / outline
+    /// / pick passes reuse the shared depth-only pipelines.
+    pub(crate) const COUNT: u32 = 10;
 }
 
 /// Pipeline and resource counts for one registered material plugin, from
@@ -866,7 +869,7 @@ impl crate::resources::DeviceResources {
     /// Answers "what does each registered plugin cost in pipelines": a plugin
     /// with `pipelines_built == 0` has been registered but not yet drawn (or
     /// its set was invalidated by a deformer registration or debug-vis
-    /// toggle); a drawn plugin holds 9 pipelines regardless of variant count,
+    /// toggle); a drawn plugin holds 10 pipelines regardless of variant count,
     /// since variants share the plugin's WGSL and pipeline set. Empty when no
     /// material plugin is registered.
     pub fn material_plugin_stats(&self) -> Vec<MaterialPluginStats> {
@@ -1032,20 +1035,30 @@ impl crate::resources::DeviceResources {
             &layout,
             &mesh_module,
         );
-        // Material-plugin OIT stays back-face culled: a two-sided variant would
-        // need a second pipeline in MaterialPluginPipelines and plugin-side
-        // selection. Two-sided transparent plugin materials are the one case the
-        // OIT back-face fix does not yet cover.
+        // Culled + two-sided OIT twins, selected per draw on the material's
+        // two-sidedness (the shader is composed from mesh_oit.wgsl, which flips
+        // the normal and applies the back-face colour via front_facing).
         let oit = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
             device,
             &layout,
             &oit_module,
             false,
         );
+        let oit_two_sided = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+            device,
+            &layout,
+            &oit_module,
+            true,
+        );
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
-            .pipelines = Some(MaterialPluginPipelines { ldr, hdr, oit });
+            .pipelines = Some(MaterialPluginPipelines {
+            ldr,
+            hdr,
+            oit,
+            oit_two_sided,
+        });
     }
 
     /// Resolve a material's plugin selection to its pipeline set and the

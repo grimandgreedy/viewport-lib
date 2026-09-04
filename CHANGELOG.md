@@ -88,9 +88,10 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   opaque and LDR paths drew them. Both OIT pipelines (per-object and instanced)
   now have a `cull_mode: None` twin selected on the material's two-sidedness, and
   two-sided transparent items instance again instead of being forced onto the
-  per-object path. Open surfaces (math plots, shells) rendered as partial shapes
-  through the OIT pass; they now render whole. (Two-sided transparent material
-  plugins are the one case still culled.)
+  per-object path. Per-material-plugin OIT pipelines gained the same twin, so
+  two-sided transparent plugin materials keep their back faces too. Open surfaces
+  (math plots, shells) rendered as partial shapes through the OIT pass; they now
+  render whole.
 - **Freeing a mesh no longer blanks the instanced scene.** The instanced batch
   cache is rebuilt when the resource-free epoch moves, matching the per-object
   path. Previously the cache key tracked only the instanceable count, scene
