@@ -1032,10 +1032,15 @@ impl crate::resources::DeviceResources {
             &layout,
             &mesh_module,
         );
+        // Material-plugin OIT stays back-face culled: a two-sided variant would
+        // need a second pipeline in MaterialPluginPipelines and plugin-side
+        // selection. Two-sided transparent plugin materials are the one case the
+        // OIT back-face fix does not yet cover.
         let oit = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
             device,
             &layout,
             &oit_module,
+            false,
         );
         self.material_plugins
             .get_mut(&id.plugin_index())

@@ -1723,8 +1723,16 @@ impl DeviceResources {
                     device,
                     &oit_layout,
                     &shader,
+                    false,
+                );
+                let oit_two_sided = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+                    device,
+                    &oit_layout,
+                    &shader,
+                    true,
                 );
                 self.oit.pipeline = Some(oit);
+                self.oit.pipeline_two_sided = Some(oit_two_sided);
             }
         }
 
@@ -1935,8 +1943,19 @@ impl DeviceResources {
                         &shader,
                         "oit_instanced_pipeline",
                         "vs_main",
+                        false,
                     );
+                    let pl_two_sided =
+                        crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
+                            device,
+                            &layout,
+                            &shader,
+                            "oit_instanced_pipeline_two_sided",
+                            "vs_main",
+                            true,
+                        );
                     self.oit.instanced_pipeline = Some(pl);
+                    self.oit.instanced_pipeline_two_sided = Some(pl_two_sided);
                 }
             }
             if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
@@ -1954,8 +1973,19 @@ impl DeviceResources {
                         &shader,
                         "oit_instanced_cull_pipeline",
                         "vs_main_cull",
+                        false,
                     );
+                    let pl_two_sided =
+                        crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
+                            device,
+                            &layout,
+                            &shader,
+                            "oit_instanced_cull_pipeline_two_sided",
+                            "vs_main_cull",
+                            true,
+                        );
                     self.cull.oit_pipeline = Some(pl);
+                    self.cull.oit_two_sided_pipeline = Some(pl_two_sided);
                 }
             }
         }

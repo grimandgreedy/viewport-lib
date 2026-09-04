@@ -2757,18 +2757,28 @@ impl ViewportRenderer {
                         if let (Some(pipeline), Some(indirect_buf)) =
                             (&self.resources.cull.oit_pipeline, &cull0.indirect_args_buf)
                         {
-                            oit_pass.set_pipeline(pipeline);
+                            // Two-sided transparent batches draw through the
+                            // cull-none twin; fall back to the culled pipeline if
+                            // the twin is missing.
+                            let pipeline_two_sided = self
+                                .resources
+                                .cull
+                                .oit_two_sided_pipeline
+                                .as_ref()
+                                .unwrap_or(pipeline);
                             bind_deform_group!(
                                 oit_pass,
                                 self.resources,
                                 &self.resources.deform.dummy_bind_group
                             );
-                            // Transparent batches all use the single OIT pipeline, so
-                            // a run collapses when the bind group and slab chunk hold
-                            // across consecutive global indices (see the opaque path).
+                            // Transparent batches pick the OIT pipeline by their
+                            // two-sidedness, so a run collapses when the pipeline,
+                            // bind group, and slab chunk hold across consecutive
+                            // global indices (see the opaque path).
                             let multi_draw = self.instancing.multi_draw_active();
                             let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
+                            let mut cur_two_sided: Option<bool> = None;
                             let mut run_start: u64 = 0;
                             let mut run_len: u32 = 0;
                             for (batch_global_idx, batch) in
@@ -2798,6 +2808,7 @@ impl ViewportRenderer {
                                     && g == run_start + run_len as u64
                                     && cur_bg == Some(bg_ptr)
                                     && cur_chunks == Some(chunks)
+                                    && cur_two_sided == Some(batch.two_sided)
                                 {
                                     run_len += 1;
                                     continue;
@@ -2812,6 +2823,14 @@ impl ViewportRenderer {
                                     );
                                     self.frame_main_draw_commands
                                         .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if cur_two_sided != Some(batch.two_sided) {
+                                    oit_pass.set_pipeline(if batch.two_sided {
+                                        pipeline_two_sided
+                                    } else {
+                                        pipeline
+                                    });
+                                    cur_two_sided = Some(batch.two_sided);
                                 }
                                 if cur_bg != Some(bg_ptr) {
                                     oit_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -2846,13 +2865,21 @@ impl ViewportRenderer {
                             }
                         }
                     } else if let Some(ref pipeline) = self.resources.oit.instanced_pipeline {
-                        oit_pass.set_pipeline(pipeline);
+                        // Two-sided transparent batches draw through the cull-none
+                        // twin; fall back to the culled pipeline if it is missing.
+                        let pipeline_two_sided = self
+                            .resources
+                            .oit
+                            .instanced_pipeline_two_sided
+                            .as_ref()
+                            .unwrap_or(pipeline);
                         bind_deform_group!(
                             oit_pass,
                             self.resources,
                             &self.resources.deform.dummy_bind_group
                         );
                         let mut cur_chunks: Option<(u32, u32)> = None;
+                        let mut cur_two_sided: Option<bool> = None;
                         for batch in &self.instancing.batches {
                             if !batch.is_transparent {
                                 continue;
@@ -2870,6 +2897,14 @@ impl ViewportRenderer {
                             else {
                                 continue;
                             };
+                            if cur_two_sided != Some(batch.two_sided) {
+                                oit_pass.set_pipeline(if batch.two_sided {
+                                    pipeline_two_sided
+                                } else {
+                                    pipeline
+                                });
+                                cur_two_sided = Some(batch.two_sided);
+                            }
                             oit_pass.set_bind_group(1, inst_tex_bg, &[]);
                             let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                             if cur_chunks != Some(chunks) {
@@ -2964,11 +2999,20 @@ impl ViewportRenderer {
                                             bind_material_group!(oit_pass, mat_bg);
                                             plugin_pipeline_active = true;
                                         }
-                                        None if plugin_pipeline_active => {
-                                            oit_pass.set_pipeline(pipeline);
+                                        // Two-sided per-range material draws back
+                                        // faces through the cull-none OIT pipeline.
+                                        None => {
+                                            oit_pass.set_pipeline(if mat.is_two_sided() {
+                                                self.resources
+                                                    .oit
+                                                    .pipeline_two_sided
+                                                    .as_ref()
+                                                    .unwrap_or(pipeline)
+                                            } else {
+                                                pipeline
+                                            });
                                             plugin_pipeline_active = false;
                                         }
-                                        None => {}
                                     }
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
                                         Some(rbg) => (
@@ -3000,11 +3044,20 @@ impl ViewportRenderer {
                                     bind_material_group!(oit_pass, mat_bg);
                                     plugin_pipeline_active = true;
                                 }
-                                None if plugin_pipeline_active => {
-                                    oit_pass.set_pipeline(pipeline);
+                                // Select the two-sided OIT pipeline for a
+                                // non-`Cull` material so its back faces draw.
+                                None => {
+                                    oit_pass.set_pipeline(if item.material.is_two_sided() {
+                                        self.resources
+                                            .oit
+                                            .pipeline_two_sided
+                                            .as_ref()
+                                            .unwrap_or(pipeline)
+                                    } else {
+                                        pipeline
+                                    });
                                     plugin_pipeline_active = false;
                                 }
-                                None => {}
                             }
                             oit_pass.set_bind_group(1, obj_bg, &[]);
                             oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);
@@ -3063,11 +3116,20 @@ impl ViewportRenderer {
                                         bind_material_group!(oit_pass, mat_bg);
                                         plugin_pipeline_active = true;
                                     }
-                                    None if plugin_pipeline_active => {
-                                        oit_pass.set_pipeline(pipeline);
+                                    // Two-sided per-range material draws back
+                                    // faces through the cull-none OIT pipeline.
+                                    None => {
+                                        oit_pass.set_pipeline(if mat.is_two_sided() {
+                                            self.resources
+                                                .oit
+                                                .pipeline_two_sided
+                                                .as_ref()
+                                                .unwrap_or(pipeline)
+                                        } else {
+                                            pipeline
+                                        });
                                         plugin_pipeline_active = false;
                                     }
-                                    None => {}
                                 }
                                 let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
                                     Some(rbg) => (
@@ -3099,11 +3161,20 @@ impl ViewportRenderer {
                                 bind_material_group!(oit_pass, mat_bg);
                                 plugin_pipeline_active = true;
                             }
-                            None if plugin_pipeline_active => {
-                                oit_pass.set_pipeline(pipeline);
+                            // Select the two-sided OIT pipeline for a non-`Cull`
+                            // material so its back faces draw.
+                            None => {
+                                oit_pass.set_pipeline(if item.material.is_two_sided() {
+                                    self.resources
+                                        .oit
+                                        .pipeline_two_sided
+                                        .as_ref()
+                                        .unwrap_or(pipeline)
+                                } else {
+                                    pipeline
+                                });
                                 plugin_pipeline_active = false;
                             }
-                            None => {}
                         }
                         oit_pass.set_bind_group(1, obj_bg, &[]);
                         oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);

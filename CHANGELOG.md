@@ -81,6 +81,16 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   instance-buffer rebuild. An alpha-mask caster whose texture was replaced under a
   stable id kept casting the first frame's silhouette. They now rebuild, and the
   cached shadow bundle re-records, when the resource-free epoch moves.
+- **Two-sided transparent surfaces keep their back faces on the HDR path.** The
+  OIT (weighted-blended) pipelines were hardcoded to back-face culling, so a
+  two-sided material (`BackfacePolicy::Identical` and the styled policies) at
+  opacity below 1 lost every back-facing triangle on the HDR path, while the
+  opaque and LDR paths drew them. Both OIT pipelines (per-object and instanced)
+  now have a `cull_mode: None` twin selected on the material's two-sidedness, and
+  two-sided transparent items instance again instead of being forced onto the
+  per-object path. Open surfaces (math plots, shells) rendered as partial shapes
+  through the OIT pass; they now render whole. (Two-sided transparent material
+  plugins are the one case still culled.)
 - **Freeing a mesh no longer blanks the instanced scene.** The instanced batch
   cache is rebuilt when the resource-free epoch moves, matching the per-object
   path. Previously the cache key tracked only the instanceable count, scene

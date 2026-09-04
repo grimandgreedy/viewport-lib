@@ -93,6 +93,9 @@ pub(crate) struct CullResources {
     pub(crate) hdr_solid_two_sided_nodiscard_pipeline: Option<crate::gpu::RenderPipeline>,
     /// OIT-pass transparent instanced pipeline using `vs_main_cull` (indirect draw path).
     pub(crate) oit_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `oit_pipeline` for a two-sided
+    /// transparent batch (indirect draw path).
+    pub(crate) oit_two_sided_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Shadow instanced cull pipeline (depth-only, uses `vs_shadow_cull`).
     pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Two-sided (`cull_mode: None` + two-sided depth bias) variant of
@@ -503,9 +506,20 @@ impl DeviceResources {
             &instanced_oit_shader,
             "oit_instanced_pipeline",
             "vs_main",
+            false,
         );
+        let pipeline_two_sided =
+            crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
+                device,
+                &instanced_oit_layout,
+                &instanced_oit_shader,
+                "oit_instanced_pipeline_two_sided",
+                "vs_main",
+                true,
+            );
 
         self.oit.instanced_pipeline = Some(pipeline);
+        self.oit.instanced_pipeline_two_sided = Some(pipeline_two_sided);
     }
 
     /// Upload instance data to the storage buffer, resizing if needed.
@@ -777,13 +791,24 @@ impl DeviceResources {
             &oit_shader,
             "oit_instanced_cull_pipeline",
             "vs_main_cull",
+            false,
         );
+        let oit_cull_two_sided =
+            crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
+                device,
+                &oit_cull_layout,
+                &oit_shader,
+                "oit_instanced_cull_pipeline_two_sided",
+                "vs_main_cull",
+                true,
+            );
 
         self.cull.hdr_solid_pipeline = Some(hdr_solid_cull);
         self.cull.hdr_solid_two_sided_pipeline = Some(hdr_solid_cull_two_sided);
         self.cull.hdr_solid_nodiscard_pipeline = Some(hdr_solid_cull_nodiscard);
         self.cull.hdr_solid_two_sided_nodiscard_pipeline = Some(hdr_solid_cull_two_sided_nodiscard);
         self.cull.oit_pipeline = Some(oit_cull);
+        self.cull.oit_two_sided_pipeline = Some(oit_cull_two_sided);
 
         // Shadow instanced cull pipeline.
         // Uses a minimal BGL for group 1: binding 0 (instances) + binding 5 (visibility_indices).

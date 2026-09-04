@@ -966,6 +966,13 @@ impl DeviceResources {
             device,
             &oit_layout,
             &oit_shader,
+            false,
+        );
+        let oit_pipeline_two_sided = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+            device,
+            &oit_layout,
+            &oit_shader,
+            true,
         );
 
         // oit_instanced_pipeline is created lazily by ensure_oit_instanced_pipeline()
@@ -1311,6 +1318,7 @@ impl DeviceResources {
         self.post.dof_pipeline = Some(dof_pipeline);
 
         self.oit.pipeline = Some(oit_pipeline);
+        self.oit.pipeline_two_sided = Some(oit_pipeline_two_sided);
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
         self.scene.hdr_solid = Some(hdr_solid_pipeline);
         self.scene.hdr_solid_two_sided = Some(hdr_solid_two_sided_pipeline);

@@ -63,19 +63,15 @@ pub(crate) fn is_instanceable(
 
 /// Whether an item's back-face handling forces it onto the per-object path.
 ///
-/// The instanced path admits the `Cull` and `Identical` policies (the latter via
-/// the two-sided `cull_mode: None` solid pipeline), but only for opaque items: the
-/// transparent instanced pipeline (OIT) is back-face culled, so a two-sided
-/// transparent item would lose its back faces there and must stay per-object. The
-/// styled policies (`DifferentColour`/`Tint`/`Pattern`) always go per-object. This
-/// is the single predicate the instanced filter and both paint-path excluded
-/// filters share, so they cannot drift.
+/// The instanced path admits the `Cull` and `Identical` policies through both the
+/// opaque and OIT passes, each of which has a two-sided (`cull_mode: None`) twin,
+/// so a two-sided `Identical` item instances at any opacity. The styled policies
+/// (`DifferentColour`/`Tint`/`Pattern`) read a per-item back-face colour and flip
+/// the normal, which the instanced shader does not carry, so they stay
+/// per-object. This is the single predicate the instanced filter and both
+/// paint-path excluded filters share, so they cannot drift.
 pub(crate) fn backface_needs_per_object(item: &SceneRenderItem) -> bool {
-    if item.material.backface_needs_per_object() {
-        return true;
-    }
-    let transparent = item.settings.opacity < 1.0 || item.material.is_blend();
-    item.material.is_two_sided() && transparent
+    item.material.backface_needs_per_object()
 }
 
 /// The per-range materials to draw `item` with, when it requests them and

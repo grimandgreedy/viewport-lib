@@ -11,8 +11,14 @@
 pub(crate) struct OitResources {
     /// OIT mesh pipeline (non-instanced, mesh_oit.wgsl, two colour targets).
     pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `pipeline`, for a transparent
+    /// material whose backface policy is not `Cull`. Without it a two-sided
+    /// transparent surface loses its back faces on the OIT path.
+    pub(crate) pipeline_two_sided: Option<crate::gpu::RenderPipeline>,
     /// OIT instanced mesh pipeline (mesh_instanced_oit.wgsl / mesh_instanced with OIT targets).
     pub(crate) instanced_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Two-sided (`cull_mode: None`) variant of `instanced_pipeline`.
+    pub(crate) instanced_pipeline_two_sided: Option<crate::gpu::RenderPipeline>,
     /// OIT composite pipeline (oit_composite.wgsl, fullscreen tri, no depth).
     pub(crate) composite_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the OIT composite pass (group 0: accum + reveal + sampler).

@@ -204,10 +204,17 @@ pub(crate) fn build_hdr_mesh_pipelines(
 
 /// `mesh_oit.wgsl`: weighted-blended OIT pipeline. Draws into the
 /// `Rgba16Float` accumulation target and the `R8Unorm` reveal target.
+///
+/// `two_sided` selects `cull_mode: None` so a two-sided transparent material
+/// (`BackfacePolicy::Identical` and the styled policies) draws its back faces;
+/// the OIT fragment shader flips the normal and applies the back-face colour via
+/// `@builtin(front_facing)`. Single-sided transparents keep back-face culling so
+/// the near sheet is not double-blended with the far one.
 pub(crate) fn build_oit_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
+    two_sided: bool,
 ) -> crate::gpu::RenderPipeline {
     let accum_blend = crate::gpu::BlendState {
         color: crate::gpu::BlendComponent {
@@ -264,7 +271,7 @@ pub(crate) fn build_oit_pipeline(
             }),
             primitive: crate::gpu::PrimitiveState {
                 topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(crate::gpu::Face::Back),
+                cull_mode: (!two_sided).then_some(crate::gpu::Face::Back),
                 ..Default::default()
             },
             depth_stencil: Some(depth_stencil),
@@ -833,6 +840,7 @@ pub(crate) fn build_oit_instanced_pipeline(
     shader: &crate::gpu::ShaderModule,
     label: &str,
     vs_entry: &str,
+    two_sided: bool,
 ) -> crate::gpu::RenderPipeline {
     let accum_blend = crate::gpu::BlendState {
         color: crate::gpu::BlendComponent {
@@ -885,7 +893,7 @@ pub(crate) fn build_oit_instanced_pipeline(
             }),
             primitive: crate::gpu::PrimitiveState {
                 topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(crate::gpu::Face::Back),
+                cull_mode: (!two_sided).then_some(crate::gpu::Face::Back),
                 ..Default::default()
             },
             depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
