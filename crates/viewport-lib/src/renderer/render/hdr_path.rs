@@ -2937,7 +2937,6 @@ impl ViewportRenderer {
                     // Render them here individually so they are not invisible at opacity < 1.
                     if let Some(ref pipeline) = self.resources.oit.pipeline {
                         oit_pass.set_pipeline(pipeline);
-                        let mut plugin_pipeline_active = false;
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || !crate::renderer::prepare::has_transparent_draws(
@@ -3001,7 +3000,6 @@ impl ViewportRenderer {
                                                 &pp.oit
                                             });
                                             bind_material_group!(oit_pass, mat_bg);
-                                            plugin_pipeline_active = true;
                                         }
                                         // Two-sided per-range material draws back
                                         // faces through the cull-none OIT pipeline.
@@ -3015,7 +3013,6 @@ impl ViewportRenderer {
                                             } else {
                                                 pipeline
                                             });
-                                            plugin_pipeline_active = false;
                                         }
                                     }
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -3050,7 +3047,6 @@ impl ViewportRenderer {
                                         &pp.oit
                                     });
                                     bind_material_group!(oit_pass, mat_bg);
-                                    plugin_pipeline_active = true;
                                 }
                                 // Select the two-sided OIT pipeline for a
                                 // non-`Cull` material so its back faces draw.
@@ -3064,7 +3060,6 @@ impl ViewportRenderer {
                                     } else {
                                         pipeline
                                     });
-                                    plugin_pipeline_active = false;
                                 }
                             }
                             oit_pass.set_bind_group(1, obj_bg, &[]);
@@ -3073,7 +3068,6 @@ impl ViewportRenderer {
                     }
                 } else if let Some(ref pipeline) = self.resources.oit.pipeline {
                     oit_pass.set_pipeline(pipeline);
-                    let mut plugin_pipeline_active = false;
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
                             || !crate::renderer::prepare::has_transparent_draws(
@@ -3126,7 +3120,6 @@ impl ViewportRenderer {
                                             &pp.oit
                                         });
                                         bind_material_group!(oit_pass, mat_bg);
-                                        plugin_pipeline_active = true;
                                     }
                                     // Two-sided per-range material draws back
                                     // faces through the cull-none OIT pipeline.
@@ -3140,7 +3133,6 @@ impl ViewportRenderer {
                                         } else {
                                             pipeline
                                         });
-                                        plugin_pipeline_active = false;
                                     }
                                 }
                                 let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -3175,7 +3167,6 @@ impl ViewportRenderer {
                                     &pp.oit
                                 });
                                 bind_material_group!(oit_pass, mat_bg);
-                                plugin_pipeline_active = true;
                             }
                             // Select the two-sided OIT pipeline for a non-`Cull`
                             // material so its back faces draw.
@@ -3189,7 +3180,6 @@ impl ViewportRenderer {
                                 } else {
                                     pipeline
                                 });
-                                plugin_pipeline_active = false;
                             }
                         }
                         oit_pass.set_bind_group(1, obj_bg, &[]);

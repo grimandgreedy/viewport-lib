@@ -319,6 +319,13 @@ impl DeviceResources {
     /// The fragment shader must return [`OitOutput`](crate::plugin_api::shared_wgsl::SHARED_OIT_WGSL),
     /// writing both `@location(0)` (accum) and `@location(1)` (reveal).
     /// Depth state: `LessEqual` test, depth write off.
+    ///
+    /// `opts.primitive` sets the cull mode, which defaults to
+    /// [`Face::Back`](crate::gpu::Face::Back). For a two-sided item (an open
+    /// surface whose back faces should show through) set `cull_mode: None`:
+    /// weighted-blended OIT is order-independent, so drawing both faces is
+    /// correct, and the fragment stage can flip the normal on `@builtin(front_facing)`.
+    /// With the default back-face culling the away-facing side is dropped.
     pub fn build_oit_pipeline(
         &self,
         device: &crate::gpu::Device,
