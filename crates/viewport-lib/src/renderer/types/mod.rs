@@ -1046,19 +1046,21 @@ macro_rules! emit_scivis_draw_calls {
         // Each segment instance is drawn as 6 vertices (2 triangles).
         // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
         // pipeline so they are always fully visible regardless of active clip volumes.
-        // Items with wireframe=true use the thin 1px LineList pipeline instead.
-        if !$polyline_gpu_data.is_empty() && resources.polyline.pipeline.is_some() {
+        // Items with wireframe=true use the thin 1px LineList pipeline instead, still
+        // honouring skip_clip (see `PolylineKey`).
+        if !$polyline_gpu_data.is_empty() && resources.polyline.pipelines.is_some() {
+            let polyline_pipelines = resources.polyline.pipelines.as_ref();
             for pl in $polyline_gpu_data.iter() {
                 if pl.segment_count == 0 {
                     continue;
                 }
+                let key = crate::resources::PolylineKey {
+                    skip_clip: pl.skip_clip,
+                    wireframe: pl.wireframe,
+                };
                 if pl.wireframe {
                     if let (Some(wf_pipeline), Some(wf_bg)) = (
-                        resources
-                            .polyline
-                            .wireframe_pipeline
-                            .as_ref()
-                            .map(|d| d.for_format(_is_hdr)),
+                        polyline_pipelines.map(|ps| ps.get(key).for_format(_is_hdr)),
                         pl.wireframe_bind_group.as_ref(),
                     ) {
                         render_pass.set_pipeline(wf_pipeline);
@@ -1068,20 +1070,8 @@ macro_rules! emit_scivis_draw_calls {
                     }
                     continue;
                 }
-                let pipeline = if pl.skip_clip {
-                    resources
-                        .polyline
-                        .no_clip_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .polyline
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
+                if let Some(pipeline) = polyline_pipelines.map(|ps| ps.get(key).for_format(_is_hdr))
+                {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, camera_bg, &[]);
                     render_pass.set_bind_group(1, &pl.bind_group, &[]);
@@ -1279,31 +1269,15 @@ macro_rules! emit_scivis_draw_calls {
                 if ribbon.index_count == 0 && ribbon.edge_index_count == 0 {
                     continue;
                 }
-                let pipeline = if ribbon.wireframe {
-                    resources
-                        .ribbon
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    match ribbon.blend {
-                        crate::renderer::SpriteBlend::Additive => resources
-                            .ribbon
-                            .pipeline_additive
-                            .as_ref()
-                            .map(|d| d.for_format(_is_hdr)),
-                        crate::renderer::SpriteBlend::Premultiplied => resources
-                            .ribbon
-                            .pipeline_premultiplied
-                            .as_ref()
-                            .map(|d| d.for_format(_is_hdr)),
-                        crate::renderer::SpriteBlend::AlphaBlend => resources
-                            .ribbon
-                            .pipeline
-                            .as_ref()
-                            .map(|d| d.for_format(_is_hdr)),
-                    }
+                let key = crate::resources::RibbonKey {
+                    blend: ribbon.blend,
+                    wireframe: ribbon.wireframe,
                 };
+                let pipeline = resources
+                    .ribbon
+                    .pipelines
+                    .as_ref()
+                    .map(|ps| ps.get(key).for_format(_is_hdr));
                 if let Some(pipeline) = pipeline {
                     render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(1, &ribbon.uniform_bind_group, &[]);

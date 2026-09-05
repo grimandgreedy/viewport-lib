@@ -13,17 +13,102 @@ pub(crate) struct StreamtubeResources {
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
-/// Ribbon pipelines (one per blend mode) and layout.
+/// Ribbon pipeline variant axes: blend mode and thin-wireframe vs
+/// solid-triangle geometry. Unlike Polyline's axes, both of Ribbon's axes
+/// select the same shader and bind group layout -- only the blend state,
+/// depth-write flag, and topology change -- so `RibbonKey`/`RibbonVariantSet`
+/// is closer in shape to the mesh family's own `PipelineKey`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct RibbonKey {
+    pub blend: crate::renderer::SpriteBlend,
+    pub wireframe: bool,
+}
+
+impl RibbonKey {
+    fn blend_index(self) -> usize {
+        match self.blend {
+            crate::renderer::SpriteBlend::AlphaBlend => 0,
+            crate::renderer::SpriteBlend::Additive => 1,
+            crate::renderer::SpriteBlend::Premultiplied => 2,
+        }
+    }
+
+    /// Every axis combination, for eager cross-product construction
+    /// (`RibbonVariantSet::build`).
+    pub fn all() -> impl Iterator<Item = RibbonKey> {
+        [
+            crate::renderer::SpriteBlend::AlphaBlend,
+            crate::renderer::SpriteBlend::Additive,
+            crate::renderer::SpriteBlend::Premultiplied,
+        ]
+        .into_iter()
+        .flat_map(|blend| {
+            [false, true]
+                .into_iter()
+                .map(move |wireframe| RibbonKey { blend, wireframe })
+        })
+    }
+
+    fn slot(self) -> usize {
+        self.blend_index() + 3 * (self.wireframe as usize)
+    }
+}
+
+/// A `DualPipeline` built for every reachable [`RibbonKey`], indexed for a
+/// hash-free draw-time lookup (`get`).
+pub(crate) struct RibbonVariantSet {
+    variants: [DualPipeline; 6],
+}
+
+impl RibbonVariantSet {
+    pub fn build(mut build: impl FnMut(RibbonKey) -> DualPipeline) -> Self {
+        let mut variants: Vec<DualPipeline> = Vec::with_capacity(6);
+        for key in RibbonKey::all() {
+            variants.push(build(key));
+        }
+        Self {
+            variants: variants
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("RibbonKey::all() yields exactly 6 keys")),
+        }
+    }
+
+    pub fn get(&self, key: RibbonKey) -> &DualPipeline {
+        &self.variants[key.slot()]
+    }
+}
+
+#[cfg(test)]
+mod ribbon_key_tests {
+    use super::*;
+
+    #[test]
+    fn all_keys_are_distinct_and_densely_slotted() {
+        let keys: Vec<RibbonKey> = RibbonKey::all().collect();
+        assert_eq!(keys.len(), 6, "RibbonKey has blend(3) x wireframe = 6 keys");
+
+        let mut seen_keys = std::collections::HashSet::new();
+        let mut seen_slots = std::collections::HashSet::new();
+        for key in keys {
+            assert!(
+                seen_keys.insert(key),
+                "all() yielded {key:?} more than once"
+            );
+            let slot = key.slot();
+            assert!(slot < 6, "{key:?} slotted out of range: {slot}");
+            assert!(
+                seen_slots.insert(slot),
+                "{key:?} collided with another key at slot {slot}"
+            );
+        }
+    }
+}
+
+/// Ribbon pipelines, keyed by `RibbonKey`, and layout.
 #[derive(Default)]
 pub(crate) struct RibbonResources {
-    /// Ribbon pipeline: alpha blend, depth write enabled. Default for plain ribbons.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Ribbon pipeline with additive blend and depth write disabled.
-    pub(crate) pipeline_additive: Option<DualPipeline>,
-    /// Ribbon pipeline with premultiplied-alpha blend and depth write disabled.
-    pub(crate) pipeline_premultiplied: Option<DualPipeline>,
-    /// Ribbon wireframe pipeline (LineList topology, cull_mode None).
-    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Ribbon render pipelines, keyed by `RibbonKey`.
+    pub(crate) pipelines: Option<RibbonVariantSet>,
     /// Bind group layout for ribbons (group 1): uniform + optional streak texture + sampler.
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
@@ -147,80 +232,44 @@ impl DeviceResources {
         ));
         // Additive and premultiplied ribbons are typically used for emissive
         // trails; depth write is disabled so successive segments accumulate
-        // rather than clipping each other when they overlap.
-        self.ribbon.pipeline = Some(build_dual_pipeline(
-            device,
-            &DualPipelineDesc {
-                label: "ribbon_pipeline",
-                layout: &ribbon_layout,
-                shader: &ribbon_shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        ));
-        self.ribbon.pipeline_additive = Some(build_dual_pipeline(
-            device,
-            &DualPipelineDesc {
-                label: "ribbon_pipeline_additive",
-                layout: &ribbon_layout,
-                shader: &ribbon_shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(additive_blend),
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: false,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        ));
-        self.ribbon.pipeline_premultiplied = Some(build_dual_pipeline(
-            device,
-            &DualPipelineDesc {
-                label: "ribbon_pipeline_premultiplied",
-                layout: &ribbon_layout,
-                shader: &ribbon_shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(premultiplied_blend),
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: false,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        ));
-        // Ribbon wireframe: same as tube wireframe but using the ribbon shader.
-        self.ribbon.wireframe_pipeline = Some(build_dual_pipeline(
-            device,
-            &DualPipelineDesc {
-                label: "ribbon_wireframe_pipeline",
-                layout: &ribbon_layout,
-                shader: &ribbon_shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                topology: crate::gpu::PrimitiveTopology::LineList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        ));
+        // rather than clipping each other when they overlap. One
+        // `RibbonVariantSet::build` covers all 6 (blend x wireframe)
+        // combinations -- previously the wireframe pipeline was built once,
+        // always alpha-blend, so an additive or premultiplied ribbon drawn
+        // as wireframe silently lost its blend mode.
+        let sample_count = self.sample_count;
+        let ldr_format = self.target_format;
+        self.ribbon.pipelines = Some(RibbonVariantSet::build(|key| {
+            let (blend, depth_write) = match key.blend {
+                crate::renderer::SpriteBlend::AlphaBlend => {
+                    (crate::gpu::BlendState::ALPHA_BLENDING, true)
+                }
+                crate::renderer::SpriteBlend::Additive => (additive_blend, false),
+                crate::renderer::SpriteBlend::Premultiplied => (premultiplied_blend, false),
+            };
+            build_dual_pipeline(
+                device,
+                &DualPipelineDesc {
+                    label: "ribbon_pipeline_variant",
+                    layout: &ribbon_layout,
+                    shader: &ribbon_shader,
+                    vertex_entry: "vs_main",
+                    fragment_entry: "fs_main",
+                    vertex_buffers: &[Vertex::buffer_layout()],
+                    blend: Some(blend),
+                    topology: if key.wireframe {
+                        crate::gpu::PrimitiveTopology::LineList
+                    } else {
+                        crate::gpu::PrimitiveTopology::TriangleList
+                    },
+                    cull_mode: None,
+                    depth_write,
+                    depth_compare: crate::gpu::CompareFunction::Less,
+                    sample_count,
+                    ldr_format,
+                },
+            )
+        }));
     }
 
     /// Upload one [`StreamtubeItem`] to the GPU and return draw data.
@@ -1543,6 +1592,30 @@ mod tests {
             strip_lengths: vec![3],
             width: 0.2,
             ..Default::default()
+        }
+    }
+
+    /// Same completeness guarantee as the mesh-family `PipelineVariantSet`
+    /// tests: once built, every key in `RibbonKey::all()` must resolve
+    /// through `get()` without panicking. Covers the `blend x wireframe`
+    /// cross product that the wireframe pipeline used to ignore (always
+    /// alpha-blend regardless of the ribbon's chosen blend mode).
+    #[test]
+    fn ribbon_pipelines_resolve_every_key_once_built() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        resources.ensure_streamtube_pipeline(&device);
+        let pipelines = resources
+            .ribbon
+            .pipelines
+            .as_ref()
+            .expect("ensure_streamtube_pipeline must build the ribbon variant set");
+        for key in super::RibbonKey::all() {
+            let _ = pipelines.get(key);
         }
     }
 
