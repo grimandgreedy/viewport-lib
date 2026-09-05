@@ -65,6 +65,15 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   present texture with its `MaterialTextureSlot`; `slot.colour_space()`
   (`ColourSpace::Srgb` / `Linear`) says whether to upload via `upload_texture` or
   `upload_data_texture`. Imported `base_color` / `emissive` factors are linear.
+- **`AlphaMode::BlendPremultiplied`.** A transparent blend mode for content whose
+  RGB is already premultiplied by alpha: authored premultiplied images, hardware
+  video-decode surfaces, and external GPU textures brought in through
+  `register_texture_view` (a Wayland client buffer, for one). It routes through the
+  same OIT pass as `Blend` but skips the pass's own alpha premultiply, so
+  antialiased edges no longer pick up the dark halo the straight equation gives
+  premultiplied input. Existing consumers are unaffected: it is a new opt-in variant
+  and straight `Blend` is unchanged. Premultiplied items draw on the per-object path
+  (the instanced OIT shader carries only an alpha-test flag, not the full mode).
 
 ### Fixes
 - **Lit sprites now get the same shadow quality as mesh receivers.** `sprite_lit.wgsl`
@@ -92,6 +101,20 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   instance-buffer rebuild. An alpha-mask caster whose texture was replaced under a
   stable id kept casting the first frame's silhouette. They now rebuild, and the
   cached shadow bundle re-records, when the resource-free epoch moves.
+- **Alpha-mask casters cast cut-out shadows on the per-object path.** A caster
+  with `AlphaMode::Mask` that fell to the per-object shadow path (any
+  per-object-only feature: a styled backface policy, matcap, GPU warp,
+  position/normal override, lightmap, or per-submesh materials) had no cutout
+  shadow pipeline and cast a solid silhouette, so a masked leaf card shadowed as
+  an opaque quad. The per-object shadow pass gained the alpha-cutout pipeline the
+  instanced path already had (`shadow.wgsl` grew a cutout fragment stage), so its
+  shadow now has the alpha holes punched through, matching the instanced path.
+- **Plugin-shaded opaque meshes get hardware early-Z again.** A material-plugin
+  material on plain-opaque geometry always drew through the discard-capable
+  pipeline, so occluded fragments were shaded instead of depth-rejected before
+  shading. Plugin opaque pipelines gained the discard-free twin the built-in
+  materials already have, so a plainly-opaque plugin material is early-depth
+  tested like any other. Performance only; output unchanged.
 - **Two-sided transparent surfaces keep their back faces on the HDR path.** The
   OIT (weighted-blended) pipelines were hardcoded to back-face culling, so a
   two-sided material (`BackfacePolicy::Identical` and the styled policies) at
@@ -129,6 +152,13 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   an additive or premultiplied ribbon lost its blend mode the moment
   wireframe mode was enabled. Wireframe ribbons now build one pipeline per
   blend mode, matching the solid path.
+- **Instanced meshes honour wireframe again.** A surface mesh drawn through the
+  instanced path rendered solid when set to wireframe (per-item
+  `settings.wireframe` or the global wireframe mode), because the per-instance
+  wireframe flag was hardcoded off even though the instanced shader already
+  supported it. Batched items now render as wireframe like non-instanced ones,
+  and toggling the global wireframe mode invalidates the instanced batch cache so
+  the change takes effect on the next frame.
 
 ## [0.21.0]
 

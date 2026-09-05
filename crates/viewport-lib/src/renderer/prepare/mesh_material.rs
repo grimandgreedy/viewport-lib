@@ -35,6 +35,11 @@ pub(crate) fn is_instanceable(
         // per-object writer's own warp exception and the comment there).
         && item.warp_attribute.is_none()
         && !backface_needs_per_object(item)
+        // Premultiplied-alpha blend is a per-object OIT feature: the instanced
+        // OIT shader carries only an alpha-test flag, not the full alpha mode,
+        // so it cannot skip the premultiply step. Keep these items per-object,
+        // where `mesh_oit.wgsl` reads `alpha_mode == 3` and composites correctly.
+        && !item.material.is_premultiplied()
         && item.material.matcap_id().is_none()
         && item.material.param_vis.is_none()
         // The instanced path carries the emissive factor but does not sample the
@@ -253,6 +258,37 @@ mod tests {
         assert!(
             !is_instanceable(&item, &resources, &[]),
             "a warp item must fall back to the per-object path",
+        );
+    }
+
+    /// Premultiplied-alpha blend is read from `alpha_mode == 3` only by the
+    /// per-object OIT shader; the instanced OIT shader carries just an
+    /// alpha-test flag, so a premultiplied item routed there would blend with
+    /// the straight equation. `is_instanceable` must keep it per-object.
+    #[test]
+    fn premultiplied_blend_is_not_instanceable() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mesh = crate::geometry::primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &mesh).unwrap();
+
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        // Straight blend instances (the instanced OIT path handles it).
+        item.material.alpha_mode = AlphaMode::Blend;
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a straight-blend item should still instance",
+        );
+
+        item.material.alpha_mode = AlphaMode::BlendPremultiplied;
+        assert!(
+            !is_instanceable(&item, &resources, &[]),
+            "a premultiplied-blend item must fall back to the per-object path",
         );
     }
 

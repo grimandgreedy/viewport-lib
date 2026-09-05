@@ -278,6 +278,80 @@ fn oit_two_sided_matrix() {
     }
 }
 
+/// Centre-pixel red channel of a rendered frame.
+fn centre_red(px: &[u8], size: usize) -> u8 {
+    let idx = ((size / 2) * size + size / 2) * 4;
+    px[idx]
+}
+
+/// Premultiplied-alpha blend axis on the OIT pass.
+///
+/// Unlike the other axes here, premultiplied blend is not a separate pipeline:
+/// weighted-blended OIT fixes its accum/reveal blend equations, so the straight
+/// vs premultiplied distinction is a per-object uniform branch in
+/// `mesh_oit.wgsl` (skip the `* alpha` on RGB), read from `alpha_mode == 3`.
+/// The observable is a colour difference, not coverage: feed the *same*
+/// premultiplied texture (RGB already multiplied down by alpha) through both
+/// modes. Straight `Blend` multiplies by alpha a second time and darkens it
+/// (the dark-edge halo the mode exists to fix); `BlendPremultiplied` composites
+/// it as authored and stays brighter.
+#[test]
+fn oit_premultiplied_blend_matrix() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // One-sided quad, front face toward the top-down camera, so it renders
+    // opaque-coverage-wise and the whole centre is the surface under test.
+    let mesh = quad_mesh(1.5, true);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &mesh)
+        .unwrap();
+    // A premultiplied grey: RGB already scaled by the 0.5 alpha it carries.
+    let tex = renderer
+        .resources_mut()
+        .upload_texture(&device, &queue, 1, 1, &[128, 128, 128, 128])
+        .unwrap();
+
+    let gen_ctr = std::cell::Cell::new(0u64);
+    let render = |renderer: &mut ViewportRenderer, mode: AlphaMode| {
+        gen_ctr.set(gen_ctr.get() + 1);
+        let mut frame = base_frame(PipelineMode::Hdr, 128, gen_ctr.get());
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.material.base_colour = [1.0, 1.0, 1.0].into();
+        item.material.texture_id = Some(tex);
+        item.material.alpha_mode = mode;
+        item.settings.unlit = true;
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        let px = renderer.render_offscreen(&device, &queue, &frame, 128, 128);
+        centre_red(&px, 128)
+    };
+
+    let straight = render(&mut renderer, AlphaMode::Blend);
+    let premult = render(&mut renderer, AlphaMode::BlendPremultiplied);
+
+    // Both must actually render the surface.
+    assert!(
+        straight > 10,
+        "straight-blend premultiplied texture rendered nothing (red {straight})"
+    );
+    assert!(
+        premult > 10,
+        "premultiplied-blend texture rendered nothing (red {premult})"
+    );
+    // Premultiplied avoids the second alpha multiply, so it composites brighter
+    // than straight blend for the same premultiplied input.
+    assert!(
+        premult as i32 - straight as i32 > 20,
+        "premultiplied blend ({premult}) should be clearly brighter than straight \
+         blend ({straight}) for the same premultiplied texture; the axis is not \
+         reaching the OIT shader"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Shadow pass: {one-sided, two-sided} x {plain, alpha-mask} x {per-object, instanced}
 // ---------------------------------------------------------------------------

@@ -501,7 +501,10 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
         out.resolved = true;
-        out.out_oit.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
+        // alpha_mode == 3 means the colour is already premultiplied by alpha, so
+        // it is weighted directly; straight blend premultiplies here.
+        let premult_rgb = select(base_colour * alpha, base_colour, object.alpha_mode == 3u);
+        out.out_oit.accum  = vec4<f32>(premult_rgb, alpha) * w;
         out.out_oit.reveal = alpha;
         return out;
     }
@@ -837,7 +840,10 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     let w = alpha * max(1e-2, min(3e3, 10.0 / (1e-5 + pow(z / 5.0, 2.0) + pow(z / 200.0, 6.0))));
 
     var out: OitOut;
-    out.accum  = vec4<f32>(final_rgb * alpha * w, alpha * w);
+    // alpha_mode == 3 (BlendPremultiplied): final_rgb already carries the alpha
+    // premultiply, so weight it as-is. Straight blend applies `* alpha` here.
+    let premult_rgb = select(final_rgb * alpha, final_rgb, object.alpha_mode == 3u);
+    out.accum  = vec4<f32>(premult_rgb * w, alpha * w);
     out.reveal = alpha;
     return out;
 }

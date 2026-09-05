@@ -149,6 +149,9 @@ pub(super) fn build_object_uniform(
             crate::scene::material::AlphaMode::Opaque => 0,
             crate::scene::material::AlphaMode::Mask(_) => 1,
             crate::scene::material::AlphaMode::Blend => 2,
+            // The OIT fragment shader reads 3 as "RGB is already premultiplied":
+            // it skips the `* alpha` it applies to straight-blend colour.
+            crate::scene::material::AlphaMode::BlendPremultiplied => 3,
         },
         alpha_cutoff: match m.alpha_mode {
             crate::scene::material::AlphaMode::Mask(c) => c,

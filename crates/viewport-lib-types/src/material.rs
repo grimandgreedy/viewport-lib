@@ -254,8 +254,21 @@ pub enum AlphaMode {
     /// Fragments with alpha below the cutoff are discarded; others are fully opaque.
     /// The f32 value is the cutoff threshold in [0, 1].
     Mask(f32),
-    /// Standard alpha blending through the OIT pass.
+    /// Standard (straight, non-premultiplied) alpha blending through the OIT pass.
+    /// The fragment colour is treated as un-premultiplied: the pass multiplies it
+    /// by alpha before compositing.
     Blend,
+    /// Alpha blending for content whose RGB is already premultiplied by alpha.
+    ///
+    /// Like [`Blend`](AlphaMode::Blend) it routes through the OIT pass, but the
+    /// pass does not multiply RGB by alpha a second time. Use it for sources that
+    /// deliver premultiplied colour: authored images stored premultiplied, hardware
+    /// video-decode surfaces, and external GPU textures brought in through
+    /// `register_texture_view` (a Wayland client buffer, for instance, is
+    /// premultiplied by convention). Blending premultiplied content with the
+    /// straight `Blend` equation double-applies alpha at antialiased edges and
+    /// leaves a dark halo; this mode composites it correctly.
+    BlendPremultiplied,
 }
 
 impl Default for AlphaMode {
@@ -521,9 +534,22 @@ impl Material {
         )
     }
 
-    /// Returns `true` if this material uses alpha blending and should go through the OIT pass.
+    /// Returns `true` if this material uses alpha blending and should go through
+    /// the OIT pass. True for both straight [`AlphaMode::Blend`] and
+    /// [`AlphaMode::BlendPremultiplied`]; the two differ only in whether the pass
+    /// premultiplies RGB, not in which pass they route to.
     pub fn is_blend(&self) -> bool {
-        matches!(self.alpha_mode, AlphaMode::Blend)
+        matches!(
+            self.alpha_mode,
+            AlphaMode::Blend | AlphaMode::BlendPremultiplied
+        )
+    }
+
+    /// Returns `true` if this material's colour is already premultiplied by alpha
+    /// ([`AlphaMode::BlendPremultiplied`]), so the OIT pass must skip its own
+    /// premultiply step.
+    pub fn is_premultiplied(&self) -> bool {
+        matches!(self.alpha_mode, AlphaMode::BlendPremultiplied)
     }
 
     /// The emitted luminance in nits: `emissive` scaled by `emissive_strength`.
@@ -783,6 +809,36 @@ mod tests {
             ..Default::default()
         };
         assert!(m.is_two_sided());
+    }
+
+    #[test]
+    fn blend_modes_route_through_oit() {
+        let straight = Material {
+            alpha_mode: AlphaMode::Blend,
+            ..Default::default()
+        };
+        assert!(straight.is_blend());
+        assert!(!straight.is_premultiplied());
+
+        let premult = Material {
+            alpha_mode: AlphaMode::BlendPremultiplied,
+            ..Default::default()
+        };
+        // Premultiplied routes through the same OIT pass as straight blend...
+        assert!(premult.is_blend());
+        // ...but flags itself so the pass skips its premultiply step.
+        assert!(premult.is_premultiplied());
+
+        let opaque = Material::default();
+        assert!(!opaque.is_blend());
+        assert!(!opaque.is_premultiplied());
+
+        let mask = Material {
+            alpha_mode: AlphaMode::Mask(0.5),
+            ..Default::default()
+        };
+        assert!(!mask.is_blend());
+        assert!(!mask.is_premultiplied());
     }
 
     #[test]
