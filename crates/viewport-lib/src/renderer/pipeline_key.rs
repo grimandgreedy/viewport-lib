@@ -13,7 +13,21 @@
 //! material-plugin opaque pipelines have no discard-free twin) falls back to
 //! the nearest pipeline it does have and reports the gap through
 //! `missing_variant`, so it shows up in `FrameStats` instead of silently
-//! drawing the wrong thing.
+//! drawing the wrong thing. `missing_variant` is a *runtime* signal on
+//! families still using named `Option<Pipeline>` fields; it stays load-bearing
+//! until every family migrates to `PipelineVariantSet` below, at which point
+//! it becomes unreachable and can be deleted (phase 4 of the plan).
+//!
+//! A family that *has* migrated to `PipelineVariantSet` gets a stronger,
+//! compile-time form of the same guarantee: `PipelineVariantSet::build` takes
+//! a closure returning a concrete `RenderPipeline`, not an `Option`, so there
+//! is no code path where a key goes unbuilt. No startup assertion is needed
+//! for those families -- the type system already rules out a missing variant.
+//! What it does *not* rule out is a `build` closure that quietly maps two
+//! keys that should differ onto the same pipeline (an axis it forgot to
+//! branch on); that is a correctness bug, not a completeness one, and is
+//! still the job of the pixel-comparison tests in
+//! `tests/headless_pipeline_variant_matrix.rs`.
 
 /// The axes that vary a mesh-family render pipeline. Computed once per item
 /// (or per instanced batch) and passed to a `select_*` function to pick the
@@ -103,6 +117,42 @@ impl PipelineVariantSet {
 
     pub fn get(&self, key: PipelineKey) -> &crate::gpu::RenderPipeline {
         &self.variants[key.slot()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `PipelineVariantSet::build`'s closure returns a concrete
+    /// `RenderPipeline`, not an `Option`, so a migrated family cannot skip a
+    /// key -- completeness is a compile-time property, not something a
+    /// startup check needs to verify. What *can* still silently break is the
+    /// enumeration itself: if a future phase adds a fourth axis to
+    /// `PipelineKey` without widening `all()`/`slot()` past 3 bits, two
+    /// distinct keys would collide on the same array slot and `build` would
+    /// silently drop one of them. This test pins `all()` and `slot()` in
+    /// sync so that class of bug fails immediately instead of showing up as
+    /// a wrong pipeline at draw time.
+    #[test]
+    fn all_keys_are_distinct_and_densely_slotted() {
+        let keys: Vec<PipelineKey> = PipelineKey::all().collect();
+        assert_eq!(keys.len(), 8, "PipelineKey has 3 bool axes: 2^3 = 8 keys");
+
+        let mut seen_keys = std::collections::HashSet::new();
+        let mut seen_slots = std::collections::HashSet::new();
+        for key in keys {
+            assert!(
+                seen_keys.insert(key),
+                "all() yielded {key:?} more than once"
+            );
+            let slot = key.slot();
+            assert!(slot < 8, "{key:?} slotted out of range: {slot}");
+            assert!(
+                seen_slots.insert(slot),
+                "{key:?} collided with another key at slot {slot}"
+            );
+        }
     }
 }
 

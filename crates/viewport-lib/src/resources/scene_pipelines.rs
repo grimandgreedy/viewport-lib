@@ -45,4 +45,36 @@ mod tests {
         assert!(res.scene.hdr_wireframe.is_none());
         assert!(res.scene.hdr_overlay.is_none());
     }
+
+    /// The completeness guarantee phase 3 of the pipeline-variant-specialization
+    /// plan asks for, applied to the one family migrated to `PipelineVariantSet`
+    /// so far: once built, every key in `PipelineKey::all()` must resolve
+    /// through `get()` without panicking. For this family that is guaranteed by
+    /// `PipelineVariantSet::build`'s signature (it returns a concrete pipeline,
+    /// never `None`), so this test is a regression guard on that contract
+    /// rather than a check that could currently fail -- it exists so that if a
+    /// future refactor ever reintroduces an `Option` here, CI catches the
+    /// regression on every backend the tests run, not just the ones a human
+    /// happens to eyeball.
+    #[test]
+    fn hdr_opaque_resolves_every_key_once_built() {
+        let Some((device, queue, mut res)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        res.ensure_hdr_shared(&device, &queue, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+        let hdr_opaque = res
+            .scene
+            .hdr_opaque
+            .as_ref()
+            .expect("ensure_hdr_shared must build hdr_opaque");
+        for key in crate::renderer::pipeline_key::PipelineKey::all() {
+            // Must not panic for any of the 8 keys, including the `cutout`
+            // combinations this family ignores (see the field doc on
+            // `hdr_opaque`): every key still has to resolve to *some*
+            // pipeline, even one shared with its sibling key.
+            let _ = hdr_opaque.get(key);
+        }
+    }
 }
