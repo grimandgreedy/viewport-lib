@@ -53,14 +53,10 @@ pub(crate) enum OverlayDrawSource {
     /// selects the group's cached buffer and per-frame instance in
     /// `overlay_retained_draws`. Each retained group is its own draw (its own
     /// buffer and instance), so these do not coalesce.
-    Retained {
-        draw_index: u32,
-    },
+    Retained { draw_index: u32 },
     /// A retained group's SDF shape stream, drawn through the shape pipeline.
     /// `draw_index` selects `overlay_retained_shape_draws`.
-    RetainedShape {
-        draw_index: u32,
-    },
+    RetainedShape { draw_index: u32 },
 }
 
 /// A single draw within the overlay pass, tagged with its z-order and family
