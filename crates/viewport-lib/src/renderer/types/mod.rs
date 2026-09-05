@@ -1388,42 +1388,24 @@ macro_rules! emit_scivis_draw_calls {
         // Depth-write items first (opaque-style markers), then the no-depth-write
         // batches (transparent / additive / premultiplied particle effects).
         if !$sprite_gpu_data.is_empty() {
-            let buckets: [(
+            // Unlit buckets only: this macro path has no group-3 lit normal-map
+            // bind group plumbing, so lit sprites are not drawn here (see the
+            // separate lit-aware loop in `render/hdr_path.rs`).
+            let sprite_pipelines = resources.sprite.pipelines.as_ref();
+            let buckets: Vec<(
                 bool,
                 crate::renderer::SpriteBlend,
                 Option<&crate::resources::DualPipeline>,
-            ); 6] = [
-                (
-                    true,
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    resources.sprite.pipeline_depth_write.as_ref(),
-                ),
-                (
-                    true,
-                    crate::renderer::SpriteBlend::Additive,
-                    resources.sprite.pipeline_additive_depth_write.as_ref(),
-                ),
-                (
-                    true,
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    resources.sprite.pipeline_premultiplied_depth_write.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    resources.sprite.pipeline.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::Additive,
-                    resources.sprite.pipeline_additive.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    resources.sprite.pipeline_premultiplied.as_ref(),
-                ),
-            ];
+            )> = crate::resources::SpriteKey::all()
+                .filter(|key| !key.lit)
+                .map(|key| {
+                    (
+                        key.depth_write,
+                        key.blend,
+                        sprite_pipelines.map(|ps| ps.get(key)),
+                    )
+                })
+                .collect();
             // Group 2 (sprite_soft_bgl) carries the scene-depth resolve consumed
             // by soft-particle fade. Inline sprite draws inside the main HDR or
             // LDR pass cannot bind the live scene depth (it is still being

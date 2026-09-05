@@ -1608,84 +1608,22 @@ impl ViewportRenderer {
             let any_depth_write = self.sprite_gpu_data.iter().any(|s| s.depth_write);
             let any_transparent = self.sprite_gpu_data.iter().any(|s| !s.depth_write);
 
-            let buckets = [
-                // (depth_write, blend, lit, pipeline)
-                (
-                    true,
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    false,
-                    resources.sprite.pipeline_depth_write.as_ref(),
-                ),
-                (
-                    true,
-                    crate::renderer::SpriteBlend::Additive,
-                    false,
-                    resources.sprite.pipeline_additive_depth_write.as_ref(),
-                ),
-                (
-                    true,
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    false,
-                    resources.sprite.pipeline_premultiplied_depth_write.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    false,
-                    resources.sprite.pipeline.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::Additive,
-                    false,
-                    resources.sprite.pipeline_additive.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    false,
-                    resources.sprite.pipeline_premultiplied.as_ref(),
-                ),
-                (
-                    true,
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    true,
-                    resources.sprite.lit_pipeline_depth_write.as_ref(),
-                ),
-                (
-                    true,
-                    crate::renderer::SpriteBlend::Additive,
-                    true,
-                    resources.sprite.lit_pipeline_additive_depth_write.as_ref(),
-                ),
-                (
-                    true,
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    true,
-                    resources
-                        .sprite
-                        .lit_pipeline_premultiplied_depth_write
-                        .as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::AlphaBlend,
-                    true,
-                    resources.sprite.lit_pipeline.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::Additive,
-                    true,
-                    resources.sprite.lit_pipeline_additive.as_ref(),
-                ),
-                (
-                    false,
-                    crate::renderer::SpriteBlend::Premultiplied,
-                    true,
-                    resources.sprite.lit_pipeline_premultiplied.as_ref(),
-                ),
-            ];
+            let sprite_pipelines = resources.sprite.pipelines.as_ref();
+            let buckets: Vec<(
+                bool,
+                crate::renderer::SpriteBlend,
+                bool,
+                Option<&crate::resources::DualPipeline>,
+            )> = crate::resources::SpriteKey::all()
+                .map(|key| {
+                    (
+                        key.depth_write,
+                        key.blend,
+                        key.lit,
+                        sprite_pipelines.map(|ps| ps.get(key)),
+                    )
+                })
+                .collect();
             let lit_fallback_bg = resources.sprite.lit_fallback_bg.as_ref();
 
             let fallback_soft_bg = resources.sprite.soft_fallback_bg.as_ref();

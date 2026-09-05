@@ -1,17 +1,143 @@
 use super::*;
 
-/// Sprite billboard pipelines (emissive + lit, one per blend/depth-write pair),
-/// their bind group layouts, refraction pass, and soft-particle fallbacks. All
-/// lazily built; the uploaded sprite sets live in separate flat stores.
+/// Sprite pipeline variant axes: depth-write, blend mode, and unlit vs
+/// `apply_scene_lighting`-lit shading. Kept separate from the mesh family's
+/// `PipelineKey` -- sprite's axes don't map onto `two_sided` / `cutout` /
+/// `no_discard_eligible`, and `blend` is three-valued, not boolean, so
+/// reusing that type would just be confusing field names for an unrelated
+/// set of axes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct SpriteKey {
+    pub depth_write: bool,
+    pub blend: crate::renderer::SpriteBlend,
+    pub lit: bool,
+}
+
+impl SpriteKey {
+    fn blend_index(self) -> usize {
+        match self.blend {
+            crate::renderer::SpriteBlend::AlphaBlend => 0,
+            crate::renderer::SpriteBlend::Additive => 1,
+            crate::renderer::SpriteBlend::Premultiplied => 2,
+        }
+    }
+
+    /// Every axis combination, for eager cross-product construction
+    /// (`SpriteVariantSet::build`).
+    pub fn all() -> impl Iterator<Item = SpriteKey> {
+        [
+            crate::renderer::SpriteBlend::AlphaBlend,
+            crate::renderer::SpriteBlend::Additive,
+            crate::renderer::SpriteBlend::Premultiplied,
+        ]
+        .into_iter()
+        .flat_map(|blend| {
+            [false, true].into_iter().flat_map(move |lit| {
+                [false, true].into_iter().map(move |depth_write| SpriteKey {
+                    depth_write,
+                    blend,
+                    lit,
+                })
+            })
+        })
+    }
+
+    /// Dense index in `0..12`, stable across calls, for the hash-free array
+    /// lookup `SpriteVariantSet` uses.
+    fn slot(self) -> usize {
+        self.depth_write as usize + 2 * self.blend_index() + 6 * (self.lit as usize)
+    }
+}
+
+/// A `DualPipeline` built for every reachable [`SpriteKey`], indexed for a
+/// hash-free draw-time lookup (`get`). Construction is eager: `build` runs
+/// once per key when `ensure_sprite_pipelines` first runs, not per draw call.
+pub(crate) struct SpriteVariantSet {
+    variants: [DualPipeline; 12],
+}
+
+impl SpriteVariantSet {
+    pub fn build(mut build: impl FnMut(SpriteKey) -> DualPipeline) -> Self {
+        let mut variants: Vec<DualPipeline> = Vec::with_capacity(12);
+        for key in SpriteKey::all() {
+            variants.push(build(key));
+        }
+        Self {
+            variants: variants
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("SpriteKey::all() yields exactly 12 keys")),
+        }
+    }
+
+    pub fn get(&self, key: SpriteKey) -> &DualPipeline {
+        &self.variants[key.slot()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins `SpriteKey::all()` and `slot()` in sync, the same regression
+    /// class `pipeline_key::tests::all_keys_are_distinct_and_densely_slotted`
+    /// guards for the mesh family's `PipelineKey`: if a future axis widens
+    /// past what `slot()` computes, two distinct keys would collide on the
+    /// same array index and `build` would silently drop one of them.
+    #[test]
+    fn all_keys_are_distinct_and_densely_slotted() {
+        let keys: Vec<SpriteKey> = SpriteKey::all().collect();
+        assert_eq!(
+            keys.len(),
+            12,
+            "SpriteKey has depth_write x blend(3) x lit = 12 keys"
+        );
+
+        let mut seen_keys = std::collections::HashSet::new();
+        let mut seen_slots = std::collections::HashSet::new();
+        for key in keys {
+            assert!(
+                seen_keys.insert(key),
+                "all() yielded {key:?} more than once"
+            );
+            let slot = key.slot();
+            assert!(slot < 12, "{key:?} slotted out of range: {slot}");
+            assert!(
+                seen_slots.insert(slot),
+                "{key:?} collided with another key at slot {slot}"
+            );
+        }
+    }
+
+    /// Same completeness guarantee as the mesh-family `PipelineVariantSet`
+    /// tests: once built, every key in `SpriteKey::all()` must resolve
+    /// through `get()` without panicking.
+    #[test]
+    fn sprite_pipelines_resolve_every_key_once_built() {
+        let Some((device, _queue, mut res)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        res.ensure_sprite_pipelines(&device);
+        let pipelines = res
+            .sprite
+            .pipelines
+            .as_ref()
+            .expect("ensure_sprite_pipelines must build the sprite variant set");
+        for key in SpriteKey::all() {
+            let _ = pipelines.get(key);
+        }
+    }
+}
+
+/// Sprite billboard pipelines (emissive + lit, keyed by depth-write / blend /
+/// lit), their bind group layouts, refraction pass, and soft-particle
+/// fallbacks. All lazily built; the uploaded sprite sets live in separate
+/// flat stores.
 #[derive(Default)]
 pub(crate) struct SpriteResources {
-    /// Sprite pipeline, alpha-blend, depth_write_enabled: false.
-    pub(crate) pipeline: Option<DualPipeline>,
-    pub(crate) pipeline_depth_write: Option<DualPipeline>,
-    pub(crate) pipeline_additive: Option<DualPipeline>,
-    pub(crate) pipeline_additive_depth_write: Option<DualPipeline>,
-    pub(crate) pipeline_premultiplied: Option<DualPipeline>,
-    pub(crate) pipeline_premultiplied_depth_write: Option<DualPipeline>,
+    /// Sprite render pipelines, keyed by `SpriteKey`.
+    pub(crate) pipelines: Option<SpriteVariantSet>,
     /// Refractive sprite pipeline (HDR target only).
     pub(crate) refraction_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 BGL for the refraction pipeline: scene-colour texture + sampler.
@@ -33,13 +159,6 @@ pub(crate) struct SpriteResources {
     pub(crate) soft_sampler: Option<crate::gpu::Sampler>,
     /// 1x1 Depth32Float texture backing the soft fallback bind group.
     pub(crate) soft_fallback_tex: Option<crate::gpu::Texture>,
-    /// Lit sprite pipelines: one per (blend, depth_write) pair.
-    pub(crate) lit_pipeline: Option<DualPipeline>,
-    pub(crate) lit_pipeline_depth_write: Option<DualPipeline>,
-    pub(crate) lit_pipeline_additive: Option<DualPipeline>,
-    pub(crate) lit_pipeline_additive_depth_write: Option<DualPipeline>,
-    pub(crate) lit_pipeline_premultiplied: Option<DualPipeline>,
-    pub(crate) lit_pipeline_premultiplied_depth_write: Option<DualPipeline>,
     /// Group 3 BGL for the optional lit normal map (texture + sampler).
     pub(crate) lit_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Fallback bind group for the lit normal map binding.
@@ -245,26 +364,6 @@ impl DeviceResources {
         self.sprite.soft_sampler = Some(soft_sampler);
         self.sprite.soft_fallback_tex = Some(fallback_tex);
         self.sprite.soft_fallback_bg = Some(fallback_bg);
-        self.sprite.pipeline = Some(make_sprite(false, alpha, "sprite_pipeline"));
-        self.sprite.pipeline_depth_write =
-            Some(make_sprite(true, alpha, "sprite_pipeline_depth_write"));
-        self.sprite.pipeline_additive =
-            Some(make_sprite(false, additive, "sprite_pipeline_additive"));
-        self.sprite.pipeline_additive_depth_write = Some(make_sprite(
-            true,
-            additive,
-            "sprite_pipeline_additive_depth_write",
-        ));
-        self.sprite.pipeline_premultiplied = Some(make_sprite(
-            false,
-            premultiplied,
-            "sprite_pipeline_premultiplied",
-        ));
-        self.sprite.pipeline_premultiplied_depth_write = Some(make_sprite(
-            true,
-            premultiplied,
-            "sprite_pipeline_premultiplied_depth_write",
-        ));
 
         // -----------------------------------------------------------------
         // Refractive sprite pipeline.
@@ -388,26 +487,21 @@ impl DeviceResources {
             )
         };
 
-        self.sprite.lit_pipeline = Some(make_lit(false, alpha, "sprite_lit_pipeline"));
-        self.sprite.lit_pipeline_depth_write =
-            Some(make_lit(true, alpha, "sprite_lit_pipeline_depth_write"));
-        self.sprite.lit_pipeline_additive =
-            Some(make_lit(false, additive, "sprite_lit_pipeline_additive"));
-        self.sprite.lit_pipeline_additive_depth_write = Some(make_lit(
-            true,
-            additive,
-            "sprite_lit_pipeline_additive_depth_write",
-        ));
-        self.sprite.lit_pipeline_premultiplied = Some(make_lit(
-            false,
-            premultiplied,
-            "sprite_lit_pipeline_premultiplied",
-        ));
-        self.sprite.lit_pipeline_premultiplied_depth_write = Some(make_lit(
-            true,
-            premultiplied,
-            "sprite_lit_pipeline_premultiplied_depth_write",
-        ));
+        // One PipelineVariantSet-style build covers all 12 (depth_write x
+        // blend x lit) combinations: the same closure picks the unlit or lit
+        // shader/layout pair and the blend state for every key up front.
+        self.sprite.pipelines = Some(SpriteVariantSet::build(|key| {
+            let blend = match key.blend {
+                crate::renderer::SpriteBlend::AlphaBlend => alpha,
+                crate::renderer::SpriteBlend::Additive => additive,
+                crate::renderer::SpriteBlend::Premultiplied => premultiplied,
+            };
+            if key.lit {
+                make_lit(key.depth_write, blend, "sprite_lit_pipeline_variant")
+            } else {
+                make_sprite(key.depth_write, blend, "sprite_pipeline_variant")
+            }
+        }));
 
         // The fallback bind group reuses the crate-wide `fallback_normal_map`,
         // already populated with `(128, 128, 255, 255)` for tangent-space `(0, 0, 1)`.

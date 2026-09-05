@@ -17,7 +17,7 @@ pub enum SpriteSizeMode {
 /// background, which is the usual choice for sparks, fire, and other
 /// emissive particles. `Premultiplied` is for sources whose RGB has already
 /// been multiplied by alpha, typically when sampling a premultiplied texture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SpriteBlend {
     /// Standard transparency: `src.rgb * src.a + dst.rgb * (1 - src.a)`.
     #[default]
