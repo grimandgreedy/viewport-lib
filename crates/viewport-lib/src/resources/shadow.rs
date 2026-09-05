@@ -40,17 +40,19 @@ pub(crate) struct ShadowResources {
     /// Bind group for the point-shadow per-face uniform. Stride is 256;
     /// the per-face render pass sets a dynamic offset.
     pub(crate) point_face_bind_group: crate::gpu::BindGroup,
-    /// Render pipeline for the shadow depth pass (depth-only, no fragment output).
-    ///
-    /// Culls front faces, so closed solids cast shadow from their back face
-    /// and a solid's own front face is never compared against itself in the
-    /// shadow map. Two-sided materials are routed to `pipeline_two_sided`.
-    pub(crate) pipeline: crate::gpu::RenderPipeline,
-    /// Shadow caster pipeline for two-sided materials. Same layout and shader
-    /// as `pipeline` but with `cull_mode: None` and a larger caster-side depth
-    /// bias (`CSM_SHADOW_BIAS_TWO_SIDED`) so both sides of a two-sided mesh
-    /// rasterise into the shadow atlas without self-shadowing.
-    pub(crate) pipeline_two_sided: crate::gpu::RenderPipeline,
+    /// Shadow depth-pass pipelines, keyed by facedness and cutout (the
+    /// no-discard axis is not a real distinction for a depth-only pass, so
+    /// both its values map to the same pipeline). Culling front faces (the
+    /// `two_sided: false` pipelines) means closed solids cast shadow from
+    /// their back face, so a solid's own front face is never compared
+    /// against itself in the shadow map; `two_sided: true` uses
+    /// `cull_mode: None` and a larger caster-side bias
+    /// (`CSM_SHADOW_BIAS_TWO_SIDED`) so both sides of a two-sided mesh
+    /// rasterise without self-shadowing. `cutout: true` selects a pipeline
+    /// with a fragment stage that samples the caster's albedo alpha and
+    /// discards below its cutoff, punching holes for an `AlphaMode::Mask`
+    /// material instead of casting a solid silhouette.
+    pub(crate) pipeline: crate::renderer::pipeline_key::PipelineVariantSet,
     /// Bind group layout for the shadow camera uniform (group 0 of the
     /// shadow pass). Kept so `register_deformer` can rebuild the shadow
     /// pipeline from a freshly composed shader module.
@@ -114,5 +116,23 @@ mod tests {
             0,
             "point-shadow face views cover whole cubes (6 faces each)"
         );
+    }
+
+    /// Same completeness guarantee as `scene_pipelines::hdr_opaque_resolves_every_key_once_built`
+    /// and `postprocess::oit::tests::oit_pipeline_resolves_every_key_once_built`: every key in
+    /// `PipelineKey::all()` must resolve through `get()` without panicking, including the
+    /// `no_discard_eligible` combinations this family ignores (a depth-only pass has no
+    /// discard-free early-Z distinction). Built eagerly at construction (unlike the HDR/OIT
+    /// families, there is no lazy first-use gate), so a fresh renderer already has it.
+    #[test]
+    fn shadow_pipeline_resolves_every_key_once_built() {
+        let Some((_device, _queue, res)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        for key in crate::renderer::pipeline_key::PipelineKey::all() {
+            let _ = res.shadow.pipeline.get(key);
+        }
     }
 }

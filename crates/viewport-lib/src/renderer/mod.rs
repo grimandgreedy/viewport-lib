@@ -37,9 +37,7 @@ pub use readback::ExposureReadback;
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub use crate::resources::{GaussianSplatData, GaussianSplatId, ShDegree};
 pub(crate) mod pipeline_key;
-use pipeline_key::{
-    PipelineKey, select_opaque_solid, select_plugin_opaque, select_shadow_caster, select_two_sided,
-};
+use pipeline_key::{PipelineKey, select_opaque_solid, select_plugin_opaque, select_two_sided};
 mod point_shadow_pool;
 mod prepare;
 mod render;

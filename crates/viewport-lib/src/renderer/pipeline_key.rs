@@ -188,30 +188,6 @@ pub(crate) fn select_opaque_solid<'p>(
     select_two_sided(key, solid, solid_two_sided)
 }
 
-/// Shadow-caster select: facedness x cutout. `cutout` / `cutout_two_sided`
-/// are `None` for a family that has not built the alpha-cutout variant (today
-/// only the instanced shadow path has); a cutout-material item drawn through
-/// such a family falls back to the plain depth-only pipeline (casting a full
-/// silhouette instead of a punched one) and bumps `*missing_variant`, the
-/// bridge this phase adds so that gap shows up in `FrameStats` instead of
-/// silently under-punching the shadow.
-pub(crate) fn select_shadow_caster<'p>(
-    key: PipelineKey,
-    plain: &'p crate::gpu::RenderPipeline,
-    plain_two_sided: &'p crate::gpu::RenderPipeline,
-    cutout: Option<&'p crate::gpu::RenderPipeline>,
-    cutout_two_sided: Option<&'p crate::gpu::RenderPipeline>,
-    missing_variant: &mut u32,
-) -> &'p crate::gpu::RenderPipeline {
-    if key.cutout {
-        if let (Some(c), Some(c_two_sided)) = (cutout, cutout_two_sided) {
-            return if key.two_sided { c_two_sided } else { c };
-        }
-        *missing_variant += 1;
-    }
-    select_two_sided(key, plain, plain_two_sided)
-}
-
 /// Material-plugin opaque select: facedness only today. A plugin material
 /// that would otherwise be eligible for the discard-free early-Z twin bumps
 /// `*missing_variant` instead of getting one, since `MaterialPluginPipelines`

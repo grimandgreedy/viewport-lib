@@ -347,17 +347,27 @@ pub(crate) const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState =
 ///   the surface can still cast a shadow regardless of which side faces the
 ///   light. The receiver-side normal bias is what keeps the self-shadow
 ///   class quiet on this path.
+///
+/// `cutout` selects `vs_cutout`/`fs_cutout` instead of the plain `vs_main`:
+/// the fragment stage samples the caster's albedo alpha and discards below
+/// its cutoff, punching holes in the shadow instead of casting a solid
+/// silhouette for an `AlphaMode::Mask` material. Mirrors the instanced
+/// family's `shadow_instanced.wgsl` cutout pipelines.
 pub(crate) fn build_shadow_pipeline(
     device: &crate::gpu::Device,
     layout: &crate::gpu::PipelineLayout,
     shader: &crate::gpu::ShaderModule,
     cull_mode: Option<crate::gpu::Face>,
+    cutout: bool,
     cache: Option<&crate::gpu::PipelineCache>,
 ) -> crate::gpu::RenderPipeline {
-    let label = match cull_mode {
-        Some(crate::gpu::Face::Front) => "shadow_pipeline",
-        Some(crate::gpu::Face::Back) => "shadow_pipeline_cull_back",
-        None => "shadow_pipeline_two_sided",
+    let label = match (cull_mode, cutout) {
+        (Some(crate::gpu::Face::Front), false) => "shadow_pipeline",
+        (Some(crate::gpu::Face::Back), false) => "shadow_pipeline_cull_back",
+        (None, false) => "shadow_pipeline_two_sided",
+        (Some(crate::gpu::Face::Front), true) => "shadow_cutout_pipeline",
+        (Some(crate::gpu::Face::Back), true) => "shadow_cutout_pipeline_cull_back",
+        (None, true) => "shadow_cutout_pipeline_two_sided",
     };
     crate::resources::builders::render_pipeline(
         device,
@@ -365,9 +375,14 @@ pub(crate) fn build_shadow_pipeline(
             label,
             layout,
             vertex_module: shader,
-            vertex_entry: "vs_main",
+            vertex_entry: if cutout { "vs_cutout" } else { "vs_main" },
             vertex_buffers: &[Vertex::buffer_layout()],
-            fragment: None,
+            fragment: cutout.then_some(crate::gpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_cutout"),
+                targets: &[],
+                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+            }),
             primitive: crate::gpu::PrimitiveState {
                 topology: crate::gpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,

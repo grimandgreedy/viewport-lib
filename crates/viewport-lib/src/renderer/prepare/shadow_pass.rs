@@ -303,7 +303,6 @@ impl ViewportRenderer {
                 // pre-collapse per-batch count that feeds `shadow_draw_calls`.
                 let mut shadow_draw_cmds = 0u32;
                 let mut shadow_binds = 0u32;
-                let mut missing_variant = 0u32;
                 let tile_px = light.tile_size as f32;
 
                 if instancing.use_instancing {
@@ -894,10 +893,10 @@ impl ViewportRenderer {
                             // Two-sided materials cast through the cull-none
                             // pipeline so both faces rasterise; its larger
                             // caster-side bias keeps the surface from
-                            // self-shadowing where it is its own receiver.
-                            // This family has no alpha-cutout variant, so a
-                            // masked caster falls back to the plain pipeline
-                            // (casting a full silhouette) and is counted below.
+                            // self-shadowing where it is its own receiver. A
+                            // masked material casts through the cutout
+                            // pipeline, punching holes instead of a solid
+                            // silhouette.
                             let key = PipelineKey {
                                 two_sided: item.material.is_two_sided(),
                                 cutout: matches!(
@@ -906,14 +905,7 @@ impl ViewportRenderer {
                                 ),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(select_shadow_caster(
-                                key,
-                                &resources.shadow.pipeline,
-                                &resources.shadow.pipeline_two_sided,
-                                None,
-                                None,
-                                &mut missing_variant,
-                            ));
+                            shadow_pass.set_pipeline(resources.shadow.pipeline.get(key));
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
                                 shadow_pass,
@@ -986,10 +978,8 @@ impl ViewportRenderer {
                                 continue;
                             }
 
-                            // Two-sided materials cast through the cull-none
-                            // pipeline (see the instanced path above). No
-                            // cutout variant here either; see the comment on
-                            // the equivalent branch above.
+                            // Two-sided and cutout selection as the instanced
+                            // path above.
                             let key = PipelineKey {
                                 two_sided: item.material.is_two_sided(),
                                 cutout: matches!(
@@ -998,14 +988,7 @@ impl ViewportRenderer {
                                 ),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(select_shadow_caster(
-                                key,
-                                &resources.shadow.pipeline,
-                                &resources.shadow.pipeline_two_sided,
-                                None,
-                                None,
-                                &mut missing_variant,
-                            ));
+                            shadow_pass.set_pipeline(resources.shadow.pipeline.get(key));
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
                                 shadow_pass,
@@ -1076,7 +1059,6 @@ impl ViewportRenderer {
                 last_stats.shadow_draw_calls = shadow_draws;
                 last_stats.shadow_draw_commands = shadow_draw_cmds;
                 last_stats.shadow_buffer_binds = shadow_binds;
-                last_stats.missing_pipeline_variants += missing_variant;
             }
             sink.push(encoder.finish());
         }

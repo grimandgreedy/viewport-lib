@@ -7,12 +7,11 @@
 //! across the opaque, OIT, and shadow passes, for both the per-object and the
 //! instanced draw routes.
 //!
-//! One of the two currently-filed gaps is red today: the per-object shadow
-//! pass has no alpha-cutout variant, so a masked caster still casts a full
-//! opaque shadow even though it discards to nothing in the colour pass.
-//! `shadow_alpha_mask_matrix` fails on the per-object route until that variant
-//! is built, and passes once it lands. Every other cell here already passes
-//! and is a regression backstop for the pipeline-key refactor.
+//! Every cell here passes; this is a regression backstop for the pipeline-key
+//! refactor. `shadow_alpha_mask_matrix` covers both draw routes for a masked
+//! caster (a material that discards to nothing in the colour pass must not
+//! still cast a full opaque shadow), including the per-object route, whose
+//! alpha-cutout pipeline was the first of two filed gaps this plan closes.
 //!
 //! The other filed gap (`material-plugin-opaque-pipelines-no-early-z-nodiscard-variant`)
 //! is not covered here: it is a missing fast-path pipeline twin, not a
@@ -364,13 +363,11 @@ fn shadow_two_sided_matrix() {
     }
 }
 
-/// The known Phase 0 gap: the per-object shadow pass has no alpha-cutout
-/// variant, so a masked caster (invisible in the colour pass) still casts a
-/// full opaque shadow. `route_instanced=false` forces the caster onto the
-/// per-object path via a styled backface policy (`Tint`, which
-/// `backface_needs_per_object` requires per-item state for); this must fail
-/// until the shadow pass gains the cutout variant described in
-/// `docs/issues/per-object-shadow-pass-missing-alpha-cutout-variant.md`.
+/// A masked caster (invisible in the colour pass) must not still cast a full
+/// opaque shadow, on both the per-object and instanced shadow routes.
+/// `route_instanced=false` forces the caster onto the per-object path via a
+/// styled backface policy (`Tint`, which `backface_needs_per_object` requires
+/// per-item state for); two-sidedness itself is not under test here.
 #[test]
 fn shadow_alpha_mask_matrix() {
     let Some((device, queue)) = headless_device() else {

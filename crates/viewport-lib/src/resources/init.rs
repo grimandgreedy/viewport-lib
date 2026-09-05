@@ -1069,28 +1069,27 @@ impl DeviceResources {
         );
 
         // Depth-only pass through the shared factory so register_deformer
-        // can rebuild it from composed source. Two variants:
-        // - cull-front (default) for closed solids: back faces are the
-        //   casters, so a solid's own front face is never compared against
-        //   itself in the shadow map.
-        // - cull-none for two-sided materials (`BackfacePolicy::Identical`):
-        //   both sides of cloth and planar surfaces rasterise; a larger
-        //   caster-side bias keeps the receiver from self-shadowing.
-        let shadow_pipeline = crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-            device,
-            &shadow_pipeline_layout,
-            &shadow_shader,
-            Some(crate::gpu::Face::Front),
-            pipeline_cache.as_ref(),
-        );
-        let shadow_pipeline_two_sided =
+        // can rebuild it from composed source. Keyed by facedness (cull-front
+        // for closed solids so a solid's own front face is never compared
+        // against itself in the shadow map; cull-none for two-sided
+        // materials, `BackfacePolicy::Identical`, with a larger caster-side
+        // bias) and cutout (a fragment stage that discards below the
+        // caster's albedo alpha cutoff, for `AlphaMode::Mask` materials).
+        let shadow_pipeline = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+            let cull_mode = if key.two_sided {
+                None
+            } else {
+                Some(crate::gpu::Face::Front)
+            };
             crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
                 device,
                 &shadow_pipeline_layout,
                 &shadow_shader,
-                None,
+                cull_mode,
+                key.cutout,
                 pipeline_cache.as_ref(),
-            );
+            )
+        });
 
         // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4x4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
@@ -2313,7 +2312,6 @@ impl DeviceResources {
                 point_face_buf: shadow_point_face_buf,
                 point_face_bind_group: shadow_point_face_bind_group,
                 pipeline: shadow_pipeline,
-                pipeline_two_sided: shadow_pipeline_two_sided,
                 camera_bgl: shadow_camera_bgl,
                 uniform_buf: shadow_uniform_buf,
                 bind_group: shadow_bind_group,

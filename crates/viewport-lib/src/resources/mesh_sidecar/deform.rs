@@ -1778,17 +1778,17 @@ impl DeviceResources {
                     &self.deform.bind_group_layout,
                 ],
             );
-            self.shadow.pipeline = crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                device,
-                &layout,
-                &shader,
-                Some(crate::gpu::Face::Front),
-                None,
-            );
-            self.shadow.pipeline_two_sided =
-                crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                    device, &layout, &shader, None, None,
-                );
+            self.shadow.pipeline =
+                crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+                    let cull_mode = if key.two_sided {
+                        None
+                    } else {
+                        Some(crate::gpu::Face::Front)
+                    };
+                    crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
+                        device, &layout, &shader, cull_mode, key.cutout, None,
+                    )
+                });
         }
 
         // outline_mask.wgsl: mask-write pass for the selection silhouette.
