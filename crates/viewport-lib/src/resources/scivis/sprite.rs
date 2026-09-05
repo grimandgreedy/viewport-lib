@@ -169,6 +169,15 @@ pub(crate) struct SpriteResources {
     pub(crate) lit_fallback_tex: Option<crate::gpu::Texture>,
     /// Sprite outline mask pipeline (R8Unorm). None until first selected sprite.
     pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Weighted-blended OIT pipeline, unlit, straight alpha. HDR-only (see
+    /// `docs/plans/non-mesh-pipeline-consistency-plan.md#phase-6b`).
+    pub(crate) oit_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Weighted-blended OIT pipeline, unlit, premultiplied alpha.
+    pub(crate) oit_pipeline_premultiplied: Option<crate::gpu::RenderPipeline>,
+    /// Weighted-blended OIT pipeline, lit, straight alpha.
+    pub(crate) oit_lit_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Weighted-blended OIT pipeline, lit, premultiplied alpha.
+    pub(crate) oit_lit_pipeline_premultiplied: Option<crate::gpu::RenderPipeline>,
 }
 
 impl DeviceResources {
@@ -524,6 +533,118 @@ impl DeviceResources {
 
         self.sprite.lit_bgl = Some(lit_bgl);
         self.sprite.lit_fallback_bg = Some(lit_fallback_bg);
+
+        // -----------------------------------------------------------------
+        // OIT (weighted-blended, order-independent transparency) sprite
+        // pipelines. HDR-only: the OIT accum/reveal targets do not exist on
+        // the LDR path. Only ever selected for `AlphaBlend`/`Premultiplied`
+        // sprites with `depth_write: false` and no active soft-particle
+        // fade (see `SpriteGpuData::oit_eligible`); `Additive` sprites and
+        // any sprite excluded by that check keep drawing through the
+        // ordinary pipelines above.
+        //
+        // "Straight alpha" and "premultiplied" are not separate pipelines --
+        // the GPU blend state for the accum/reveal targets is identical
+        // either way (see `crate::plugin_api::target_desc::OIT_ACCUM_BLEND`/
+        // `OIT_REVEAL_BLEND`); the only difference is whether the fragment
+        // shader multiplies by alpha before weighting. Each OIT shader
+        // exposes `fs_oit`/`fs_oit_premultiplied` from the same module, so
+        // one pipeline layout builds both pipelines.
+        let oit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "sprite_oit_shader",
+            crate::resources::builders::wgsl_source!("sprite_oit"),
+        );
+        let oit_lit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "sprite_lit_oit_shader",
+            crate::resources::builders::wgsl_source!("sprite_lit_oit"),
+        );
+
+        let sprite_bgl_for_oit = self.sprite.bgl.as_ref().unwrap();
+        let oit_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "sprite_oit_pipeline_layout",
+            &[&self.binds.camera_bgl, sprite_bgl_for_oit],
+        );
+        let lit_bgl_for_oit = self.sprite.lit_bgl.as_ref().unwrap();
+        let oit_lit_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "sprite_lit_oit_pipeline_layout",
+            &[&self.binds.camera_bgl, sprite_bgl_for_oit, lit_bgl_for_oit],
+        );
+
+        let make_oit_pipeline = |layout: &crate::gpu::PipelineLayout,
+                                 shader: &crate::gpu::ShaderModule,
+                                 entry: &str,
+                                 label: &str| {
+            crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label,
+                    layout,
+                    vertex_module: shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &vertex_buffers,
+                    fragment: Some(crate::gpu::FragmentState {
+                        module: shader,
+                        entry_point: Some(entry),
+                        targets: &[
+                            Some(crate::gpu::ColorTargetState {
+                                format: crate::gpu::TextureFormat::Rgba16Float,
+                                blend: Some(crate::plugin_api::target_desc::OIT_ACCUM_BLEND),
+                                write_mask: crate::gpu::ColorWrites::ALL,
+                            }),
+                            Some(crate::gpu::ColorTargetState {
+                                format: crate::gpu::TextureFormat::R8Unorm,
+                                blend: Some(crate::plugin_api::target_desc::OIT_REVEAL_BLEND),
+                                write_mask: crate::gpu::ColorWrites::RED,
+                            }),
+                        ],
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        false,
+                        crate::gpu::CompareFunction::LessEqual,
+                    )),
+                    multisample: crate::gpu::MultisampleState {
+                        count: sample_count,
+                        ..Default::default()
+                    },
+                    cache: None,
+                },
+            )
+        };
+
+        self.sprite.oit_pipeline = Some(make_oit_pipeline(
+            &oit_layout,
+            &oit_shader,
+            "fs_oit",
+            "sprite_oit_pipeline",
+        ));
+        self.sprite.oit_pipeline_premultiplied = Some(make_oit_pipeline(
+            &oit_layout,
+            &oit_shader,
+            "fs_oit_premultiplied",
+            "sprite_oit_pipeline_premultiplied",
+        ));
+        self.sprite.oit_lit_pipeline = Some(make_oit_pipeline(
+            &oit_lit_layout,
+            &oit_lit_shader,
+            "fs_oit",
+            "sprite_lit_oit_pipeline",
+        ));
+        self.sprite.oit_lit_pipeline_premultiplied = Some(make_oit_pipeline(
+            &oit_lit_layout,
+            &oit_lit_shader,
+            "fs_oit_premultiplied",
+            "sprite_lit_oit_pipeline_premultiplied",
+        ));
     }
 
     /// Upload one [`SpriteItem`] to the GPU and return draw data.
@@ -752,6 +873,14 @@ impl DeviceResources {
             None
         };
 
+        let oit_eligible = matches!(
+            item.blend,
+            crate::renderer::SpriteBlend::AlphaBlend | crate::renderer::SpriteBlend::Premultiplied
+        ) && !item.depth_write
+            && item.soft_particle_distance.is_none_or(|d| d <= 0.0)
+            && item.soft_particle_distances.is_empty()
+            && item.refraction_strength.is_none_or(|s| s <= 0.0);
+
         SpriteGpuData {
             vertex_buffer,
             sprite_count: count,
@@ -763,6 +892,7 @@ impl DeviceResources {
             refraction_strength: item.refraction_strength.filter(|s| *s > 0.0).unwrap_or(0.0),
             lit: item.lit,
             lit_normal_bg,
+            oit_eligible,
             _uniform_buf: uniform_buf,
             _instance_buf: instance_buf,
         }
@@ -1056,6 +1186,18 @@ pub struct SpriteGpuData {
     /// lit batches: a fallback texture is bound when no normal map is supplied
     /// so the same pipeline layout is honoured.
     pub(crate) lit_normal_bg: Option<crate::gpu::BindGroup>,
+    /// True when this batch qualifies for true (weighted-blended) OIT
+    /// instead of ordinary alpha blending: `blend` is `AlphaBlend` or
+    /// `Premultiplied` (not `Additive`, which is already order-independent
+    /// at the GPU blend-state level), `depth_write` is `false` (OIT
+    /// pipelines never write depth), and neither soft-particle fade nor
+    /// refractive distortion is active -- both need to sample a resolved
+    /// scene texture mid-fragment (depth for soft-particle, colour for
+    /// refraction), which the OIT pass exposes for neither (see
+    /// `docs/plans/non-mesh-pipeline-consistency-plan.md#phase-6d`). Read by
+    /// the HDR path to route the batch through `oit_pass` instead of the
+    /// ordinary sprite passes.
+    pub(crate) oit_eligible: bool,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: crate::gpu::Buffer,
     pub(crate) _instance_buf: crate::gpu::Buffer,

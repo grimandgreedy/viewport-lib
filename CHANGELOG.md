@@ -33,6 +33,16 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
+- **Sprite and Ribbon items get true order-independent transparency (OIT)
+  on the HDR path.** Alpha-blend and premultiplied sprites/ribbons
+  previously composited by ordinary draw-order blending, which visibly
+  breaks when several overlap at different depths (particle clouds, trail
+  bundles). They now draw through the same weighted-blended accumulate/reveal
+  pass mesh transparency already uses, so overlap order no longer matters.
+  Additive sprites/ribbons are unaffected (already order-independent).
+  Soft-particle and refractive sprites, and any sprite with `depth_write:
+  true`, keep drawing through the existing ordinary-blend pipeline for now.
+  LDR (`PipelineMode::Direct`) is unaffected; OIT only exists on the HDR path.
 - **Ribbon and GPU marching cubes items now cast and receive shadows.**
   Previously only mesh-family items participated in the shadow pass at all;
   `ItemSettings.cast_shadows`/`receive_shadows` were silent no-ops on these

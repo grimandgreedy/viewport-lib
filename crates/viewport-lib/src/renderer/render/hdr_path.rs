@@ -510,7 +510,9 @@ impl ViewportRenderer {
                 .any(|i| !i.settings.hidden && i.transparency.is_some())
                 // Item-type plugins may draw into the OIT pass through
                 // `paint_transparent` (mirrors `has_transparent` below).
-                || self.any_plugin_items_submitted(frame);
+                || self.any_plugin_items_submitted(frame)
+                || self.sprite_gpu_data.iter().any(|s| s.oit_eligible)
+                || self.ribbon_gpu_data.iter().any(|r| r.oit_eligible);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
@@ -1743,6 +1745,7 @@ impl ViewportRenderer {
                                 || sprite.blend != *blend
                                 || sprite.lit != *lit
                                 || sprite.refraction_strength > 0.0
+                                || sprite.oit_eligible
                             {
                                 continue;
                             }
@@ -2581,7 +2584,9 @@ impl ViewportRenderer {
                 // Item-type plugins draw into the OIT pass through
                 // `paint_transparent` for any registered plugin with a
                 // non-empty submitted collection (mirrors `needs_oit` above).
-                || self.any_plugin_items_submitted(frame);
+                || self.any_plugin_items_submitted(frame)
+                || self.sprite_gpu_data.iter().any(|s| s.oit_eligible)
+                || self.ribbon_gpu_data.iter().any(|r| r.oit_eligible);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -3130,6 +3135,67 @@ impl ViewportRenderer {
 
                 // Item-type plugin transparent draws.
                 self.dispatch_plugin_paint_transparent(&mut oit_pass, frame);
+
+                // OIT-eligible sprite and ribbon draws. Only batches
+                // `SpriteGpuData::oit_eligible`/`StreamtubeGpuData::oit_eligible`
+                // flagged true reach here (AlphaBlend/Premultiplied, no
+                // depth_write, no soft-particle fade for sprites, not
+                // wireframe for ribbons); everything else keeps drawing
+                // through the ordinary sprite/ribbon passes elsewhere in this
+                // function, which skip these same batches (see the
+                // `!s.oit_eligible`/`!r.oit_eligible` filters there).
+                for sprite in self.sprite_gpu_data.iter().filter(|s| s.oit_eligible) {
+                    let (pipeline, pipeline_premultiplied) = if sprite.lit {
+                        (
+                            self.resources.sprite.oit_lit_pipeline.as_ref(),
+                            self.resources
+                                .sprite
+                                .oit_lit_pipeline_premultiplied
+                                .as_ref(),
+                        )
+                    } else {
+                        (
+                            self.resources.sprite.oit_pipeline.as_ref(),
+                            self.resources.sprite.oit_pipeline_premultiplied.as_ref(),
+                        )
+                    };
+                    let pipeline = match sprite.blend {
+                        crate::renderer::SpriteBlend::Premultiplied => pipeline_premultiplied,
+                        _ => pipeline,
+                    };
+                    let Some(pipeline) = pipeline else { continue };
+                    oit_pass.set_pipeline(pipeline);
+                    oit_pass.set_bind_group(1, &sprite.bind_group, &[]);
+                    if sprite.lit {
+                        let lit_bg = sprite.lit_normal_bg.as_ref().or(self
+                            .resources
+                            .sprite
+                            .lit_fallback_bg
+                            .as_ref());
+                        if let Some(lit_bg) = lit_bg {
+                            oit_pass.set_bind_group(2, lit_bg, &[]);
+                        }
+                    }
+                    oit_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                    oit_pass.draw(0..6, 0..sprite.sprite_count);
+                }
+                for ribbon in self.ribbon_gpu_data.iter().filter(|r| r.oit_eligible) {
+                    let pipeline = match ribbon.blend {
+                        crate::renderer::SpriteBlend::Premultiplied => {
+                            self.resources.ribbon.oit_pipeline_premultiplied.as_ref()
+                        }
+                        _ => self.resources.ribbon.oit_pipeline.as_ref(),
+                    };
+                    let Some(pipeline) = pipeline else { continue };
+                    oit_pass.set_pipeline(pipeline);
+                    oit_pass.set_bind_group(1, &ribbon.uniform_bind_group, &[]);
+                    oit_pass.set_vertex_buffer(0, ribbon.vertex_buffer.slice(..));
+                    oit_pass.set_index_buffer(
+                        ribbon.index_buffer.slice(..),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
+                    oit_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
+                }
             }
         }
 

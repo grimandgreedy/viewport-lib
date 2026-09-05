@@ -119,6 +119,13 @@ pub(crate) struct RibbonResources {
     /// group 1 reuses `bgl` above, so the same `uniform_bind_group` built for
     /// the solid draw is bound again here.
     pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Weighted-blended OIT pipeline (`ribbon_oit.wgsl`), straight alpha.
+    /// HDR-only. Only ever selected for `AlphaBlend`/`Premultiplied` ribbons
+    /// that are not drawn wireframe (see
+    /// `docs/plans/non-mesh-pipeline-consistency-plan.md#phase-6b`).
+    pub(crate) oit_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Weighted-blended OIT pipeline, premultiplied alpha.
+    pub(crate) oit_pipeline_premultiplied: Option<crate::gpu::RenderPipeline>,
 }
 
 impl DeviceResources {
@@ -229,6 +236,74 @@ impl DeviceResources {
                 None,
             ),
         );
+
+        // Ribbon OIT (weighted-blended, order-independent transparency)
+        // pipeline. HDR-only; only ever selected for non-wireframe
+        // `AlphaBlend`/`Premultiplied` ribbons (see
+        // `RibbonGpuData`-equivalent eligibility check at the draw site --
+        // Ribbon has no independent depth_write toggle to gate on the way
+        // Sprite does, since its depth_write is already fully determined by
+        // `blend` in the solid `RibbonVariantSet` below). Reuses the same
+        // `ribbon_layout` (group 0 = scene `camera_bgl`, group 1 = `ribbon_bgl`)
+        // the solid pipeline uses -- the OIT accum/reveal targets are the
+        // only thing that differs, so the same `uniform_bind_group` built for
+        // the solid draw is bound again for the OIT draw. `fs_oit`/
+        // `fs_oit_premultiplied` share one shader module and pipeline layout,
+        // differing only in fragment entry point (see `sprite_oit.wgsl` for
+        // why straight vs premultiplied is not a separate GPU blend state).
+        let ribbon_oit_shader = crate::resources::builders::wgsl_module(
+            device,
+            "ribbon_oit_shader",
+            crate::resources::builders::wgsl_source!("ribbon_oit"),
+        );
+        let make_ribbon_oit_pipeline = |entry: &str, label: &str| {
+            crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label,
+                    layout: &ribbon_layout,
+                    vertex_module: &ribbon_oit_shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[Vertex::buffer_layout()],
+                    fragment: Some(crate::gpu::FragmentState {
+                        module: &ribbon_oit_shader,
+                        entry_point: Some(entry),
+                        targets: &[
+                            Some(crate::gpu::ColorTargetState {
+                                format: crate::gpu::TextureFormat::Rgba16Float,
+                                blend: Some(crate::plugin_api::target_desc::OIT_ACCUM_BLEND),
+                                write_mask: crate::gpu::ColorWrites::ALL,
+                            }),
+                            Some(crate::gpu::ColorTargetState {
+                                format: crate::gpu::TextureFormat::R8Unorm,
+                                blend: Some(crate::plugin_api::target_desc::OIT_REVEAL_BLEND),
+                                write_mask: crate::gpu::ColorWrites::RED,
+                            }),
+                        ],
+                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        false,
+                        crate::gpu::CompareFunction::LessEqual,
+                    )),
+                    multisample: crate::gpu::MultisampleState {
+                        count: self.sample_count,
+                        ..Default::default()
+                    },
+                    cache: None,
+                },
+            )
+        };
+        self.ribbon.oit_pipeline = Some(make_ribbon_oit_pipeline("fs_oit", "ribbon_oit_pipeline"));
+        self.ribbon.oit_pipeline_premultiplied = Some(make_ribbon_oit_pipeline(
+            "fs_oit_premultiplied",
+            "ribbon_oit_pipeline_premultiplied",
+        ));
 
         self.streamtube.pipeline = Some(build_dual_pipeline(
             device,
@@ -595,6 +670,7 @@ impl DeviceResources {
                 [0.0, 0.0, 0.0, 1.0],
             ],
             cast_shadows: true,
+            oit_eligible: false,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -971,6 +1047,7 @@ impl DeviceResources {
                 [0.0, 0.0, 0.0, 1.0],
             ],
             cast_shadows: true,
+            oit_eligible: false,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -1347,6 +1424,13 @@ impl DeviceResources {
             ],
         });
 
+        let oit_eligible = !wireframe
+            && matches!(
+                item.blend,
+                crate::renderer::SpriteBlend::AlphaBlend
+                    | crate::renderer::SpriteBlend::Premultiplied
+            );
+
         StreamtubeGpuData {
             vertex_buffer,
             index_buffer,
@@ -1364,6 +1448,7 @@ impl DeviceResources {
                 [0.0, 0.0, 0.0, 1.0],
             ],
             cast_shadows: true,
+            oit_eligible,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -1872,6 +1957,15 @@ pub struct StreamtubeGpuData {
     /// loop); Streamtube/Tube data carries the same field for consistency but
     /// has no shadow-cast loop of its own yet.
     pub(crate) cast_shadows: bool,
+    /// True when this batch qualifies for true (weighted-blended) OIT
+    /// instead of ordinary alpha blending: `blend` is `AlphaBlend` or
+    /// `Premultiplied` (not `Additive`) and the item is not drawn wireframe.
+    /// Only ever `true` for Ribbon (`upload_ribbon_per_frame` computes it
+    /// from `RibbonItem::blend`); Streamtube/Tube data always carries
+    /// `false` since neither has an OIT pipeline of its own yet. Read by the
+    /// HDR path to route the batch through `oit_pass` instead of the
+    /// ordinary ribbon draw.
+    pub(crate) oit_eligible: bool,
     /// Per-triangle segment index, one entry per triangle in `index_buffer`
     /// (i.e. `index_count / 3` entries). Maps a GPU pick's `primitive_index`
     /// (the hit triangle) to the source curve segment, so a sub-object GPU pick

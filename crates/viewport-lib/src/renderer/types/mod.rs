@@ -1269,6 +1269,13 @@ macro_rules! emit_scivis_draw_calls {
                 if ribbon.index_count == 0 && ribbon.edge_index_count == 0 {
                     continue;
                 }
+                // OIT-eligible ribbons draw through the HDR path's dedicated
+                // `oit_pass` instead (see `hdr_path.rs`); this is HDR-only,
+                // so the LDR path (`_is_hdr == false`) still draws them here
+                // -- there is no OIT pass to route them to on that path.
+                if _is_hdr && ribbon.oit_eligible {
+                    continue;
+                }
                 let key = crate::resources::RibbonKey {
                     blend: ribbon.blend,
                     wireframe: ribbon.wireframe,
