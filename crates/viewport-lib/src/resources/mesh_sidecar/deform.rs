@@ -1751,20 +1751,16 @@ impl DeviceResources {
                     &self.binds.object_bgl,
                     Some(&self.deform.bind_group_layout),
                 );
-                let oit = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                    device,
-                    &oit_layout,
-                    &shader,
-                    false,
-                );
-                let oit_two_sided = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-                    device,
-                    &oit_layout,
-                    &shader,
-                    true,
-                );
-                self.oit.pipeline = Some(oit);
-                self.oit.pipeline_two_sided = Some(oit_two_sided);
+                self.oit.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
+                    |key| {
+                        crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+                            device,
+                            &oit_layout,
+                            &shader,
+                            key.two_sided,
+                        )
+                    },
+                ));
             }
         }
 

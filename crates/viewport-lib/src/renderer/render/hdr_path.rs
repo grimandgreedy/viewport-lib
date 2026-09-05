@@ -2930,8 +2930,8 @@ impl ViewportRenderer {
                     // Transparent excluded items (two-sided, active attribute, matcap) are not
                     // in any instanced batch, so the instanced OIT loop above skips them.
                     // Render them here individually so they are not invisible at opacity < 1.
-                    if let Some(ref pipeline) = self.resources.oit.pipeline {
-                        oit_pass.set_pipeline(pipeline);
+                    if let Some(ref oit_variants) = self.resources.oit.pipeline {
+                        oit_pass.set_pipeline(oit_variants.get(PipelineKey::default()));
                         for (item_idx, item) in scene_items.iter().enumerate() {
                             if item.settings.hidden
                                 || !crate::renderer::prepare::has_transparent_draws(
@@ -2990,27 +2990,13 @@ impl ViewportRenderer {
                                     let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                     match self.resources.material_plugin_draw(mat.shading_plugin) {
                                         Some((pp, mat_bg)) => {
-                                            oit_pass.set_pipeline(select_two_sided(
-                                                range_key,
-                                                &pp.oit,
-                                                &pp.oit_two_sided,
-                                            ));
+                                            oit_pass.set_pipeline(pp.oit.get(range_key));
                                             bind_material_group!(oit_pass, mat_bg);
                                         }
                                         // Two-sided per-range material draws back
                                         // faces through the cull-none OIT pipeline.
                                         None => {
-                                            let two_sided_pipe = self
-                                                .resources
-                                                .oit
-                                                .pipeline_two_sided
-                                                .as_ref()
-                                                .unwrap_or(pipeline);
-                                            oit_pass.set_pipeline(select_two_sided(
-                                                range_key,
-                                                pipeline,
-                                                two_sided_pipe,
-                                            ));
+                                            oit_pass.set_pipeline(oit_variants.get(range_key));
                                         }
                                     }
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -3040,35 +3026,21 @@ impl ViewportRenderer {
                                 .material_plugin_draw(item.material.shading_plugin)
                             {
                                 Some((pp, mat_bg)) => {
-                                    oit_pass.set_pipeline(select_two_sided(
-                                        item_key,
-                                        &pp.oit,
-                                        &pp.oit_two_sided,
-                                    ));
+                                    oit_pass.set_pipeline(pp.oit.get(item_key));
                                     bind_material_group!(oit_pass, mat_bg);
                                 }
                                 // Select the two-sided OIT pipeline for a
                                 // non-`Cull` material so its back faces draw.
                                 None => {
-                                    let two_sided_pipe = self
-                                        .resources
-                                        .oit
-                                        .pipeline_two_sided
-                                        .as_ref()
-                                        .unwrap_or(pipeline);
-                                    oit_pass.set_pipeline(select_two_sided(
-                                        item_key,
-                                        pipeline,
-                                        two_sided_pipe,
-                                    ));
+                                    oit_pass.set_pipeline(oit_variants.get(item_key));
                                 }
                             }
                             oit_pass.set_bind_group(1, obj_bg, &[]);
                             oit_pass.draw_indexed(0..mesh.index_count, 0, obj_inst..obj_inst + 1);
                         }
                     }
-                } else if let Some(ref pipeline) = self.resources.oit.pipeline {
-                    oit_pass.set_pipeline(pipeline);
+                } else if let Some(ref oit_variants) = self.resources.oit.pipeline {
+                    oit_pass.set_pipeline(oit_variants.get(PipelineKey::default()));
                     for (item_idx, item) in scene_items.iter().enumerate() {
                         if item.settings.hidden
                             || !crate::renderer::prepare::has_transparent_draws(
@@ -3116,27 +3088,13 @@ impl ViewportRenderer {
                                 let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                 match self.resources.material_plugin_draw(mat.shading_plugin) {
                                     Some((pp, mat_bg)) => {
-                                        oit_pass.set_pipeline(select_two_sided(
-                                            range_key,
-                                            &pp.oit,
-                                            &pp.oit_two_sided,
-                                        ));
+                                        oit_pass.set_pipeline(pp.oit.get(range_key));
                                         bind_material_group!(oit_pass, mat_bg);
                                     }
                                     // Two-sided per-range material draws back
                                     // faces through the cull-none OIT pipeline.
                                     None => {
-                                        let two_sided_pipe = self
-                                            .resources
-                                            .oit
-                                            .pipeline_two_sided
-                                            .as_ref()
-                                            .unwrap_or(pipeline);
-                                        oit_pass.set_pipeline(select_two_sided(
-                                            range_key,
-                                            pipeline,
-                                            two_sided_pipe,
-                                        ));
+                                        oit_pass.set_pipeline(oit_variants.get(range_key));
                                     }
                                 }
                                 let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -3166,27 +3124,13 @@ impl ViewportRenderer {
                             .material_plugin_draw(item.material.shading_plugin)
                         {
                             Some((pp, mat_bg)) => {
-                                oit_pass.set_pipeline(select_two_sided(
-                                    item_key,
-                                    &pp.oit,
-                                    &pp.oit_two_sided,
-                                ));
+                                oit_pass.set_pipeline(pp.oit.get(item_key));
                                 bind_material_group!(oit_pass, mat_bg);
                             }
                             // Select the two-sided OIT pipeline for a non-`Cull`
                             // material so its back faces draw.
                             None => {
-                                let two_sided_pipe = self
-                                    .resources
-                                    .oit
-                                    .pipeline_two_sided
-                                    .as_ref()
-                                    .unwrap_or(pipeline);
-                                oit_pass.set_pipeline(select_two_sided(
-                                    item_key,
-                                    pipeline,
-                                    two_sided_pipe,
-                                ));
+                                oit_pass.set_pipeline(oit_variants.get(item_key));
                             }
                         }
                         oit_pass.set_bind_group(1, obj_bg, &[]);

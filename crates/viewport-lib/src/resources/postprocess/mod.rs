@@ -962,18 +962,14 @@ impl DeviceResources {
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let oit_pipeline = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-            device,
-            &oit_layout,
-            &oit_shader,
-            false,
-        );
-        let oit_pipeline_two_sided = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-            device,
-            &oit_layout,
-            &oit_shader,
-            true,
-        );
+        let oit_pipeline = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+            crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+                device,
+                &oit_layout,
+                &oit_shader,
+                key.two_sided,
+            )
+        });
 
         // oit_instanced_pipeline is created lazily by ensure_oit_instanced_pipeline()
         // once instance_bind_group_layout becomes available. Splitting it out avoids the
@@ -1331,7 +1327,6 @@ impl DeviceResources {
         self.post.dof_pipeline = Some(dof_pipeline);
 
         self.oit.pipeline = Some(oit_pipeline);
-        self.oit.pipeline_two_sided = Some(oit_pipeline_two_sided);
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
         self.scene.hdr_opaque = Some(hdr_opaque);
         self.scene.hdr_transparent = Some(hdr_transparent_pipeline);

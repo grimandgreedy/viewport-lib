@@ -550,10 +550,9 @@ impl crate::resources::DeviceResources {
 pub(crate) struct MaterialPluginPipelines {
     pub ldr: crate::resources::mesh::mesh_pipelines::LdrMeshPipelines,
     pub hdr: crate::resources::mesh::mesh_pipelines::HdrMeshPipelines,
-    pub oit: crate::gpu::RenderPipeline,
-    /// Two-sided (`cull_mode: None`) OIT twin, selected for a two-sided material
-    /// so its back faces draw through the OIT pass.
-    pub oit_two_sided: crate::gpu::RenderPipeline,
+    /// OIT accumulate pipelines, keyed by facedness (the only axis this
+    /// family varies on).
+    pub oit: crate::renderer::pipeline_key::PipelineVariantSet,
 }
 
 impl MaterialPluginPipelines {
@@ -1038,27 +1037,18 @@ impl crate::resources::DeviceResources {
         // Culled + two-sided OIT twins, selected per draw on the material's
         // two-sidedness (the shader is composed from mesh_oit.wgsl, which flips
         // the normal and applies the back-face colour via front_facing).
-        let oit = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-            device,
-            &layout,
-            &oit_module,
-            false,
-        );
-        let oit_two_sided = crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
-            device,
-            &layout,
-            &oit_module,
-            true,
-        );
+        let oit = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+            crate::resources::mesh::mesh_pipelines::build_oit_pipeline(
+                device,
+                &layout,
+                &oit_module,
+                key.two_sided,
+            )
+        });
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
-            .pipelines = Some(MaterialPluginPipelines {
-            ldr,
-            hdr,
-            oit,
-            oit_two_sided,
-        });
+            .pipelines = Some(MaterialPluginPipelines { ldr, hdr, oit });
     }
 
     /// Resolve a material's plugin selection to its pipeline set and the
