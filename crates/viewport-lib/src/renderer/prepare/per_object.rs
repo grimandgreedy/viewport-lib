@@ -961,10 +961,7 @@ impl ViewportRenderer {
             {
                 break 'plan None;
             }
-            if hdr
-                && (self.resources.scene.hdr_solid.is_none()
-                    || self.resources.scene.hdr_solid_two_sided.is_none())
-            {
+            if hdr && self.resources.scene.hdr_opaque.is_none() {
                 break 'plan None;
             }
             use std::hash::{Hash, Hasher};
@@ -1030,12 +1027,8 @@ impl ViewportRenderer {
             // discard-free pipeline twins and let hidden fragments be depth
             // rejected before shading. The choice is hashed so flipping it
             // (clip toggled, the force-discard measurement knob) re-records.
-            let no_discard = hdr
-                && !clipping_active
-                && !any_mask
-                && !self.resources.force_po_discard
-                && self.resources.scene.hdr_solid_nodiscard.is_some()
-                && self.resources.scene.hdr_solid_two_sided_nodiscard.is_some();
+            let no_discard =
+                hdr && !clipping_active && !any_mask && !self.resources.force_po_discard;
             no_discard.hash(&mut h);
             Some((h.finish(), transparent, no_discard))
         };
@@ -1134,19 +1127,18 @@ impl ViewportRenderer {
         } else {
             (resources.target_format, resources.sample_count)
         };
-        let (solid, solid_two_sided) = if hdr && no_discard {
+        let (solid, solid_two_sided) = if hdr {
+            let hdr_opaque = self.resources.scene.hdr_opaque.as_ref().unwrap();
             (
-                self.resources.scene.hdr_solid_nodiscard.as_ref().unwrap(),
-                self.resources
-                    .scene
-                    .hdr_solid_two_sided_nodiscard
-                    .as_ref()
-                    .unwrap(),
-            )
-        } else if hdr {
-            (
-                self.resources.scene.hdr_solid.as_ref().unwrap(),
-                self.resources.scene.hdr_solid_two_sided.as_ref().unwrap(),
+                hdr_opaque.get(PipelineKey {
+                    no_discard_eligible: no_discard,
+                    ..PipelineKey::default()
+                }),
+                hdr_opaque.get(PipelineKey {
+                    two_sided: true,
+                    no_discard_eligible: no_discard,
+                    ..PipelineKey::default()
+                }),
             )
         } else {
             (&resources.scene.solid, &resources.scene.solid_two_sided)

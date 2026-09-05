@@ -51,6 +51,59 @@ impl PipelineKey {
             ..Self::default()
         }
     }
+
+    /// Every axis combination, for eager cross-product construction
+    /// (`PipelineVariantSet::build`). A pass that does not vary on every axis
+    /// still sees all 8 during construction; its build closure just returns
+    /// the same pipeline for the axis it ignores.
+    pub fn all() -> impl Iterator<Item = PipelineKey> {
+        (0u8..8).map(|bits| PipelineKey {
+            two_sided: bits & 1 != 0,
+            cutout: bits & 2 != 0,
+            no_discard_eligible: bits & 4 != 0,
+        })
+    }
+
+    /// Dense index in `0..8`, stable across calls, for the hash-free array
+    /// lookup `PipelineVariantSet` uses.
+    fn slot(self) -> usize {
+        (self.two_sided as usize)
+            | (self.cutout as usize) << 1
+            | (self.no_discard_eligible as usize) << 2
+    }
+}
+
+/// A pipeline built for every reachable [`PipelineKey`], indexed for a
+/// hash-free draw-time lookup (`get`). Construction is eager: `build` runs
+/// once per key up front (typically from the same lazy first-HDR-use or
+/// deform-registration-changed trigger a family already rebuilds from), not
+/// per draw call.
+///
+/// `RenderPipeline` is a cheap reference-counted GPU handle, so a `build`
+/// closure that ignores an axis (e.g. OIT ignoring cutout, or shadow ignoring
+/// no-discard) can just return a clone of the same pipeline for both of that
+/// axis's values -- `PipelineVariantSet` does not force compiling 8 distinct
+/// GPU pipelines when a pass only has 2 or 4 real variants.
+pub(crate) struct PipelineVariantSet {
+    variants: [crate::gpu::RenderPipeline; 8],
+}
+
+impl PipelineVariantSet {
+    pub fn build(mut build: impl FnMut(PipelineKey) -> crate::gpu::RenderPipeline) -> Self {
+        let mut variants: Vec<crate::gpu::RenderPipeline> = Vec::with_capacity(8);
+        for key in PipelineKey::all() {
+            variants.push(build(key));
+        }
+        Self {
+            variants: variants
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("PipelineKey::all() yields exactly 8 keys")),
+        }
+    }
+
+    pub fn get(&self, key: PipelineKey) -> &crate::gpu::RenderPipeline {
+        &self.variants[key.slot()]
+    }
 }
 
 /// Two-way facedness select, shared by every family whose only axis is

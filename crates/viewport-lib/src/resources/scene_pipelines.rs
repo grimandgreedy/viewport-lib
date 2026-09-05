@@ -15,16 +15,12 @@ pub(crate) struct SceneCorePipelines {
     pub(crate) transparent: crate::gpu::RenderPipeline,
     /// Wireframe render pipeline (LineList topology, same shader).
     pub(crate) wireframe: crate::gpu::RenderPipeline,
-    /// HDR solid variant. `None` until the HDR path first builds it.
-    pub(crate) hdr_solid: Option<crate::gpu::RenderPipeline>,
-    /// HDR two-sided variant (cull_mode: None) for analytical surfaces.
-    pub(crate) hdr_solid_two_sided: Option<crate::gpu::RenderPipeline>,
-    /// Discard-free twins of the per-object HDR solid pipelines (early-Z fast
-    /// path). Selected for plain-opaque per-object draws when the frame renders
-    /// no clip geometry, so occluded fragments are depth-rejected before
-    /// shading. The instanced paths carry their own nodiscard twins.
-    pub(crate) hdr_solid_nodiscard: Option<crate::gpu::RenderPipeline>,
-    pub(crate) hdr_solid_two_sided_nodiscard: Option<crate::gpu::RenderPipeline>,
+    /// Per-object HDR opaque pipelines, keyed by facedness and discard-free
+    /// early-Z eligibility (`cutout` is not a real axis here: the opaque
+    /// fragment shader branches on a per-object uniform instead of a
+    /// dedicated pipeline). `None` until the HDR path first builds it. The
+    /// instanced paths carry their own variant sets.
+    pub(crate) hdr_opaque: Option<crate::renderer::pipeline_key::PipelineVariantSet>,
     pub(crate) hdr_transparent: Option<crate::gpu::RenderPipeline>,
     pub(crate) hdr_wireframe: Option<crate::gpu::RenderPipeline>,
     /// HDR overlay pipeline (TriangleList, Rgba16Float, alpha blending) for cap fill in HDR path.
@@ -44,7 +40,7 @@ mod tests {
         };
         // Base pipelines are non-optional and built at new(); nothing to unwrap.
         // The HDR variants are built on first HDR-path use.
-        assert!(res.scene.hdr_solid.is_none());
+        assert!(res.scene.hdr_opaque.is_none());
         assert!(res.scene.hdr_transparent.is_none());
         assert!(res.scene.hdr_wireframe.is_none());
         assert!(res.scene.hdr_overlay.is_none());

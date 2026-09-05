@@ -1033,21 +1033,34 @@ impl DeviceResources {
             &hdr_pipeline_layout,
             &hdr_shader,
         );
-        let hdr_solid_pipeline = hdr.solid;
-        let hdr_solid_two_sided_pipeline = hdr.solid_two_sided;
+        let hdr_solid = hdr.solid;
+        let hdr_solid_two_sided = hdr.solid_two_sided;
         let hdr_transparent_pipeline = hdr.transparent;
         let hdr_wireframe_pipeline = hdr.wireframe;
 
-        // Discard-free solid twins for the early-Z fast path. Only .solid and
-        // .solid_two_sided are used; the transparent/wireframe twins are
-        // discarded (transparency and wireframe do not benefit from early-Z).
+        // Discard-free solid twins for the early-Z fast path: only .solid and
+        // .solid_two_sided are used (transparency and wireframe do not
+        // benefit from early-Z). Folded into one keyed `PipelineVariantSet`
+        // with the discarding twins above; `cutout` is not a real axis here
+        // (the shader branches on a per-object uniform instead), so both its
+        // values map to the same pipeline.
         let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
             device,
             &hdr_pipeline_layout,
             &hdr_shader_nodiscard,
         );
-        let hdr_solid_nodiscard_pipeline = hdr_nd.solid;
-        let hdr_solid_two_sided_nodiscard_pipeline = hdr_nd.solid_two_sided;
+        let hdr_opaque = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+            let (solid, solid_two_sided) = if key.no_discard_eligible {
+                (&hdr_nd.solid, &hdr_nd.solid_two_sided)
+            } else {
+                (&hdr_solid, &hdr_solid_two_sided)
+            };
+            if key.two_sided {
+                solid_two_sided.clone()
+            } else {
+                solid.clone()
+            }
+        });
 
         let hdr_overlay_shader = crate::resources::builders::wgsl_module(
             device,
@@ -1320,10 +1333,7 @@ impl DeviceResources {
         self.oit.pipeline = Some(oit_pipeline);
         self.oit.pipeline_two_sided = Some(oit_pipeline_two_sided);
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
-        self.scene.hdr_solid = Some(hdr_solid_pipeline);
-        self.scene.hdr_solid_two_sided = Some(hdr_solid_two_sided_pipeline);
-        self.scene.hdr_solid_nodiscard = Some(hdr_solid_nodiscard_pipeline);
-        self.scene.hdr_solid_two_sided_nodiscard = Some(hdr_solid_two_sided_nodiscard_pipeline);
+        self.scene.hdr_opaque = Some(hdr_opaque);
         self.scene.hdr_transparent = Some(hdr_transparent_pipeline);
         self.scene.hdr_wireframe = Some(hdr_wireframe_pipeline);
         self.scene.hdr_overlay = Some(hdr_overlay_pipeline);

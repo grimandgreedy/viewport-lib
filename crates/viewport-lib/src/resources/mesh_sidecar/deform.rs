@@ -1649,12 +1649,14 @@ impl DeviceResources {
         // mesh.wgsl: LDR + HDR families.
         if let Some(base) = lookup_source("mesh.wgsl") {
             let composed = compose_shader(base, &registrations);
+            let final_src = crate::resources::builders::builtin_hook_env(
+                crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+            )
+            .into_owned();
             let shader = crate::resources::builders::wgsl_module(
                 device,
                 "mesh_shader_composed",
-                crate::resources::builders::builtin_hook_env(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
+                final_src.clone(),
             );
 
             let ldr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
@@ -1677,7 +1679,7 @@ impl DeviceResources {
             self.scene.transparent = ldr.transparent;
             self.scene.wireframe = ldr.wireframe;
 
-            if self.scene.hdr_solid.is_some() {
+            if self.scene.hdr_opaque.is_some() {
                 let hdr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
                     device,
                     "hdr_mesh_pipeline_layout",
@@ -1690,10 +1692,40 @@ impl DeviceResources {
                     &hdr_layout,
                     &shader,
                 );
-                self.scene.hdr_solid = Some(hdr.solid);
-                self.scene.hdr_solid_two_sided = Some(hdr.solid_two_sided);
+                let hdr_solid = hdr.solid;
+                let hdr_solid_two_sided = hdr.solid_two_sided;
                 self.scene.hdr_transparent = Some(hdr.transparent);
                 self.scene.hdr_wireframe = Some(hdr.wireframe);
+
+                // Discard-free twin, rebuilt from the same fresh composition
+                // so it never lags the discarding pipeline's shading (the
+                // pre-keyed code left this twin stale across a deformer
+                // registration; folding both into one `PipelineVariantSet`
+                // build fixes that for free).
+                let hdr_shader_nodiscard = crate::resources::builders::wgsl_module(
+                    device,
+                    "mesh_shader_hdr_nodiscard",
+                    crate::resources::builders::strip_discards(&final_src),
+                );
+                let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
+                    device,
+                    &hdr_layout,
+                    &hdr_shader_nodiscard,
+                );
+                self.scene.hdr_opaque = Some(
+                    crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+                        let (solid, solid_two_sided) = if key.no_discard_eligible {
+                            (&hdr_nd.solid, &hdr_nd.solid_two_sided)
+                        } else {
+                            (&hdr_solid, &hdr_solid_two_sided)
+                        };
+                        if key.two_sided {
+                            solid_two_sided.clone()
+                        } else {
+                            solid.clone()
+                        }
+                    }),
+                );
             }
         }
 

@@ -1008,10 +1008,7 @@ impl ViewportRenderer {
                                 wf_idx += 1;
                             }
                         }
-                    } else if let (Some(hdr_solid), Some(hdr_solid_two_sided)) = (
-                        &resources.scene.hdr_solid,
-                        &resources.scene.hdr_solid_two_sided,
-                    ) {
+                    } else if let Some(hdr_opaque) = &resources.scene.hdr_opaque {
                         // Clip geometry disables the discard-free early-Z twin
                         // (the clip discards would be stripped). Computed here
                         // because this per-object branch is the `else` of the
@@ -1066,13 +1063,7 @@ impl ViewportRenderer {
                                     &self.frame_missing_pipeline_variants,
                                 )
                             } else {
-                                select_opaque_solid(
-                                    key,
-                                    hdr_solid,
-                                    hdr_solid_two_sided,
-                                    resources.scene.hdr_solid_nodiscard.as_ref(),
-                                    resources.scene.hdr_solid_two_sided_nodiscard.as_ref(),
-                                )
+                                hdr_opaque.get(key)
                             };
                             render_pass.set_pipeline(pipeline);
                             bind_deform_group!(
@@ -1144,7 +1135,7 @@ impl ViewportRenderer {
                                             &pp.hdr.solid_two_sided,
                                         )
                                     } else {
-                                        select_two_sided(range_key, hdr_solid, hdr_solid_two_sided)
+                                        hdr_opaque.get(range_key)
                                     };
                                     render_pass.set_pipeline(pl);
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -1273,23 +1264,15 @@ impl ViewportRenderer {
                     // NOTE: only opaque items are drawn here. Transparent items are
                     // routed to the OIT pass below.
                     let _ = &transparent; // suppress unused warning
-                    if let (
-                        Some(hdr_solid),
-                        Some(hdr_solid_two_sided),
-                        Some(hdr_trans),
-                        Some(hdr_wf),
-                    ) = (
-                        &resources.scene.hdr_solid,
-                        &resources.scene.hdr_solid_two_sided,
+                    if let (Some(hdr_opaque), Some(hdr_trans), Some(hdr_wf)) = (
+                        &resources.scene.hdr_opaque,
                         &resources.scene.hdr_transparent,
                         &resources.scene.hdr_wireframe,
                     ) {
+                        let hdr_solid_two_sided = hdr_opaque.get(PipelineKey::two_sided(true));
                         for (item_idx, item) in &opaque {
-                            let solid_pl = select_two_sided(
-                                PipelineKey::two_sided(item.material.is_two_sided()),
-                                hdr_solid,
-                                hdr_solid_two_sided,
-                            );
+                            let solid_pl = hdr_opaque
+                                .get(PipelineKey::two_sided(item.material.is_two_sided()));
                             let obj_bg = per_item_bgs.get(*item_idx).and_then(|opt| opt.as_ref());
                             draw_mesh_item(
                                 resources,
@@ -3951,14 +3934,14 @@ impl ViewportRenderer {
         let Some(fg_depth_view) = slot_hdr.foreground_depth_view.as_ref() else {
             return;
         };
-        let (Some(hdr_solid), Some(hdr_solid_two_sided), Some(hdr_trans), Some(hdr_wf)) = (
-            &resources.scene.hdr_solid,
-            &resources.scene.hdr_solid_two_sided,
+        let (Some(hdr_opaque), Some(hdr_trans), Some(hdr_wf)) = (
+            &resources.scene.hdr_opaque,
             &resources.scene.hdr_transparent,
             &resources.scene.hdr_wireframe,
         ) else {
             return;
         };
+        let hdr_solid_two_sided = hdr_opaque.get(PipelineKey::two_sided(true));
 
         let fg_camera = frame
             .camera
@@ -4027,11 +4010,7 @@ impl ViewportRenderer {
         render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
 
         for (idx, item) in opaque.iter().chain(transparent.iter()) {
-            let solid_pl = select_two_sided(
-                PipelineKey::two_sided(item.material.is_two_sided()),
-                hdr_solid,
-                hdr_solid_two_sided,
-            );
+            let solid_pl = hdr_opaque.get(PipelineKey::two_sided(item.material.is_two_sided()));
             let obj_bg = slot
                 .foreground_objects
                 .get(*idx)

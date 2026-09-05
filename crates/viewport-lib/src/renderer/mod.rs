@@ -36,7 +36,7 @@ pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub use crate::resources::{GaussianSplatData, GaussianSplatId, ShDegree};
-mod pipeline_key;
+pub(crate) mod pipeline_key;
 use pipeline_key::{
     PipelineKey, select_opaque_solid, select_plugin_opaque, select_shadow_caster, select_two_sided,
 };
