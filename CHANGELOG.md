@@ -111,6 +111,18 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   before output, so the sRGB target no longer encodes it a second time. Splats
   were washed out; they now match their source. The decode also puts the alpha
   blend in linear space. Uploaded `sh_coeffs` are unchanged.
+- **Wireframe polylines respect clip planes and clip volumes again.** The thin
+  1px wireframe pipeline never sampled the clip uniform at all, so a polyline
+  with `ItemSettings.ignore_clip` left at its default `false` was silently
+  drawn in full the moment it switched to wireframe mode, regardless of any
+  active clip plane or clip volume. The wireframe shader now runs the same
+  clip test as the thick-line pipeline, with its own clip-exempt twin for the
+  cases (clip-object overlays) that still need one.
+- **Wireframe ribbons keep their blend mode.** A ribbon drawn as wireframe
+  always used the alpha-blend pipeline regardless of `RibbonItem::blend`, so
+  an additive or premultiplied ribbon lost its blend mode the moment
+  wireframe mode was enabled. Wireframe ribbons now build one pipeline per
+  blend mode, matching the solid path.
 
 ## [0.21.0]
 
