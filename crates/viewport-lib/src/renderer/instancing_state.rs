@@ -33,6 +33,12 @@ pub(crate) struct InstancingState {
     pub(crate) cull_resources: Option<indirect::CullResources>,
     /// Last scene generation seen during prepare(). u64::MAX forces rebuild on first frame.
     pub(crate) last_scene_generation: u64,
+    /// Global wireframe toggle (`frame.viewport.wireframe_mode`) at the last
+    /// rebuild. Baked into each instance's per-instance `wireframe` shading
+    /// flag (see `mesh_instanced.wgsl`'s `inst.wireframe`), so a toggle with
+    /// no other scene change must still force a rebuild or the cached
+    /// instance buffer keeps shading with the old flag.
+    pub(crate) last_wireframe_mode: bool,
     /// Last selection generation seen during prepare(). u64::MAX forces rebuild on first frame.
     pub(crate) last_selection_generation: u64,
     /// Last scene_items count seen during prepare(). usize::MAX forces rebuild on first frame.
@@ -112,6 +118,7 @@ impl InstancingState {
             multi_draw_forced: false,
             cull_resources: None,
             last_scene_generation: u64::MAX,
+            last_wireframe_mode: false,
             last_selection_generation: u64::MAX,
             last_scene_items_count: usize::MAX,
             last_instancable_count: usize::MAX,

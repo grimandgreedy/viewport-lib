@@ -46,7 +46,11 @@ impl ViewportRenderer {
             // Cached batches reference mesh ids by slot; a free (which bumps this
             // epoch) can leave them pointing at freed meshes, so every instanced
             // draw is skipped. Rebuild when it moves, as the per-object path does.
-            && resources.resource_free_epoch == instancing.last_resource_free_epoch;
+            && resources.resource_free_epoch == instancing.last_resource_free_epoch
+            // The global wireframe toggle is baked into each instance's
+            // per-instance wireframe flag (see the `InstanceData` push below), so
+            // flipping it with no other scene change must still force a rebuild.
+            && frame.viewport.wireframe_mode == instancing.last_wireframe_mode;
 
         if !cache_valid {
             // Cache miss : rebuild batches and upload instance data.
@@ -158,7 +162,17 @@ impl ViewportRenderer {
                                 model: cm.model,
                                 colour: cm.colour,
                                 selected: cm.selected,
-                                wireframe: 0, // always 0 : wireframe uses per-object pipeline
+                                // The instanced shader shades wireframe the same way the
+                                // per-object shader does: a per-instance flag that swaps
+                                // the fragment colour for flat grey, not a separate
+                                // pipeline or topology (see `mesh_instanced.wgsl`'s
+                                // `inst.wireframe` check, mirroring `mesh.wgsl`'s
+                                // `object.wireframe`). Previously hardcoded to 0 here, so
+                                // a batched item's own `settings.wireframe` was silently
+                                // dropped -- it rendered solid instead.
+                                wireframe: (frame.viewport.wireframe_mode
+                                    || item.settings.wireframe)
+                                    as u32,
                                 ambient: cm.ambient,
                                 diffuse: cm.diffuse,
                                 specular: cm.specular,
@@ -338,6 +352,7 @@ impl ViewportRenderer {
             instancing.batches = instancing.cached_batches.clone();
 
             instancing.last_scene_generation = frame.scene.generation;
+            instancing.last_wireframe_mode = frame.viewport.wireframe_mode;
             instancing.last_selection_generation = frame.interaction.selection_generation;
             instancing.last_scene_items_count = scene_items.len();
             instancing.last_instancable_count = sorted_items.len();
