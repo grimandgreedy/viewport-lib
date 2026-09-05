@@ -137,18 +137,18 @@ pub(super) fn draw_mesh_item(
         }
     } else if is_face_attr {
         if let Some(ref fvb) = mesh.face_vertex_buffer {
+            let key = PipelineKey::two_sided(item.material.is_two_sided());
             let pl = if let Some((pp, _)) = plug {
-                match (
-                    hdr,
-                    item.settings.opacity < 1.0,
-                    item.material.is_two_sided(),
-                ) {
-                    (true, true, _) => &pp.hdr.transparent,
-                    (true, false, true) => &pp.hdr.solid_two_sided,
-                    (true, false, false) => &pp.hdr.solid,
-                    (false, true, _) => &pp.ldr.transparent,
-                    (false, false, true) => &pp.ldr.solid_two_sided,
-                    (false, false, false) => &pp.ldr.solid,
+                if item.settings.opacity < 1.0 {
+                    if hdr {
+                        &pp.hdr.transparent
+                    } else {
+                        &pp.ldr.transparent
+                    }
+                } else if hdr {
+                    select_two_sided(key, &pp.hdr.solid, &pp.hdr.solid_two_sided)
+                } else {
+                    select_two_sided(key, &pp.ldr.solid, &pp.ldr.solid_two_sided)
                 }
             } else if item.settings.opacity < 1.0 {
                 trans_pl
@@ -187,21 +187,23 @@ pub(super) fn draw_mesh_item(
                     }
                 }
                 let plug_r = resources.material_plugin_draw(mat.shading_plugin);
+                let range_key = PipelineKey::two_sided(mat.is_two_sided());
                 let pl = if let Some((pp, _)) = plug_r {
-                    match (hdr, is_trans, mat.is_two_sided()) {
-                        (true, true, _) => &pp.hdr.transparent,
-                        (true, false, true) => &pp.hdr.solid_two_sided,
-                        (true, false, false) => &pp.hdr.solid,
-                        (false, true, _) => &pp.ldr.transparent,
-                        (false, false, true) => &pp.ldr.solid_two_sided,
-                        (false, false, false) => &pp.ldr.solid,
+                    if is_trans {
+                        if hdr {
+                            &pp.hdr.transparent
+                        } else {
+                            &pp.ldr.transparent
+                        }
+                    } else if hdr {
+                        select_two_sided(range_key, &pp.hdr.solid, &pp.hdr.solid_two_sided)
+                    } else {
+                        select_two_sided(range_key, &pp.ldr.solid, &pp.ldr.solid_two_sided)
                     }
                 } else if is_trans {
                     trans_pl
-                } else if mat.is_two_sided() {
-                    solid_two_sided_pl
                 } else {
-                    solid_pl
+                    select_two_sided(range_key, solid_pl, solid_two_sided_pl)
                 };
                 render_pass.set_pipeline(pl);
                 let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -228,10 +230,12 @@ pub(super) fn draw_mesh_item(
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
                     &pp.hdr.transparent
-                } else if item.material.is_two_sided() {
-                    &pp.hdr.solid_two_sided
                 } else {
-                    &pp.hdr.solid
+                    select_two_sided(
+                        PipelineKey::two_sided(item.material.is_two_sided()),
+                        &pp.hdr.solid,
+                        &pp.hdr.solid_two_sided,
+                    )
                 }
             } else if item.settings.opacity < 1.0 {
                 trans_pl
@@ -835,14 +839,18 @@ impl ViewportRenderer {
                                             .fetch_add(dc, std::sync::atomic::Ordering::Relaxed);
                                     }
                                     if cur_pipe != Some(pipe_key) {
-                                        render_pass.set_pipeline(
-                                            match (no_discard, batch.two_sided) {
-                                                (true, true) => nodiscard_pipes.1.unwrap(),
-                                                (true, false) => nodiscard_pipes.0.unwrap(),
-                                                (false, true) => pipeline_two_sided,
-                                                (false, false) => pipeline,
-                                            },
-                                        );
+                                        let key = PipelineKey {
+                                            two_sided: batch.two_sided,
+                                            no_discard_eligible: no_discard,
+                                            ..PipelineKey::default()
+                                        };
+                                        render_pass.set_pipeline(select_opaque_solid(
+                                            key,
+                                            pipeline,
+                                            pipeline_two_sided,
+                                            nodiscard_pipes.0,
+                                            nodiscard_pipes.1,
+                                        ));
                                         cur_pipe = Some(pipe_key);
                                     }
                                     if cur_bg != Some(bg_ptr) {
@@ -914,12 +922,18 @@ impl ViewportRenderer {
                                     && nodiscard_pipes.0.is_some()
                                     && nodiscard_pipes.1.is_some();
                                 if cur_pipe != Some((batch.two_sided, no_discard)) {
-                                    render_pass.set_pipeline(match (no_discard, batch.two_sided) {
-                                        (true, true) => nodiscard_pipes.1.unwrap(),
-                                        (true, false) => nodiscard_pipes.0.unwrap(),
-                                        (false, true) => pipeline_two_sided,
-                                        (false, false) => pipeline,
-                                    });
+                                    let key = PipelineKey {
+                                        two_sided: batch.two_sided,
+                                        no_discard_eligible: no_discard,
+                                        ..PipelineKey::default()
+                                    };
+                                    render_pass.set_pipeline(select_opaque_solid(
+                                        key,
+                                        pipeline,
+                                        pipeline_two_sided,
+                                        nodiscard_pipes.0,
+                                        nodiscard_pipes.1,
+                                    ));
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -1026,40 +1040,39 @@ impl ViewportRenderer {
                             // non-scalar item in a frame with no clip geometry can
                             // never hit a `discard`, so draw it with the
                             // discard-free twin and let hidden fragments be
-                            // depth-rejected before shading. Plugin, alpha-mask,
-                            // submesh-material, and scalar-attribute (NaN-discard)
-                            // draws keep the discarding pipeline.
-                            let no_discard = plug.is_none()
-                                && !clipping_active
-                                && !resources.force_po_discard
-                                && matches!(
-                                    item.material.alpha_mode,
-                                    crate::scene::material::AlphaMode::Opaque
-                                )
-                                && item.active_attribute.is_none()
-                                && item.submesh_materials.is_none()
-                                && resources.scene.hdr_solid_nodiscard.is_some()
-                                && resources.scene.hdr_solid_two_sided_nodiscard.is_some();
+                            // depth-rejected before shading. Alpha-mask and
+                            // submesh-material draws keep the discarding pipeline.
+                            // Material-plugin pipelines have no discard-free twin
+                            // at all (see `select_plugin_opaque`), so an otherwise
+                            // eligible plugin item is counted as a missing variant
+                            // rather than silently losing the fast path.
+                            let key = PipelineKey {
+                                two_sided: item.material.is_two_sided(),
+                                no_discard_eligible: !clipping_active
+                                    && !resources.force_po_discard
+                                    && matches!(
+                                        item.material.alpha_mode,
+                                        crate::scene::material::AlphaMode::Opaque
+                                    )
+                                    && item.active_attribute.is_none()
+                                    && item.submesh_materials.is_none(),
+                                ..PipelineKey::default()
+                            };
                             let pipeline = if let Some((pp, _)) = plug {
-                                if item.material.is_two_sided() {
-                                    &pp.hdr.solid_two_sided
-                                } else {
-                                    &pp.hdr.solid
-                                }
-                            } else if no_discard {
-                                if item.material.is_two_sided() {
-                                    resources
-                                        .scene
-                                        .hdr_solid_two_sided_nodiscard
-                                        .as_ref()
-                                        .unwrap()
-                                } else {
-                                    resources.scene.hdr_solid_nodiscard.as_ref().unwrap()
-                                }
-                            } else if item.material.is_two_sided() {
-                                hdr_solid_two_sided
+                                select_plugin_opaque(
+                                    key,
+                                    &pp.hdr.solid,
+                                    &pp.hdr.solid_two_sided,
+                                    &self.frame_missing_pipeline_variants,
+                                )
                             } else {
-                                hdr_solid
+                                select_opaque_solid(
+                                    key,
+                                    hdr_solid,
+                                    hdr_solid_two_sided,
+                                    resources.scene.hdr_solid_nodiscard.as_ref(),
+                                    resources.scene.hdr_solid_two_sided_nodiscard.as_ref(),
+                                )
                             };
                             render_pass.set_pipeline(pipeline);
                             bind_deform_group!(
@@ -1123,16 +1136,15 @@ impl ViewportRenderer {
                                         continue;
                                     }
                                     let plug_r = resources.material_plugin_draw(mat.shading_plugin);
+                                    let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                     let pl = if let Some((pp, _)) = plug_r {
-                                        if mat.is_two_sided() {
-                                            &pp.hdr.solid_two_sided
-                                        } else {
-                                            &pp.hdr.solid
-                                        }
-                                    } else if mat.is_two_sided() {
-                                        hdr_solid_two_sided
+                                        select_two_sided(
+                                            range_key,
+                                            &pp.hdr.solid,
+                                            &pp.hdr.solid_two_sided,
+                                        )
                                     } else {
-                                        hdr_solid
+                                        select_two_sided(range_key, hdr_solid, hdr_solid_two_sided)
                                     };
                                     render_pass.set_pipeline(pl);
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -1273,11 +1285,11 @@ impl ViewportRenderer {
                         &resources.scene.hdr_wireframe,
                     ) {
                         for (item_idx, item) in &opaque {
-                            let solid_pl = if item.material.is_two_sided() {
-                                hdr_solid_two_sided
-                            } else {
-                                hdr_solid
-                            };
+                            let solid_pl = select_two_sided(
+                                PipelineKey::two_sided(item.material.is_two_sided()),
+                                hdr_solid,
+                                hdr_solid_two_sided,
+                            );
                             let obj_bg = per_item_bgs.get(*item_idx).and_then(|opt| opt.as_ref());
                             draw_mesh_item(
                                 resources,
@@ -2992,27 +3004,30 @@ impl ViewportRenderer {
                                     if item.settings.opacity >= 1.0 && !mat.is_blend() {
                                         continue;
                                     }
+                                    let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                     match self.resources.material_plugin_draw(mat.shading_plugin) {
                                         Some((pp, mat_bg)) => {
-                                            oit_pass.set_pipeline(if mat.is_two_sided() {
-                                                &pp.oit_two_sided
-                                            } else {
-                                                &pp.oit
-                                            });
+                                            oit_pass.set_pipeline(select_two_sided(
+                                                range_key,
+                                                &pp.oit,
+                                                &pp.oit_two_sided,
+                                            ));
                                             bind_material_group!(oit_pass, mat_bg);
                                         }
                                         // Two-sided per-range material draws back
                                         // faces through the cull-none OIT pipeline.
                                         None => {
-                                            oit_pass.set_pipeline(if mat.is_two_sided() {
-                                                self.resources
-                                                    .oit
-                                                    .pipeline_two_sided
-                                                    .as_ref()
-                                                    .unwrap_or(pipeline)
-                                            } else {
-                                                pipeline
-                                            });
+                                            let two_sided_pipe = self
+                                                .resources
+                                                .oit
+                                                .pipeline_two_sided
+                                                .as_ref()
+                                                .unwrap_or(pipeline);
+                                            oit_pass.set_pipeline(select_two_sided(
+                                                range_key,
+                                                pipeline,
+                                                two_sided_pipe,
+                                            ));
                                         }
                                     }
                                     let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -3036,30 +3051,33 @@ impl ViewportRenderer {
                                 }
                                 continue;
                             }
+                            let item_key = PipelineKey::two_sided(item.material.is_two_sided());
                             match self
                                 .resources
                                 .material_plugin_draw(item.material.shading_plugin)
                             {
                                 Some((pp, mat_bg)) => {
-                                    oit_pass.set_pipeline(if item.material.is_two_sided() {
-                                        &pp.oit_two_sided
-                                    } else {
-                                        &pp.oit
-                                    });
+                                    oit_pass.set_pipeline(select_two_sided(
+                                        item_key,
+                                        &pp.oit,
+                                        &pp.oit_two_sided,
+                                    ));
                                     bind_material_group!(oit_pass, mat_bg);
                                 }
                                 // Select the two-sided OIT pipeline for a
                                 // non-`Cull` material so its back faces draw.
                                 None => {
-                                    oit_pass.set_pipeline(if item.material.is_two_sided() {
-                                        self.resources
-                                            .oit
-                                            .pipeline_two_sided
-                                            .as_ref()
-                                            .unwrap_or(pipeline)
-                                    } else {
-                                        pipeline
-                                    });
+                                    let two_sided_pipe = self
+                                        .resources
+                                        .oit
+                                        .pipeline_two_sided
+                                        .as_ref()
+                                        .unwrap_or(pipeline);
+                                    oit_pass.set_pipeline(select_two_sided(
+                                        item_key,
+                                        pipeline,
+                                        two_sided_pipe,
+                                    ));
                                 }
                             }
                             oit_pass.set_bind_group(1, obj_bg, &[]);
@@ -3112,27 +3130,30 @@ impl ViewportRenderer {
                                 if item.settings.opacity >= 1.0 && !mat.is_blend() {
                                     continue;
                                 }
+                                let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                 match self.resources.material_plugin_draw(mat.shading_plugin) {
                                     Some((pp, mat_bg)) => {
-                                        oit_pass.set_pipeline(if mat.is_two_sided() {
-                                            &pp.oit_two_sided
-                                        } else {
-                                            &pp.oit
-                                        });
+                                        oit_pass.set_pipeline(select_two_sided(
+                                            range_key,
+                                            &pp.oit,
+                                            &pp.oit_two_sided,
+                                        ));
                                         bind_material_group!(oit_pass, mat_bg);
                                     }
                                     // Two-sided per-range material draws back
                                     // faces through the cull-none OIT pipeline.
                                     None => {
-                                        oit_pass.set_pipeline(if mat.is_two_sided() {
-                                            self.resources
-                                                .oit
-                                                .pipeline_two_sided
-                                                .as_ref()
-                                                .unwrap_or(pipeline)
-                                        } else {
-                                            pipeline
-                                        });
+                                        let two_sided_pipe = self
+                                            .resources
+                                            .oit
+                                            .pipeline_two_sided
+                                            .as_ref()
+                                            .unwrap_or(pipeline);
+                                        oit_pass.set_pipeline(select_two_sided(
+                                            range_key,
+                                            pipeline,
+                                            two_sided_pipe,
+                                        ));
                                     }
                                 }
                                 let (bg, inst) = match bgs.get(r).and_then(|b| b.as_ref()) {
@@ -3156,30 +3177,33 @@ impl ViewportRenderer {
                             }
                             continue;
                         }
+                        let item_key = PipelineKey::two_sided(item.material.is_two_sided());
                         match self
                             .resources
                             .material_plugin_draw(item.material.shading_plugin)
                         {
                             Some((pp, mat_bg)) => {
-                                oit_pass.set_pipeline(if item.material.is_two_sided() {
-                                    &pp.oit_two_sided
-                                } else {
-                                    &pp.oit
-                                });
+                                oit_pass.set_pipeline(select_two_sided(
+                                    item_key,
+                                    &pp.oit,
+                                    &pp.oit_two_sided,
+                                ));
                                 bind_material_group!(oit_pass, mat_bg);
                             }
                             // Select the two-sided OIT pipeline for a non-`Cull`
                             // material so its back faces draw.
                             None => {
-                                oit_pass.set_pipeline(if item.material.is_two_sided() {
-                                    self.resources
-                                        .oit
-                                        .pipeline_two_sided
-                                        .as_ref()
-                                        .unwrap_or(pipeline)
-                                } else {
-                                    pipeline
-                                });
+                                let two_sided_pipe = self
+                                    .resources
+                                    .oit
+                                    .pipeline_two_sided
+                                    .as_ref()
+                                    .unwrap_or(pipeline);
+                                oit_pass.set_pipeline(select_two_sided(
+                                    item_key,
+                                    pipeline,
+                                    two_sided_pipe,
+                                ));
                             }
                         }
                         oit_pass.set_bind_group(1, obj_bg, &[]);
@@ -4003,11 +4027,11 @@ impl ViewportRenderer {
         render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
 
         for (idx, item) in opaque.iter().chain(transparent.iter()) {
-            let solid_pl = if item.material.is_two_sided() {
-                hdr_solid_two_sided
-            } else {
-                hdr_solid
-            };
+            let solid_pl = select_two_sided(
+                PipelineKey::two_sided(item.material.is_two_sided()),
+                hdr_solid,
+                hdr_solid_two_sided,
+            );
             let obj_bg = slot
                 .foreground_objects
                 .get(*idx)

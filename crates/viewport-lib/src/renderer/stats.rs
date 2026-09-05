@@ -318,6 +318,13 @@ pub struct FrameStats {
     /// `shadow_draw_calls` (the pre-collapse batch-draw count) to read the shadow
     /// collapse ratio.
     pub shadow_draw_commands: u32,
+    /// Draws this frame that had to fall back to a pipeline not fully
+    /// specialized for the item's `PipelineKey` (see `renderer::pipeline_key`):
+    /// an alpha-mask shadow caster drawn through a pass with no cutout variant,
+    /// or a material-plugin item eligible for the discard-free early-Z twin
+    /// that the plugin family does not build. Zero once every pass has a
+    /// pipeline for every axis it draws.
+    pub missing_pipeline_variants: u32,
     /// Number of chunk buffers backing the geometry slab (vertex chunks + index
     /// chunks). Grows only when a scene's geometry exceeds the current chunk
     /// capacity; a steady value of 2 means all mesh geometry fits one vertex and

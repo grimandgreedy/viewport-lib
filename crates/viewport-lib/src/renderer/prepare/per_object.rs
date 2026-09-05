@@ -1176,7 +1176,11 @@ impl ViewportRenderer {
             };
             let two_sided = item.material.is_two_sided();
             if cur_two_sided != Some(two_sided) {
-                enc.set_pipeline(if two_sided { solid_two_sided } else { solid });
+                enc.set_pipeline(select_two_sided(
+                    PipelineKey::two_sided(two_sided),
+                    solid,
+                    solid_two_sided,
+                ));
                 cur_two_sided = Some(two_sided);
             }
             // A per-item slot means this item draws with the shared material

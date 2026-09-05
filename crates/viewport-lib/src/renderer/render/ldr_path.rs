@@ -387,11 +387,11 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, &slot.foreground_camera_bind_group, &[]);
 
                 for (idx, item) in opaque.iter().chain(transparent.iter()) {
-                    let solid_pl = if item.material.is_two_sided() {
-                        &resources.scene.solid_two_sided
-                    } else {
-                        &resources.scene.solid
-                    };
+                    let solid_pl = select_two_sided(
+                        PipelineKey::two_sided(item.material.is_two_sided()),
+                        &resources.scene.solid,
+                        &resources.scene.solid_two_sided,
+                    );
                     let obj_bg = slot
                         .foreground_objects
                         .get(*idx)
