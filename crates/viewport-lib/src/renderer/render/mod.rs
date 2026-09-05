@@ -787,8 +787,6 @@ impl ViewportRenderer {
             .store(0, std::sync::atomic::Ordering::Relaxed);
         self.frame_main_draw_commands
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        self.frame_missing_pipeline_variants
-            .store(0, std::sync::atomic::Ordering::Relaxed);
         // Take the LOD-resolved surfaces from prepare (level mesh chosen, culled
         // items hidden), then extend with the boundary draws contributed by
         // opaque volume meshes (see the matching construction in `prepare.rs`).
@@ -910,12 +908,6 @@ impl ViewportRenderer {
             .load(std::sync::atomic::Ordering::Relaxed);
         self.last_stats.main_draw_commands = self
             .frame_main_draw_commands
-            .load(std::sync::atomic::Ordering::Relaxed);
-        // Additive: `prepare()`'s shadow pass may already have counted its own
-        // missing-variant hits into `last_stats` this frame; the render path's
-        // hits (material-plugin items) add on top rather than overwrite them.
-        self.last_stats.missing_pipeline_variants += self
-            .frame_missing_pipeline_variants
             .load(std::sync::atomic::Ordering::Relaxed);
         // Pipelines compiled during the render phase (e.g. the shared HDR set on
         // the first HDR frame) land after prepare() snapshotted the counter; fold

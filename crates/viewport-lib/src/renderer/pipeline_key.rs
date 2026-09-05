@@ -187,19 +187,3 @@ pub(crate) fn select_opaque_solid<'p>(
     }
     select_two_sided(key, solid, solid_two_sided)
 }
-
-/// Material-plugin opaque select: facedness only today. A plugin material
-/// that would otherwise be eligible for the discard-free early-Z twin bumps
-/// `*missing_variant` instead of getting one, since `MaterialPluginPipelines`
-/// has no nodiscard field -- the second gap this phase's bridge surfaces.
-pub(crate) fn select_plugin_opaque<'p>(
-    key: PipelineKey,
-    solid: &'p crate::gpu::RenderPipeline,
-    solid_two_sided: &'p crate::gpu::RenderPipeline,
-    missing_variant: &std::sync::atomic::AtomicU32,
-) -> &'p crate::gpu::RenderPipeline {
-    if key.no_discard_eligible {
-        missing_variant.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-    select_two_sided(key, solid, solid_two_sided)
-}

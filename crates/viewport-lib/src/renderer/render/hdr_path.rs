@@ -141,12 +141,12 @@ pub(super) fn draw_mesh_item(
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
                     if hdr {
-                        &pp.hdr.transparent
+                        &pp.hdr_transparent
                     } else {
                         &pp.ldr.transparent
                     }
                 } else if hdr {
-                    select_two_sided(key, &pp.hdr.solid, &pp.hdr.solid_two_sided)
+                    pp.hdr_opaque.get(key)
                 } else {
                     select_two_sided(key, &pp.ldr.solid, &pp.ldr.solid_two_sided)
                 }
@@ -191,12 +191,12 @@ pub(super) fn draw_mesh_item(
                 let pl = if let Some((pp, _)) = plug_r {
                     if is_trans {
                         if hdr {
-                            &pp.hdr.transparent
+                            &pp.hdr_transparent
                         } else {
                             &pp.ldr.transparent
                         }
                     } else if hdr {
-                        select_two_sided(range_key, &pp.hdr.solid, &pp.hdr.solid_two_sided)
+                        pp.hdr_opaque.get(range_key)
                     } else {
                         select_two_sided(range_key, &pp.ldr.solid, &pp.ldr.solid_two_sided)
                     }
@@ -229,13 +229,10 @@ pub(super) fn draw_mesh_item(
         } else {
             let pl = if let Some((pp, _)) = plug {
                 if item.settings.opacity < 1.0 {
-                    &pp.hdr.transparent
+                    &pp.hdr_transparent
                 } else {
-                    select_two_sided(
-                        PipelineKey::two_sided(item.material.is_two_sided()),
-                        &pp.hdr.solid,
-                        &pp.hdr.solid_two_sided,
-                    )
+                    pp.hdr_opaque
+                        .get(PipelineKey::two_sided(item.material.is_two_sided()))
                 }
             } else if item.settings.opacity < 1.0 {
                 trans_pl
@@ -1039,10 +1036,8 @@ impl ViewportRenderer {
                             // discard-free twin and let hidden fragments be
                             // depth-rejected before shading. Alpha-mask and
                             // submesh-material draws keep the discarding pipeline.
-                            // Material-plugin pipelines have no discard-free twin
-                            // at all (see `select_plugin_opaque`), so an otherwise
-                            // eligible plugin item is counted as a missing variant
-                            // rather than silently losing the fast path.
+                            // Material-plugin items are just as eligible: their
+                            // `hdr_opaque` set carries the same discard-free twin.
                             let key = PipelineKey {
                                 two_sided: item.material.is_two_sided(),
                                 no_discard_eligible: !clipping_active
@@ -1056,12 +1051,7 @@ impl ViewportRenderer {
                                 ..PipelineKey::default()
                             };
                             let pipeline = if let Some((pp, _)) = plug {
-                                select_plugin_opaque(
-                                    key,
-                                    &pp.hdr.solid,
-                                    &pp.hdr.solid_two_sided,
-                                    &self.frame_missing_pipeline_variants,
-                                )
+                                pp.hdr_opaque.get(key)
                             } else {
                                 hdr_opaque.get(key)
                             };
@@ -1129,11 +1119,7 @@ impl ViewportRenderer {
                                     let plug_r = resources.material_plugin_draw(mat.shading_plugin);
                                     let range_key = PipelineKey::two_sided(mat.is_two_sided());
                                     let pl = if let Some((pp, _)) = plug_r {
-                                        select_two_sided(
-                                            range_key,
-                                            &pp.hdr.solid,
-                                            &pp.hdr.solid_two_sided,
-                                        )
+                                        pp.hdr_opaque.get(range_key)
                                     } else {
                                         hdr_opaque.get(range_key)
                                     };

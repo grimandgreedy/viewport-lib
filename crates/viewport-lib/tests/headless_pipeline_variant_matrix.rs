@@ -14,12 +14,12 @@
 //! alpha-cutout pipeline was the first of two filed gaps this plan closes.
 //!
 //! The other filed gap (`material-plugin-opaque-pipelines-no-early-z-nodiscard-variant`)
-//! is not covered here: it is a missing fast-path pipeline twin, not a
-//! rendering difference, so a plugin material draws the same pixels whether or
-//! not the discard-free twin exists. There is no `FrameStats` counter or other
-//! black-box signal that distinguishes the two paths, so a pixel-readback test
-//! cannot detect this gap without new renderer instrumentation, which is
-//! outside a test file's scope.
+//! is closed too but is not covered here: it was a missing fast-path pipeline
+//! twin, not a rendering difference, so a plugin material draws the same
+//! pixels whether or not the discard-free twin exists. There is no pixel-level
+//! signal that distinguishes the two paths; see
+//! `mesh_sidecar::shade::tests::material_plugin_pipelines_resolve_every_key_once_built`
+//! for the completeness check that covers it instead.
 
 #[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;

@@ -549,7 +549,11 @@ impl crate::resources::DeviceResources {
 /// all on the 4-group layout (camera, object, deform, plugin params).
 pub(crate) struct MaterialPluginPipelines {
     pub ldr: crate::resources::mesh::mesh_pipelines::LdrMeshPipelines,
-    pub hdr: crate::resources::mesh::mesh_pipelines::HdrMeshPipelines,
+    /// HDR opaque pipelines, keyed by facedness and discard-free early-Z
+    /// eligibility (mirrors `SceneCorePipelines::hdr_opaque`; `cutout` is not
+    /// a real axis here, same as the main family).
+    pub hdr_opaque: crate::renderer::pipeline_key::PipelineVariantSet,
+    pub hdr_transparent: crate::gpu::RenderPipeline,
     /// OIT accumulate pipelines, keyed by facedness (the only axis this
     /// family varies on).
     pub oit: crate::renderer::pipeline_key::PipelineVariantSet,
@@ -557,10 +561,12 @@ pub(crate) struct MaterialPluginPipelines {
 
 impl MaterialPluginPipelines {
     /// Pipelines in one plugin's set: 4 LDR (solid, two-sided, transparent,
-    /// wireframe) + 4 HDR (same variants) + 2 OIT accumulate (culled +
-    /// two-sided). This is the whole per-plugin pipeline cost; shadow / outline
-    /// / pick passes reuse the shared depth-only pipelines.
-    pub(crate) const COUNT: u32 = 10;
+    /// wireframe), 4 HDR opaque (discarding and discard-free, each
+    /// facedness), 1 HDR transparent, and 2 OIT accumulate (culled and
+    /// two-sided). This is the whole per-plugin pipeline cost; shadow /
+    /// outline / pick passes reuse the shared depth-only pipelines. HDR
+    /// wireframe is not built for plugin materials; nothing draws it.
+    pub(crate) const COUNT: u32 = 11;
 }
 
 /// Pipeline and resource counts for one registered material plugin, from
@@ -995,10 +1001,22 @@ impl crate::resources::DeviceResources {
         };
         let name = self.shade_hooks[id.plugin_index() as usize].desc.name;
 
+        let mesh_final_src =
+            crate::resources::builders::strip_debug_vis(mesh_src, self.debug_vis_shaders)
+                .into_owned();
         let mesh_module = crate::resources::builders::wgsl_module(
             device,
             &format!("material_plugin_{name}_mesh"),
-            crate::resources::builders::strip_debug_vis(mesh_src, self.debug_vis_shaders),
+            mesh_final_src.clone(),
+        );
+        // Discard-free twin for the early-Z fast path, mirroring the main
+        // opaque family's own nodiscard twin (`ensure_hdr_shared`): identical
+        // shading with every `discard;` removed, valid only for draws that
+        // would not have discarded (the per-object gate in hdr_path.rs).
+        let mesh_module_nodiscard = crate::resources::builders::wgsl_module(
+            device,
+            &format!("material_plugin_{name}_mesh_nodiscard"),
+            crate::resources::builders::strip_discards(&mesh_final_src),
         );
         let oit_module = crate::resources::builders::wgsl_module(
             device,
@@ -1034,6 +1052,23 @@ impl crate::resources::DeviceResources {
             &layout,
             &mesh_module,
         );
+        let hdr_nd = crate::resources::mesh::mesh_pipelines::build_hdr_mesh_pipelines(
+            device,
+            &layout,
+            &mesh_module_nodiscard,
+        );
+        let hdr_opaque = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+            let (solid, solid_two_sided) = if key.no_discard_eligible {
+                (&hdr_nd.solid, &hdr_nd.solid_two_sided)
+            } else {
+                (&hdr.solid, &hdr.solid_two_sided)
+            };
+            if key.two_sided {
+                solid_two_sided.clone()
+            } else {
+                solid.clone()
+            }
+        });
         // Culled + two-sided OIT twins, selected per draw on the material's
         // two-sidedness (the shader is composed from mesh_oit.wgsl, which flips
         // the normal and applies the back-face colour via front_facing).
@@ -1048,7 +1083,12 @@ impl crate::resources::DeviceResources {
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
-            .pipelines = Some(MaterialPluginPipelines { ldr, hdr, oit });
+            .pipelines = Some(MaterialPluginPipelines {
+            ldr,
+            hdr_opaque,
+            hdr_transparent: hdr.transparent,
+            oit,
+        });
     }
 
     /// Resolve a material's plugin selection to its pipeline set and the
@@ -1165,6 +1205,45 @@ fn recolor(surf: ShadingSurface, direct: vec3<f32>, ambient: vec3<f32>) -> vec3<
         let unknown = MaterialPluginId::from_parts(9999, 0);
         assert!(!resources.material_plugin_pipelines_ready(unknown));
         assert!(!resources.material_plugin_needs_build(unknown));
+    }
+
+    /// Same completeness guarantee as the main opaque and OIT families
+    /// (`scene_pipelines::tests::hdr_opaque_resolves_every_key_once_built`,
+    /// `postprocess::oit::tests::oit_pipeline_resolves_every_key_once_built`):
+    /// every key in `PipelineKey::all()` must resolve through `get()` without
+    /// panicking, for both `hdr_opaque` (facedness x no-discard-eligible) and
+    /// `oit` (facedness only, `cutout`/`no_discard_eligible` ignored).
+    #[test]
+    fn material_plugin_pipelines_resolve_every_key_once_built() {
+        use crate::renderer::ViewportRenderer;
+        let Some((device, _queue)) = headless() else {
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let resources = renderer.resources_mut();
+
+        struct ReadyProbe;
+        impl MaterialPlugin for ReadyProbe {
+            fn name(&self) -> &'static str {
+                "ready_probe_variant_matrix"
+            }
+            fn wgsl_body(&self) -> String {
+                TOON_BODY.to_string()
+            }
+        }
+
+        let id = resources
+            .register_material_plugin(&device, &ReadyProbe)
+            .expect("register");
+        resources.warm_material_plugin_pipelines(&device, &[id]);
+        let (pp, _) = resources
+            .material_plugin_draw(Some(id))
+            .expect("pipelines built");
+        for key in crate::renderer::pipeline_key::PipelineKey::all() {
+            let _ = pp.hdr_opaque.get(key);
+            let _ = pp.oit.get(key);
+        }
     }
 
     #[test]

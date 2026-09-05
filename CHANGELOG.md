@@ -26,6 +26,11 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   as sRGB.
 - **Light colours stay linear.** `LightSource.colour`, `sky_colour`,
   `ground_colour` are unchanged (physical radiance).
+- **`FrameStats::missing_pipeline_variants` removed.** It tracked draws that fell
+  back to a less-specialized pipeline (an alpha-mask shadow caster with no cutout
+  variant, a material-plugin item with no discard-free early-Z twin); both gaps
+  are closed, so every pass now has a pipeline for every axis it draws and the
+  counter was always zero.
 
 ### Features
 - **`ViewportGpuResources::register_texture_view`.** Point a `Material` texture slot

@@ -37,7 +37,7 @@ pub use readback::ExposureReadback;
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
 pub use crate::resources::{GaussianSplatData, GaussianSplatId, ShDegree};
 pub(crate) mod pipeline_key;
-use pipeline_key::{PipelineKey, select_opaque_solid, select_plugin_opaque, select_two_sided};
+use pipeline_key::{PipelineKey, select_opaque_solid, select_two_sided};
 mod point_shadow_pool;
 mod prepare;
 mod render;
@@ -655,14 +655,6 @@ pub struct ViewportRenderer {
     /// counts once. Latched into `FrameStats::main_draw_commands`; compare
     /// against `instanced_batches` to read the collapse ratio.
     frame_main_draw_commands: std::sync::atomic::AtomicU32,
-    /// Draws this frame where a pass had to fall back to a pipeline that does
-    /// not represent the item's full `PipelineKey` (e.g. an alpha-mask caster
-    /// drawn through a shadow pass with no cutout variant, or a material-plugin
-    /// item eligible for the discard-free early-Z twin the plugin family does
-    /// not build). Zero on a fully-specialized pipeline set; see
-    /// `renderer::pipeline_key`. Reset before paint and latched into
-    /// `FrameStats::missing_pipeline_variants` after.
-    frame_missing_pipeline_variants: std::sync::atomic::AtomicU32,
     /// One-shot latch for the paint_to foreground warning: a host-owned
     /// render pass cannot host the cleared-depth foreground pass, so
     /// submitted foreground items are reported once instead of every frame.
@@ -1024,7 +1016,6 @@ impl ViewportRenderer {
             ts_written_mask: std::sync::atomic::AtomicU32::new(0),
             frame_main_buffer_binds: std::sync::atomic::AtomicU32::new(0),
             frame_main_draw_commands: std::sync::atomic::AtomicU32::new(0),
-            frame_missing_pipeline_variants: std::sync::atomic::AtomicU32::new(0),
             foreground_paint_to_warned: std::sync::atomic::AtomicBool::new(false),
             ldr_plugin_items_warned: std::sync::atomic::AtomicBool::new(false),
             ldr_volume_transparency_warned: std::sync::atomic::AtomicBool::new(false),
