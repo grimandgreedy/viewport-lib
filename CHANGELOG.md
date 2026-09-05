@@ -67,6 +67,12 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   `upload_data_texture`. Imported `base_color` / `emissive` factors are linear.
 
 ### Fixes
+- **Lit sprites now get the same shadow quality as mesh receivers.** `sprite_lit.wgsl`
+  hand-rolled its own 16-tap PCF shadow sampler instead of calling the shared CSM
+  helper the mesh shaders use, so a lit sprite ignored `shadow_filter` entirely
+  (always plain PCF, never PCSS or the hard tier) and used a coarser, less accurate
+  receiver bias. Lit sprites now call the same `sample_shadow_csm` helper as
+  `mesh.wgsl`, so shadow filter mode, bias, and cascade selection match exactly.
 - **`replace_texture` and `update_texture_view` now show the new pixels
   immediately.** They bump the resource-free epoch like `free_texture`, so the
   per-object bind-group cache and cached render bundle rebuild against the new view.
