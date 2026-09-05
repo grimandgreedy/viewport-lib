@@ -75,14 +75,29 @@ pub(crate) struct OverlayInstance {
     /// Outer clip bounding box in framebuffer pixels `[x0, y0, x1, y1]`; all-zero
     /// means no clip.
     pub clip_rect: [f32; 4],
+    /// Colour multiplier applied to the group's colour each frame; identity
+    /// `[1, 1, 1, 1]`. Lets a colour flash or fade ride the instance instead of the
+    /// vertex stream.
+    pub tint: [f32; 4],
+    /// Uniform scale about the group's local origin, applied before `translate`;
+    /// identity `1.0`. Applied to the text-stream geometry (glyphs, polylines,
+    /// vector fills); the SDF-shape stream ignores it for now.
+    pub scale: f32,
+    /// Padding so the struct matches the WGSL storage stride (a `vec4` member
+    /// forces 16-byte alignment). Not read by the shaders.
+    pub _pad: [f32; 3],
 }
 
 impl OverlayInstance {
-    /// The identity instance immediate draws use: no offset, full opacity, no clip.
+    /// The identity instance immediate draws use: no offset, full opacity, no clip,
+    /// no tint, no scale.
     pub const IDENTITY: OverlayInstance = OverlayInstance {
         translate: [0.0, 0.0],
         opacity: 1.0,
         clip_index: -1.0,
         clip_rect: [0.0, 0.0, 0.0, 0.0],
+        tint: [1.0, 1.0, 1.0, 1.0],
+        scale: 1.0,
+        _pad: [0.0, 0.0, 0.0],
     };
 }

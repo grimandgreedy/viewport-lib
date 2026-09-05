@@ -51,10 +51,23 @@ pub struct RetainedOverlay {
     /// (the default) applies no shaped clip. Composes with `clip_rect`: both are
     /// applied. A mask absent from the frame leaves the group unclipped.
     pub clip_id: Option<u32>,
+    /// Per-frame colour multiplier applied to the whole group, identity
+    /// `[1, 1, 1, 1]`. A colour flash, fade, or tint rides this instead of
+    /// re-compiling the group. On SDF shapes the tint reaches the fill, border, and
+    /// gradient colours but not the drop shadow (whose colour is baked).
+    pub tint: [f32; 4],
+    /// Per-frame uniform scale about the group's local origin, applied before
+    /// `translate`; identity `1.0`. A pulse or pop rides this instead of
+    /// re-compiling. Applies to the group's text, polyline, and vector geometry;
+    /// SDF shapes are not scaled yet. Retained glyphs are bitmaps baked at their
+    /// original size, so a large sustained scale looks soft: re-compile at the
+    /// target size when crisp large text is needed.
+    pub scale: f32,
 }
 
 impl RetainedOverlay {
-    /// A submission of `id` at the origin, fully opaque, `z_order` 0, unclipped.
+    /// A submission of `id` at the origin, fully opaque, `z_order` 0, unclipped,
+    /// untinted, unscaled.
     pub fn new(id: OverlayGeometryId) -> Self {
         Self {
             id,
@@ -63,6 +76,8 @@ impl RetainedOverlay {
             z_order: 0,
             clip_rect: [0.0; 4],
             clip_id: None,
+            tint: [1.0, 1.0, 1.0, 1.0],
+            scale: 1.0,
         }
     }
 
@@ -95,6 +110,20 @@ impl RetainedOverlay {
     /// clipping such as a rounded-rect scroll viewport.
     pub fn with_clip_mask(mut self, clip_id: u32) -> Self {
         self.clip_id = Some(clip_id);
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.tint = tint;
+        self
+    }
+
+    /// Set the per-frame uniform scale about the group's local origin (identity
+    /// `1.0`). Applies to text, polyline, and vector geometry; SDF shapes are not
+    /// scaled yet.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
         self
     }
 }

@@ -67,6 +67,11 @@ struct OverlayInstance {
     opacity:    f32,
     clip_index: f32,        // per-frame clip-mask index, or -1 for none
     clip_rect:  vec4<f32>,
+    tint:       vec4<f32>,  // per-frame colour multiplier, identity [1,1,1,1]
+    scale:      f32,        // per-frame uniform scale (text stream only; unused here)
+    _pad0:      f32,
+    _pad1:      f32,
+    _pad2:      f32,
 };
 @group(0) @binding(3) var<storage, read> instances: array<OverlayInstance>;
 
@@ -116,18 +121,23 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let inst = instances[in.instance_index];
     let a = inst.opacity;
+    let t = inst.tint;
+    // The shape stream does not apply the per-frame scale (that is the text stream;
+    // scaling an SDF shape needs its size/border/radii scaled to match, a later step).
     out.clip_position   = vec4<f32>(px_to_ndc(in.position + inst.translate), 0.0, 1.0);
     out.local_pos       = in.local_pos;
-    // Fold the per-draw opacity into the vertex colours (identity for immediate
-    // draws). Alpha interpolates linearly, so scaling per-vertex matches scaling
-    // the resolved fragment alpha for these flat/lerped colour channels.
-    out.fill_colour     = vec4<f32>(in.fill_colour.rgb, in.fill_colour.a * a);
-    out.border_colour   = vec4<f32>(in.border_colour.rgb, in.border_colour.a * a);
+    // Fold the per-draw opacity and colour tint into the vertex colours (identity
+    // for immediate draws). Alpha interpolates linearly, so scaling per-vertex
+    // matches scaling the resolved fragment alpha for these flat/lerped channels.
+    // The tint does not reach the SDF shadow layers (a separate storage buffer), so
+    // a tinted shape keeps its authored shadow colour.
+    out.fill_colour     = vec4<f32>(in.fill_colour.rgb * t.rgb, in.fill_colour.a * a * t.a);
+    out.border_colour   = vec4<f32>(in.border_colour.rgb * t.rgb, in.border_colour.a * a * t.a);
     out.half_size       = in.half_size;
     out.radii           = in.radii;
     out.border_width    = in.shape_meta.x;
     out.shape_type      = in.shape_meta.y;
-    out.fill_colour2    = vec4<f32>(in.fill_colour2.rgb, in.fill_colour2.a * a);
+    out.fill_colour2    = vec4<f32>(in.fill_colour2.rgb * t.rgb, in.fill_colour2.a * a * t.a);
     out.gradient_params = in.gradient_params;
     out.shadow_index    = in.shadow_index;
     out.rotation_pivot  = in.rotation_pivot;
@@ -137,8 +147,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Prefer the per-frame group clip mask (retained groups) over the baked mask;
     // the identity instance is -1, so immediate draws keep their baked clip.
     out.clip_index      = select(in.clip_index, inst.clip_index, inst.clip_index >= 0.0);
-    out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb, in.stop_colour_c.a * a);
-    out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb, in.stop_colour_d.a * a);
+    out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb * t.rgb, in.stop_colour_c.a * a * t.a);
+    out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb * t.rgb, in.stop_colour_d.a * a * t.a);
     out.stop_positions  = in.stop_positions;
     return out;
 }

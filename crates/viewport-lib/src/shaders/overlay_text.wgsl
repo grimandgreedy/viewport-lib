@@ -40,6 +40,11 @@ struct OverlayInstance {
     opacity:    f32,
     clip_index: f32,        // per-frame clip-mask index, or -1 for none
     clip_rect:  vec4<f32>,
+    tint:       vec4<f32>,  // per-frame colour multiplier, identity [1,1,1,1]
+    scale:      f32,        // per-frame uniform scale about the local origin
+    _pad0:      f32,
+    _pad1:      f32,
+    _pad2:      f32,
 };
 @group(0) @binding(4) var<storage, read> instances: array<OverlayInstance>;
 
@@ -62,6 +67,7 @@ struct VertexOutput {
     @location(4) @interpolate(flat) clip_rect:   vec4<f32>,
     @location(5) @interpolate(flat) opacity:     f32,
     @location(6) @interpolate(flat) outer_clip:  vec4<f32>,
+    @location(7) @interpolate(flat) tint:        vec4<f32>,
 };
 
 // Map a local logical-pixel position to NDC using the viewport size.
@@ -73,7 +79,10 @@ fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let inst = instances[in.instance_index];
-    out.clip_position = vec4<f32>(px_to_ndc(in.position + inst.translate), 0.0, 1.0);
+    // Scale about the local origin, then translate (identity scale/translate for
+    // immediate draws). Text-stream geometry is the vertex position itself, so this
+    // scales glyphs, polylines, and vector fills.
+    out.clip_position = vec4<f32>(px_to_ndc(in.position * inst.scale + inst.translate), 0.0, 1.0);
     out.uv            = in.uv;
     out.colour        = in.colour;
     out.use_texture   = in.use_texture;
@@ -84,6 +93,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_rect     = in.clip_rect;
     out.opacity       = inst.opacity;
     out.outer_clip    = inst.clip_rect;
+    out.tint          = inst.tint;
     return out;
 }
 
@@ -348,6 +358,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         result = in.colour;
     }
-    // Per-draw opacity (1.0 for immediate draws).
-    return vec4<f32>(result.rgb, result.a * in.opacity);
+    // Per-draw tint and opacity (identity for immediate draws).
+    return vec4<f32>(result.rgb * in.tint.rgb, result.a * in.opacity * in.tint.a);
 }

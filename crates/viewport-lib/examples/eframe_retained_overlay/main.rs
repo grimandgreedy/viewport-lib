@@ -15,12 +15,13 @@
 //! - a world-anchored label pinned to the top of the cube (`compile_overlay_label`),
 //!   whose text is laid out once: the renderer reprojects its anchor every frame so
 //!   it tracks the cube as the camera orbits, and hides it when the cube is off
-//!   screen, with no re-layout.
+//!   screen, with no re-layout. It also pulses and flashes colour via the per-frame
+//!   scale and tint, again without re-tessellating.
 //!
-//! None is re-tessellated as it scrolls or the camera moves: only the small
-//! per-frame `RetainedOverlay` (a handle plus translate/opacity/clip) changes, and
-//! the label carries no translate at all. Compare with pushing hundreds of items
-//! into `OverlayFrame` every frame.
+//! None is re-tessellated as it scrolls, the camera moves, or the label pulses:
+//! only the small per-frame `RetainedOverlay` (a handle plus translate / opacity /
+//! clip / tint / scale) changes. Compare with pushing hundreds of items into
+//! `OverlayFrame` every frame.
 //!
 //! Navigation: left/middle drag orbit, right drag pan, scroll zoom (the cube is
 //! just context behind the panel).
@@ -310,8 +311,13 @@ impl eframe::App for App {
                         .with_z_order(1),
                     // World-anchored label: no translate here. The renderer
                     // resolves its baked anchor to the cube's projected position
-                    // each frame and hides it when the cube is off screen.
-                    RetainedOverlay::new(self.label.unwrap()).with_z_order(2),
+                    // each frame and hides it when the cube is off screen. It also
+                    // pulses (per-frame scale) and flashes between white and amber
+                    // (per-frame tint), both riding the instance with no recompile.
+                    RetainedOverlay::new(self.label.unwrap())
+                        .with_z_order(2)
+                        .with_scale(1.0 + 0.12 * (time * 3.0).sin())
+                        .with_tint([1.0, 1.0, 0.55 + 0.45 * (time * 2.0).sin(), 1.0]),
                 ];
 
                 let cmd = self

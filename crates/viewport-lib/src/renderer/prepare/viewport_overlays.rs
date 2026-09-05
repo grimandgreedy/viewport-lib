@@ -851,6 +851,9 @@ impl ViewportRenderer {
                         opacity: r.opacity,
                         clip_index,
                         clip_rect,
+                        tint: r.tint,
+                        scale: r.scale,
+                        _pad: [0.0, 0.0, 0.0],
                     });
                     if let Some((vbuf, vcount)) = text {
                         let draw_index = self.overlay_retained_draws.len() as u32;

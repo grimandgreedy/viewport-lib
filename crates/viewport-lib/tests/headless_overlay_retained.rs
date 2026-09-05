@@ -71,6 +71,117 @@ fn red_sdf_rect() -> OverlayShapeItem {
     .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()))
 }
 
+fn is_white(c: (u8, u8, u8)) -> bool {
+    c.0 > 200 && c.1 > 200 && c.2 > 200
+}
+
+/// A white SDF rect over pixels 16..48 (shape stream), for tint tests.
+fn white_sdf_rect() -> OverlayShapeItem {
+    OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 0.0 },
+        [16.0, 16.0],
+        [32.0, 32.0],
+    )
+    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
+}
+
+/// A white closed filled square polyline over pixels 16..48 (text stream).
+fn white_square() -> OverlayPolylineItem {
+    let mut p = OverlayPolylineItem::default();
+    p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
+    p.closed = true;
+    p.thickness = 0.0;
+    p.fill = Some(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()));
+    p.opacity = 1.0;
+    p
+}
+
+/// The per-frame tint multiplies a retained group's colour without recompiling,
+/// on both the shape and text streams: a white group tinted red reads red, and
+/// the same compiled group reads white again with the identity tint.
+#[test]
+fn retained_per_frame_tint() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+
+    let shape_id =
+        renderer.compile_overlay_geometry(&device, &queue, &[], &[white_sdf_rect()], &[], &[], 1.0);
+    let text_id =
+        renderer.compile_overlay_geometry(&device, &queue, &[white_square()], &[], &[], &[], 1.0);
+
+    for id in [shape_id, text_id] {
+        // Red tint: white * [1, 0, 0, 1] = red.
+        let mut frame = overlay_frame(size);
+        frame.overlays.retained = vec![RetainedOverlay::new(id).with_tint([1.0, 0.0, 0.0, 1.0])];
+        let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+        assert!(
+            is_red(rgb_at(&px, size, 32, 32)),
+            "red tint should make the white group read red"
+        );
+
+        // Identity tint (default): the same compiled group reads white.
+        let mut frame = overlay_frame(size);
+        frame.overlays.retained = vec![RetainedOverlay::new(id)];
+        let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+        assert!(
+            is_white(rgb_at(&px, size, 32, 32)),
+            "identity tint should leave the group white"
+        );
+    }
+}
+
+/// The per-frame scale shrinks a retained text-stream group about its local origin
+/// without recompiling; the SDF-shape stream is left unscaled for now (P2 scope).
+#[test]
+fn retained_per_frame_scale() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+
+    // Text stream: a filled square over 16..48. Scale 0.5 about the origin maps it
+    // to 8..24, so the old centre (32) empties and (16) is covered.
+    let text_id =
+        renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], &[], 1.0);
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(text_id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 32, 32)),
+        "unscaled text square should cover the centre"
+    );
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(text_id).with_scale(0.5)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_background(rgb_at(&px, size, 32, 32)),
+        "scaled-down text square should have vacated the centre"
+    );
+    assert!(
+        is_red(rgb_at(&px, size, 16, 16)),
+        "scaled-down text square should cover x=16,y=16"
+    );
+
+    // Shape stream is not scaled by P2: the same scale leaves the SDF rect at full size.
+    let shape_id =
+        renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], &[], 1.0);
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(shape_id).with_scale(0.5)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 32, 32)),
+        "SDF shape should ignore per-frame scale (P2 scope), still covering the centre"
+    );
+}
+
 /// A retained group carrying an analytic SDF shape draws through the shape
 /// pipeline from its cached buffer and moves with the per-frame translate.
 #[test]
