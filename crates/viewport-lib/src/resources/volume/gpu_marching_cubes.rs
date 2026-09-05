@@ -29,6 +29,11 @@ pub(crate) struct McResources {
     pub(crate) generate_pipeline: Option<crate::gpu::ComputePipeline>,
     pub(crate) surface_pipeline: Option<DualPipeline>,
     pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Depth-only shadow-cast pipeline (`mc_shadow.wgsl`). MC vertices are
+    /// already world-space (no per-item model matrix anywhere in the MC
+    /// path), so there is no group-1 bind group at all: just the shadow
+    /// pass's own camera bind group layout at group 0.
+    pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) wireframe_render_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) classify_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) prefix_sum_bgl: Option<crate::gpu::BindGroupLayout>,
@@ -145,6 +150,11 @@ pub(crate) struct McFrameData {
     /// Object pick id from the item's `settings.pick_id`. `PickId::NONE` (0) when
     /// the item is not pickable. Used by the GPU pick pass to tag the isosurface.
     pub pick_id: crate::renderer::PickId,
+    /// Set from the item's `settings.cast_shadows`. Read by the shadow pass's
+    /// MC caster loop; always casts through the solid `vertex_buf`/`indirect_buf`
+    /// slab data regardless of `wireframe` (shadows reflect the actual surface,
+    /// not its display mode).
+    pub cast_shadows: bool,
 }
 
 /// Per-selected MC item data for the outline mask pass.
@@ -207,7 +217,7 @@ struct McSurfaceRaw {
     /// `ambient = 0.15`. Without this field the MC surface reads notably
     /// darker on its shadowed side than an equivalent regular mesh.
     ambient: f32,
-    _pad: u32,
+    receive_shadows: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +426,58 @@ impl DeviceResources {
         };
 
         // ----------------------------------------------------------------
+        // Shadow-cast pipeline. `mc_surface_pipeline` draws with
+        // `cull_mode: None` (open isosurfaces are expected), so the caster
+        // matches with `cull_mode: None` and the two-sided caster bias --
+        // the same convention Ribbon's shadow caster uses.
+        // ----------------------------------------------------------------
+        let mc_shadow_shader = crate::resources::builders::wgsl_module(
+            device,
+            "mc_shadow_shader",
+            crate::resources::builders::wgsl_source!("mc_shadow"),
+        );
+        let mc_shadow_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "mc_shadow_pipeline_layout",
+            &[&self.shadow.camera_bgl],
+        );
+        let mc_shadow_pipeline = crate::resources::builders::render_pipeline(
+            device,
+            crate::resources::builders::RenderPipelineDesc {
+                label: "mc_shadow_pipeline",
+                layout: &mc_shadow_layout,
+                vertex_module: &mc_shadow_shader,
+                vertex_entry: "vs_main",
+                vertex_buffers: &[vertex_layout.clone()],
+                fragment: None,
+                primitive: crate::gpu::PrimitiveState {
+                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: crate::gpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: crate::gpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(crate::gpu::DepthStencilState {
+                    format: crate::gpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: crate::resources::builders::dwrite(true),
+                    depth_compare: crate::resources::builders::dcompare(
+                        crate::gpu::CompareFunction::Less,
+                    ),
+                    stencil: crate::gpu::StencilState::default(),
+                    bias: crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
+                }),
+                multisample: crate::gpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                cache: None,
+            },
+        );
+
+        // ----------------------------------------------------------------
         // Wireframe render pipeline.
         // ----------------------------------------------------------------
         let wireframe_render_bgl =
@@ -456,6 +518,7 @@ impl DeviceResources {
         self.mc.classify_pipeline = Some(classify_pipeline);
         self.mc.prefix_sum_pipeline = Some(prefix_sum_pipeline);
         self.mc.generate_pipeline = Some(generate_pipeline);
+        self.mc.shadow_pipeline = Some(mc_shadow_pipeline);
         self.mc.surface_pipeline = Some(crate::resources::builders::build_dual_pipeline(
             device,
             &crate::resources::builders::DualPipelineDesc {
@@ -1004,7 +1067,7 @@ impl DeviceResources {
                 unlit: job.settings.unlit as u32,
                 opacity: job.settings.opacity,
                 ambient: job.material.ambient,
-                _pad: 0,
+                receive_shadows: job.settings.receive_shadows as u32,
             };
             let mat_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
                 label: Some("mc_surface_mat"),
@@ -1264,6 +1327,7 @@ impl DeviceResources {
                 wireframe: job.settings.wireframe,
                 wire_slab_bgs,
                 pick_id: job.settings.pick_id,
+                cast_shadows: job.settings.cast_shadows,
             });
         }
 

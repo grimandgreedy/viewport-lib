@@ -6,6 +6,7 @@
 //
 // Group 0 : camera_bgl (shared with all scene pipelines)
 //   binding 0 : Camera uniform
+//   binding 1 : shadow_map, binding 2 : shadow_sampler, binding 5 : shadow_atlas
 //   binding 3 : Lights uniform
 //
 // Group 1 : per-draw material
@@ -18,7 +19,7 @@
 // #include "helpers/scene_lighting.wgsl"
 
 // ---------------------------------------------------------------------------
-// Group 0: camera + lights
+// Group 0: camera + shadow + lights
 // ---------------------------------------------------------------------------
 
 struct Camera {
@@ -31,10 +32,27 @@ struct Camera {
     view:          mat4x4<f32>,
 };
 
+struct ShadowAtlas {
+    cascade_vp:        array<mat4x4<f32>, 4>,
+    cascade_splits:    vec4<f32>,
+    cascade_count:     u32,
+    atlas_size:        f32,
+    shadow_filter:     u32,
+    pcss_light_radius: f32,
+    atlas_rects:       array<vec4<f32>, 8>,
+};
+
 // `SingleLight` and `Lights` come from the included `scene_lighting.wgsl`.
 
-@group(0) @binding(0) var<uniform> camera: Camera;
-@group(0) @binding(3) var<uniform> lights: Lights;
+@group(0) @binding(0) var<uniform>       camera:         Camera;
+@group(0) @binding(1) var                shadow_map:     texture_depth_2d;
+@group(0) @binding(2) var                shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var<uniform>       lights_uniform: Lights;
+@group(0) @binding(5) var<uniform>       shadow_atlas:   ShadowAtlas;
+
+// Cascaded shadow map sampling: cascade selection, receiver bias, and the
+// PCF/PCSS/hard filter tiers, shared with the mesh shader family.
+// #include "helpers/csm.wgsl"
 
 // ---------------------------------------------------------------------------
 // Group 1: per-draw material
@@ -50,7 +68,7 @@ struct McSurfaceUniform {
     // Blinn-Phong ambient term, which otherwise leaves the MC dark side
     // visibly darker than an equivalent regular mesh.
     ambient:    f32,
-    _pad1:      u32,
+    receive_shadows: u32,
 };
 
 @group(1) @binding(0) var<uniform> material: McSurfaceUniform;
@@ -99,8 +117,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // mesh on the side facing away from the light.
     let up_dot = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
     let hemi_ambient = mix(
-        lights.ground_colour * lights.hemisphere_intensity,
-        lights.sky_colour    * lights.hemisphere_intensity,
+        lights_uniform.ground_colour * lights_uniform.hemisphere_intensity,
+        lights_uniform.sky_colour    * lights_uniform.hemisphere_intensity,
         up_dot,
     );
     let ambient = hemi_ambient + vec3<f32>(material.ambient);
@@ -110,7 +128,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // fallback : see `scene_lighting.wgsl`.
     var diffuse  = vec3<f32>(0.0);
     var specular = vec3<f32>(0.0);
-    let range = cluster_light_range(in.world_pos, lights.count);
+    let range = cluster_light_range(in.world_pos, lights_uniform.count);
     for (var j: u32 = 0u; j < range.count; j = j + 1u) {
         let i = cluster_light_global(range, j);
         let light = lights_storage[i];
@@ -159,8 +177,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let spec  = pow(max(dot(N, H), 0.0), shine)
                   * (1.0 - material.roughness) * (shine + 8.0) * INV_PI * 0.125;
 
-        diffuse  += light_rgb * diff;
-        specular += light_rgb * spec;
+        // Shadow factor for the primary directional light only (global index
+        // 0, matching mesh.wgsl's own convention): attenuate just that
+        // light's diffuse+specular contribution before accumulating, rather
+        // than the whole-result mix sprite_lit.wgsl uses -- MC already keeps
+        // per-light contributions separate, so this is exact rather than an
+        // approximation.
+        var shadow_factor = 1.0;
+        if i == 0u && light.light_type == 0u
+            && material.receive_shadows != 0u
+            && lights_uniform.shadows_enabled != 0u {
+            shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, N, L, 0u).factor;
+        }
+
+        diffuse  += light_rgb * diff * shadow_factor;
+        specular += light_rgb * spec * shadow_factor;
     }
 
     let final_colour = material.base_colour * (ambient + diffuse) + specular;

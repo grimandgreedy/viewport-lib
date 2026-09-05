@@ -111,6 +111,14 @@ pub(crate) struct RibbonResources {
     pub(crate) pipelines: Option<RibbonVariantSet>,
     /// Bind group layout for ribbons (group 1): uniform + optional streak texture + sampler.
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Depth-only shadow-cast pipeline (`ribbon_shadow.wgsl`). One pipeline
+    /// covers every ribbon: geometry is always the thin, two-sided expanded
+    /// quad strip (no cutout/two-sided axis to key on, unlike the mesh
+    /// family). Group 0 is `resources.shadow.camera_bgl` (the shadow pass's
+    /// dedicated dynamic-offset camera uniform, not the scene `camera_bgl`);
+    /// group 1 reuses `bgl` above, so the same `uniform_bind_group` built for
+    /// the solid draw is bound again here.
+    pub(crate) shadow_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 impl DeviceResources {
@@ -192,6 +200,36 @@ impl DeviceResources {
         use crate::resources::builders::{DualPipelineDesc, build_dual_pipeline};
         self.streamtube.bgl = Some(streamtube_bgl);
         self.ribbon.bgl = Some(ribbon_bgl);
+
+        // Ribbon shadow-cast pipeline. Group 0 is the shadow pass's own
+        // dedicated camera bind group layout (`shadow.camera_bgl`, a single
+        // dynamic-offset uniform), not the scene `camera_bgl` the solid
+        // pipelines above use; group 1 reuses `ribbon.bgl` as-is, so the same
+        // `uniform_bind_group` built for the solid draw is bound again for
+        // the shadow draw. Ribbon geometry is always the thin, two-sided
+        // expanded quad strip (no cutout/two-sided axis to key on), so one
+        // pipeline covers every ribbon.
+        let ribbon_shadow_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "ribbon_shadow_pipeline_layout",
+            &[&self.shadow.camera_bgl, self.ribbon.bgl.as_ref().unwrap()],
+        );
+        let ribbon_shadow_shader = crate::resources::builders::wgsl_module(
+            device,
+            "ribbon_shadow_shader",
+            crate::resources::builders::wgsl_source!("ribbon_shadow"),
+        );
+        self.ribbon.shadow_pipeline = Some(
+            crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
+                device,
+                &ribbon_shadow_layout,
+                &ribbon_shadow_shader,
+                None,
+                false,
+                None,
+            ),
+        );
+
         self.streamtube.pipeline = Some(build_dual_pipeline(
             device,
             &DualPipelineDesc {
@@ -556,6 +594,7 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            cast_shadows: true,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -931,6 +970,7 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            cast_shadows: true,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -1250,7 +1290,8 @@ impl DeviceResources {
             opacity: f32,
             wireframe: u32,
             has_texture: u32,
-            _pad: [f32; 2],
+            receive_shadows: u32,
+            _pad: f32,
         }
         let (texture_view, has_texture): (&crate::gpu::TextureView, u32) =
             if let Some(id) = item.texture_id {
@@ -1271,7 +1312,8 @@ impl DeviceResources {
             opacity: item.settings.opacity,
             wireframe: wireframe as u32,
             has_texture,
-            _pad: [0.0; 2],
+            receive_shadows: item.settings.receive_shadows as u32,
+            _pad: 0.0,
         };
         let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ribbon_uniform_buf"),
@@ -1321,6 +1363,7 @@ impl DeviceResources {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            cast_shadows: true,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -1823,6 +1866,12 @@ pub struct StreamtubeGpuData {
     /// Model matrix the streamtube shader applies to `vertex_buffer`. The pick
     /// pass uses the same matrix so its silhouette matches the rendered tube.
     pub(crate) model: [[f32; 4]; 4],
+    /// Set from the source item's `settings.cast_shadows`, overwritten by the
+    /// prepare loop alongside `pick_id`/`model`. Only Ribbon items currently
+    /// read this in the shadow pass (see `shadow_pass.rs`'s ribbon caster
+    /// loop); Streamtube/Tube data carries the same field for consistency but
+    /// has no shadow-cast loop of its own yet.
+    pub(crate) cast_shadows: bool,
     /// Per-triangle segment index, one entry per triangle in `index_buffer`
     /// (i.e. `index_count / 3` entries). Maps a GPU pick's `primitive_index`
     /// (the hit triangle) to the source curve segment, so a sub-object GPU pick

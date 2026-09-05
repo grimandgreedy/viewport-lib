@@ -840,6 +840,8 @@ impl ViewportRenderer {
             plugin_frame_index,
             lighting,
             scene_items,
+            &self.ribbon_gpu_data,
+            &self.mc_gpu_data,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,

@@ -33,6 +33,15 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
+- **Ribbon and GPU marching cubes items now cast and receive shadows.**
+  Previously only mesh-family items participated in the shadow pass at all;
+  `ItemSettings.cast_shadows`/`receive_shadows` were silent no-ops on these
+  two types. Both now cast into the cascade shadow atlas (depth-only, via
+  their own small pipelines) and receive shadows from the primary
+  directional light using the same `sample_shadow_csm` helper the mesh
+  shaders use, so shadow filter mode, bias, and cascade selection match
+  exactly. Ribbon geometry always casts two-sided; a wireframe-displayed
+  GPU marching cubes surface still casts its solid shadow.
 - **`ViewportGpuResources::register_texture_view`.** Point a `Material` texture slot
   at an external, caller-owned GPU `TextureView` (a dma-buf import, a video-decode
   surface, a compute-pass output, another renderer's target) as a `TextureId`, with

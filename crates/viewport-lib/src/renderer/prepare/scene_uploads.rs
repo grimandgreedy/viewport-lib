@@ -689,6 +689,7 @@ impl ViewportRenderer {
                     resources.upload_streamtube_per_frame(device, queue, item, wireframe);
                 gpu_data.pick_id = item.settings.pick_id;
                 gpu_data.model = item.model;
+                gpu_data.cast_shadows = item.settings.cast_shadows;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
                         streamtube_selected_gpu_indices.push(streamtube_gpu_data.len());
@@ -716,6 +717,7 @@ impl ViewportRenderer {
                 gpu_data.pick_id = ref_item.settings.pick_id;
                 gpu_data.model = ref_item.model;
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.cast_shadows = ref_item.settings.cast_shadows;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
                         streamtube_selected_gpu_indices.push(streamtube_gpu_data.len());
@@ -743,6 +745,7 @@ impl ViewportRenderer {
                 let mut gpu_data = resources.upload_tube_per_frame(device, queue, item, wireframe);
                 gpu_data.pick_id = item.settings.pick_id;
                 gpu_data.model = item.model;
+                gpu_data.cast_shadows = item.settings.cast_shadows;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
                         tube_selected_gpu_indices.push(tube_gpu_data.len());
@@ -770,6 +773,7 @@ impl ViewportRenderer {
                 gpu_data.pick_id = ref_item.settings.pick_id;
                 gpu_data.model = ref_item.model;
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.cast_shadows = ref_item.settings.cast_shadows;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
                         tube_selected_gpu_indices.push(tube_gpu_data.len());
@@ -798,6 +802,7 @@ impl ViewportRenderer {
                     resources.upload_ribbon_per_frame(device, queue, item, wireframe);
                 gpu_data.pick_id = item.settings.pick_id;
                 gpu_data.model = item.model;
+                gpu_data.cast_shadows = item.settings.cast_shadows;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && item.settings.selected {
                         ribbon_selected_gpu_indices.push(ribbon_gpu_data.len());
@@ -825,6 +830,7 @@ impl ViewportRenderer {
                 gpu_data.pick_id = ref_item.settings.pick_id;
                 gpu_data.model = ref_item.model;
                 gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
+                gpu_data.cast_shadows = ref_item.settings.cast_shadows;
                 if gpu_data.index_count > 0 {
                     if frame.interaction.outline_selected && ref_item.settings.selected {
                         ribbon_selected_gpu_indices.push(ribbon_gpu_data.len());
