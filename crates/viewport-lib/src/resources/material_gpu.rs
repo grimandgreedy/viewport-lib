@@ -43,10 +43,10 @@ impl TexTransformGpu {
         rot_tc: [0.0, 0.0, 0.0, 0.0],
     };
 
-    fn from_offset_scale(offset: [f32; 2], scale: [f32; 2]) -> TexTransformGpu {
+    fn from_transform(t: &crate::scene::material::TextureTransform) -> TexTransformGpu {
         TexTransformGpu {
-            offset_scale: [offset[0], offset[1], scale[0], scale[1]],
-            rot_tc: [0.0, 0.0, 0.0, 0.0],
+            offset_scale: [t.offset[0], t.offset[1], t.scale[0], t.scale[1]],
+            rot_tc: [t.rotation, t.uv_set as f32, 0.0, 0.0],
         }
     }
 }
@@ -66,14 +66,17 @@ impl MaterialGpu {
         xf: [TexTransformGpu::IDENTITY; MATERIAL_TEX_SLOTS],
     };
 
-    /// Build the GPU transform block from a material. Currently every slot shares
-    /// the material's `uv_offset` / `uv_scale`; per-texture offset/scale/rotation
-    /// and UV-set selection are layered on here as the `Material` API grows.
+    /// Build the GPU transform block from a material: one entry per texture slot,
+    /// each resolved to its per-texture override or the material's shared
+    /// `uv_offset` / `uv_scale` / `uv_rotation`.
     pub(crate) fn from_material(m: &Material) -> MaterialGpu {
-        let shared = TexTransformGpu::from_offset_scale(m.uv_offset, m.uv_scale);
-        MaterialGpu {
-            xf: [shared; MATERIAL_TEX_SLOTS],
+        use crate::scene::material::TextureSlot::{Albedo, Ao, Emissive, MetallicRoughness, Normal};
+        let slots = [Albedo, Normal, Ao, MetallicRoughness, Emissive];
+        let mut xf = [TexTransformGpu::IDENTITY; MATERIAL_TEX_SLOTS];
+        for (i, slot) in slots.iter().enumerate() {
+            xf[i] = TexTransformGpu::from_transform(&m.effective_texture_transform(*slot));
         }
+        MaterialGpu { xf }
     }
 
     /// True when this block is the identity (all slots pass UVs through unchanged).

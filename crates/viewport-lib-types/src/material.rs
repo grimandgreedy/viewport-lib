@@ -277,6 +277,81 @@ impl Default for AlphaMode {
     }
 }
 
+/// Number of texture slots a material can transform independently, in the order
+/// [`TextureSlot`] lists: albedo, normal, AO, metallic-roughness, emissive.
+pub const MATERIAL_TEXTURE_SLOTS: usize = 5;
+
+/// The texture maps a [`Material`] can carry, used to index per-texture UV
+/// transforms in [`Material::texture_transforms`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TextureSlot {
+    Albedo = 0,
+    Normal = 1,
+    Ao = 2,
+    MetallicRoughness = 3,
+    Emissive = 4,
+}
+
+/// A per-texture UV transform: offset, scale, rotation, and UV-set selection.
+///
+/// This matches the glTF `KHR_texture_transform` extension (and Unity per-map
+/// `_ST`). The UV is transformed as
+/// `uv' = rotate((mesh_uv * scale + offset) - 0.5, rotation) + 0.5`, i.e. scale
+/// and offset apply first (as before rotation existed), then the result rotates
+/// about the texture centre `(0.5, 0.5)`. With `rotation = 0` this is exactly the
+/// prior `mesh_uv * scale + offset`, so adding rotation does not disturb existing
+/// scale/offset materials.
+///
+/// Set one on a material with [`Material::with_texture_transform`] to make a
+/// single map tile or orient differently from the material's shared
+/// [`uv_offset`](Material::uv_offset) / [`uv_scale`](Material::uv_scale) /
+/// [`uv_rotation`](Material::uv_rotation). A slot left unset uses the shared
+/// transform.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TextureTransform {
+    /// UV offset added after scale. Default `[0.0, 0.0]`.
+    pub offset: [f32; 2],
+    /// UV scale (tiling). Default `[1.0, 1.0]`.
+    pub scale: [f32; 2],
+    /// Rotation about the texture centre, in radians. Default `0.0`.
+    pub rotation: f32,
+    /// UV-set index (glTF `texCoord`). `0` samples the mesh's primary UVs.
+    /// Higher sets need a second UV vertex stream, which is not wired yet, so
+    /// values other than `0` currently fall back to UV0.
+    pub uv_set: u32,
+}
+
+impl Default for TextureTransform {
+    fn default() -> Self {
+        TextureTransform {
+            offset: [0.0, 0.0],
+            scale: [1.0, 1.0],
+            rotation: 0.0,
+            uv_set: 0,
+        }
+    }
+}
+
+impl TextureTransform {
+    /// Identity: passes UVs through unchanged.
+    pub const IDENTITY: TextureTransform = TextureTransform {
+        offset: [0.0, 0.0],
+        scale: [1.0, 1.0],
+        rotation: 0.0,
+        uv_set: 0,
+    };
+
+    /// A pure rotation (radians) about the texture centre.
+    pub fn from_rotation(radians: f32) -> Self {
+        TextureTransform {
+            rotation: radians,
+            ..TextureTransform::IDENTITY
+        }
+    }
+}
+
 /// Per-object material properties for Blinn-Phong and PBR shading.
 ///
 /// Each `SceneRenderItem` carries its own `Material`, so shading parameters
@@ -392,6 +467,24 @@ pub struct Material {
     ///
     /// See [`uv_offset`](Self::uv_offset) for the full sampling formula.
     pub uv_scale: [f32; 2],
+    /// Shared UV rotation for every texture slot, in radians about the texture
+    /// centre `(0.5, 0.5)`. Default `0.0`. Applied after scale and offset:
+    /// `uv' = rotate((mesh_uv * uv_scale + uv_offset) - 0.5, uv_rotation) + 0.5`,
+    /// so `0.0` leaves the prior `mesh_uv * uv_scale + uv_offset` unchanged.
+    ///
+    /// This is the common case for orienting a directional texture (a road,
+    /// brick coursing, wood grain). For a single map to rotate or tile
+    /// differently from the rest, set a [`TextureTransform`] on its slot via
+    /// [`with_texture_transform`](Self::with_texture_transform).
+    pub uv_rotation: f32,
+    /// Optional per-texture UV transform override, indexed by [`TextureSlot`]
+    /// (`0` albedo .. `4` emissive). A slot left `None` uses the shared
+    /// [`uv_offset`](Self::uv_offset) / [`uv_scale`](Self::uv_scale) /
+    /// [`uv_rotation`](Self::uv_rotation). Default all `None`.
+    ///
+    /// This carries glTF `KHR_texture_transform` per texture (offset, scale,
+    /// rotation, and `texCoord`) so an importer can honour it faithfully.
+    pub texture_transforms: [Option<TextureTransform>; MATERIAL_TEXTURE_SLOTS],
     /// Min/max range applied to the AO map's R sample. Identity `[0.0, 1.0]`
     /// passes the sample through unchanged. Skipped when `ao_map_id` is None.
     ///
@@ -503,6 +596,8 @@ impl Default for Material {
             backface_policy: BackfacePolicy::Cull,
             uv_offset: [0.0, 0.0],
             uv_scale: [1.0, 1.0],
+            uv_rotation: 0.0,
+            texture_transforms: [None; MATERIAL_TEXTURE_SLOTS],
             ao_range: [0.0, 1.0],
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
@@ -515,6 +610,31 @@ impl Material {
     /// Returns `true` if the backface policy makes back faces visible.
     pub fn is_two_sided(&self) -> bool {
         !matches!(self.backface_policy, BackfacePolicy::Cull)
+    }
+
+    /// Set the shared UV rotation (radians about the texture centre) for every
+    /// texture slot. See [`uv_rotation`](Self::uv_rotation).
+    pub fn with_uv_rotation(mut self, radians: f32) -> Self {
+        self.uv_rotation = radians;
+        self
+    }
+
+    /// Override one texture slot's UV transform, leaving the others on the shared
+    /// transform. See [`texture_transforms`](Self::texture_transforms).
+    pub fn with_texture_transform(mut self, slot: TextureSlot, transform: TextureTransform) -> Self {
+        self.texture_transforms[slot as usize] = Some(transform);
+        self
+    }
+
+    /// The effective transform for a texture slot: its override if set, otherwise
+    /// the material's shared `uv_offset` / `uv_scale` / `uv_rotation`.
+    pub fn effective_texture_transform(&self, slot: TextureSlot) -> TextureTransform {
+        self.texture_transforms[slot as usize].unwrap_or(TextureTransform {
+            offset: self.uv_offset,
+            scale: self.uv_scale,
+            rotation: self.uv_rotation,
+            uv_set: 0,
+        })
     }
 
     /// Returns `true` if back faces need the per-object draw path.
