@@ -310,7 +310,7 @@ pub enum TextureSlot {
 /// transform.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TextureTransform {
+pub struct UvTransform {
     /// UV offset added after scale. Default `[0.0, 0.0]`.
     pub offset: [f32; 2],
     /// UV scale (tiling). Default `[1.0, 1.0]`.
@@ -323,9 +323,9 @@ pub struct TextureTransform {
     pub uv_set: u32,
 }
 
-impl Default for TextureTransform {
+impl Default for UvTransform {
     fn default() -> Self {
-        TextureTransform {
+        UvTransform {
             offset: [0.0, 0.0],
             scale: [1.0, 1.0],
             rotation: 0.0,
@@ -334,9 +334,9 @@ impl Default for TextureTransform {
     }
 }
 
-impl TextureTransform {
+impl UvTransform {
     /// Identity: passes UVs through unchanged.
-    pub const IDENTITY: TextureTransform = TextureTransform {
+    pub const IDENTITY: UvTransform = UvTransform {
         offset: [0.0, 0.0],
         scale: [1.0, 1.0],
         rotation: 0.0,
@@ -345,9 +345,9 @@ impl TextureTransform {
 
     /// A pure rotation (radians) about the texture centre.
     pub fn from_rotation(radians: f32) -> Self {
-        TextureTransform {
+        UvTransform {
             rotation: radians,
-            ..TextureTransform::IDENTITY
+            ..UvTransform::IDENTITY
         }
     }
 }
@@ -474,7 +474,7 @@ pub struct Material {
     ///
     /// This is the common case for orienting a directional texture (a road,
     /// brick coursing, wood grain). For a single map to rotate or tile
-    /// differently from the rest, set a [`TextureTransform`] on its slot via
+    /// differently from the rest, set a [`UvTransform`] on its slot via
     /// [`with_texture_transform`](Self::with_texture_transform).
     pub uv_rotation: f32,
     /// Optional per-texture UV transform override, indexed by [`TextureSlot`]
@@ -484,7 +484,7 @@ pub struct Material {
     ///
     /// This carries glTF `KHR_texture_transform` per texture (offset, scale,
     /// rotation, and `texCoord`) so an importer can honour it faithfully.
-    pub texture_transforms: [Option<TextureTransform>; MATERIAL_TEXTURE_SLOTS],
+    pub texture_transforms: [Option<UvTransform>; MATERIAL_TEXTURE_SLOTS],
     /// Min/max range applied to the AO map's R sample. Identity `[0.0, 1.0]`
     /// passes the sample through unchanged. Skipped when `ao_map_id` is None.
     ///
@@ -621,15 +621,15 @@ impl Material {
 
     /// Override one texture slot's UV transform, leaving the others on the shared
     /// transform. See [`texture_transforms`](Self::texture_transforms).
-    pub fn with_texture_transform(mut self, slot: TextureSlot, transform: TextureTransform) -> Self {
+    pub fn with_texture_transform(mut self, slot: TextureSlot, transform: UvTransform) -> Self {
         self.texture_transforms[slot as usize] = Some(transform);
         self
     }
 
     /// The effective transform for a texture slot: its override if set, otherwise
     /// the material's shared `uv_offset` / `uv_scale` / `uv_rotation`.
-    pub fn effective_texture_transform(&self, slot: TextureSlot) -> TextureTransform {
-        self.texture_transforms[slot as usize].unwrap_or(TextureTransform {
+    pub fn effective_texture_transform(&self, slot: TextureSlot) -> UvTransform {
+        self.texture_transforms[slot as usize].unwrap_or(UvTransform {
             offset: self.uv_offset,
             scale: self.uv_scale,
             rotation: self.uv_rotation,

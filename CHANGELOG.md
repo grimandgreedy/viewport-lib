@@ -33,6 +33,17 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
+- **Per-texture UV transforms with rotation.** `Material` gains `uv_rotation`
+  (a shared rotation, in radians, about the texture centre) and
+  `texture_transforms` (an optional per-map `UvTransform` of offset, scale,
+  rotation, and UV-set index, matching glTF `KHR_texture_transform`). Set a
+  directional texture's orientation with `Material::with_uv_rotation`, or tile a
+  single map differently with `with_texture_transform(TextureSlot::Normal, ..)`.
+  Rotation `0` and an unset slot reproduce the prior `uv_scale`/`uv_offset`
+  behaviour exactly, so existing materials are unchanged. Rotation applies to
+  albedo, normal, and AO; metallic-roughness and emissive follow the shared
+  transform. Material UV transforms now live in a small per-material GPU buffer
+  indexed by a `material_id`, rather than being duplicated into every instance.
 - **Sprite and Ribbon items get true order-independent transparency (OIT)
   on the HDR path.** Alpha-blend and premultiplied sprites/ribbons
   previously composited by ordinary draw-order blending, which visibly

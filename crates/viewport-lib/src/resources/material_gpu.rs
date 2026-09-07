@@ -43,7 +43,7 @@ impl TexTransformGpu {
         rot_tc: [0.0, 0.0, 0.0, 0.0],
     };
 
-    fn from_transform(t: &crate::scene::material::TextureTransform) -> TexTransformGpu {
+    fn from_transform(t: &crate::scene::material::UvTransform) -> TexTransformGpu {
         TexTransformGpu {
             offset_scale: [t.offset[0], t.offset[1], t.scale[0], t.scale[1]],
             rot_tc: [t.rotation, t.uv_set as f32, 0.0, 0.0],
@@ -143,5 +143,45 @@ impl MaterialGpuBuilder {
     /// The blocks to upload this frame (always at least the identity entry).
     pub(crate) fn entries(&self) -> &[MaterialGpu] {
         &self.entries
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::material::{Material, TextureSlot, UvTransform};
+
+    #[test]
+    fn identity_material_interns_to_zero() {
+        let mut b = MaterialGpuBuilder::default();
+        assert_eq!(b.intern(&Material::default()), 0);
+        // Only the reserved identity entry exists.
+        assert_eq!(b.entries().len(), 1);
+    }
+
+    #[test]
+    fn rotation_makes_a_distinct_entry_and_dedups() {
+        let mut b = MaterialGpuBuilder::default();
+        let rotated = Material::default().with_uv_rotation(std::f32::consts::FRAC_PI_2);
+        let id = b.intern(&rotated);
+        assert_ne!(id, 0, "a rotated material is not identity");
+        // Same transform interns to the same id (dedup), no new entry.
+        assert_eq!(b.intern(&rotated), id);
+        assert_eq!(b.entries().len(), 2);
+    }
+
+    #[test]
+    fn per_slot_override_packs_into_its_slot() {
+        let m = Material::default().with_texture_transform(
+            TextureSlot::Normal,
+            UvTransform {
+                scale: [4.0, 4.0],
+                ..UvTransform::IDENTITY
+            },
+        );
+        let block = MaterialGpu::from_material(&m);
+        // Albedo (slot 0) stays identity; normal (slot 1) carries the 4x scale.
+        assert_eq!(block.xf[0].offset_scale, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(block.xf[1].offset_scale, [0.0, 0.0, 4.0, 4.0]);
     }
 }
