@@ -155,6 +155,8 @@ impl ViewportRenderer {
 
                         for (orig_idx, item) in batch_items {
                             let cm = common_material(item);
+                            let material_id =
+                                resources.material_gpu_builder.intern(&item.material);
                             // Recover this item's light-probe SH block (assigned
                             // in the shared prepass, keyed by scene-item index).
                             let probe = probe_indices[*orig_idx];
@@ -187,7 +189,8 @@ impl ViewportRenderer {
                                 receive_shadows: cm.receive_shadows,
                                 use_flat: cm.use_flat,
                                 normal_strength: cm.normal_strength,
-                                uv_transform: cm.uv_transform,
+                                material_id,
+                                _pad_uv: [0; 3],
                                 ao_range: cm.ao_range,
                                 alpha_cutoff: cm.alpha_cutoff,
                                 alpha_flag: cm.alpha_flag,

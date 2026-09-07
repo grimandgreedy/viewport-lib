@@ -169,6 +169,12 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
+        // Reset the per-material transform interner for this frame. The per-object
+        // and instanced passes below intern each item's material into it; the
+        // buffer is uploaded at the end of this function (and again after
+        // per-viewport foreground objects intern).
+        self.resources.material_gpu_builder.reset();
+
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
         // any registered completion callbacks fire on this thread.
@@ -875,6 +881,11 @@ impl ViewportRenderer {
         self.prepare_breakdown.instancing_ms = instancing_ms;
         self.prepare_breakdown.geometry_ms = geometry_ms;
         self.prepare_breakdown.shadow_ms = shadow_ms;
+
+        // All scene items have interned their material transforms; upload the
+        // block buffer so the scene pass can index it. Foreground objects
+        // re-upload after they intern in `prepare_viewport_internal`.
+        self.resources.upload_material_gpu(queue);
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -916,6 +927,9 @@ impl ViewportRenderer {
             device,
             queue,
         );
+        // Foreground objects just interned their materials; re-upload the block
+        // buffer so any new entries past the scene set are resident.
+        self.resources.upload_material_gpu(queue);
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 

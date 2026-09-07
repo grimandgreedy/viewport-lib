@@ -89,7 +89,10 @@ struct Object {
     alpha_cutoff: f32,                     // offset 244
     has_metallic_roughness_tex: u32,       // offset 248
     has_emissive_tex: u32,                 // offset 252
-    uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
+    material_id: u32,                      // offset 256 : index into material_gpu_buf
+    _pad_uv0: u32,                         // offset 260
+    _pad_uv1: u32,                         // offset 264
+    _pad_uv2: u32,                         // offset 268
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
     normal_strength: f32,                  // offset 276 : scales tangent normal XY (also aligns next vec2)
     ao_range: vec2<f32>,                   // offset 280 : (min, max) remap of AO map R sample
@@ -107,6 +110,17 @@ struct Object {
     // The vec4 higher up keeps the struct 16-aligned, so WGSL rounds its size up
     // to 368 to match the Rust ObjectUniform (ignore_clip + a trailing u32 pad).
 };
+
+// Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
+// 1 normal, 2 AO, 3 metallic-roughness, 4 emissive. material_id 0 is identity.
+struct TexTransform {
+    offset_scale: vec4<f32>,   // (offset.x, offset.y, scale.x, scale.y)
+    rot_tc: vec4<f32>,         // (rotation_radians, f32(uv_set), 0, 0)
+}
+struct MaterialGpu {
+    xf: array<TexTransform, 5>,
+}
+@group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
 struct ClipVolumeEntry {
     volume_type: u32,
@@ -432,14 +446,15 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         if !clip_volume_test(in.world_pos) { discard; }
     }
 
-    // Per-material UV transform: atlas region / tiling selection. Identity
-    // (offset 0,0 scale 1,1) passes the authored UV through unchanged.
-    let mat_uv = in.uv * object.uv_transform.zw + object.uv_transform.xy;
+    // Per-material UV transform from the block buffer (slot 0 = albedo; identity
+    // material_id 0 passes the authored UV through unchanged).
+    let mxf0 = material_gpu_buf[object.material_id].xf[0];
+    let mat_uv = in.uv * mxf0.offset_scale.zw + mxf0.offset_scale.xy;
     out.mat_uv = mat_uv;
-    // Transformed-UV gradient: the transform is a per-object uniform, so
+    // Transformed-UV gradient: the transform is a per-material value, so
     // d(mat_uv) = d(in.uv) * scale, exact and valid in any control flow.
-    let muv_ddx = d_uv_dx * object.uv_transform.zw;
-    let muv_ddy = d_uv_dy * object.uv_transform.zw;
+    let muv_ddx = d_uv_dx * mxf0.offset_scale.zw;
+    let muv_ddy = d_uv_dy * mxf0.offset_scale.zw;
 
     // Sample texture if one is assigned.
     var tex_colour = vec4<f32>(1.0);

@@ -19,6 +19,7 @@ pub(crate) mod lighting;
 pub mod lightmap;
 /// Texture, matcap, colourmap, and environment/IBL resources.
 pub mod material;
+pub(crate) mod material_gpu;
 /// GPU memory accounting and the hardware VRAM budget query.
 mod memory;
 /// Mesh storage, instancing, level-of-detail, and mesh-family pipelines.

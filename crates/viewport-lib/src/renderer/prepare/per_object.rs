@@ -39,6 +39,7 @@ pub(super) fn build_object_uniform(
     item: &SceneRenderItem,
     wireframe_mode: bool,
     light_probe_index: Option<u32>,
+    material_id: u32,
 ) -> ObjectUniform {
     let m = &item.material;
     // Compute scalar attribute range.
@@ -167,7 +168,8 @@ pub(super) fn build_object_uniform(
         } else {
             0
         },
-        uv_transform: cm.uv_transform,
+        material_id,
+        _pad_uv: [0; 3],
         deform_flags: resources.deform.flag_bits(item.mesh_id),
         normal_strength: cm.normal_strength,
         ao_range: cm.ao_range,
@@ -405,11 +407,13 @@ impl ViewportRenderer {
                     );
                     continue;
                 };
+                let material_id = resources.material_gpu_builder.intern(&item.material);
                 let obj_uniform = build_object_uniform(
                     resources,
                     item,
                     frame.viewport.wireframe_mode,
                     probe_indices[item_idx],
+                    material_id,
                 );
 
                 // Collect per-item uniform for wireframe per-item bind groups.
@@ -459,7 +463,8 @@ impl ViewportRenderer {
                         alpha_cutoff: 0.5,
                         has_metallic_roughness_tex: 0,
                         has_emissive_tex: 0,
-                        uv_transform: [0.0, 0.0, 1.0, 1.0],
+                        material_id: 0,
+                        _pad_uv: [0; 3],
                         deform_flags: 0,
                         normal_strength: 1.0,
                         ao_range: [0.0, 1.0],
@@ -540,11 +545,14 @@ impl ViewportRenderer {
                     let mut range_indices: Vec<u32> = Vec::with_capacity(mats.len());
                     for (r, mat) in mats.iter().enumerate() {
                         range_item.material = mat.clone();
+                        let range_material_id =
+                            resources.material_gpu_builder.intern(&range_item.material);
                         let range_uniform = build_object_uniform(
                             resources,
                             &range_item,
                             frame.viewport.wireframe_mode,
                             probe_indices[item_idx],
+                            range_material_id,
                         );
                         let ridx = object_data.len() as u32;
                         object_data.push(range_uniform);
@@ -877,7 +885,8 @@ impl ViewportRenderer {
                 item.material.emissive_texture_id,
             );
 
-            let obj_uniform = build_object_uniform(resources, item, false, None);
+            let material_id = resources.material_gpu_builder.intern(&item.material);
+            let obj_uniform = build_object_uniform(resources, item, false, None, material_id);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {
                 bytemuck::bytes_of(u) != bytemuck::bytes_of(&obj_uniform)

@@ -349,6 +349,19 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 21: per-material UV transform buffer (FRAGMENT,
+                // read-only). Array of `MaterialGpu` transform blocks, indexed by
+                // the per-draw `material_id`. Scene-global, so it lives in group 0.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 21,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -704,6 +717,18 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
+        // Per-material UV transform buffer (group 0, binding 13). Fixed capacity
+        // so the handle is stable across frames; the camera bind group binds it
+        // once and never rebuilds for material churn.
+        let material_gpu_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("material_gpu_buf"),
+            size: (std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()
+                * crate::resources::material_gpu::MATERIAL_GPU_CAPACITY)
+                as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Indirect-lighting storage buffer (group 0 binding 18). Holds the
         // per-object light-probe SH blocks in the first region and the
         // environment-selection zones in the second, sharing one binding so the
@@ -1023,6 +1048,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 20,
                     resource: light_probe_volume_fallback.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 21,
+                    resource: material_gpu_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2477,6 +2506,9 @@ impl DeviceResources {
             ),
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
+            material_gpu_buf,
+            material_gpu_builder:
+                crate::resources::material_gpu::MaterialGpuBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: 0,
             resource_free_epoch: 0,

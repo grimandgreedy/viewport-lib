@@ -818,6 +818,16 @@ pub struct DeviceResources {
     // Used by the HDR path when render_scale < 1.0.
     // The depth-blit and dynamic-resolution upscale pipelines live on `post`.
 
+    // --- Per-material UV transform buffer (group 0, binding 13) ---
+    /// Scene-global buffer of per-material UV transform blocks
+    /// (`MaterialGpu`, one per distinct transform this frame). Fixed capacity
+    /// ([`MATERIAL_GPU_CAPACITY`](crate::resources::material_gpu::MATERIAL_GPU_CAPACITY)),
+    /// so its handle is stable and the camera bind group never rebuilds for it.
+    pub(crate) material_gpu_buf: crate::gpu::Buffer,
+    /// Per-frame interner that deduplicates transform blocks and hands out
+    /// `material_id` indices into `material_gpu_buf`. Reset at each `prepare()`.
+    pub(crate) material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder,
+
     // --- Runtime performance tracking ---
     /// Cumulative bytes of geometry data uploaded since the last `prepare()` reset.
     ///
@@ -1149,6 +1159,32 @@ impl DeviceResources {
     ///
     /// NOTE: The initial bind group in `init.rs` is constructed inline (before
     /// `Self` exists). Keep the binding layout in sync when modifying either site.
+    /// Upload the current per-material transform blocks to `material_gpu_buf`.
+    /// Called after interning finishes (end of scene prep, and again after
+    /// per-viewport foreground objects intern). Overwriting a superset each time
+    /// is safe: index 0 is always identity and ids only grow within a frame, so
+    /// earlier material_ids stay valid.
+    pub(crate) fn upload_material_gpu(&mut self, queue: &crate::gpu::Queue) {
+        let entries = self.material_gpu_builder.entries();
+        let n = entries
+            .len()
+            .min(crate::resources::material_gpu::MATERIAL_GPU_CAPACITY);
+        queue.write_buffer(
+            &self.material_gpu_buf,
+            0,
+            bytemuck::cast_slice(&entries[..n]),
+        );
+        let bytes =
+            (n * std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()) as u64;
+        if self.material_gpu_builder.overflowed {
+            tracing::warn!(
+                capacity = crate::resources::material_gpu::MATERIAL_GPU_CAPACITY,
+                "material UV transform buffer overflowed; excess materials fell back to identity"
+            );
+        }
+        self.frame_upload_bytes += bytes;
+    }
+
     pub(crate) fn create_camera_bind_group(
         &self,
         device: &crate::gpu::Device,
@@ -1270,6 +1306,10 @@ impl DeviceResources {
                         .as_ref()
                         .unwrap_or(&self.lighting.probe_volume_fallback)
                         .as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 21,
+                    resource: self.material_gpu_buf.as_entire_binding(),
                 },
             ],
         })

@@ -1515,10 +1515,12 @@ pub(crate) struct ObjectUniform {
     pub(crate) alpha_cutoff: f32,    //   4 bytes, offset 244
     pub(crate) has_metallic_roughness_tex: u32, //   4 bytes, offset 248
     pub(crate) has_emissive_tex: u32, //   4 bytes, offset 252
-    /// Per-material UV transform applied to every texture sample.
-    /// `[offset_x, offset_y, scale_x, scale_y]`. Defaults to `(0, 0, 1, 1)`
-    /// (identity). Lets atlas-packed materials share one mesh instance.
-    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 256
+    /// Index into the scene-global per-material UV transform buffer
+    /// (`material_gpu_buf`, group 0 binding 21). 0 is the identity block. The
+    /// three trailing words keep the 16-byte slot the old `uv_transform` vec4
+    /// occupied, so every following offset and the struct size are unchanged.
+    pub(crate) material_id: u32, //   4 bytes, offset 256
+    pub(crate) _pad_uv: [u32; 3], //  12 bytes, offset 260
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
     pub(crate) deform_flags: u32, //   4 bytes, offset 272
@@ -1611,9 +1613,12 @@ pub(crate) struct InstanceData {
     /// `Material::normal_strength`; 1.0 is neutral. Occupies the former padding word
     /// that aligned `uv_transform` to 16, so the struct stride is unchanged.
     pub(crate) normal_strength: f32, //   4 bytes, offset 140
-    /// Per-material UV transform; mirrors `ObjectUniform::uv_transform`.
-    /// `[offset_x, offset_y, scale_x, scale_y]`.
-    pub(crate) uv_transform: [f32; 4], //  16 bytes, offset 144
+    /// Index into the scene-global per-material UV transform buffer
+    /// (`material_gpu_buf`, group 0 binding 21); mirrors
+    /// `ObjectUniform::material_id`. 0 is the identity block. The trailing words
+    /// keep the 16-byte slot the old `uv_transform` vec4 occupied.
+    pub(crate) material_id: u32, //   4 bytes, offset 144
+    pub(crate) _pad_uv: [u32; 3], //  12 bytes, offset 148
     /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
     /// Mirrors `Material::ao_range`. The instanced mesh shaders do not sample
     /// the MR texture today, so `metallic_range` / `roughness_range` are

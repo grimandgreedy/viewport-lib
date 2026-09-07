@@ -66,7 +66,10 @@ struct InstanceData {
     receive_shadows: u32,
     use_flat: u32,
     normal_strength: f32,
-    uv_transform: vec4<f32>,
+    material_id: u32,                     // offset 144 : index into material_gpu_buf
+    _pad_uv0: u32,                        // offset 148
+    _pad_uv1: u32,                        // offset 152
+    _pad_uv2: u32,                        // offset 156
     ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
     alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
     alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
@@ -77,6 +80,17 @@ struct InstanceData {
     ignore_clip: u32,                     // 1 = exempt from clip planes/volumes
     _pad_lp: u32,
 };
+
+// Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
+// 1 normal, 2 AO, 3 metallic-roughness, 4 emissive. material_id 0 is identity.
+struct TexTransform {
+    offset_scale: vec4<f32>,   // (offset.x, offset.y, scale.x, scale.y)
+    rot_tc: vec4<f32>,         // (rotation_radians, f32(uv_set), 0, 0)
+}
+struct MaterialGpu {
+    xf: array<TexTransform, 5>,
+}
+@group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
 struct ClipVolumeEntry {
     volume_type: u32,
@@ -337,10 +351,13 @@ fn compute_surface(in: VertexOut) -> Surface {
         if !clip_volume_test(in.world_pos) { discard; }
     }
 
-    let mat_uv = in.uv * inst.uv_transform.zw + inst.uv_transform.xy;
+    // Per-material UV transform from the block buffer (slot 0 = albedo; identity
+    // material_id 0 passes the authored UV through unchanged).
+    let mxf0 = material_gpu_buf[inst.material_id].xf[0];
+    let mat_uv = in.uv * mxf0.offset_scale.zw + mxf0.offset_scale.xy;
     out.mat_uv = mat_uv;
-    let muv_ddx = d_uv_dx * inst.uv_transform.zw;
-    let muv_ddy = d_uv_dy * inst.uv_transform.zw;
+    let muv_ddx = d_uv_dx * mxf0.offset_scale.zw;
+    let muv_ddy = d_uv_dy * mxf0.offset_scale.zw;
 
     var tex_colour = vec4<f32>(1.0);
     if inst.has_texture == 1u { tex_colour = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy); }
