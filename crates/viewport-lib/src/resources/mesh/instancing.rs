@@ -517,51 +517,82 @@ impl DeviceResources {
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
         let bindless = self.bindless_textures();
-        let (inst_shader, inst_shader_nodiscard) = if bindless {
-            self.instanced_bindless_shader_modules(device, "mesh_instanced_bindless_shader_hdr")
-        } else {
-            self.instanced_shader_modules(device, "mesh_instanced_shader_hdr")
-        };
-        let group1_bgl = if bindless {
-            self.instancing.bindless_bind_group_layout.as_ref()
-        } else {
-            self.instancing.bind_group_layout.as_ref()
-        };
-        let Some(group1_bgl) = group1_bgl else {
+        let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() else {
             return;
         };
-        let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
+
+        // Per-batch HDR pipelines. `hdr_transparent` / `additive` / `premultiplied`
+        // serve the explicit `MeshInstanceItem` draw path only, which binds its own
+        // per-batch group 1 and pins material_id 0, so they stay per-batch even
+        // under bindless. The per-batch `solid` is used only when bindless is off.
+        let (pb_shader, pb_shader_nodiscard) =
+            self.instanced_shader_modules(device, "mesh_instanced_shader_hdr");
+        let pb_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_pipeline_layout",
             &self.binds.camera_bgl,
-            group1_bgl,
+            instance_bgl,
             self.deform
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
-        let hdr_inst = crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
-            device,
-            &inst_layout,
-            &inst_shader,
+        let pb_hdr = crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
+            device, &pb_layout, &pb_shader,
         );
-        let (hdr_solid_nodiscard, hdr_solid_two_sided_nodiscard) =
-            crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
+        self.instancing.hdr_transparent_pipeline = Some(pb_hdr.transparent);
+        self.instancing.hdr_additive_pipeline = Some(pb_hdr.additive);
+        self.instancing.hdr_premultiplied_pipeline = Some(pb_hdr.premultiplied);
+
+        // SceneRenderItem instanced solids: bindless under bindless (they use the
+        // frame-constant texture array), the per-batch build otherwise.
+        if bindless {
+            let (bl_shader, bl_shader_nodiscard) = self
+                .instanced_bindless_shader_modules(device, "mesh_instanced_bindless_shader_hdr");
+            let Some(bl_bgl) = self.instancing.bindless_bind_group_layout.as_ref() else {
+                return;
+            };
+            let bl_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                 device,
-                &inst_layout,
-                &inst_shader_nodiscard,
-                crate::gpu::TextureFormat::Rgba16Float,
-                1,
-                "hdr_instanced_solid_nodiscard_pipeline",
-                "hdr_instanced_solid_two_sided_nodiscard_pipeline",
+                "hdr_instanced_bindless_pipeline_layout",
+                &self.binds.camera_bgl,
+                bl_bgl,
+                self.deform
+                    .enabled
+                    .then_some(&self.deform.bind_group_layout),
             );
-        self.instancing.hdr_solid_pipeline = Some(hdr_inst.solid);
-        self.instancing.hdr_solid_two_sided_pipeline = Some(hdr_inst.solid_two_sided);
-        self.instancing.hdr_solid_nodiscard_pipeline = Some(hdr_solid_nodiscard);
-        self.instancing.hdr_solid_two_sided_nodiscard_pipeline =
-            Some(hdr_solid_two_sided_nodiscard);
-        self.instancing.hdr_transparent_pipeline = Some(hdr_inst.transparent);
-        self.instancing.hdr_additive_pipeline = Some(hdr_inst.additive);
-        self.instancing.hdr_premultiplied_pipeline = Some(hdr_inst.premultiplied);
+            let bl_hdr = crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
+                device, &bl_layout, &bl_shader,
+            );
+            let (nd, nd_two_sided) =
+                crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
+                    device,
+                    &bl_layout,
+                    &bl_shader_nodiscard,
+                    crate::gpu::TextureFormat::Rgba16Float,
+                    1,
+                    "hdr_instanced_solid_nodiscard_pipeline",
+                    "hdr_instanced_solid_two_sided_nodiscard_pipeline",
+                );
+            self.instancing.hdr_solid_pipeline = Some(bl_hdr.solid);
+            self.instancing.hdr_solid_two_sided_pipeline = Some(bl_hdr.solid_two_sided);
+            self.instancing.hdr_solid_nodiscard_pipeline = Some(nd);
+            self.instancing.hdr_solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
+        } else {
+            let (nd, nd_two_sided) =
+                crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
+                    device,
+                    &pb_layout,
+                    &pb_shader_nodiscard,
+                    crate::gpu::TextureFormat::Rgba16Float,
+                    1,
+                    "hdr_instanced_solid_nodiscard_pipeline",
+                    "hdr_instanced_solid_two_sided_nodiscard_pipeline",
+                );
+            self.instancing.hdr_solid_pipeline = Some(pb_hdr.solid);
+            self.instancing.hdr_solid_two_sided_pipeline = Some(pb_hdr.solid_two_sided);
+            self.instancing.hdr_solid_nodiscard_pipeline = Some(nd);
+            self.instancing.hdr_solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
+        }
     }
 
     /// Ensure the OIT instanced pipeline exists. Called after

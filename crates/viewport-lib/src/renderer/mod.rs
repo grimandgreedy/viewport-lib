@@ -846,6 +846,18 @@ impl ViewportRenderer {
         // the deform bind group invalid; the base draw path stays under both.
         limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
         limits.max_buffer_size = adapter_limits.max_buffer_size;
+        // The bindless material path binds one texture array; its element count
+        // (a binding-array limit that defaults to 0) must be requested alongside
+        // the feature or the layout is invalid. Only ask for it when the adapter
+        // offers the bindless features, clamped to what it reports.
+        if adapter
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        {
+            limits.max_binding_array_elements_per_shader_stage =
+                crate::resources::mesh::instanced_bindless::BINDLESS_TEXTURE_CAPACITY
+                    .min(adapter_limits.max_binding_array_elements_per_shader_stage);
+        }
         limits
     }
 
@@ -920,15 +932,23 @@ impl ViewportRenderer {
             .features()
             .contains(crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT);
         // Bindless material textures activate only when the device enabled the
-        // whole texture-array feature set (Vulkan/DX12). Otherwise the instanced
-        // path stays on the per-batch texture binding.
+        // whole texture-array feature set AND granted enough binding-array
+        // elements for the texture array (both are needed to build the layout).
+        // Modern Metal (Apple Silicon, argument buffers Tier 2), Vulkan, and DX12
+        // qualify; a device that enabled the feature but not the element limit,
+        // or WebGPU, stays on the per-batch binding rather than crashing.
+        use crate::resources::mesh::instanced_bindless::{
+            BINDLESS_TEXTURE_CAPACITY, MaterialTextureBinding,
+        };
         let material_texture_binding = if device
             .features()
             .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+            && device.limits().max_binding_array_elements_per_shader_stage
+                >= BINDLESS_TEXTURE_CAPACITY
         {
-            crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless
+            MaterialTextureBinding::Bindless
         } else {
-            crate::resources::mesh::instanced_bindless::MaterialTextureBinding::PerBatch
+            MaterialTextureBinding::PerBatch
         };
         let mut resources = DeviceResources::new_with_cache(
             device,
@@ -937,10 +957,9 @@ impl ViewportRenderer {
             pipeline_cache_data,
         );
         resources.instancing.material_texture_binding = material_texture_binding;
-        resources.material_gpu_builder.set_bindless(
-            material_texture_binding
-                == crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless,
-        );
+        resources
+            .material_gpu_builder
+            .set_bindless(material_texture_binding == MaterialTextureBinding::Bindless);
         Self {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),

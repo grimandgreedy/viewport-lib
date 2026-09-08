@@ -33,15 +33,17 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
-- **Bindless material textures on the instanced path (Vulkan/DX12).** On a device
-  that enables the texture-array feature set, the instanced colour pipelines bind
-  one material texture array once per frame and index it per material, so the
+- **Bindless material textures on the instanced path.** On a device with the
+  texture-array feature set (Apple Silicon Metal with argument buffers Tier 2,
+  Vulkan, and DX12; not WebGPU or older hardware), the instanced colour pipelines
+  bind one material texture array once per frame and index it per material, so the
   batch key stops caring about textures: instances of one mesh with different
   materials collapse into a single batch, cutting draw calls toward mesh count.
-  Selected automatically at renderer construction (via
-  `recommended_device_features`); Metal and WebGPU keep the per-batch texture
-  binding, and both paths render the same result. Pass
-  `recommended_device_features(&adapter)` when requesting the device to opt in.
+  Selected automatically at renderer construction; devices without the feature (or
+  its binding-array limit) keep the per-batch texture binding, and both paths
+  render the same result. Pass both `recommended_device_features(&adapter)` and
+  `recommended_device_limits(&adapter)` when requesting the device to opt in (the
+  feature needs its matching `max_binding_array_elements_per_shader_stage` limit).
 - **Instanced metallic-roughness and emissive textures.** The instanced mesh path
   now samples the metallic-roughness and emissive maps, so a material carrying
   either no longer falls to the per-object draw path. Emissive-textured materials
