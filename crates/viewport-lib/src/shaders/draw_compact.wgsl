@@ -31,6 +31,12 @@ struct CompactUniform {
     _pad2:       u32,
 }
 
+// Sentinel `group_id` for a batch not in any compacted group (transparent under
+// the opaque pass, additive/premultiplied, or any batch the CPU left ungrouped).
+// Mirrors `indirect::NO_GROUP`. Such batches are skipped so they neither inflate a
+// group's survivor count nor scatter their args into another group's range.
+const NO_GROUP: u32 = 0xffffffffu;
+
 @group(0) @binding(0) var<uniform>             params:         CompactUniform;
 // Per-batch draw args from the cull (binding 5 of the cull pass), read here.
 @group(0) @binding(1) var<storage, read>       src_args:       array<DrawIndirect>;
@@ -50,12 +56,17 @@ fn compact_draws(@builtin(global_invocation_id) id: vec3<u32>) {
     if b >= params.batch_count {
         return;
     }
+    let g = group_id[b];
+    // Batches not assigned to a compacted group are drawn by another path (or not
+    // at all); skip them before touching any group buffer.
+    if g == NO_GROUP {
+        return;
+    }
     let args = src_args[b];
     // Batches the cull emptied are dropped from the draw list.
     if args.instance_count == 0u {
         return;
     }
-    let g = group_id[b];
     let slot = atomicAdd(&draw_counts[g], 1u);
     dst_args[group_arg_base[b] + slot] = args;
 }

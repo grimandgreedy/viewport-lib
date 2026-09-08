@@ -805,9 +805,7 @@ impl ViewportRenderer {
                                         render_pass.set_bind_group(1, bg, &[]);
                                         let mut cur_pipe: Option<(bool, bool)> = None;
                                         let mut cur_chunks: Option<(u32, u32)> = None;
-                                        for (gidx, group) in
-                                            self.instancing.draw_groups.iter().enumerate()
-                                        {
+                                        for group in self.instancing.draw_groups.iter() {
                                             let Some(first) = self
                                                 .instancing
                                                 .batches
@@ -853,7 +851,7 @@ impl ViewportRenderer {
                                                 compacted,
                                                 group.arg_base as u64 * 20,
                                                 counts,
-                                                gidx as u64 * 4,
+                                                group.count_index as u64 * 4,
                                                 group.size,
                                             );
                                             self.frame_main_draw_commands
@@ -2765,18 +2763,86 @@ impl ViewportRenderer {
                                 self.resources,
                                 &self.resources.deform.dummy_bind_group
                             );
+                            // GPU-driven submission: iterate the precomputed
+                            // transparent groups and issue one
+                            // multi_draw_indexed_indirect_count per group over the
+                            // shared compacted args + counts, skipping the CPU
+                            // run-forming below. Active only under the same
+                            // bindless + native-multi-draw gate as the opaque path.
+                            let mut did_oit_groups = false;
+                            if !self.instancing.oit_draw_groups.is_empty() {
+                                if let (Some(compacted), Some(counts), Some(bg)) = (
+                                    cull0.compacted_args_buf.as_ref(),
+                                    cull0.draw_counts_buf.as_ref(),
+                                    cull0.bindless_cull_bind_group.as_ref(),
+                                ) {
+                                    oit_pass.set_bind_group(1, bg, &[]);
+                                    let mut cur_two_sided: Option<bool> = None;
+                                    let mut cur_chunks: Option<(u32, u32)> = None;
+                                    for group in self.instancing.oit_draw_groups.iter() {
+                                        let Some(first) =
+                                            self.instancing.batches.get(group.arg_base as usize)
+                                        else {
+                                            continue;
+                                        };
+                                        let Some(mesh) = resources.mesh_store.get(first.mesh_id)
+                                        else {
+                                            continue;
+                                        };
+                                        if cur_two_sided != Some(group.two_sided) {
+                                            oit_pass.set_pipeline(if group.two_sided {
+                                                pipeline_two_sided
+                                            } else {
+                                                pipeline
+                                            });
+                                            cur_two_sided = Some(group.two_sided);
+                                        }
+                                        let chunks =
+                                            (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                        if cur_chunks != Some(chunks) {
+                                            oit_pass.set_vertex_buffer(
+                                                0,
+                                                resources.geometry.vertex_chunk_slice(chunks.0),
+                                            );
+                                            oit_pass.set_index_buffer(
+                                                resources.geometry.index_chunk_slice(chunks.1),
+                                                crate::gpu::IndexFormat::Uint32,
+                                            );
+                                            cur_chunks = Some(chunks);
+                                        }
+                                        oit_pass.multi_draw_indexed_indirect_count(
+                                            compacted,
+                                            group.arg_base as u64 * 20,
+                                            counts,
+                                            group.count_index as u64 * 4,
+                                            group.size,
+                                        );
+                                        self.frame_main_draw_commands
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                    did_oit_groups = true;
+                                }
+                            }
                             // Transparent batches pick the OIT pipeline by their
                             // two-sidedness, so a run collapses when the pipeline,
                             // bind group, and slab chunk hold across consecutive
-                            // global indices (see the opaque path).
+                            // global indices (see the opaque path). Skipped when the
+                            // group path above already submitted the draws.
                             let multi_draw = self.instancing.multi_draw_active();
                             let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             let mut cur_two_sided: Option<bool> = None;
                             let mut run_start: u64 = 0;
                             let mut run_len: u32 = 0;
-                            for (batch_global_idx, batch) in
-                                self.instancing.batches.iter().enumerate()
+                            // `take(0)` when the group path already drew, so the
+                            // CPU run-forming is skipped without duplicating draws.
+                            let cpu_run_limit = if did_oit_groups { 0 } else { usize::MAX };
+                            for (batch_global_idx, batch) in self
+                                .instancing
+                                .batches
+                                .iter()
+                                .enumerate()
+                                .take(cpu_run_limit)
                             {
                                 if !batch.is_transparent {
                                     continue;

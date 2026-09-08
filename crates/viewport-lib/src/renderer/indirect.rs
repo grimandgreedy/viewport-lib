@@ -37,8 +37,9 @@ pub(super) struct MainCullExtras<'a> {
 
 /// Per-batch group assignment for GPU draw-list compaction: which pipeline group
 /// a batch belongs to (`group_id`, keying the survivor counter) and the batch
-/// index at which that group's compacted args start (`group_arg_base`). A
-/// transparent batch, or any batch not part of a compacted opaque group, carries
+/// index at which that group's compacted args start (`group_arg_base`). Opaque
+/// and transparent (OIT) batches both get real groups; a batch in neither pass
+/// (additive / premultiplied, or when the GPU-driven path is inactive) carries
 /// `group_id = NO_GROUP` and is skipped by the compaction pass.
 pub(super) const NO_GROUP: u32 = u32::MAX;
 
@@ -605,5 +606,259 @@ impl CullResources {
                 count: None,
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CullResources;
+    use crate::gpu;
+
+    fn headless_device() -> Option<(gpu::Device, gpu::Queue)> {
+        let instance = gpu::default_instance();
+        let adapter = pollster::block_on(instance.request_adapter(&gpu::RequestAdapterOptions {
+            power_preference: gpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            #[cfg(wgpu30)]
+            apply_limit_buckets: false,
+        }))
+        .ok()?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&gpu::DeviceDescriptor {
+            label: Some("compaction_tests"),
+            required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(&adapter),
+            ..Default::default()
+        }))
+        .ok()?;
+        Some((device, queue))
+    }
+
+    fn storage_buf(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        data: &[u32],
+        usage: gpu::BufferUsages,
+    ) -> gpu::Buffer {
+        let buf = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: (data.len() * 4) as u64,
+            usage,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, bytemuck::cast_slice(data));
+        buf
+    }
+
+    fn read_words(device: &gpu::Device, buf: &gpu::Buffer) -> Vec<u32> {
+        let slice = buf.slice(..);
+        slice.map_async(gpu::MapMode::Read, |_| {});
+        let _ = device.poll(gpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        });
+        let words = bytemuck::cast_slice::<u8, u32>(&gpu::mapped_range(slice)).to_vec();
+        buf.unmap();
+        words
+    }
+
+    /// Dispatch `compact_draws` over the crafted inputs and read back
+    /// `(per-group survivor counts, compacted dst args as words)`. `batches` are
+    /// `DrawIndirect` 5-tuples; `group_id[b]` / `group_arg_base[b]` are the CPU
+    /// grouping; `count_slots` sizes the per-group counter buffer.
+    fn run_compaction(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        cull: &CullResources,
+        batches: &[[u32; 5]],
+        group_id: &[u32],
+        group_arg_base: &[u32],
+        count_slots: usize,
+    ) -> (Vec<u32>, Vec<u32>) {
+        let src: Vec<u32> = batches.iter().flatten().copied().collect();
+        let storage = gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST;
+        let src_args = storage_buf(device, queue, &src, storage);
+        let group_arg_base_buf = storage_buf(device, queue, group_arg_base, storage);
+        let group_id_buf = storage_buf(device, queue, group_id, storage);
+        let dst_args = storage_buf(
+            device,
+            queue,
+            &vec![0u32; batches.len() * 5],
+            storage | gpu::BufferUsages::COPY_SRC,
+        );
+        let draw_counts = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: (count_slots * 4) as u64,
+            usage: storage | gpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&gpu::CommandEncoderDescriptor {
+            label: Some("compaction_test_encoder"),
+        });
+        cull.compact_draws(
+            &mut encoder,
+            device,
+            queue,
+            batches.len() as u32,
+            &src_args,
+            &group_arg_base_buf,
+            &group_id_buf,
+            &dst_args,
+            &draw_counts,
+        );
+
+        let dst_bytes = (batches.len() * 5 * 4) as u64;
+        let counts_bytes = (count_slots * 4) as u64;
+        let read_usage = gpu::BufferUsages::COPY_DST | gpu::BufferUsages::MAP_READ;
+        let dst_staging = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: dst_bytes,
+            usage: read_usage,
+            mapped_at_creation: false,
+        });
+        let counts_staging = device.create_buffer(&gpu::BufferDescriptor {
+            label: None,
+            size: counts_bytes,
+            usage: read_usage,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&dst_args, 0, &dst_staging, 0, dst_bytes);
+        encoder.copy_buffer_to_buffer(&draw_counts, 0, &counts_staging, 0, counts_bytes);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        (
+            read_words(device, &counts_staging),
+            read_words(device, &dst_staging),
+        )
+    }
+
+    /// Reconstruct the `DrawIndirect` 5-tuple compacted into `dst` slot `slot`.
+    fn entry(dst: &[u32], slot: usize) -> [u32; 5] {
+        [
+            dst[slot * 5],
+            dst[slot * 5 + 1],
+            dst[slot * 5 + 2],
+            dst[slot * 5 + 3],
+            dst[slot * 5 + 4],
+        ]
+    }
+
+    /// The compaction pass is pure compute, so it runs on any backend (including
+    /// Metal, where the `_count` draw path it feeds is dormant). Drive it directly
+    /// with crafted per-batch cull args and check it packs each group's visible
+    /// batches to the front of the group's arg range and counts the survivors.
+    #[test]
+    fn compact_draws_packs_survivors_per_group() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping compact_draws_packs_survivors_per_group: no GPU adapter");
+            return;
+        };
+        let cull = CullResources::new(&device);
+
+        // Six batches in two contiguous groups of three. `instance_count == 0`
+        // marks a batch the cull emptied (dropped from the draw list). Each batch
+        // carries a unique `first_index` so a compacted arg can be traced back to
+        // its source batch. Layout matches `DrawIndirect`:
+        // (index_count, instance_count, first_index, base_vertex, first_instance).
+        let batches: [[u32; 5]; 6] = [
+            [100, 5, 0, 0, 0],
+            [101, 0, 1, 1, 1], // culled
+            [102, 7, 2, 2, 2],
+            [103, 0, 3, 3, 3], // culled
+            [104, 3, 4, 4, 4],
+            [105, 9, 5, 5, 5],
+        ];
+        // Group 0 = batches 0..3 (arg base 0), group 1 = batches 3..6 (arg base 3).
+        let group_id = [0u32, 0, 0, 1, 1, 1];
+        let group_arg_base = [0u32, 0, 0, 3, 3, 3];
+
+        let (counts, dst) = run_compaction(
+            &device,
+            &queue,
+            &cull,
+            &batches,
+            &group_id,
+            &group_arg_base,
+            2,
+        );
+
+        // Two survivors per group (one of each three was culled).
+        assert_eq!(counts, vec![2, 2], "per-group survivor counts");
+
+        // Within a group the atomic slot order is unspecified, so compare as sets
+        // and trace each survivor back to its source batch by `first_index`.
+        let group0: std::collections::HashSet<u32> =
+            [entry(&dst, 0)[2], entry(&dst, 1)[2]].into_iter().collect();
+        assert_eq!(
+            group0,
+            [0u32, 2].into_iter().collect(),
+            "group 0 survivors packed to [0, 2)"
+        );
+        let group1: std::collections::HashSet<u32> =
+            [entry(&dst, 3)[2], entry(&dst, 4)[2]].into_iter().collect();
+        assert_eq!(
+            group1,
+            [4u32, 5].into_iter().collect(),
+            "group 1 survivors packed to [3, 5)"
+        );
+        // Every compacted arg is a faithful, whole copy of its source batch.
+        for slot in [0usize, 1, 3, 4] {
+            let e = entry(&dst, slot);
+            assert_eq!(
+                e, batches[e[2] as usize],
+                "arg at slot {slot} copied verbatim"
+            );
+        }
+    }
+
+    /// A batch with `group_id == NO_GROUP` (a transparent or additive batch under
+    /// the opaque compaction, say) must be skipped entirely: it must not inflate a
+    /// group's survivor count nor scatter its args into `group_arg_base` slot 0.
+    #[test]
+    fn compact_draws_skips_ungrouped_batches() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping compact_draws_skips_ungrouped_batches: no GPU adapter");
+            return;
+        };
+        let cull = CullResources::new(&device);
+
+        // Batch 1 is ungrouped but visible (instance_count 8). It sits inside
+        // group 0's batch range with `group_arg_base == 0`, so a missing skip would
+        // corrupt group 0 (inflated count, a stray arg at slot 0).
+        let batches: [[u32; 5]; 3] = [
+            [100, 5, 0, 0, 0],
+            [101, 8, 1, 1, 1], // NO_GROUP: must be dropped despite being visible
+            [102, 7, 2, 2, 2],
+        ];
+        let group_id = [0u32, super::NO_GROUP, 0];
+        let group_arg_base = [0u32, 0, 0];
+
+        let (counts, dst) = run_compaction(
+            &device,
+            &queue,
+            &cull,
+            &batches,
+            &group_id,
+            &group_arg_base,
+            1,
+        );
+
+        // Only batches 0 and 2 survive; the ungrouped batch is not counted.
+        assert_eq!(
+            counts,
+            vec![2],
+            "ungrouped batch excluded from the group count"
+        );
+        let survivors: std::collections::HashSet<u32> =
+            [entry(&dst, 0)[2], entry(&dst, 1)[2]].into_iter().collect();
+        assert_eq!(
+            survivors,
+            [0u32, 2].into_iter().collect(),
+            "group 0 holds only its own batches"
+        );
+        assert!(
+            !survivors.contains(&1),
+            "ungrouped batch 1 must not appear in any group"
+        );
     }
 }

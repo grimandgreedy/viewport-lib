@@ -74,49 +74,64 @@ fn build_and_upload_draw_groups(
     let n = instancing.batches.len();
     let mut group_id = vec![crate::renderer::indirect::NO_GROUP; n];
     let mut group_arg_base = vec![0u32; n];
-    let mut groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
-    let mut cur: Option<((bool, bool, u32, u32), usize)> = None;
+    let mut opaque_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
+    let mut oit_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
+    // Opaque and transparent batches are grouped in one pass so both draws share a
+    // single compaction and one `draw_counts` slot space. The run key includes
+    // `is_transparent`, so a group is always a maximal contiguous batch range of
+    // one kind: consecutive groups have adjacent arg ranges and never overlap in
+    // the compacted buffer, whichever way the two kinds interleave. `next_group`
+    // is the global slot each group takes in `draw_counts` (its `count_index`).
+    let mut next_group = 0u32;
+    // (run key, index within the group vec the key's transparency bit selects).
+    let mut cur: Option<((bool, bool, bool, u32, u32), usize)> = None;
     for (b, batch) in instancing.batches.iter().enumerate() {
-        // A transparent batch breaks the opaque run (it sits between opaque
-        // batches in the global order, so their args are not contiguous).
-        if batch.is_transparent {
-            cur = None;
-            continue;
-        }
         let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
             cur = None;
             continue;
         };
-        let no_discard = !clipping_active && !batch.has_alpha_mask && nodiscard;
+        let transparent = batch.is_transparent;
+        // OIT has no discard-free variant; only the opaque pass keys on it.
+        let no_discard = !transparent && !clipping_active && !batch.has_alpha_mask && nodiscard;
         let key = (
+            transparent,
             batch.two_sided,
             no_discard,
             mesh.vertex_span.chunk,
             mesh.index_span.chunk,
         );
-        let gi = match cur {
-            Some((k, gi)) if k == key => {
-                groups[gi].size += 1;
-                gi
+        let vec_ref = if transparent {
+            &mut oit_groups
+        } else {
+            &mut opaque_groups
+        };
+        let gv = match cur {
+            Some((k, gv)) if k == key => {
+                vec_ref[gv].size += 1;
+                gv
             }
             _ => {
-                let gi = groups.len();
-                groups.push(crate::renderer::instancing_state::DrawGroup {
+                let count_index = next_group;
+                next_group += 1;
+                vec_ref.push(crate::renderer::instancing_state::DrawGroup {
                     arg_base: b as u32,
                     size: 1,
                     two_sided: batch.two_sided,
                     no_discard,
+                    count_index,
                 });
-                cur = Some((key, gi));
-                gi
+                let gv = vec_ref.len() - 1;
+                cur = Some((key, gv));
+                gv
             }
         };
-        group_id[b] = gi as u32;
-        group_arg_base[b] = groups[gi].arg_base;
+        group_id[b] = vec_ref[gv].count_index;
+        group_arg_base[b] = vec_ref[gv].arg_base;
     }
 
-    if groups.is_empty() {
+    if opaque_groups.is_empty() && oit_groups.is_empty() {
         instancing.draw_groups.clear();
+        instancing.oit_draw_groups.clear();
         return false;
     }
 
@@ -169,7 +184,8 @@ fn build_and_upload_draw_groups(
         cull_state.compact_capacity = cap;
     }
 
-    instancing.draw_groups = groups;
+    instancing.draw_groups = opaque_groups;
+    instancing.oit_draw_groups = oit_groups;
     true
 }
 
