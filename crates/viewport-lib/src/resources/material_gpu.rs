@@ -51,24 +51,39 @@ impl TexTransformGpu {
     }
 }
 
-/// A material's per-slot UV transforms. Matches the WGSL `MaterialGpu` struct
-/// (an `array<TexTransform, 5>`), 160 bytes.
+/// A material's per-slot UV transforms plus its scalar shading parameters, as the
+/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 240
+/// bytes. The scalars are the per-material fields that used to be duplicated into
+/// every `InstanceData` record; moving them here shrinks the per-instance record
+/// to O(instances) transform-free and keeps a single copy per distinct material.
+///
+/// Field packing (after the 160-byte transform array):
+/// - `scalars0` = (ambient, diffuse, specular, shininess)
+/// - `scalars1` = (metallic, roughness, normal_strength, _)
+/// - `scalars2` = (emissive.r, emissive.g, emissive.b, ao_range.min)
+/// - `scalars3` = (ao_range.max, _, _, _)
+/// - `flags`    = (use_pbr, use_flat, _, _)
+///
+/// The `has_*` texture flags and `alpha_cutoff` / `alpha_flag` stay per-instance
+/// (in `InstanceData`): the explicit `MeshInstanceItem` path bakes them at upload
+/// time (it pins `material_id` to 0), and the instanced shadow-cutout pass reads
+/// them without binding the material buffer (its group 0 is light-only).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MaterialGpu {
     pub(crate) xf: [TexTransformGpu; MATERIAL_TEX_SLOTS],
+    pub(crate) scalars0: [f32; 4],
+    pub(crate) scalars1: [f32; 4],
+    pub(crate) scalars2: [f32; 4],
+    pub(crate) scalars3: [f32; 4],
+    pub(crate) flags: [u32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 160);
+const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 240);
 
 impl MaterialGpu {
-    pub(crate) const IDENTITY: MaterialGpu = MaterialGpu {
-        xf: [TexTransformGpu::IDENTITY; MATERIAL_TEX_SLOTS],
-    };
-
-    /// Build the GPU transform block from a material: one entry per texture slot,
-    /// each resolved to its per-texture override or the material's shared
-    /// `uv_offset` / `uv_scale` / `uv_rotation`.
+    /// Build the full GPU material block (transforms + scalars) from a material.
+    /// The scalar derivations mirror `common_material` (`mesh_material.rs`).
     pub(crate) fn from_material(m: &Material) -> MaterialGpu {
         use crate::scene::material::TextureSlot::{Albedo, Ao, Emissive, MetallicRoughness, Normal};
         let slots = [Albedo, Normal, Ao, MetallicRoughness, Emissive];
@@ -76,13 +91,15 @@ impl MaterialGpu {
         for (i, slot) in slots.iter().enumerate() {
             xf[i] = TexTransformGpu::from_transform(&m.effective_texture_transform(*slot));
         }
-        MaterialGpu { xf }
-    }
-
-    /// True when this block is the identity (all slots pass UVs through unchanged).
-    fn is_identity(&self) -> bool {
-        let id = bytemuck::bytes_of(&MaterialGpu::IDENTITY);
-        bytemuck::bytes_of(self) == id
+        let e = m.emissive_nits();
+        MaterialGpu {
+            xf,
+            scalars0: [m.ambient, m.diffuse, m.specular, m.shininess],
+            scalars1: [m.metallic, m.roughness, m.normal_strength, 0.0],
+            scalars2: [e[0], e[1], e[2], m.ao_range[0]],
+            scalars3: [m.ao_range[1], 0.0, 0.0, 0.0],
+            flags: [m.is_pbr() as u32, m.is_flat() as u32, 0, 0],
+        }
     }
 }
 
@@ -91,8 +108,8 @@ impl MaterialGpu {
 /// the identity block, so any material with no authored transform maps to 0.
 pub(crate) struct MaterialGpuBuilder {
     entries: Vec<MaterialGpu>,
-    lookup: HashMap<[u8; 160], u32>,
-    /// Set when the capacity was hit and some materials were forced to identity.
+    lookup: HashMap<[u8; 240], u32>,
+    /// Set when the capacity was hit and some materials were forced to entry 0.
     pub(crate) overflowed: bool,
 }
 
@@ -109,24 +126,25 @@ impl Default for MaterialGpuBuilder {
 }
 
 impl MaterialGpuBuilder {
-    /// Clear to a single identity entry (id 0) for a new frame.
+    /// Clear to a single default-material entry (id 0) for a new frame. Entry 0 is
+    /// the default material block, so a draw with `material_id` 0 (the normal-vis
+    /// uniform, or an overflow fallback) reads sensible default shading. A default
+    /// material interns straight to 0.
     pub(crate) fn reset(&mut self) {
         self.entries.clear();
         self.lookup.clear();
         self.overflowed = false;
-        self.entries.push(MaterialGpu::IDENTITY);
-        self.lookup
-            .insert(bytemuck::cast(MaterialGpu::IDENTITY), 0);
+        let default_block = MaterialGpu::from_material(&Material::default());
+        self.entries.push(default_block);
+        self.lookup.insert(bytemuck::cast(default_block), 0);
     }
 
-    /// Intern a material's transform block, returning its `material_id`. Identity
-    /// blocks return 0 without touching the map. On overflow, returns 0.
+    /// Intern a material's block, returning its `material_id` (its index in the
+    /// uploaded buffer). Deduplicates by the block bytes, so instances sharing a
+    /// material share an id. On overflow, returns 0.
     pub(crate) fn intern(&mut self, m: &Material) -> u32 {
         let block = MaterialGpu::from_material(m);
-        if block.is_identity() {
-            return 0;
-        }
-        let key: [u8; 160] = bytemuck::cast(block);
+        let key: [u8; 240] = bytemuck::cast(block);
         if let Some(&id) = self.lookup.get(&key) {
             return id;
         }
@@ -168,6 +186,17 @@ mod tests {
         // Same transform interns to the same id (dedup), no new entry.
         assert_eq!(b.intern(&rotated), id);
         assert_eq!(b.entries().len(), 2);
+    }
+
+    #[test]
+    fn scalars_pack_emissive_and_pbr() {
+        let mut m = Material::default();
+        m.emissive = crate::Colour::linear_rgb(1.5, 0.25, 4.0);
+        m.metallic = 0.7;
+        let b = MaterialGpu::from_material(&m);
+        // scalars2.xyz = emissive (HDR nits), scalars1.x = metallic.
+        assert_eq!([b.scalars2[0], b.scalars2[1], b.scalars2[2]], [1.5, 0.25, 4.0]);
+        assert!((b.scalars1[0] - 0.7).abs() < 1e-6);
     }
 
     #[test]

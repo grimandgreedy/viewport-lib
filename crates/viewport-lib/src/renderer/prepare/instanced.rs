@@ -175,31 +175,28 @@ impl ViewportRenderer {
                                 wireframe: (frame.viewport.wireframe_mode
                                     || item.settings.wireframe)
                                     as u32,
-                                ambient: cm.ambient,
-                                diffuse: cm.diffuse,
-                                specular: cm.specular,
-                                shininess: cm.shininess,
                                 has_texture: cm.has_texture,
-                                use_pbr: cm.use_pbr,
-                                metallic: cm.metallic,
-                                roughness: cm.roughness,
                                 has_normal_map: cm.has_normal_map,
                                 has_ao_map: cm.has_ao_map,
                                 unlit: cm.unlit,
                                 receive_shadows: cm.receive_shadows,
-                                use_flat: cm.use_flat,
-                                normal_strength: cm.normal_strength,
+                                // Shading scalars (PBR terms, ranges, emissive,
+                                // use_pbr/use_flat) live in material_gpu_buf, read
+                                // via material_id; alpha stays per-instance for the
+                                // shadow-cutout pass.
                                 material_id,
-                                _pad_uv: [0; 3],
-                                ao_range: cm.ao_range,
-                                alpha_cutoff: cm.alpha_cutoff,
-                                alpha_flag: cm.alpha_flag,
-                                emissive: cm.emissive,
-                                _pad_emissive: 0.0,
+                                alpha_cutoff: match item.material.alpha_mode {
+                                    crate::scene::material::AlphaMode::Mask(c) => c,
+                                    _ => 0.5,
+                                },
+                                alpha_flag: matches!(
+                                    item.material.alpha_mode,
+                                    crate::scene::material::AlphaMode::Mask(_)
+                                ) as u32,
                                 has_light_probe: probe.map_or(0, |_| 1),
                                 light_probe_index: probe.unwrap_or(0),
                                 ignore_clip: item.settings.ignore_clip as u32,
-                                _pad_lp: 0,
+                                _pad: [0; 3],
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);

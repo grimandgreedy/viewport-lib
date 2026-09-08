@@ -157,9 +157,6 @@ pub(super) struct CommonMaterial {
     pub(super) receive_shadows: u32,
     pub(super) use_flat: u32,
     pub(super) ao_range: [f32; 2],
-    pub(super) alpha_cutoff: f32,
-    pub(super) alpha_flag: u32,
-    pub(super) emissive: [f32; 3],
 }
 
 pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
@@ -186,15 +183,6 @@ pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
         receive_shadows: if item.settings.receive_shadows { 1 } else { 0 },
         use_flat: if m.is_flat() { 1 } else { 0 },
         ao_range: m.ao_range,
-        alpha_cutoff: match m.alpha_mode {
-            crate::scene::material::AlphaMode::Mask(c) => c,
-            _ => 0.5,
-        },
-        alpha_flag: match m.alpha_mode {
-            crate::scene::material::AlphaMode::Mask(_) => 1,
-            _ => 0,
-        },
-        emissive: m.emissive_nits(),
     }
 }
 
@@ -290,31 +278,8 @@ mod tests {
         );
     }
 
-    /// The shared material mapping carries the cutoff and enable flag that the
-    /// instanced shader reads. A `Mask` item enables the discard; anything else
-    /// disables it.
-    #[test]
-    fn common_material_carries_alpha_cutout() {
-        let mut item = SceneRenderItem::default();
-        item.material.alpha_mode = AlphaMode::Mask(0.45);
-        let cm = common_material(&item);
-        assert_eq!(cm.alpha_flag, 1);
-        assert!((cm.alpha_cutoff - 0.45).abs() < 1e-6);
-
-        item.material.alpha_mode = AlphaMode::Opaque;
-        let cm = common_material(&item);
-        assert_eq!(cm.alpha_flag, 0);
-    }
-
-    /// The emissive factor rides the shared material mapping so the instanced
-    /// shaders can add it after lighting, matching the per-object path.
-    #[test]
-    fn common_material_carries_emissive() {
-        let mut item = SceneRenderItem::default();
-        item.material.emissive = [1.5, 0.25, 4.0].into();
-        let cm = common_material(&item);
-        assert_eq!(cm.emissive, [1.5, 0.25, 4.0]);
-    }
+    // Alpha cutout and emissive now ride the per-material block, covered by the
+    // `material_gpu` tests (`scalars_pack_alpha_and_emissive`).
 
     /// The instanced path applies the emissive factor flat and never samples the
     /// emissive texture, so an emissive-textured material must stay per-object.

@@ -47,38 +47,27 @@ struct ShadowAtlas {
     atlas_rects: array<vec4<f32>, 8>,
 };
 
+// Per-instance data (128 bytes). Shading scalars live in material_gpu_buf via
+// material_id; see mesh_instanced.wgsl. The has_* texture flags stay per-instance.
 struct InstanceData {
-    model: mat4x4<f32>,
-    colour: vec4<f32>,
-    selected: u32,
-    wireframe: u32,
-    ambient: f32,
-    diffuse: f32,
-    specular: f32,
-    shininess: f32,
-    has_texture: u32,
-    use_pbr: u32,
-    metallic: f32,
-    roughness: f32,
-    has_normal_map: u32,
-    has_ao_map: u32,
-    unlit: u32,
-    receive_shadows: u32,
-    use_flat: u32,
-    normal_strength: f32,
-    material_id: u32,                     // offset 144 : index into material_gpu_buf
-    _pad_uv0: u32,                        // offset 148
-    _pad_uv1: u32,                        // offset 152
-    _pad_uv2: u32,                        // offset 156
-    ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
-    alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
-    alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
-    emissive: vec3<f32>,                  // self-illumination added after lighting
-    _pad_emissive: f32,
-    has_light_probe: u32,                 // 1 = sample light_probe_sh for indirect diffuse
-    light_probe_index: u32,               // base block index into light_probe_sh
-    ignore_clip: u32,                     // 1 = exempt from clip planes/volumes
-    _pad_lp: u32,
+    model: mat4x4<f32>,                   // offset 0
+    colour: vec4<f32>,                    // offset 64
+    selected: u32,                        // offset 80
+    wireframe: u32,                       // offset 84
+    has_texture: u32,                     // offset 88
+    has_normal_map: u32,                  // offset 92
+    has_ao_map: u32,                      // offset 96
+    unlit: u32,                           // offset 100
+    receive_shadows: u32,                 // offset 104
+    material_id: u32,                     // offset 108
+    alpha_cutoff: f32,                    // offset 112
+    alpha_flag: u32,                      // offset 116
+    has_light_probe: u32,                 // offset 120
+    light_probe_index: u32,               // offset 124
+    ignore_clip: u32,                     // offset 128
+    _pad0: u32,                           // offset 132
+    _pad1: u32,                           // offset 136
+    _pad2: u32,                           // offset 140
 };
 
 // Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
@@ -87,8 +76,17 @@ struct TexTransform {
     offset_scale: vec4<f32>,   // (offset.x, offset.y, scale.x, scale.y)
     rot_tc: vec4<f32>,         // (rotation_radians, f32(uv_set), 0, 0)
 }
+// scalars0 = (ambient, diffuse, specular, shininess)
+// scalars1 = (metallic, roughness, normal_strength, _)
+// scalars2 = (emissive.rgb, ao_min); scalars3 = (ao_max, _, _, _)
+// flags    = (use_pbr, use_flat, _, _)
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
+    scalars0: vec4<f32>,
+    scalars1: vec4<f32>,
+    scalars2: vec4<f32>,
+    scalars3: vec4<f32>,
+    flags: vec4<u32>,
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -347,6 +345,7 @@ struct LitResult {
 // colour and sets `resolved`; otherwise the surface fields feed compute_lit.
 fn compute_surface(in: VertexOut) -> Surface {
     let inst = instances[in.instance_idx];
+    let mat = material_gpu_buf[inst.material_id];
 
     var out: Surface;
     out.resolved = false;
@@ -405,7 +404,7 @@ fn compute_surface(in: VertexOut) -> Surface {
     }
 
     var N: vec3<f32>;
-    if inst.use_flat != 0u {
+    if mat.flags.y != 0u {
         let dpx = d_wp_dx;
         let dpy = d_wp_dy;
         var Nf = normalize(cross(dpx, dpy));
@@ -414,8 +413,8 @@ fn compute_surface(in: VertexOut) -> Surface {
     } else if inst.has_normal_map != 0u {
         let nm_sample = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).rgb;
         var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
-        ts_unpacked.x = ts_unpacked.x * inst.normal_strength;
-        ts_unpacked.y = ts_unpacked.y * inst.normal_strength;
+        ts_unpacked.x = ts_unpacked.x * mat.scalars1.z;
+        ts_unpacked.y = ts_unpacked.y * mat.scalars1.z;
         let ts_normal = normalize(ts_unpacked);
         let T = normalize(in.world_tangent.xyz);
         let Ng = normalize(in.world_normal);
@@ -430,7 +429,7 @@ fn compute_surface(in: VertexOut) -> Surface {
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u {
         let raw_ao = textureSampleGrad(ao_map, obj_sampler, s_ao.uv, s_ao.ddx, s_ao.ddy).r;
-        ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
+        ao_factor = mix(vec2<f32>(mat.scalars2.w, mat.scalars3.x).x, vec2<f32>(mat.scalars2.w, mat.scalars3.x).y, raw_ao);
     }
 
     out.base_colour = base_colour;
@@ -442,6 +441,7 @@ fn compute_surface(in: VertexOut) -> Surface {
 // Lighting for the instanced transparent path. Skips shadow sampling.
 fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -> LitResult {
     let inst = instances[in.instance_idx];
+    let mat = material_gpu_buf[inst.material_id];
     var base_colour = surface.base_colour;
     let ao_factor = surface.ao_factor;
     var N = surface.normal;
@@ -465,9 +465,9 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
     var dbg_metallic     = 0.0;
     let lum_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-    if inst.use_pbr != 0u {
-        var metallic  = clamp(inst.metallic,  0.0, 1.0);
-        var roughness = specular_aa_roughness_kernel(max(inst.roughness, 0.04), saa_kernel);
+    if mat.flags.x != 0u {
+        var metallic  = clamp(mat.scalars1.x,  0.0, 1.0);
+        var roughness = specular_aa_roughness_kernel(max(mat.scalars1.y, 0.04), saa_kernel);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
@@ -514,7 +514,7 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         } else {
             let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
             let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
-            let ambient_scale = vec3<f32>(inst.ambient) + hemi_colour * lights_uniform.hemisphere_intensity;
+            let ambient_scale = vec3<f32>(mat.scalars0.x) + hemi_colour * lights_uniform.hemisphere_intensity;
             ambient = ambient_scale * (base_colour * (1.0 - metallic) + F0 * metallic) * ao_factor;
             dbg_ambient_lum = dot(ambient, lum_weights);
         }
@@ -543,12 +543,12 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
             let n_dot_h = max(dot(N, H), 0.0);
             // Energy-normalised Blinn-Phong (matches the PBR path): 1/pi on the
             // diffuse lobe, (shininess + 8) / (8 pi) on the specular lobe.
-            let diffuse_contrib  = inst.diffuse  * n_dot_l * INV_PI;
-            let specular_contrib = inst.specular * pow(n_dot_h, inst.shininess)
-                                 * (inst.shininess + 8.0) * INV_PI * 0.125;
+            let diffuse_contrib  = mat.scalars0.y  * n_dot_l * INV_PI;
+            let specular_contrib = mat.scalars0.z * pow(n_dot_h, mat.scalars0.w)
+                                 * (mat.scalars0.w + 8.0) * INV_PI * 0.125;
             total_colour_contrib += (diffuse_contrib + specular_contrib) * ev.radiance;
         }
-        let ambient_contrib = inst.ambient;
+        let ambient_contrib = mat.scalars0.x;
         let hemi_t = clamp(in.world_normal.z * 0.5 + 0.5, 0.0, 1.0);
         let hemi_colour = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t);
         let hemi_ambient = hemi_colour * lights_uniform.hemisphere_intensity;
@@ -609,7 +609,7 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
 
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     // The instanced path has no emissive texture, so the factor is applied flat.
-    let emissive = instances[in.instance_idx].emissive;
+    let emissive = material_gpu_buf[instances[in.instance_idx].material_id].scalars2.xyz;
     final_rgb += emissive;
     let dbg_emissive_lum = dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722));
 

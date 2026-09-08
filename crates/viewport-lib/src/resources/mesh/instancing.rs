@@ -1263,7 +1263,11 @@ impl DeviceResources {
         }
 
         // Per-instance struct must match `InstanceData` in `mesh_instanced.wgsl`
-        // and `resources::types::InstanceData` (208 bytes).
+        // and the `InstanceData` Rust struct (128 bytes). These instances are
+        // `unlit`, so the material scalars in `material_gpu_buf` (indexed by
+        // `material_id`) are not read; pinning `material_id` to 0 (the default
+        // block) is safe. `has_texture` stays per-instance so the albedo still
+        // samples.
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct GpuInstanceData {
@@ -1271,37 +1275,21 @@ impl DeviceResources {
             colour: [f32; 4],
             selected: u32,
             wireframe: u32,
-            ambient: f32,
-            diffuse: f32,
-            specular: f32,
-            shininess: f32,
             has_texture: u32,
-            use_pbr: u32,
-            metallic: f32,
-            roughness: f32,
             has_normal_map: u32,
             has_ao_map: u32,
             unlit: u32,
             receive_shadows: u32,
-            use_flat: u32,
-            normal_strength: f32,
-            uv_transform: [f32; 4],
-            ao_range: [f32; 2],
+            material_id: u32,
             alpha_cutoff: f32,
             alpha_flag: u32,
-            emissive: [f32; 3],
-            _pad_emissive: f32,
             has_light_probe: u32,
             light_probe_index: u32,
             ignore_clip: u32,
-            _pad_lp: u32,
+            _pad: [u32; 3],
         }
 
-        // Layout matches the WGSL `InstanceData` (and the `InstanceData` Rust
-        // struct); both the explicit `MeshInstanceItem` batches built here and
-        // the auto-instanced items feed the same instanced shaders. Explicit
-        // instance batches do not opt into light probes, so the fields stay 0.
-        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 208);
+        const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 144);
 
         let has_texture = if item
             .texture_id
@@ -1322,30 +1310,18 @@ impl DeviceResources {
                     .unwrap_or([1.0, 1.0, 1.0, 1.0]),
                 selected: 0,
                 wireframe: 0,
-                ambient: 1.0,
-                diffuse: 0.0,
-                specular: 0.0,
-                shininess: 0.0,
                 has_texture,
-                use_pbr: 0,
-                metallic: 0.0,
-                roughness: 0.0,
                 has_normal_map: 0,
                 has_ao_map: 0,
                 unlit: 1,
                 receive_shadows: 0,
-                use_flat: 1,
-                normal_strength: 1.0,
-                uv_transform: [0.0, 0.0, 1.0, 1.0],
-                ao_range: [0.0, 1.0],
+                material_id: 0,
                 alpha_cutoff: 0.5,
                 alpha_flag: 0,
-                emissive: [0.0, 0.0, 0.0],
-                _pad_emissive: 0.0,
                 has_light_probe: 0,
                 light_probe_index: 0,
                 ignore_clip: item.settings.ignore_clip as u32,
-                _pad_lp: 0,
+                _pad: [0; 3],
             }
         };
         let instances: Vec<GpuInstanceData> = match indices {
@@ -1585,7 +1561,13 @@ pub(crate) struct ObjectUniform {
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
 /// Per-instance GPU data for instanced rendering. Matches the WGSL `InstanceData` struct.
 ///
-/// Layout: 192 bytes.
+/// Layout: 144 bytes.
+/// Only genuinely per-instance fields ride here; every material scalar
+/// (PBR terms, `has_*` flags, `ao_range`, alpha, emissive, `normal_strength`)
+/// moved into the per-material `material_gpu_buf`, read via `material_id`. The
+/// instanced shaders fetch those from the buffer, so a shared material is stored
+/// once instead of duplicated across instances. `colour` stays per-instance
+/// (per-instance tinting).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct InstanceData {
@@ -1593,59 +1575,32 @@ pub(crate) struct InstanceData {
     pub(crate) colour: [f32; 4],     //  16 bytes, offset  64
     pub(crate) selected: u32,        //   4 bytes, offset  80
     pub(crate) wireframe: u32,       //   4 bytes, offset  84
-    pub(crate) ambient: f32,         //   4 bytes, offset  88
-    pub(crate) diffuse: f32,         //   4 bytes, offset  92
-    pub(crate) specular: f32,        //   4 bytes, offset  96
-    pub(crate) shininess: f32,       //   4 bytes, offset 100
-    pub(crate) has_texture: u32,     //   4 bytes, offset 104
-    pub(crate) use_pbr: u32,         //   4 bytes, offset 108
-    pub(crate) metallic: f32,        //   4 bytes, offset 112
-    pub(crate) roughness: f32,       //   4 bytes, offset 116
-    pub(crate) has_normal_map: u32,  //   4 bytes, offset 120
-    pub(crate) has_ao_map: u32,      //   4 bytes, offset 124
-    pub(crate) unlit: u32,           //   4 bytes, offset 128
+    /// Which material textures are bound for this batch. These stay per-instance
+    /// (the explicit `MeshInstanceItem` path sets them at upload time); the shading
+    /// scalars and mode flags they gate live in `material_gpu_buf`.
+    pub(crate) has_texture: u32,     //   4 bytes, offset  88
+    pub(crate) has_normal_map: u32,  //   4 bytes, offset  92
+    pub(crate) has_ao_map: u32,      //   4 bytes, offset  96
+    pub(crate) unlit: u32,           //   4 bytes, offset 100
     /// 1 = sample the shadow atlas, 0 = treat the fragment as unshadowed.
-    pub(crate) receive_shadows: u32, //   4 bytes, offset 132
-    /// 1 = recover the shading normal from screen-space derivatives of
-    /// `world_pos` (`ShadingModel::Flat`).
-    pub(crate) use_flat: u32, //   4 bytes, offset 136
-    /// Scales the tangent-space normal XY before the TBN transform. Mirrors
-    /// `Material::normal_strength`; 1.0 is neutral. Occupies the former padding word
-    /// that aligned `uv_transform` to 16, so the struct stride is unchanged.
-    pub(crate) normal_strength: f32, //   4 bytes, offset 140
-    /// Index into the scene-global per-material UV transform buffer
-    /// (`material_gpu_buf`, group 0 binding 21); mirrors
-    /// `ObjectUniform::material_id`. 0 is the identity block. The trailing words
-    /// keep the 16-byte slot the old `uv_transform` vec4 occupied.
-    pub(crate) material_id: u32, //   4 bytes, offset 144
-    pub(crate) _pad_uv: [u32; 3], //  12 bytes, offset 148
-    /// Min/max remap applied to the AO map's R sample (identity `[0, 1]`).
-    /// Mirrors `Material::ao_range`. The instanced mesh shaders do not sample
-    /// the MR texture today, so `metallic_range` / `roughness_range` are
-    /// intentionally absent from `InstanceData`.
-    pub(crate) ao_range: [f32; 2], //   8 bytes, offset 160
-    /// `AlphaMode::Mask` cutoff. Fragments whose albedo alpha is below this are
-    /// discarded when `alpha_flag == 1`. Mirrors `ObjectUniform::alpha_cutoff`.
-    pub(crate) alpha_cutoff: f32, //   4 bytes, offset 168
-    /// 1 = alpha-test (`Mask`) enabled, 0 = no cutout.
-    pub(crate) alpha_flag: u32, //   4 bytes, offset 172
-    /// Self-illumination colour added after lighting; mirrors `Material::emissive`
-    /// (glTF `emissiveFactor`). The instanced path does not sample the emissive
-    /// texture, so emissive-textured materials stay on the per-object path.
-    pub(crate) emissive: [f32; 3], //  12 bytes, offset 176
-    pub(crate) _pad_emissive: f32,   //   4 bytes, offset 188
-    /// 1 = take indirect diffuse from `light_probe_sh` at `light_probe_index`,
-    /// 0 = use the hemisphere/IBL ambient. Mirrors `ObjectUniform::has_light_probe`.
-    pub(crate) has_light_probe: u32, //   4 bytes, offset 192
+    pub(crate) receive_shadows: u32, //   4 bytes, offset 104
+    /// Index into `material_gpu_buf` (group 0 binding 21): this instance's
+    /// transforms and scalar shading params. 0 is the default-material block.
+    pub(crate) material_id: u32, //   4 bytes, offset 108
+    /// `AlphaMode::Mask` cutoff, and 1 = alpha-test enabled. Stay per-instance:
+    /// the instanced shadow-cutout pass reads them without the material buffer.
+    pub(crate) alpha_cutoff: f32, //   4 bytes, offset 112
+    pub(crate) alpha_flag: u32,  //   4 bytes, offset 116
+    /// 1 = take indirect diffuse from `light_probe_sh` at `light_probe_index`.
+    pub(crate) has_light_probe: u32, //   4 bytes, offset 120
     /// Base block index into the shared light-probe SH buffer (group 0 binding 18).
-    pub(crate) light_probe_index: u32, //   4 bytes, offset 196
-    /// 1 = exempt from the global clip planes/volumes. Mirrors
-    /// `ObjectUniform::ignore_clip` / `ItemSettings::ignore_clip`. Offset 200.
-    pub(crate) ignore_clip: u32, //   4 bytes, offset 200
-    pub(crate) _pad_lp: u32,         //   4 bytes, offset 204 (struct stride to 16B)
+    pub(crate) light_probe_index: u32, //   4 bytes, offset 124
+    /// 1 = exempt from the global clip planes/volumes.
+    pub(crate) ignore_clip: u32, //   4 bytes, offset 128
+    pub(crate) _pad: [u32; 3],   //  12 bytes, offset 132 (stride to 144)
 }
 
-const _: () = assert!(std::mem::size_of::<InstanceData>() == 208);
+const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);
 /// Per-instance GPU data for the object-ID pick pass.
 ///
 /// Stores only the model matrix and a sentinel object ID : none of the material
