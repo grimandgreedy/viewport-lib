@@ -61,8 +61,13 @@ impl TexTransformGpu {
 /// - `scalars0` = (ambient, diffuse, specular, shininess)
 /// - `scalars1` = (metallic, roughness, normal_strength, _)
 /// - `scalars2` = (emissive.r, emissive.g, emissive.b, ao_range.min)
-/// - `scalars3` = (ao_range.max, _, _, _)
-/// - `flags`    = (use_pbr, use_flat, _, _)
+/// - `scalars3` = (ao_range.max, param_vis_scale, _, _)
+/// - `flags`    = (use_pbr, use_flat, alpha_mode, param_vis_mode)
+///
+/// `alpha_mode` is 0 Opaque / 1 Mask / 2 Blend / 3 BlendPremultiplied (only the
+/// instanced OIT shader reads it, to skip the premultiply for mode 3).
+/// `param_vis_mode` 0 means off; non-zero selects a procedural UV pattern that
+/// replaces the lit colour (mirrors the per-object `uv_vis_mode`).
 ///
 /// The `has_*` texture flags and `alpha_cutoff` / `alpha_flag` stay per-instance
 /// (in `InstanceData`): the explicit `MeshInstanceItem` path bakes them at upload
@@ -94,13 +99,27 @@ impl MaterialGpu {
             xf[i] = TexTransformGpu::from_transform(&m.effective_texture_transform(*slot));
         }
         let e = m.emissive_nits();
+        // Mirror the per-object `ObjectUniform` derivation (`per_object.rs`).
+        let alpha_mode = match m.alpha_mode {
+            crate::scene::material::AlphaMode::Opaque => 0u32,
+            crate::scene::material::AlphaMode::Mask(_) => 1,
+            crate::scene::material::AlphaMode::Blend => 2,
+            crate::scene::material::AlphaMode::BlendPremultiplied => 3,
+        };
+        let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
+        let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
         MaterialGpu {
             xf,
             scalars0: [m.ambient, m.diffuse, m.specular, m.shininess],
             scalars1: [m.metallic, m.roughness, m.normal_strength, 0.0],
             scalars2: [e[0], e[1], e[2], m.ao_range[0]],
-            scalars3: [m.ao_range[1], 0.0, 0.0, 0.0],
-            flags: [m.is_pbr() as u32, m.is_flat() as u32, 0, 0],
+            scalars3: [m.ao_range[1], param_vis_scale, 0.0, 0.0],
+            flags: [
+                m.is_pbr() as u32,
+                m.is_flat() as u32,
+                alpha_mode,
+                param_vis_mode,
+            ],
         }
     }
 }

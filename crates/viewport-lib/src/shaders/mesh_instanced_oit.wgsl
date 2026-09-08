@@ -78,8 +78,8 @@ struct TexTransform {
 }
 // scalars0 = (ambient, diffuse, specular, shininess)
 // scalars1 = (metallic, roughness, normal_strength, _)
-// scalars2 = (emissive.rgb, ao_min); scalars3 = (ao_max, _, _, _)
-// flags    = (use_pbr, use_flat, _, _)
+// scalars2 = (emissive.rgb, ao_min); scalars3 = (ao_max, param_vis_scale, _, _)
+// flags    = (use_pbr, use_flat, alpha_mode, param_vis_mode)
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
     scalars0: vec4<f32>,
@@ -351,6 +351,35 @@ struct LitResult {
     last_shadow_sample: ShadowSample,
 };
 
+// Procedural UV parameterisation pattern (mirrors mesh.wgsl:param_vis_colour).
+// Replaces the lit colour entirely; driven by the per-material mode/scale.
+fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
+    let col_a      = vec3<f32>(1.0,  1.0,  1.0);
+    let col_b      = vec3<f32>(0.0,  0.0,  0.0);
+    let line_col   = vec3<f32>(0.0,  0.0,  0.0);
+    let bg_col     = vec3<f32>(1.0,  1.0,  1.0);
+    let line_width = 0.05f;
+    let su = uv.x * scale;
+    let sv = uv.y * scale;
+    if mode == 1u {
+        let p = (i32(floor(su)) + i32(floor(sv))) & 1;
+        return select(col_a, col_b, p != 0);
+    } else if mode == 2u {
+        let on_line = fract(su) < line_width || fract(sv) < line_width;
+        return select(bg_col, line_col, on_line);
+    } else if mode == 3u {
+        let d      = uv - vec2<f32>(0.5);
+        let r      = length(d) * scale * 2.0;
+        let theta  = atan2(d.y, d.x);
+        let ring   = i32(floor(r)) & 1;
+        let sector = i32(floor(theta * 4.0 / 3.14159265 + 8.0)) & 1;
+        return select(col_a, col_b, (ring ^ sector) != 0);
+    } else {
+        let r = length(uv - vec2<f32>(0.5)) * scale * 2.0;
+        return select(col_a, col_b, (i32(floor(r)) & 1) != 0);
+    }
+}
+
 // Material prep for the instanced transparent path. Unlit fully determines the
 // colour and sets `resolved`; otherwise the surface fields feed compute_lit.
 fn compute_surface(in: VertexOut) -> Surface {
@@ -407,8 +436,24 @@ fn compute_surface(in: VertexOut) -> Surface {
     if inst.unlit != 0u {
         let alpha = obj_colour.a;
         let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        // alpha_mode 3 (BlendPremultiplied): the colour is already premultiplied,
+        // so it is weighted directly; straight blend premultiplies here.
+        let premult_rgb = select(base_colour * alpha, base_colour, mat.flags.z == 3u);
         out.resolved = true;
-        out.out_oit.accum  = vec4<f32>(base_colour * alpha, alpha) * w;
+        out.out_oit.accum  = vec4<f32>(premult_rgb, alpha) * w;
+        out.out_oit.reveal = alpha;
+        return out;
+    }
+
+    // UV parameterisation visualisation: procedural pattern replaces all lighting.
+    // Mode in flags.w, tile scale in scalars3.y (per-material). Uses the raw mesh
+    // UV, matching the per-object path.
+    if mat.flags.w != 0u {
+        let vis = param_vis_colour(in.uv, mat.flags.w, mat.scalars3.y);
+        let alpha = obj_colour.a;
+        let w = alpha * max(1e-2, min(3e3, 0.03 / (1e-5 + pow(abs(in.clip_pos.z / in.clip_pos.w), 4.0))));
+        out.resolved = true;
+        out.out_oit.accum  = vec4<f32>(vis * alpha, alpha) * w;
         out.out_oit.reveal = alpha;
         return out;
     }

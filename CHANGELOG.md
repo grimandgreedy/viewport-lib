@@ -33,6 +33,12 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
+- **Param-vis and premultiplied-blend materials now instance.** A material with a
+  UV parameterisation visualisation (`param_vis`) or `AlphaMode::BlendPremultiplied`
+  previously fell to the per-object draw path; both now draw through the instanced
+  path, rendering the same as before. The instanced mesh shaders read the
+  per-material param-vis mode/scale and alpha mode from the material buffer. No API
+  change; scenes that use these materials on many instances issue fewer draws.
 - **Per-instance custom data.** `ItemSettings` gains `custom_data: [f32; 8]`, a
   raw per-instance payload that lets instances sharing a `Material` vary their
   appearance without breaking batching, matching Unity's `MaterialPropertyBlock`
