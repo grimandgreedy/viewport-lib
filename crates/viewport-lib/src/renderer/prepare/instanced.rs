@@ -30,6 +30,149 @@ type BatchGroupKey = (
     bool,
 );
 
+/// Form the opaque draw groups for GPU-driven submission and size + upload the
+/// buffers the compaction pass and the count-multi-draw need. Returns whether the
+/// path is active (bindless + native multi-draw + built cull pipelines + at least
+/// one group); when inactive it clears `draw_groups` so the draw loop falls back
+/// to CPU run-forming.
+///
+/// The group key mirrors the draw loop's run key exactly (two-sidedness,
+/// discard-free eligibility, and geometry chunk over contiguous opaque batches),
+/// so the groups drawn here match the runs the CPU path would have formed. The
+/// texture bind group is constant under bindless, so it is not part of the key.
+fn build_and_upload_draw_groups(
+    resources: &DeviceResources,
+    instancing: &mut InstancingState,
+    cull_state: &mut crate::resources::ViewportCullState,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    frame: &FrameData,
+) -> bool {
+    let bindless =
+        resources.instancing.material_texture_binding == MaterialTextureBinding::Bindless;
+    // `multi_draw_supported` (native MULTI_DRAW_INDIRECT_COUNT), not
+    // `multi_draw_active()`: the count variant cannot be emulated, so the
+    // `multi_draw_forced` diagnostic override must not reach this path.
+    let active =
+        bindless && instancing.multi_draw_supported && resources.cull.hdr_solid_pipeline.is_some();
+    if !active {
+        instancing.draw_groups.clear();
+        return false;
+    }
+    let clipping_active = frame
+        .effects
+        .clip
+        .objects
+        .iter()
+        .any(|o| o.enabled && o.clip_geometry);
+    let nodiscard = resources.cull.hdr_solid_nodiscard_pipeline.is_some()
+        && resources
+            .cull
+            .hdr_solid_two_sided_nodiscard_pipeline
+            .is_some();
+
+    let n = instancing.batches.len();
+    let mut group_id = vec![crate::renderer::indirect::NO_GROUP; n];
+    let mut group_arg_base = vec![0u32; n];
+    let mut groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
+    let mut cur: Option<((bool, bool, u32, u32), usize)> = None;
+    for (b, batch) in instancing.batches.iter().enumerate() {
+        // A transparent batch breaks the opaque run (it sits between opaque
+        // batches in the global order, so their args are not contiguous).
+        if batch.is_transparent {
+            cur = None;
+            continue;
+        }
+        let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+            cur = None;
+            continue;
+        };
+        let no_discard = !clipping_active && !batch.has_alpha_mask && nodiscard;
+        let key = (
+            batch.two_sided,
+            no_discard,
+            mesh.vertex_span.chunk,
+            mesh.index_span.chunk,
+        );
+        let gi = match cur {
+            Some((k, gi)) if k == key => {
+                groups[gi].size += 1;
+                gi
+            }
+            _ => {
+                let gi = groups.len();
+                groups.push(crate::renderer::instancing_state::DrawGroup {
+                    arg_base: b as u32,
+                    size: 1,
+                    two_sided: batch.two_sided,
+                    no_discard,
+                });
+                cur = Some((key, gi));
+                gi
+            }
+        };
+        group_id[b] = gi as u32;
+        group_arg_base[b] = groups[gi].arg_base;
+    }
+
+    if groups.is_empty() {
+        instancing.draw_groups.clear();
+        return false;
+    }
+
+    // Per-batch group metadata (scene-global): grow to `n` batches.
+    if instancing.group_buf_capacity < n {
+        let cap = (n * 2).max(64);
+        let mk = |label: &str| {
+            device.create_buffer(&crate::gpu::BufferDescriptor {
+                label: Some(label),
+                size: (cap * std::mem::size_of::<u32>()) as u64,
+                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        instancing.group_id_buf = Some(mk("draw_group_id_buf"));
+        instancing.group_arg_base_buf = Some(mk("draw_group_arg_base_buf"));
+        instancing.group_buf_capacity = cap;
+    }
+    queue.write_buffer(
+        instancing.group_id_buf.as_ref().unwrap(),
+        0,
+        bytemuck::cast_slice(&group_id),
+    );
+    queue.write_buffer(
+        instancing.group_arg_base_buf.as_ref().unwrap(),
+        0,
+        bytemuck::cast_slice(&group_arg_base),
+    );
+
+    // Per-viewport compaction outputs: compacted args (one DrawIndexedIndirect =
+    // 20 bytes per batch slot) and per-group survivor counts (u32; at most `n`).
+    if cull_state.compact_capacity < n {
+        let cap = (n * 2).max(64);
+        cull_state.compacted_args_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("compacted_draw_args_buf"),
+            size: (cap * 20) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::INDIRECT
+                | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        cull_state.draw_counts_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("draw_counts_buf"),
+            size: (cap * std::mem::size_of::<u32>()) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE
+                | crate::gpu::BufferUsages::INDIRECT
+                | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        cull_state.compact_capacity = cap;
+    }
+
+    instancing.draw_groups = groups;
+    true
+}
+
 fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> BatchGroupKey {
     let m = &item.material;
     let textured = binding == MaterialTextureBinding::PerBatch;
@@ -521,6 +664,13 @@ impl ViewportRenderer {
         // shadow-cutout cull path); a no-op on the per-batch binding.
         resources.get_bindless_cull_bind_group(cull_state, device);
 
+        // GPU-driven submission: form the opaque draw groups and size the
+        // per-viewport compaction buffers. Active only under the bindless +
+        // native-multi-draw path; leaves `draw_groups` empty otherwise, so the
+        // draw loop keeps the CPU run-forming path.
+        let gpu_driven =
+            build_and_upload_draw_groups(resources, instancing, cull_state, device, queue, frame);
+
         // Now take immutable borrows to the GPU buffers for dispatch.
         if let (
             Some(aabb_buf),
@@ -584,6 +734,30 @@ impl ViewportRenderer {
                 cull_ts,
                 Some(&extras),
             );
+
+            // GPU-driven submission: compact the per-batch cull args into one
+            // multi-draw range per group. Same encoder, after the cull, so the
+            // storage barrier orders it after the args were written.
+            if gpu_driven {
+                if let (Some(group_id), Some(group_arg_base), Some(compacted), Some(counts)) = (
+                    instancing.group_id_buf.as_ref(),
+                    instancing.group_arg_base_buf.as_ref(),
+                    cull_state.compacted_args_buf.as_ref(),
+                    cull_state.draw_counts_buf.as_ref(),
+                ) {
+                    cull.compact_draws(
+                        &mut encoder,
+                        device,
+                        queue,
+                        batch_count,
+                        indirect_buf,
+                        group_arg_base,
+                        group_id,
+                        compacted,
+                        counts,
+                    );
+                }
+            }
 
             // Copy indirect_args_buf to the CPU-readable staging buffer so the
             // visible instance count can be read back on a later frame. The

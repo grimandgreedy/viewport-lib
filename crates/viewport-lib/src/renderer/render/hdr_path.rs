@@ -790,12 +790,87 @@ impl ViewportRenderer {
                                 // transparent batch sits between two opaque ones) so a
                                 // multi-draw never sweeps in an entry the CPU skipped.
                                 let multi_draw = self.instancing.multi_draw_active();
+                                // GPU-driven submission: when the compaction pass
+                                // precomputed draw groups (bindless + native
+                                // multi-draw-count), issue one
+                                // multi_draw_indexed_indirect_count per group and
+                                // skip the CPU run-forming entirely.
+                                let mut did_groups = false;
+                                if !self.instancing.draw_groups.is_empty() {
+                                    if let (Some(compacted), Some(counts), Some(bg)) = (
+                                        cull0.compacted_args_buf.as_ref(),
+                                        cull0.draw_counts_buf.as_ref(),
+                                        cull0.bindless_cull_bind_group.as_ref(),
+                                    ) {
+                                        render_pass.set_bind_group(1, bg, &[]);
+                                        let mut cur_pipe: Option<(bool, bool)> = None;
+                                        let mut cur_chunks: Option<(u32, u32)> = None;
+                                        for (gidx, group) in
+                                            self.instancing.draw_groups.iter().enumerate()
+                                        {
+                                            let Some(first) = self
+                                                .instancing
+                                                .batches
+                                                .get(group.arg_base as usize)
+                                            else {
+                                                continue;
+                                            };
+                                            let Some(mesh) =
+                                                resources.mesh_store.get(first.mesh_id)
+                                            else {
+                                                continue;
+                                            };
+                                            let pipe_key = (group.two_sided, group.no_discard);
+                                            if cur_pipe != Some(pipe_key) {
+                                                let key = PipelineKey {
+                                                    two_sided: group.two_sided,
+                                                    no_discard_eligible: group.no_discard,
+                                                    ..PipelineKey::default()
+                                                };
+                                                render_pass.set_pipeline(select_opaque_solid(
+                                                    key,
+                                                    pipeline,
+                                                    pipeline_two_sided,
+                                                    nodiscard_pipes.0,
+                                                    nodiscard_pipes.1,
+                                                ));
+                                                cur_pipe = Some(pipe_key);
+                                            }
+                                            let chunks =
+                                                (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                            if cur_chunks != Some(chunks) {
+                                                render_pass.set_vertex_buffer(
+                                                    0,
+                                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                                );
+                                                render_pass.set_index_buffer(
+                                                    resources.geometry.index_chunk_slice(chunks.1),
+                                                    crate::gpu::IndexFormat::Uint32,
+                                                );
+                                                cur_chunks = Some(chunks);
+                                            }
+                                            render_pass.multi_draw_indexed_indirect_count(
+                                                compacted,
+                                                group.arg_base as u64 * 20,
+                                                counts,
+                                                gidx as u64 * 4,
+                                                group.size,
+                                            );
+                                            self.frame_main_draw_commands
+                                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        }
+                                        did_groups = true;
+                                    }
+                                }
                                 let mut cur_pipe: Option<(bool, bool)> = None;
                                 let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
                                 let mut cur_chunks: Option<(u32, u32)> = None;
                                 let mut run_start: u64 = 0;
                                 let mut run_len: u32 = 0;
-                                for (batch_global_idx, batch) in &opaque_batches {
+                                for (batch_global_idx, batch) in opaque_batches
+                                    .iter()
+                                    .take(if did_groups { 0 } else { usize::MAX })
+                                {
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
                                     };

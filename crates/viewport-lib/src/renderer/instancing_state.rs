@@ -5,6 +5,21 @@
 use super::indirect;
 use super::types::InstancedBatch;
 
+/// One GPU-driven submission group: a maximal run of contiguous opaque instanced
+/// batches sharing pipeline variant and geometry chunk, drawn with a single
+/// `multi_draw_indexed_indirect_count`. `arg_base` is the group's first batch
+/// index (its base into the compacted args + the per-batch args), `size` the
+/// number of batches (the multi-draw `max_count`); `two_sided` / `no_discard`
+/// pick the pipeline. Built at prepare only under the bindless + native-multi-draw
+/// GPU-driven path; empty otherwise.
+#[derive(Clone, Copy)]
+pub(crate) struct DrawGroup {
+    pub(crate) arg_base: u32,
+    pub(crate) size: u32,
+    pub(crate) two_sided: bool,
+    pub(crate) no_discard: bool,
+}
+
 pub(crate) struct InstancingState {
     /// Instanced batches prepared for the current frame. Empty when using the
     /// per-object path.
@@ -98,6 +113,18 @@ pub(crate) struct InstancingState {
     /// the primary camera and rendered once, so this is scene-scoped rather than
     /// per-viewport.
     pub(crate) shadow_cull: crate::resources::ShadowCullState,
+    /// GPU-driven submission groups for the opaque instanced pass, rebuilt each
+    /// frame under the bindless + native-multi-draw path (empty otherwise). The
+    /// draw loop iterates these instead of re-forming runs from the batch list.
+    pub(crate) draw_groups: Vec<DrawGroup>,
+    /// Per-batch group index (`group_id`) for the compaction pass, scene-global.
+    /// `indirect::NO_GROUP` for a batch not in a compacted group (transparent, or
+    /// when the GPU-driven path is inactive).
+    pub(crate) group_id_buf: Option<crate::gpu::Buffer>,
+    /// Per-batch compacted-args base (`group_arg_base`) for the compaction pass.
+    pub(crate) group_arg_base_buf: Option<crate::gpu::Buffer>,
+    /// Capacity (in batches) of `group_id_buf` / `group_arg_base_buf`.
+    pub(crate) group_buf_capacity: usize,
 }
 
 impl InstancingState {
@@ -136,6 +163,10 @@ impl InstancingState {
             instance_gen: 0,
             batches_gen: 0,
             shadow_cull: crate::resources::ShadowCullState::new(),
+            draw_groups: Vec::new(),
+            group_id_buf: None,
+            group_arg_base_buf: None,
+            group_buf_capacity: 0,
         }
     }
 }

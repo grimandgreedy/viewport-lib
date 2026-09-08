@@ -35,6 +35,13 @@ pub(super) struct MainCullExtras<'a> {
     pub(super) do_occlusion: bool,
 }
 
+/// Per-batch group assignment for GPU draw-list compaction: which pipeline group
+/// a batch belongs to (`group_id`, keying the survivor counter) and the batch
+/// index at which that group's compacted args start (`group_arg_base`). A
+/// transparent batch, or any batch not part of a compacted opaque group, carries
+/// `group_id = NO_GROUP` and is skipped by the compaction pass.
+pub(super) const NO_GROUP: u32 = u32::MAX;
+
 /// Cull compute pipelines and the lib's shared scratch buffers.
 pub(super) struct CullResources {
     /// Compute pipeline for `cull_instances` (workgroup 64).
@@ -43,6 +50,16 @@ pub(super) struct CullResources {
     write_indirect_args_pipeline: crate::gpu::ComputePipeline,
     /// Shared bind group layout for both pipelines (6 entries, all COMPUTE).
     bgl: crate::gpu::BindGroupLayout,
+    /// Compute pipeline for `compact_draws`: packs each pipeline group's visible
+    /// batch draw args to the front of its range and counts the survivors, so the
+    /// colour pass issues one multi_draw_indexed_indirect_count per group. Only
+    /// used on the GPU-driven submission path (bindless + native multi-draw).
+    compact_pipeline: crate::gpu::ComputePipeline,
+    /// Bind group layout for `compact_pipeline` (6 entries, all COMPUTE).
+    compact_bgl: crate::gpu::BindGroupLayout,
+    /// Uniform (batch_count) for the compaction dispatch. One slot, overwritten
+    /// each dispatch.
+    compact_params_buf: crate::gpu::Buffer,
     /// Frustum uniform for the main-camera dispatch. One slot, overwritten
     /// each frame.
     pub(super) frustum_buf: crate::gpu::Buffer,
@@ -100,6 +117,34 @@ impl CullResources {
             &shader,
             "write_indirect_args",
         );
+
+        let compact_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("draw_compact_bgl"),
+            entries: &Self::compact_bgl_entries(),
+        });
+        let compact_shader = crate::resources::builders::wgsl_module(
+            device,
+            "draw_compact_shader",
+            crate::resources::builders::wgsl_source!("draw_compact"),
+        );
+        let compact_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "draw_compact_pipeline_layout",
+            &[&compact_bgl],
+        );
+        let compact_pipeline = crate::resources::builders::compute_pipeline(
+            device,
+            "draw_compact_pipeline",
+            &compact_layout,
+            &compact_shader,
+            "compact_draws",
+        );
+        let compact_params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("draw_compact_params_buf"),
+            size: 16, // vec4-aligned CompactUniform (batch_count + pad)
+            usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let frustum_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("cull_frustum_buf"),
@@ -168,6 +213,9 @@ impl CullResources {
             cull_instances_pipeline,
             write_indirect_args_pipeline,
             bgl,
+            compact_pipeline,
+            compact_bgl,
+            compact_params_buf,
             frustum_buf,
             cascade_frustum_bufs,
             scratch_meta_buf,
@@ -365,6 +413,103 @@ impl CullResources {
     /// `batch_meta` and `counter` buffers.
     pub(super) fn scratch_single_mesh_buffers(&self) -> (&crate::gpu::Buffer, &crate::gpu::Buffer) {
         (&self.scratch_meta_buf, &self.scratch_counter_buf)
+    }
+
+    /// Run the draw-list compaction pass: read the per-batch cull args from
+    /// `src_args`, pack each pipeline group's visible batches to the front of its
+    /// range in `dst_args`, and write the survivor count per group into
+    /// `draw_counts`. `draw_counts` is zeroed first (its atomics accumulate the
+    /// per-group counts). Runs in its own compute pass so the automatic
+    /// storage barrier orders it after the cull that filled `src_args`.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compact_draws(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        batch_count: u32,
+        src_args: &crate::gpu::Buffer,
+        group_arg_base: &crate::gpu::Buffer,
+        group_id: &crate::gpu::Buffer,
+        dst_args: &crate::gpu::Buffer,
+        draw_counts: &crate::gpu::Buffer,
+    ) {
+        queue.write_buffer(
+            &self.compact_params_buf,
+            0,
+            bytemuck::cast_slice(&[batch_count, 0u32, 0u32, 0u32]),
+        );
+        // The survivor counters accumulate via atomicAdd, so start from zero.
+        encoder.clear_buffer(draw_counts, 0, None);
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("draw_compact_bg"),
+            layout: &self.compact_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.compact_params_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: src_args.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: group_arg_base.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: group_id.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dst_args.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: draw_counts.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
+            label: Some("draw_compact_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.compact_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(batch_count.div_ceil(64), 1, 1);
+    }
+
+    fn compact_bgl_entries() -> [crate::gpu::BindGroupLayoutEntry; 6] {
+        let compute = crate::gpu::ShaderStages::COMPUTE;
+        let storage = |binding: u32, read_only: bool| crate::gpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: crate::gpu::BindingType::Buffer {
+                ty: crate::gpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        [
+            // binding 0: params uniform (batch_count)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: compute,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            storage(1, true),  // src_args
+            storage(2, true),  // group_arg_base
+            storage(3, true),  // group_id
+            storage(4, false), // dst_args
+            storage(5, false), // draw_counts (atomic)
+        ]
     }
 
     fn bgl_entries() -> [crate::gpu::BindGroupLayoutEntry; CULL_BGL_ENTRY_COUNT] {

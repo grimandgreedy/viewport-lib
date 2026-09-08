@@ -912,6 +912,17 @@ pub(crate) struct ViewportCullState {
     /// draws under `Bindless` instead of `instance_cull_bind_groups`. Rebuilt with
     /// the same `built_gen` / `built_free_epoch` staleness checks as the map.
     pub(crate) bindless_cull_bind_group: Option<crate::gpu::BindGroup>,
+    /// GPU-driven submission (bindless + native multi-draw only): this viewport's
+    /// compacted draw args, holding each pipeline group's visible batches packed to
+    /// the front of its range. Written by the compaction pass from this viewport's
+    /// `indirect_args_buf`; read by `multi_draw_indexed_indirect_count`.
+    pub(crate) compacted_args_buf: Option<crate::gpu::Buffer>,
+    /// Per-group survivor counts for this viewport, read as the count buffer by
+    /// `multi_draw_indexed_indirect_count`. Written by the compaction pass.
+    pub(crate) draw_counts_buf: Option<crate::gpu::Buffer>,
+    /// Capacity (in batches) of `compacted_args_buf` and (in groups) of
+    /// `draw_counts_buf`.
+    pub(crate) compact_capacity: usize,
     /// Generation of the shared instance buffers the main cull bind groups were
     /// built against. When it falls behind `InstancingState::instance_gen` the
     /// shared instance storage buffer was rebuilt, so those bind groups (which
@@ -940,6 +951,9 @@ impl ViewportCullState {
             batch_output_capacity: 0,
             instance_cull_bind_groups: std::collections::HashMap::new(),
             bindless_cull_bind_group: None,
+            compacted_args_buf: None,
+            draw_counts_buf: None,
+            compact_capacity: 0,
             built_gen: u64::MAX,
             built_free_epoch: u64::MAX,
             hiz: None,
