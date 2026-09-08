@@ -117,8 +117,19 @@ struct TexTransform {
     offset_scale: vec4<f32>,   // (offset.x, offset.y, scale.x, scale.y)
     rot_tc: vec4<f32>,         // (rotation_radians, f32(uv_set), 0, 0)
 }
+// The per-object mesh path only reads the UV transforms (`xf`); the scalar and
+// flag blocks are consumed by the instanced path. They are declared here so the
+// WGSL array stride matches the Rust MaterialGpu (272 bytes): omitting them
+// shrinks the stride and misreads every entry past material_id 0.
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
+    scalars0: vec4<f32>,
+    scalars1: vec4<f32>,
+    scalars2: vec4<f32>,
+    scalars3: vec4<f32>,
+    flags: vec4<u32>,
+    backface_colour: vec4<f32>,
+    mr_range: vec4<f32>,
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
