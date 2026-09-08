@@ -30,9 +30,14 @@ pub(crate) fn is_instanceable(
 ) -> bool {
     !item.settings.hidden
         && item.active_attribute.is_none()
-        // Material-plugin items select a per-item pipeline set and a group-3
-        // params bind; the instanced path has neither, so they draw per-object.
-        && item.material.shading_plugin.is_none()
+        // Material-plugin items instance once the plugin's instanced pipeline set
+        // is built (the plugin's shading composed onto the instanced modules, on
+        // the group-3 layout). Until then, or under bindless / on an unknown id
+        // where no instanced set exists, they draw through the per-object path.
+        && match item.material.shading_plugin {
+            None => true,
+            Some(pid) => resources.material_plugin_instanced_ready(pid),
+        }
         // A GPU vertex warp is a per-object-only feature: the instanced pipeline
         // has no warp support and would draw the mesh undeformed, ignoring
         // `warp_scale`. Keep warp items on the per-object path (matching the
@@ -204,6 +209,57 @@ mod tests {
         assert!(
             is_instanceable(&item, &resources, &[]),
             "a styled-backface item should instance",
+        );
+    }
+
+    /// A material-plugin item instances only once the plugin's instanced
+    /// pipeline set is built: cold, it must fall back to the per-object path
+    /// (where its plugin still shades); once built, `is_instanceable` admits it.
+    #[test]
+    fn shading_plugin_item_instances_once_its_set_is_built() {
+        use crate::MaterialPlugin;
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        // A bare DeviceResources defaults to the per-batch texture path, which is
+        // where the plugin instanced set is built.
+        let mesh = crate::geometry::primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &mesh).unwrap();
+
+        struct Toon;
+        impl MaterialPlugin for Toon {
+            fn name(&self) -> &'static str {
+                "toon_instanceable_probe"
+            }
+            fn wgsl_body(&self) -> String {
+                "fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {\n\
+                 \x20   return surf.base_colour * light.radiance * light.shadow;\n\
+                 }\n"
+                .to_string()
+            }
+        }
+        let id = resources
+            .register_material_plugin(&device, &Toon)
+            .expect("register");
+
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.material.shading_plugin = Some(id);
+
+        assert!(
+            !is_instanceable(&item, &resources, &[]),
+            "a plugin item stays per-object until its instanced set is built",
+        );
+
+        resources.ensure_instanced_pipelines(&device);
+        resources.ensure_material_plugin_instanced_pipelines(&device, id);
+
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a plugin item instances once its instanced set is ready",
         );
     }
 

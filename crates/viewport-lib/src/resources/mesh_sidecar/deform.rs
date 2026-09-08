@@ -1643,6 +1643,7 @@ impl DeviceResources {
         // plugin id rebuilds its set from the fresh composition.
         for plugin in self.material_plugins.values_mut() {
             plugin.pipelines = None;
+            plugin.instanced_pipelines = None;
         }
         let registrations = self.deform.registrations.clone();
 

@@ -102,9 +102,9 @@ struct MaterialGpu {
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
 // Per-instance custom-data payload (group 0, binding 22). Raw [f32; 8] per
-// instance, indexed by custom_data_id. Slots 0..3 add to emissive (nits); slots
-// 3..8 are a raw channel reserved for material plugins. custom_data_id 0 is the
-// zero block.
+// instance, indexed by custom_data_id. Slots 0..3 add to emissive (nits), slot 3
+// is pad, and slots 4..8 (`data1`) are the raw material-plugin channel, surfaced
+// to a plugin hook as `surf.attr`. custom_data_id 0 is the zero block.
 struct CustomData {
     data0: vec4<f32>,   // slots 0..4
     data1: vec4<f32>,   // slots 4..8
@@ -354,9 +354,12 @@ fn build_shading_surface(
     surf.uv_ddx = dpdx(surface.mat_uv);
     surf.uv_ddy = dpdy(surface.mat_uv);
     surf.front_facing = surface.front_facing;
-    // Filled from the injected varying in modules whose hook reads the
-    // per-vertex extension attribute; zero everywhere else.
-    surf.attr = vec4<f32>(0.0);
+    // On the instanced path `attr` carries the per-instance raw material
+    // channel: custom_data slots 4..8 (`data1`), the block reserved for material
+    // plugins (slots 0..3 add to emissive, slot 3 is pad). A plugin hook that
+    // instances reads its per-instance inputs here; `custom_data_id` 0 is the
+    // shared all-zero block, so instances that set no custom data read zero.
+    surf.attr = instance_custom_data_buf[instances[in.instance_idx].custom_data_id].data1;
     return surf;
 }
 

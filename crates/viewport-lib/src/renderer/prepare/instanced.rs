@@ -18,6 +18,11 @@ use viewport_lib_types::ids::TextureId;
 /// against. Opaque materials cast shadows through the discard-free pipeline that
 /// samples no texture, so they collapse fully.
 ///
+/// A material plugin also splits the key: plugin items select a per-plugin
+/// pipeline set and a per-variant group-3 bind group that apply to the whole
+/// draw, so two items batch together only when their plugin selection matches
+/// (`None` for built-in shading). Carried as `(plugin_index, variant_index)`.
+///
 /// Used by both the sort comparator and the batch-split predicate below, so the
 /// two cannot drift out of sync.
 type BatchGroupKey = (
@@ -28,6 +33,7 @@ type BatchGroupKey = (
     Option<TextureId>,
     Option<TextureId>,
     bool,
+    Option<(u32, u32)>,
 );
 
 /// Form the opaque draw groups for GPU-driven submission and size + upload the
@@ -211,6 +217,8 @@ fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> B
         keep(m.metallic_roughness_texture_id),
         keep(m.emissive_texture_id),
         m.is_two_sided(),
+        m.shading_plugin
+            .map(|p| (p.plugin_index(), p.variant_index())),
     )
 }
 
@@ -470,6 +478,10 @@ impl ViewportRenderer {
                                         crate::scene::material::AlphaMode::Mask(_)
                                     )
                                 }),
+                            // Batch-uniform: `shading_plugin` is part of the
+                            // batch key, so every item in the batch selects the
+                            // same plugin (or built-in shading).
+                            shading_plugin: rep.material.shading_plugin,
                         });
 
                         batch_start = i;
@@ -882,5 +894,45 @@ mod batch_key_tests {
             batch_group_key(&one_sided, MaterialTextureBinding::Bindless),
             batch_group_key(&two_sided, MaterialTextureBinding::Bindless),
         );
+    }
+
+    #[test]
+    fn shading_plugin_splits_and_matches() {
+        use crate::scene::material::MaterialPluginId;
+        for binding in [
+            MaterialTextureBinding::PerBatch,
+            MaterialTextureBinding::Bindless,
+        ] {
+            let plain = item_with(0, None, false);
+            let mut plug_a = item_with(0, None, false);
+            plug_a.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 0));
+            let mut plug_a2 = item_with(0, None, false);
+            plug_a2.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 0));
+            let mut plug_b_variant = item_with(0, None, false);
+            plug_b_variant.material.shading_plugin = Some(MaterialPluginId::from_parts(3, 1));
+            let mut plug_c = item_with(0, None, false);
+            plug_c.material.shading_plugin = Some(MaterialPluginId::from_parts(4, 0));
+
+            // Built-in shading never batches with a plugin.
+            assert_ne!(
+                batch_group_key(&plain, binding),
+                batch_group_key(&plug_a, binding),
+            );
+            // Same plugin and variant batch together.
+            assert_eq!(
+                batch_group_key(&plug_a, binding),
+                batch_group_key(&plug_a2, binding),
+            );
+            // A different variant of the same plugin splits (its group-3 params
+            // and textures differ), as does a different plugin.
+            assert_ne!(
+                batch_group_key(&plug_a, binding),
+                batch_group_key(&plug_b_variant, binding),
+            );
+            assert_ne!(
+                batch_group_key(&plug_a, binding),
+                batch_group_key(&plug_c, binding),
+            );
+        }
     }
 }

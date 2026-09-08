@@ -201,7 +201,7 @@ impl DeviceResources {
     }
 
     /// Whether the instanced colour pipelines bind material textures bindlessly.
-    fn bindless_textures(&self) -> bool {
+    pub(crate) fn bindless_textures(&self) -> bool {
         self.instancing.material_texture_binding
             == crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless
     }

@@ -68,6 +68,13 @@ pub(crate) struct InstancedBatch {
     /// discard-free early-Z pipeline: a batch with a masked instance must keep
     /// the full shader so the per-fragment alpha discard still runs.
     pub has_alpha_mask: bool,
+    /// The material plugin whose composed instanced shading this batch draws
+    /// with, or `None` for built-in shading. All items in the batch share it
+    /// (it is part of the batch key). A plugin batch draws through the plugin's
+    /// instanced pipeline plus its group-3 params bind, outside the GPU-cull /
+    /// count-multi-draw run-forming, so the field also flags "skip me" in those
+    /// loops.
+    pub shading_plugin: Option<crate::scene::material::MaterialPluginId>,
 }
 
 mod clip;

@@ -305,13 +305,26 @@ impl ViewportRenderer {
         let mut plugin_builds = 0usize;
         let mut plugin_builds_deferred = 0usize;
         let mut cold_seen: Vec<u32> = Vec::new();
+        // Instanced plugin pipelines only exist on the per-batch texture path and
+        // are drawn only by the HDR scene / OIT passes; under bindless, or on an
+        // LDR frame (whose `emit_draw_calls` path draws plugins per-object), they
+        // stay per-object, so do not spend build slots on a set that never draws.
+        let instanced_plugins_possible =
+            !resources.bindless_textures() && frame.effects.display.is_hdr();
         for item in scene_items.iter() {
             let Some(pid) = item.material.shading_plugin else {
                 continue;
             };
-            if !resources.material_plugin_needs_build(pid)
-                || cold_seen.contains(&pid.plugin_index())
-            {
+            if cold_seen.contains(&pid.plugin_index()) {
+                continue;
+            }
+            // The per-object set is the built-in-shading fallback; the instanced
+            // set lets plugin items join instanced batches (see `is_instanceable`).
+            // Build both so a plugin material reaches full parity.
+            let need_object = resources.material_plugin_needs_build(pid);
+            let need_instanced =
+                instanced_plugins_possible && !resources.material_plugin_instanced_ready(pid);
+            if !need_object && !need_instanced {
                 continue;
             }
             cold_seen.push(pid.plugin_index());
@@ -319,7 +332,15 @@ impl ViewportRenderer {
                 plugin_builds_deferred += 1;
                 continue;
             }
-            resources.ensure_material_plugin_pipelines(device, pid);
+            if need_object {
+                resources.ensure_material_plugin_pipelines(device, pid);
+            }
+            if need_instanced {
+                // The instanced set reuses the built-in instanced group-1 layout;
+                // ensure it exists (idempotent) before composing on top of it.
+                resources.ensure_instanced_pipelines(device);
+                resources.ensure_material_plugin_instanced_pipelines(device, pid);
+            }
             plugin_builds += 1;
         }
         if plugin_builds_deferred > 0 {

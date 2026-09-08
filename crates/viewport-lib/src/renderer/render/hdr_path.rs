@@ -869,6 +869,13 @@ impl ViewportRenderer {
                                     .iter()
                                     .take(if did_groups { 0 } else { usize::MAX })
                                 {
+                                    // Plugin batches draw in the dedicated plugin
+                                    // sub-loop below; skipping here breaks the
+                                    // current run on the global-index gap, exactly
+                                    // as an interleaved transparent batch does.
+                                    if batch.shading_plugin.is_some() {
+                                        continue;
+                                    }
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
                                     };
@@ -981,6 +988,10 @@ impl ViewportRenderer {
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for (_, batch) in &opaque_batches {
+                                // Plugin batches draw in the plugin sub-loop below.
+                                if batch.shading_plugin.is_some() {
+                                    continue;
+                                }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
@@ -1019,6 +1030,84 @@ impl ViewportRenderer {
                                     cur_pipe = Some((batch.two_sided, no_discard));
                                 }
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                if cur_chunks != Some(chunks) {
+                                    render_pass.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_chunk_slice(chunks.0),
+                                    );
+                                    render_pass.set_index_buffer(
+                                        resources.geometry.index_chunk_slice(chunks.1),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    self.frame_main_buffer_binds
+                                        .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+                                    cur_chunks = Some(chunks);
+                                }
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
+                                render_pass.draw_indexed(
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
+                                    batch.instance_offset
+                                        ..batch.instance_offset + batch.instance_count,
+                                );
+                                self.frame_main_draw_commands
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+
+                        // Material-plugin opaque batches: one instanced call each,
+                        // through the plugin's composed instanced pipeline plus its
+                        // group-3 params bind. The loops above skip plugin batches
+                        // (they sit outside GPU-cull / count-multi-draw run-forming),
+                        // so this covers them whether or not culling drew the rest.
+                        if opaque_batches
+                            .iter()
+                            .any(|(_, b)| b.shading_plugin.is_some())
+                        {
+                            bind_deform_group!(
+                                render_pass,
+                                resources,
+                                &resources.deform.dummy_bind_group
+                            );
+                            let mut cur_chunks: Option<(u32, u32)> = None;
+                            for (_, batch) in &opaque_batches {
+                                if batch.shading_plugin.is_none() {
+                                    continue;
+                                }
+                                let Some((plug_pipes, mat_bg)) =
+                                    resources.material_plugin_instanced_draw(batch.shading_plugin)
+                                else {
+                                    continue;
+                                };
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                    continue;
+                                };
+                                let mat_key = (
+                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch
+                                        .metallic_roughness_id
+                                        .map(|t| t.raw())
+                                        .unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                );
+                                let Some(inst_tex_bg) =
+                                    resources.instanced_colour_bind_group(mat_key)
+                                else {
+                                    continue;
+                                };
+                                let no_discard = !clipping_active && !batch.has_alpha_mask;
+                                let key = PipelineKey {
+                                    two_sided: batch.two_sided,
+                                    no_discard_eligible: no_discard,
+                                    ..PipelineKey::default()
+                                };
+                                render_pass.set_pipeline(plug_pipes.hdr_opaque.get(key));
+                                render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                bind_material_group!(render_pass, mat_bg);
                                 let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                                 if cur_chunks != Some(chunks) {
                                     render_pass.set_vertex_buffer(
@@ -2844,7 +2933,10 @@ impl ViewportRenderer {
                                 .enumerate()
                                 .take(cpu_run_limit)
                             {
-                                if !batch.is_transparent {
+                                // Plugin transparent batches draw in the plugin OIT
+                                // sub-loop below; skipping breaks the run on the
+                                // global-index gap like an opaque batch does.
+                                if !batch.is_transparent || batch.shading_plugin.is_some() {
                                     continue;
                                 }
                                 let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id)
@@ -2947,7 +3039,9 @@ impl ViewportRenderer {
                         let mut cur_chunks: Option<(u32, u32)> = None;
                         let mut cur_two_sided: Option<bool> = None;
                         for batch in &self.instancing.batches {
-                            if !batch.is_transparent {
+                            // Plugin transparent batches draw in the plugin OIT
+                            // sub-loop below.
+                            if !batch.is_transparent || batch.shading_plugin.is_some() {
                                 continue;
                             }
                             let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
@@ -2977,6 +3071,78 @@ impl ViewportRenderer {
                                 cur_two_sided = Some(batch.two_sided);
                             }
                             oit_pass.set_bind_group(1, inst_tex_bg, &[]);
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if cur_chunks != Some(chunks) {
+                                oit_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                oit_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                self.frame_main_buffer_binds
+                                    .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+                                cur_chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            oit_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                batch.instance_offset..batch.instance_offset + batch.instance_count,
+                            );
+                            self.frame_main_draw_commands
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+
+                    // Material-plugin transparent batches: one instanced OIT call
+                    // each, through the plugin's composed instanced OIT pipeline
+                    // plus its group-3 params bind. The OIT loops above skip plugin
+                    // batches, so this covers them under both the culled and direct
+                    // transparent paths.
+                    if self
+                        .instancing
+                        .batches
+                        .iter()
+                        .any(|b| b.is_transparent && b.shading_plugin.is_some())
+                    {
+                        bind_deform_group!(oit_pass, resources, &resources.deform.dummy_bind_group);
+                        let mut cur_chunks: Option<(u32, u32)> = None;
+                        for batch in &self.instancing.batches {
+                            if !batch.is_transparent || batch.shading_plugin.is_none() {
+                                continue;
+                            }
+                            let Some((plug_pipes, mat_bg)) =
+                                resources.material_plugin_instanced_draw(batch.shading_plugin)
+                            else {
+                                continue;
+                            };
+                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                continue;
+                            };
+                            let mat_key = (
+                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch
+                                    .metallic_roughness_id
+                                    .map(|t| t.raw())
+                                    .unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            );
+                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key)
+                            else {
+                                continue;
+                            };
+                            let key = PipelineKey {
+                                two_sided: batch.two_sided,
+                                ..PipelineKey::default()
+                            };
+                            oit_pass.set_pipeline(plug_pipes.oit.get(key));
+                            oit_pass.set_bind_group(1, inst_tex_bg, &[]);
+                            bind_material_group!(oit_pass, mat_bg);
                             let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                             if cur_chunks != Some(chunks) {
                                 oit_pass.set_vertex_buffer(
