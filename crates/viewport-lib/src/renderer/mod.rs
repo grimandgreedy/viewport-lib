@@ -912,7 +912,14 @@ impl ViewportRenderer {
                 sample_count,
                 pipeline_cache_data,
             ),
-            instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
+            instancing: InstancingState::new(
+                gpu_culling_supported,
+                multi_draw_supported,
+                // Bindless material textures need the texture-array feature set
+                // (Vulkan/DX12) and the bindless draw path; until that path
+                // exists every device uses the per-batch texture binding.
+                instancing_state::MaterialTextureBinding::PerBatch,
+            ),
             item_type_plugins: std::collections::HashMap::new(),
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),

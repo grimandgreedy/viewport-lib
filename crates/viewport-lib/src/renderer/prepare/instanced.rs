@@ -1,6 +1,45 @@
 //! Instanced (GPU-driven) mesh draw preparation.
 
 use super::*;
+use crate::renderer::instancing_state::MaterialTextureBinding;
+use viewport_lib_types::ids::TextureId;
+
+/// The batch grouping key for one instanced item: items with an equal key share
+/// a batch (same pipeline state and, under `PerBatch`, the same texture bind
+/// group). `mesh_id` and `two_sided` are always part of the key; the five
+/// material texture ids are only included under `PerBatch` binding. Under
+/// `Bindless` the shader indexes a texture array by a per-material index, so the
+/// texture ids collapse to `None` and instances of one mesh with different
+/// materials batch together.
+///
+/// Used by both the sort comparator and the batch-split predicate below, so the
+/// two cannot drift out of sync.
+type BatchGroupKey = (
+    usize,
+    Option<TextureId>,
+    Option<TextureId>,
+    Option<TextureId>,
+    Option<TextureId>,
+    Option<TextureId>,
+    bool,
+);
+
+fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> BatchGroupKey {
+    let m = &item.material;
+    let textured = binding == MaterialTextureBinding::PerBatch;
+    // Under bindless the texture ids drop out of the key (the array is bound
+    // once per frame); keep them only for the per-batch binding path.
+    let keep = |id: Option<TextureId>| if textured { id } else { None };
+    (
+        item.mesh_id.index(),
+        keep(m.texture_id),
+        keep(m.normal_map_id),
+        keep(m.ao_map_id),
+        keep(m.metallic_roughness_texture_id),
+        keep(m.emissive_texture_id),
+        m.is_two_sided(),
+    )
+}
 
 impl ViewportRenderer {
     /// Build instanced batches for the current frame: filter eligible items,
@@ -65,28 +104,13 @@ impl ViewportRenderer {
                 .filter(|(idx, _)| instanceable[*idx])
                 .collect();
 
+            let binding = instancing.material_texture_binding;
             sorted_items.sort_unstable_by(|(_, a), (_, b)| {
-                // Batch grouping key (must match the batch-split condition).
-                // two_sided is part of the key because the two pipelines differ
-                // in cull mode, so a batch must not mix one- and two-sided items.
-                let batch_ord = (
-                    a.mesh_id.index(),
-                    a.material.texture_id,
-                    a.material.normal_map_id,
-                    a.material.ao_map_id,
-                    a.material.metallic_roughness_texture_id,
-                    a.material.emissive_texture_id,
-                    a.material.is_two_sided(),
-                )
-                    .cmp(&(
-                        b.mesh_id.index(),
-                        b.material.texture_id,
-                        b.material.normal_map_id,
-                        b.material.ao_map_id,
-                        b.material.metallic_roughness_texture_id,
-                        b.material.emissive_texture_id,
-                        b.material.is_two_sided(),
-                    ));
+                // Batch grouping key (shared with the batch-split condition
+                // below). two_sided is part of the key because the two pipelines
+                // differ in cull mode, so a batch must not mix one- and
+                // two-sided items.
+                let batch_ord = batch_group_key(a, binding).cmp(&batch_group_key(b, binding));
                 if batch_ord != std::cmp::Ordering::Equal {
                     return batch_ord;
                 }
@@ -126,14 +150,7 @@ impl ViewportRenderer {
                     let key_changed = !at_end && {
                         let a = sorted_items[batch_start].1;
                         let b = sorted_items[i].1;
-                        a.mesh_id != b.mesh_id
-                            || a.material.texture_id != b.material.texture_id
-                            || a.material.normal_map_id != b.material.normal_map_id
-                            || a.material.ao_map_id != b.material.ao_map_id
-                            || a.material.metallic_roughness_texture_id
-                                != b.material.metallic_roughness_texture_id
-                            || a.material.emissive_texture_id != b.material.emissive_texture_id
-                            || a.material.is_two_sided() != b.material.is_two_sided()
+                        batch_group_key(a, binding) != batch_group_key(b, binding)
                     };
 
                     if at_end || key_changed {
@@ -592,5 +609,64 @@ impl ViewportRenderer {
                 instancing.indirect_readback_pending = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod batch_key_tests {
+    use super::*;
+
+    fn item_with(mesh: usize, tex: Option<u64>, two_sided: bool) -> SceneRenderItem {
+        let mut item = SceneRenderItem::default();
+        // MeshId is a generational slot handle; the key only reads its index.
+        item.mesh_id = crate::resources::mesh::mesh_store::MeshId::from_index(mesh as u32);
+        item.material.texture_id = tex.map(TextureId::from_raw);
+        if two_sided {
+            item.material.backface_policy = crate::scene::material::BackfacePolicy::Identical;
+        }
+        item
+    }
+
+    #[test]
+    fn per_batch_splits_on_texture_id() {
+        let a = item_with(0, Some(1), false);
+        let b = item_with(0, Some(2), false);
+        assert_ne!(
+            batch_group_key(&a, MaterialTextureBinding::PerBatch),
+            batch_group_key(&b, MaterialTextureBinding::PerBatch),
+            "per-batch binding must split two textures into separate batches",
+        );
+    }
+
+    #[test]
+    fn bindless_collapses_texture_id() {
+        let a = item_with(0, Some(1), false);
+        let b = item_with(0, Some(2), false);
+        assert_eq!(
+            batch_group_key(&a, MaterialTextureBinding::Bindless),
+            batch_group_key(&b, MaterialTextureBinding::Bindless),
+            "bindless binding must collapse different textures on one mesh into one batch",
+        );
+    }
+
+    #[test]
+    fn mesh_and_two_sided_always_split() {
+        // Different mesh never batches together, in either mode.
+        for binding in [
+            MaterialTextureBinding::PerBatch,
+            MaterialTextureBinding::Bindless,
+        ] {
+            let a = item_with(0, None, false);
+            let b = item_with(1, None, false);
+            assert_ne!(batch_group_key(&a, binding), batch_group_key(&b, binding));
+        }
+        // two_sided stays in the key even under bindless (the pipelines differ
+        // in cull mode), so it splits regardless of texture collapse.
+        let one_sided = item_with(0, Some(5), false);
+        let two_sided = item_with(0, Some(5), true);
+        assert_ne!(
+            batch_group_key(&one_sided, MaterialTextureBinding::Bindless),
+            batch_group_key(&two_sided, MaterialTextureBinding::Bindless),
+        );
     }
 }
