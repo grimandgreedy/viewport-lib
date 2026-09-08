@@ -52,18 +52,25 @@ impl TexTransformGpu {
 }
 
 /// A material's per-slot UV transforms plus its scalar shading parameters, as the
-/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 256
+/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 272
 /// bytes. The scalars are the per-material fields that used to be duplicated into
 /// every `InstanceData` record; moving them here shrinks the per-instance record
 /// to O(instances) transform-free and keeps a single copy per distinct material.
 ///
 /// Field packing (after the 160-byte transform array):
 /// - `scalars0` = (ambient, diffuse, specular, shininess)
-/// - `scalars1` = (metallic, roughness, normal_strength, _)
+/// - `scalars1` = (metallic, roughness, normal_strength, has_mr_tex)
 /// - `scalars2` = (emissive.r, emissive.g, emissive.b, ao_range.min)
-/// - `scalars3` = (ao_range.max, param_vis_scale, backface_policy, _)
+/// - `scalars3` = (ao_range.max, param_vis_scale, backface_policy, has_emissive_tex)
 /// - `flags`    = (use_pbr, use_flat, alpha_mode, param_vis_mode)
 /// - `backface_colour` = the styled-backface colour (see below)
+/// - `mr_range`  = (metallic_min, metallic_max, roughness_min, roughness_max)
+///
+/// `has_mr_tex` / `has_emissive_tex` (0 or 1) gate the instanced metallic-roughness
+/// and emissive texture samples; `mr_range` remaps the raw MR sample before the
+/// scalar factor, mirroring the per-object `metallic_range` / `roughness_range`.
+/// These are per-material, so they ride the material buffer (the actual textures
+/// are per-batch, bound on the instanced group-1 layout).
 ///
 /// `alpha_mode` is 0 Opaque / 1 Mask / 2 Blend / 3 BlendPremultiplied (only the
 /// instanced OIT shader reads it, to skip the premultiply for mode 3).
@@ -90,9 +97,10 @@ pub(crate) struct MaterialGpu {
     pub(crate) scalars3: [f32; 4],
     pub(crate) flags: [u32; 4],
     pub(crate) backface_colour: [f32; 4],
+    pub(crate) mr_range: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 256);
+const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 272);
 
 impl MaterialGpu {
     /// Build the full GPU material block (transforms + scalars) from a material.
@@ -138,12 +146,19 @@ impl MaterialGpu {
             }
             _ => [0.0; 4],
         };
+        let has_mr = m.metallic_roughness_texture_id.is_some() as u32 as f32;
+        let has_emissive = m.emissive_texture_id.is_some() as u32 as f32;
         MaterialGpu {
             xf,
             scalars0: [m.ambient, m.diffuse, m.specular, m.shininess],
-            scalars1: [m.metallic, m.roughness, m.normal_strength, 0.0],
+            scalars1: [m.metallic, m.roughness, m.normal_strength, has_mr],
             scalars2: [e[0], e[1], e[2], m.ao_range[0]],
-            scalars3: [m.ao_range[1], param_vis_scale, backface_policy as f32, 0.0],
+            scalars3: [
+                m.ao_range[1],
+                param_vis_scale,
+                backface_policy as f32,
+                has_emissive,
+            ],
             flags: [
                 m.is_pbr() as u32,
                 m.is_flat() as u32,
@@ -151,6 +166,12 @@ impl MaterialGpu {
                 param_vis_mode,
             ],
             backface_colour,
+            mr_range: [
+                m.metallic_range[0],
+                m.metallic_range[1],
+                m.roughness_range[0],
+                m.roughness_range[1],
+            ],
         }
     }
 }
@@ -160,7 +181,7 @@ impl MaterialGpu {
 /// the identity block, so any material with no authored transform maps to 0.
 pub(crate) struct MaterialGpuBuilder {
     entries: Vec<MaterialGpu>,
-    lookup: HashMap<[u8; 256], u32>,
+    lookup: HashMap<[u8; 272], u32>,
     /// Set when the capacity was hit and some materials were forced to entry 0.
     pub(crate) overflowed: bool,
 }
@@ -196,7 +217,7 @@ impl MaterialGpuBuilder {
     /// material share an id. On overflow, returns 0.
     pub(crate) fn intern(&mut self, m: &Material) -> u32 {
         let block = MaterialGpu::from_material(m);
-        let key: [u8; 256] = bytemuck::cast(block);
+        let key: [u8; 272] = bytemuck::cast(block);
         if let Some(&id) = self.lookup.get(&key) {
             return id;
         }
@@ -297,5 +318,23 @@ mod tests {
         // A default material is Cull (policy 0), no styled back-face.
         let b = MaterialGpu::from_material(&Material::default());
         assert_eq!(b.scalars3[2] as u32, 0);
+    }
+
+    #[test]
+    fn pbr_texture_flags_and_ranges_pack() {
+        // No MR/emissive texture: both has-flags are 0.
+        let b = MaterialGpu::from_material(&Material::default());
+        assert_eq!(b.scalars1[3], 0.0, "has_mr_tex off by default");
+        assert_eq!(b.scalars3[3], 0.0, "has_emissive_tex off by default");
+
+        let mut m = Material::default();
+        m.metallic_roughness_texture_id = Some(crate::resources::TextureId::from_raw(7));
+        m.emissive_texture_id = Some(crate::resources::TextureId::from_raw(8));
+        m.metallic_range = [0.1, 0.9];
+        m.roughness_range = [0.2, 0.8];
+        let b = MaterialGpu::from_material(&m);
+        assert_eq!(b.scalars1[3], 1.0, "has_mr_tex set");
+        assert_eq!(b.scalars3[3], 1.0, "has_emissive_tex set");
+        assert_eq!(b.mr_range, [0.1, 0.9, 0.2, 0.8]);
     }
 }

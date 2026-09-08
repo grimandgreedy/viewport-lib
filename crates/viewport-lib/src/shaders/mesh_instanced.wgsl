@@ -81,10 +81,12 @@ struct TexTransform {
 // scalars0 = (ambient, diffuse, specular, shininess)
 // scalars1 = (metallic, roughness, normal_strength, _)
 // scalars2 = (emissive.rgb, ao_min)
-// scalars3 = (ao_max, param_vis_scale, backface_policy, _)
+// scalars1 = (metallic, roughness, normal_strength, has_mr_tex)
+// scalars3 = (ao_max, param_vis_scale, backface_policy, has_emissive_tex)
 // flags    = (use_pbr, use_flat, alpha_mode, param_vis_mode)
 // backface_colour = styled back-face colour (DiffColour rgb / Tint factor in .r /
 //                   Pattern rgb); Pattern world scale is per-instance
+// mr_range = (metallic_min, metallic_max, roughness_min, roughness_max)
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
     scalars0: vec4<f32>,
@@ -93,6 +95,7 @@ struct MaterialGpu {
     scalars3: vec4<f32>,
     flags: vec4<u32>,
     backface_colour: vec4<f32>,
+    mr_range: vec4<f32>,
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -177,6 +180,8 @@ struct ClipVolumeUB {
 @group(1) @binding(3) var                normal_map:         texture_2d<f32>;
 @group(1) @binding(4) var                ao_map:             texture_2d<f32>;
 @group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;
+@group(1) @binding(6) var                metallic_roughness_tex: texture_2d<f32>;
+@group(1) @binding(7) var                emissive_tex:           texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -555,6 +560,15 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
     // The PBR block below is gated on per-instance data, so evaluating the
     // underlying derivatives here would violate WGSL uniformity.
 
+    // Metallic-roughness texture (slot 3), sampled here in uniform control flow
+    // (the PBR branch below is per-instance / non-uniform). The fallback view is a
+    // 1x1 texture, so sampling unconditionally is cheap; the result is only used
+    // when `has_mr_tex` is set.
+    let d_uv_dx = dpdx(in.uv);
+    let d_uv_dy = dpdy(in.uv);
+    let s_mr = material_slot_uv(inst.material_id, 3u, in.uv, d_uv_dx, d_uv_dy);
+    let mr_sample = textureSampleGrad(metallic_roughness_tex, obj_sampler, s_mr.uv, s_mr.ddx, s_mr.ddy);
+
     let tint = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     var last_shadow_sample = ShadowSample(1.0, 0u, vec2<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
     var final_rgb: vec3<f32>;
@@ -569,7 +583,16 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
 
     if mat.flags.x != 0u {
         var metallic  = clamp(mat.scalars1.x,  0.0, 1.0);
-        var roughness = specular_aa_roughness_kernel(max(mat.scalars1.y, 0.04), saa_kernel);
+        var roughness = max(mat.scalars1.y, 0.04);
+        // glTF ORM texture: G=roughness, B=metallic. `mr_range` remaps the raw
+        // sample before the scalar factor, then specular-AA, matching mesh.wgsl.
+        if mat.scalars1.w != 0.0 {
+            let m_remapped = mix(mat.mr_range.x, mat.mr_range.y, mr_sample.b);
+            let r_remapped = mix(mat.mr_range.z, mat.mr_range.w, mr_sample.g);
+            metallic  = clamp(m_remapped * metallic,  0.0, 1.0);
+            roughness = max(r_remapped * roughness, 0.04);
+        }
+        roughness = specular_aa_roughness_kernel(roughness, saa_kernel);
         var F0 = mix(vec3<f32>(0.04), base_colour, metallic);
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
@@ -738,10 +761,20 @@ fn fs_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> @location(0)
     var final_rgb = lit.rgb;
 
     // Emissive term: added after lighting so it can push HDR values above 1.0.
-    // The instanced path has no emissive texture, so the factor is applied flat.
-    // Per-instance custom data slots 0..3 add to emissive (nits); zero is a no-op.
-    let inst_emissive = instance_custom_data_buf[instances[in.instance_idx].custom_data_id].data0.xyz;
-    let emissive = material_gpu_buf[instances[in.instance_idx].material_id].scalars2.xyz + inst_emissive;
+    // The emissive factor is modulated by the emissive texture (slot 4) when set,
+    // matching mesh.wgsl. Per-instance custom data slots 0..3 then add to emissive
+    // (nits); zero is a no-op.
+    let e_inst = instances[in.instance_idx];
+    let e_mat = material_gpu_buf[e_inst.material_id];
+    var emissive = e_mat.scalars2.xyz;
+    if e_mat.scalars3.w != 0.0 {
+        let d_uv_dx = dpdx(in.uv);
+        let d_uv_dy = dpdy(in.uv);
+        let s_em = material_slot_uv(e_inst.material_id, 4u, in.uv, d_uv_dx, d_uv_dy);
+        emissive = emissive * textureSampleGrad(emissive_tex, obj_sampler, s_em.uv, s_em.ddx, s_em.ddy).rgb;
+    }
+    let inst_emissive = instance_custom_data_buf[e_inst.custom_data_id].data0.xyz;
+    emissive = emissive + inst_emissive;
     final_rgb += emissive;
     let dbg_emissive_lum = dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722));
 

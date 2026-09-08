@@ -953,7 +953,9 @@ impl DeviceResources {
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
         self.instancing
             .bind_groups
-            .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
+            .retain(|&(a, n, ao, mr, em), _| {
+                a != raw && n != raw && ao != raw && mr != raw && em != raw
+            });
 
         // Invalidate per-mesh object bind groups that sampled the texture so
         // `update_mesh_texture_bind_group` rebuilds them. `last_tex_key`

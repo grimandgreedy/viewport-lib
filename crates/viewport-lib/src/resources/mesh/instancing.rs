@@ -18,7 +18,8 @@ pub(crate) struct InstancingResources {
     /// one specific texture combination (bindings 1-4). Keyed by
     /// (albedo_id, normal_map_id, ao_map_id) using u64::MAX for fallback slots.
     /// Invalidated when the storage buffer is resized.
-    pub(crate) bind_groups: std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
+    pub(crate) bind_groups:
+        std::collections::HashMap<(u64, u64, u64, u64, u64), crate::gpu::BindGroup>,
     /// Instanced solid render pipeline (TriangleList, opaque).
     pub(crate) solid_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Two-sided (`cull_mode: None`) variant of `solid_pipeline` for
@@ -207,6 +208,29 @@ impl DeviceResources {
                     // binding 4: AO map texture
                     crate::gpu::BindGroupLayoutEntry {
                         binding: 4,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 6: metallic-roughness texture (5 is the cull
+                    // variant's visibility_indices, so MR/emissive start at 6)
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 7: emissive texture
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 7,
                         visibility: crate::gpu::ShaderStages::FRAGMENT,
                         ty: crate::gpu::BindingType::Texture {
                             sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
@@ -715,6 +739,28 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 6: metallic-roughness texture
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 7: emissive texture
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1062,6 +1108,20 @@ impl DeviceResources {
                         binding: 5,
                         resource: vis_buf.as_entire_binding(),
                     },
+                    // MR/emissive are required by `cull_bgl` but the shadow cutout
+                    // pass never samples them; bind the fallback views.
+                    crate::gpu::BindGroupEntry {
+                        binding: 6,
+                        resource: crate::gpu::BindingResource::TextureView(
+                            &self.material.metallic_roughness_view,
+                        ),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 7,
+                        resource: crate::gpu::BindingResource::TextureView(
+                            &self.material.emissive_view,
+                        ),
+                    },
                 ],
             });
             shadow_cull.shadow_cutout_cull_bgs.insert(key, bg);
@@ -1080,11 +1140,15 @@ impl DeviceResources {
         albedo_id: Option<crate::resources::TextureId>,
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
+        mr_id: Option<crate::resources::TextureId>,
+        emissive_id: Option<crate::resources::TextureId>,
     ) -> Option<&'a crate::gpu::BindGroup> {
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            mr_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
         );
 
         if !cull_state.instance_cull_bind_groups.contains_key(&key) {
@@ -1109,6 +1173,18 @@ impl DeviceResources {
                     &self.content.textures.get(id).unwrap().view
                 }
                 _ => &self.material.ao_map_view,
+            };
+            let mr_view = match mr_id {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.material.metallic_roughness_view,
+            };
+            let emissive_view = match emissive_id {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.material.emissive_view,
             };
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1139,6 +1215,14 @@ impl DeviceResources {
                         binding: 5,
                         resource: vis_buf.as_entire_binding(),
                     },
+                    crate::gpu::BindGroupEntry {
+                        binding: 6,
+                        resource: crate::gpu::BindingResource::TextureView(mr_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 7,
+                        resource: crate::gpu::BindingResource::TextureView(emissive_view),
+                    },
                 ],
             });
             cull_state.instance_cull_bind_groups.insert(key, bg);
@@ -1159,11 +1243,15 @@ impl DeviceResources {
         albedo_id: Option<crate::resources::TextureId>,
         normal_map_id: Option<crate::resources::TextureId>,
         ao_map_id: Option<crate::resources::TextureId>,
+        mr_id: Option<crate::resources::TextureId>,
+        emissive_id: Option<crate::resources::TextureId>,
     ) -> Option<&crate::gpu::BindGroup> {
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            mr_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
         );
 
         if !self.instancing.bind_groups.contains_key(&key) {
@@ -1187,6 +1275,18 @@ impl DeviceResources {
                     &self.content.textures.get(id).unwrap().view
                 }
                 _ => &self.material.ao_map_view,
+            };
+            let mr_view = match mr_id {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.material.metallic_roughness_view,
+            };
+            let emissive_view = match emissive_id {
+                Some(id) if self.content.textures.get(id).is_some() => {
+                    &self.content.textures.get(id).unwrap().view
+                }
+                _ => &self.material.emissive_view,
             };
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1212,6 +1312,14 @@ impl DeviceResources {
                     crate::gpu::BindGroupEntry {
                         binding: 4,
                         resource: crate::gpu::BindingResource::TextureView(ao_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 6,
+                        resource: crate::gpu::BindingResource::TextureView(mr_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 7,
+                        resource: crate::gpu::BindingResource::TextureView(emissive_view),
                     },
                 ],
             });
@@ -1379,6 +1487,20 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 4,
                     resource: crate::gpu::BindingResource::TextureView(&self.material.ao_map_view),
+                },
+                // Particles never sample MR/emissive; bind fallback views to
+                // satisfy the shared `instance_bgl`.
+                crate::gpu::BindGroupEntry {
+                    binding: 6,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.material.metallic_roughness_view,
+                    ),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 7,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        &self.material.emissive_view,
+                    ),
                 },
             ],
         });

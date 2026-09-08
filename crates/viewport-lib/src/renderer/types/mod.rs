@@ -51,6 +51,8 @@ pub(crate) struct InstancedBatch {
     pub texture_id: Option<crate::resources::TextureId>,
     pub normal_map_id: Option<crate::resources::TextureId>,
     pub ao_map_id: Option<crate::resources::TextureId>,
+    pub metallic_roughness_id: Option<crate::resources::TextureId>,
+    pub emissive_id: Option<crate::resources::TextureId>,
     pub instance_offset: u32,
     pub instance_count: u32,
     pub is_transparent: bool,
@@ -347,6 +349,8 @@ macro_rules! emit_draw_calls {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
@@ -393,6 +397,8 @@ macro_rules! emit_draw_calls {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);

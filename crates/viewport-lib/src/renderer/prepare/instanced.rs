@@ -74,6 +74,8 @@ impl ViewportRenderer {
                     a.material.texture_id,
                     a.material.normal_map_id,
                     a.material.ao_map_id,
+                    a.material.metallic_roughness_texture_id,
+                    a.material.emissive_texture_id,
                     a.material.is_two_sided(),
                 )
                     .cmp(&(
@@ -81,6 +83,8 @@ impl ViewportRenderer {
                         b.material.texture_id,
                         b.material.normal_map_id,
                         b.material.ao_map_id,
+                        b.material.metallic_roughness_texture_id,
+                        b.material.emissive_texture_id,
                         b.material.is_two_sided(),
                     ));
                 if batch_ord != std::cmp::Ordering::Equal {
@@ -126,6 +130,9 @@ impl ViewportRenderer {
                             || a.material.texture_id != b.material.texture_id
                             || a.material.normal_map_id != b.material.normal_map_id
                             || a.material.ao_map_id != b.material.ao_map_id
+                            || a.material.metallic_roughness_texture_id
+                                != b.material.metallic_roughness_texture_id
+                            || a.material.emissive_texture_id != b.material.emissive_texture_id
                             || a.material.is_two_sided() != b.material.is_two_sided()
                     };
 
@@ -253,6 +260,8 @@ impl ViewportRenderer {
                             texture_id: rep.material.texture_id,
                             normal_map_id: rep.material.normal_map_id,
                             ao_map_id: rep.material.ao_map_id,
+                            metallic_roughness_id: rep.material.metallic_roughness_texture_id,
+                            emissive_id: rep.material.emissive_texture_id,
                             instance_offset,
                             instance_count: batch_items.len() as u32,
                             is_transparent,
@@ -388,6 +397,8 @@ impl ViewportRenderer {
                     batch.texture_id,
                     batch.normal_map_id,
                     batch.ao_map_id,
+                    batch.metallic_roughness_id,
+                    batch.emissive_id,
                 );
             }
         } else {
@@ -397,6 +408,8 @@ impl ViewportRenderer {
                     batch.texture_id,
                     batch.normal_map_id,
                     batch.ao_map_id,
+                    batch.metallic_roughness_id,
+                    batch.emissive_id,
                 );
             }
         }
@@ -462,6 +475,8 @@ impl ViewportRenderer {
                 batch.texture_id,
                 batch.normal_map_id,
                 batch.ao_map_id,
+                batch.metallic_roughness_id,
+                batch.emissive_id,
             );
         }
 

@@ -13,7 +13,7 @@ use super::*;
 /// and when deciding the instanced-batch cache key. An item is excluded when it
 /// is hidden, carries a scalar attribute, carries a GPU vertex warp (the
 /// instanced shader has no warp support), uses a matcap (a texture bind the
-/// instanced path does not yet carry), has an emissive texture, has a pending
+/// instanced path does not yet carry), has a pending
 /// compute-filter result (which needs a per-item index buffer), carries
 /// per-submesh materials, has per-instance deform data, or its mesh has a
 /// position/normal override or baked lightmap. All four back-face policies now
@@ -39,10 +39,6 @@ pub(crate) fn is_instanceable(
         // per-object writer's own warp exception and the comment there).
         && item.warp_attribute.is_none()
         && item.material.matcap_id().is_none()
-        // The instanced path carries the emissive factor but does not sample the
-        // emissive texture. An emissive-textured material must stay per-object so
-        // the factor is modulated by the texture instead of applied flat.
-        && item.material.emissive_texture_id.is_none()
         // Per-submesh materials mean one draw per index range, each with its
         // own object bind group; the instanced path draws the whole mesh in
         // one call with batch-level textures, so range items stay per-object.
@@ -312,10 +308,12 @@ mod tests {
     // Alpha cutout and emissive now ride the per-material block, covered by the
     // `material_gpu` tests (`scalars_pack_alpha_and_emissive`).
 
-    /// The instanced path applies the emissive factor flat and never samples the
-    /// emissive texture, so an emissive-textured material must stay per-object.
+    /// Emissive- and metallic-roughness-textured materials now instance: the
+    /// instanced shaders sample both maps (the textures are per-batch, bound on
+    /// the instanced group-1 layout; the has-flags and MR ranges ride the material
+    /// buffer).
     #[test]
-    fn emissive_textured_is_not_instanceable() {
+    fn textured_pbr_maps_are_instanceable() {
         let Some((device, _queue)) = try_make_device() else {
             eprintln!("skipping: no wgpu adapter available");
             return;
@@ -327,18 +325,18 @@ mod tests {
 
         let mut item = SceneRenderItem::default();
         item.mesh_id = mesh_id;
-        // A plain emissive factor stays instanceable: the instanced path carries it.
         item.material.emissive = [2.0, 2.0, 2.0].into();
-        assert!(
-            is_instanceable(&item, &resources, &[]),
-            "a plain emissive item should still instance",
-        );
-
-        // An emissive texture forces the per-object path where it is sampled.
         item.material.emissive_texture_id = Some(crate::resources::TextureId::from_raw(1));
         assert!(
-            !is_instanceable(&item, &resources, &[]),
-            "an emissive-textured item must fall back to the per-object path",
+            is_instanceable(&item, &resources, &[]),
+            "an emissive-textured item should instance",
+        );
+
+        item.material.metallic_roughness_texture_id =
+            Some(crate::resources::TextureId::from_raw(2));
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a metallic-roughness-textured item should instance",
         );
     }
 

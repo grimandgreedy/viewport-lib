@@ -697,6 +697,8 @@ impl ViewportRenderer {
                                 b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                b.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                b.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                             ))
                         }),
                     ) {
@@ -758,6 +760,11 @@ impl ViewportRenderer {
                                         batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch
+                                            .metallic_roughness_id
+                                            .map(|t| t.raw())
+                                            .unwrap_or(u64::MAX),
+                                        batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     ))
                                 } else {
                                     None

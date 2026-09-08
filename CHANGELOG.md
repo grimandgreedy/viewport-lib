@@ -33,6 +33,15 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
+- **Instanced metallic-roughness and emissive textures.** The instanced mesh path
+  now samples the metallic-roughness and emissive maps, so a material carrying
+  either no longer falls to the per-object draw path. Emissive-textured materials
+  in particular used to draw one call per object; they now batch. This also fixes
+  a latent gap where a metallic-roughness-textured material instanced but never
+  sampled its MR map (the scalar metallic/roughness were used instead). The two
+  maps are keyed into the batch and sampled with their own UV-slot transforms; the
+  `has-*` flags and MR ranges ride the per-material buffer. Portable across all
+  backends.
 - **Styled back-face policies now instance.** A material with a
   `DifferentColour` / `Tint` / `Pattern` back-face policy previously fell to the
   per-object draw path; it now draws through the two-sided instanced path,

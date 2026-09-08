@@ -902,11 +902,11 @@ pub(crate) struct ViewportCullState {
     /// Per-texture-key bind groups for the main cull pipelines. These also serve
     /// as the group-1 bind for the indirect draw, so they sample the albedo,
     /// normal, and ao views (bindings 1/3/4). Keyed by
-    /// (albedo_id, normal_map_id, ao_map_id); invalidated when
+    /// (albedo_id, normal_map_id, ao_map_id, mr_id, emissive_id); invalidated when
     /// `visibility_index_buf` is resized, when the instance buffer is rebuilt, or
     /// when a texture behind a key is replaced or freed (see `built_free_epoch`).
     pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
+        std::collections::HashMap<(u64, u64, u64, u64, u64), crate::gpu::BindGroup>,
     /// Generation of the shared instance buffers the main cull bind groups were
     /// built against. When it falls behind `InstancingState::instance_gen` the
     /// shared instance storage buffer was rebuilt, so those bind groups (which

@@ -803,6 +803,11 @@ impl ViewportRenderer {
                                         batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch
+                                            .metallic_roughness_id
+                                            .map(|t| t.raw())
+                                            .unwrap_or(u64::MAX),
+                                        batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     );
                                     let Some(inst_tex_bg) =
                                         cull0.instance_cull_bind_groups.get(&mat_key)
@@ -910,6 +915,11 @@ impl ViewportRenderer {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch
+                                        .metallic_roughness_id
+                                        .map(|t| t.raw())
+                                        .unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) =
                                     resources.instancing.bind_groups.get(&mat_key)
@@ -2704,6 +2714,11 @@ impl ViewportRenderer {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch
+                                        .metallic_roughness_id
+                                        .map(|t| t.raw())
+                                        .unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) =
                                     cull0.instance_cull_bind_groups.get(&mat_key)
@@ -2800,6 +2815,11 @@ impl ViewportRenderer {
                                 batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch
+                                    .metallic_roughness_id
+                                    .map(|t| t.raw())
+                                    .unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                             );
                             let Some(inst_tex_bg) =
                                 self.resources.instancing.bind_groups.get(&mat_key)
