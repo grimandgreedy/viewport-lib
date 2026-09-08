@@ -25,8 +25,8 @@ use viewport_lib as vpl;
 
 use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourmapId,
-    FrameData, MeshId, PickId, PickMask, SceneRenderItem, SubObjectRef, SubSelection,
-    SubSelectionRef, TensorGlyphItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    FrameData, MeshId, PickId, SceneRenderItem, SubObjectRef, SubSelection, SubSelectionRef,
+    TensorGlyphItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 const PICK_BEAM_MESH: u64 = 3901;
@@ -397,17 +397,13 @@ pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
     vec![item]
 }
 
-/// Handle a click in the tensor glyph showcase viewport.
-/// Resolves the hit via the GPU pick buffer and stores the result in `tg_state.selection`.
-pub(crate) fn tg_handle_click(
-    app: &mut App,
-    pos: glam::Vec2,
-    vp_size: glam::Vec2,
-    view_proj: glam::Mat4,
-    renderer: &ViewportRenderer,
-) {
-    let mask = PickMask::POINT_LIKE;
-    let Some(hit) = renderer.pick(pos, vp_size, view_proj, mask) else {
+/// Apply a resolved pick hit to the tensor glyph showcase selection.
+///
+/// The hit comes from the unified GPU picker (`pick_object`) at the render site;
+/// this routes a tensor glyph instance or a beam-mesh cell into
+/// `tg_state.selection` / `tg_state.sub_selection`.
+pub(crate) fn tg_apply_pick(app: &mut App, hit: Option<vpl::PickHit>) {
+    let Some(hit) = hit else {
         app.tg_state.selection = None;
         app.tg_state.sub_selection.clear();
         return;

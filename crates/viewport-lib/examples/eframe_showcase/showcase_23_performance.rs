@@ -6,15 +6,15 @@
 //! - Toggle GPU culling on/off to compare paths live
 //! - Optional HiZ occlusion culling: drop boxes hidden behind nearer ones
 //! - Full FrameStats readout: CPU/GPU timings, culling state, draw counts
-//! - BVH-accelerated picking: click to select objects
+//! - GPU object picking: click to select objects
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use viewport_lib as vpl;
 
 use eframe::egui;
 use vpl::{
-    Aabb, FrameStats, ItemSettings, Material, MeshId, PickAccelerator, SceneRenderItem,
-    scene::Scene, selection::Selection,
+    Aabb, FrameStats, ItemSettings, Material, MeshId, SceneRenderItem, scene::Scene,
+    selection::Selection,
 };
 
 use crate::App;
@@ -33,10 +33,6 @@ pub(crate) const TEXTURE_POOL_SIZE: usize = 128;
 pub(crate) struct PerfState {
     pub scene: Scene,
     pub selection: Selection,
-    pub pick_accelerator: Option<PickAccelerator>,
-    /// Per-shape geometry (mesh index, positions, indices) for CPU picking,
-    /// one entry per cycled shape.
-    pub pick_geometry: Vec<(u64, Vec<[f32; 3]>, Vec<u32>)>,
     pub last_stats: FrameStats,
     pub total_objects: u32,
     pub scene_items_cache: std::sync::Arc<[SceneRenderItem]>,
@@ -44,8 +40,8 @@ pub(crate) struct PerfState {
     pub built: bool,
     pub gpu_culling: bool,
     pub occlusion_culling: bool,
-    /// Receives the completed (Scene, PickAccelerator) from the background build thread.
-    pub build_rx: Option<std::sync::mpsc::Receiver<(Scene, PickAccelerator)>>,
+    /// Receives the completed `Scene` from the background build thread.
+    pub build_rx: Option<std::sync::mpsc::Receiver<Scene>>,
     /// Shared progress counter written by the background build thread (objects placed so far).
     pub build_progress: Option<std::sync::Arc<AtomicU32>>,
 }
@@ -55,8 +51,6 @@ impl Default for PerfState {
         Self {
             scene: Scene::new(),
             selection: Selection::new(),
-            pick_accelerator: None,
-            pick_geometry: Vec::new(),
             last_stats: FrameStats::default(),
             total_objects: 0,
             scene_items_cache: std::sync::Arc::from([]),
@@ -84,7 +78,7 @@ pub(crate) fn build_perf_scene_threaded(
     meshes: Vec<(MeshId, Option<Aabb>)>,
     texture_pool: Vec<vpl::TextureId>,
     progress: &AtomicU32,
-) -> (Scene, PickAccelerator) {
+) -> Scene {
     let spacing = 2.5_f32;
     let colours: [[f32; 3]; 6] = [
         [0.65, 0.09, 0.07],
@@ -133,11 +127,7 @@ pub(crate) fn build_perf_scene_threaded(
     }
     progress.store(count, Ordering::Relaxed);
 
-    let pick_acc = PickAccelerator::build_from_scene(&scene, |mid| {
-        meshes.iter().find(|(m, _)| *m == mid).and_then(|(_, a)| *a)
-    });
-
-    (scene, pick_acc)
+    scene
 }
 
 /// The shapes the box grid cycles through, each sized to fit a 1x1x1 box
@@ -324,6 +314,25 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.heading("Timings");
     perf_stat_row(ui, "CPU prepare", &format!("{:.2} ms", s.cpu_prepare_ms));
+    // Sub-phase split of CPU prepare, so a slow prepare can be pinned to one
+    // phase instead of guessed at. This is CPU-side work that runs every frame
+    // over the whole scene, independent of what culling drops on the GPU:
+    // "Other" is the per-frame scene-item list build plus LOD resolution,
+    // "Uniforms" the instanceability classification and per-object writes,
+    // "Instancing" the batch build and upload.
+    let pb = s.prepare_breakdown;
+    for (label, ms) in [
+        ("Lighting", pb.lighting_ms),
+        ("Uniforms", pb.uniforms_ms),
+        ("Instancing", pb.instancing_ms),
+        ("Geometry", pb.geometry_ms),
+        ("Shadow", pb.shadow_ms),
+        ("Plugin", pb.plugin_ms),
+        ("Viewport", pb.viewport_ms),
+        ("Other", pb.other_ms),
+    ] {
+        perf_stat_row(ui, &format!("    {label}"), &format!("{ms:.2} ms"));
+    }
     perf_stat_row(
         ui,
         "GPU scene",

@@ -689,38 +689,14 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
 // Click handling
 // ---------------------------------------------------------------------------
 
-/// Build the mesh lookup table for CPU picking from stored mesh data.
-fn decal46_mesh_lookup(
-    st: &Decal46State,
-) -> std::collections::HashMap<u64, (Vec<[f32; 3]>, Vec<u32>)> {
-    let mut map = std::collections::HashMap::new();
-    if let (Some(id), Some(data)) = (st.wall_mesh, &st.wall_cpu_mesh) {
-        map.insert(id.index() as u64, data.clone());
-    }
-    if let (Some(id), Some(data)) = (st.ground_mesh, &st.ground_cpu_mesh) {
-        map.insert(id.index() as u64, data.clone());
-    }
-    if let (Some(id), Some(data)) = (st.column_mesh, &st.column_cpu_mesh) {
-        map.insert(id.index() as u64, data.clone());
-    }
-    map
-}
-
-/// Place a gunshot decal at the clicked viewport position using CPU ray-casting.
-pub(crate) fn decal46_place(app: &mut App, cursor: glam::Vec2, vp_size: glam::Vec2) {
+/// Place a gunshot decal at a resolved surface pick hit.
+///
+/// The hit comes from the unified GPU picker (`pick_object`) at the render site;
+/// its world position and surface normal orient the decal.
+pub(crate) fn decal46_place(app: &mut App, pick: &vpl::PickHit) {
     if !app.decal46_state.built {
         return;
     }
-    let vp_inv = app.camera.view_proj_matrix().inverse();
-    let (ro, rd) = vpl::picking::screen_to_ray(cursor, vp_size, vp_inv);
-
-    let mesh_lookup = decal46_mesh_lookup(&app.decal46_state);
-    let Some(pick) =
-        vpl::picking::pick_scene_nodes_cpu(ro, rd, &app.decal46_state.scene, &mesh_lookup)
-    else {
-        return;
-    };
-
     let hit = pick.world_pos;
     let normal = pick.normal;
 
