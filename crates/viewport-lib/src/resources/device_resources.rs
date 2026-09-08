@@ -907,6 +907,11 @@ pub(crate) struct ViewportCullState {
     /// when a texture behind a key is replaced or freed (see `built_free_epoch`).
     pub(crate) instance_cull_bind_groups:
         std::collections::HashMap<(u64, u64, u64, u64, u64), crate::gpu::BindGroup>,
+    /// The bindless cull bind group for this viewport (instances + texture array +
+    /// sampler + this viewport's visibility buffer). Used by the culled colour
+    /// draws under `Bindless` instead of `instance_cull_bind_groups`. Rebuilt with
+    /// the same `built_gen` / `built_free_epoch` staleness checks as the map.
+    pub(crate) bindless_cull_bind_group: Option<crate::gpu::BindGroup>,
     /// Generation of the shared instance buffers the main cull bind groups were
     /// built against. When it falls behind `InstancingState::instance_gen` the
     /// shared instance storage buffer was rebuilt, so those bind groups (which
@@ -934,6 +939,7 @@ impl ViewportCullState {
             indirect_args_buf: None,
             batch_output_capacity: 0,
             instance_cull_bind_groups: std::collections::HashMap::new(),
+            bindless_cull_bind_group: None,
             built_gen: u64::MAX,
             built_free_epoch: u64::MAX,
             hiz: None,
@@ -967,6 +973,7 @@ impl ViewportCullState {
             self.visibility_index_capacity = new_cap;
             // The cull bind groups bind the vis buffer at binding 5.
             self.instance_cull_bind_groups.clear();
+            self.bindless_cull_bind_group = None;
         }
 
         // Counter and indirect-args buffers, sized like the shared batch-meta buffer.

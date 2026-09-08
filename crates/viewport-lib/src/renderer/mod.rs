@@ -740,6 +740,11 @@ impl ViewportRenderer {
     ///   it with trilinear interpolation. Without it the field falls back to an
     ///   `R16Float` texture (trilinear at reduced precision, half the bandwidth);
     ///   either way the reconstruction is smooth, never blocky nearest-neighbour.
+    /// - The bindless texture-array set (texture `binding_array` + non-uniform
+    ///   indexing + partially bound) lets the instanced mesh path bind material
+    ///   textures once per frame and index them per material, so instances of one
+    ///   mesh with different materials batch together. Present on Vulkan/DX12;
+    ///   without it the path binds textures per batch (the portable default).
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
@@ -757,6 +762,15 @@ impl ViewportRenderer {
             if adapter.features().contains(feature) {
                 features |= feature;
             }
+        }
+        // The bindless material-texture path needs the whole texture-array set at
+        // once; request it only when the adapter offers every piece, so a device
+        // that supports part of it is not asked for a feature it lacks.
+        if adapter
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        {
+            features |= crate::gpu::BINDLESS_TEXTURE_FEATURES;
         }
         features
     }
@@ -905,21 +919,31 @@ impl ViewportRenderer {
         let multi_draw_supported = device
             .features()
             .contains(crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT);
+        // Bindless material textures activate only when the device enabled the
+        // whole texture-array feature set (Vulkan/DX12). Otherwise the instanced
+        // path stays on the per-batch texture binding.
+        let material_texture_binding = if device
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        {
+            crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless
+        } else {
+            crate::resources::mesh::instanced_bindless::MaterialTextureBinding::PerBatch
+        };
+        let mut resources = DeviceResources::new_with_cache(
+            device,
+            target_format,
+            sample_count,
+            pipeline_cache_data,
+        );
+        resources.instancing.material_texture_binding = material_texture_binding;
+        resources.material_gpu_builder.set_bindless(
+            material_texture_binding
+                == crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless,
+        );
         Self {
-            resources: DeviceResources::new_with_cache(
-                device,
-                target_format,
-                sample_count,
-                pipeline_cache_data,
-            ),
-            instancing: InstancingState::new(
-                gpu_culling_supported,
-                multi_draw_supported,
-                // Bindless material textures need the texture-array feature set
-                // (Vulkan/DX12) and the bindless draw path; until that path
-                // exists every device uses the per-batch texture binding.
-                instancing_state::MaterialTextureBinding::PerBatch,
-            ),
+            resources,
+            instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: std::collections::HashMap::new(),
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),

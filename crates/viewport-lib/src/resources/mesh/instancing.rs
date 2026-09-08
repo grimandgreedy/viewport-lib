@@ -6,6 +6,25 @@ use crate::resources::*;
 /// and `ensure_hdr_instanced_pipelines`.
 #[derive(Default)]
 pub(crate) struct InstancingResources {
+    /// How the colour pipelines bind material textures. `Bindless` (Vulkan/DX12)
+    /// swaps the per-batch group-1 textures for one texture array indexed per
+    /// material; `PerBatch` (the default, Metal/WebGPU) keeps the per-batch binds.
+    /// Fixed at renderer construction from the device's enabled features.
+    pub(crate) material_texture_binding:
+        crate::resources::mesh::instanced_bindless::MaterialTextureBinding,
+    /// Bindless group-1 layout (instances + texture array + sampler), built when
+    /// `material_texture_binding` is `Bindless`. The colour pipelines use it in
+    /// place of `bind_group_layout`; the shadow pipelines keep `bind_group_layout`.
+    pub(crate) bindless_bind_group_layout: Option<crate::gpu::BindGroupLayout>,
+    /// Bindless cull group-1 layout (the above plus the visibility buffer).
+    pub(crate) bindless_cull_bind_group_layout: Option<crate::gpu::BindGroupLayout>,
+    /// The frame-constant bindless colour bind group (instances + texture array +
+    /// sampler), used by every direct colour draw under `Bindless`. Rebuilt when
+    /// the instance buffer or texture set changes (see `bindless_signature`).
+    pub(crate) bindless_bind_group: Option<crate::gpu::BindGroup>,
+    /// Change signature `(instance_gen, texture slot_count, free_epoch)` the
+    /// `bindless_bind_group` was built for; a mismatch triggers a rebuild.
+    pub(crate) bindless_signature: Option<(u64, usize, u64)>,
     /// Bind group layout for the instanced storage buffer + textures (group 1).
     pub(crate) bind_group_layout: Option<crate::gpu::BindGroupLayout>,
     /// Storage buffer for per-instance data.
@@ -146,6 +165,47 @@ impl DeviceResources {
         (module, nodiscard)
     }
 
+    /// The bindless twin of [`instanced_shader_modules`]: the base instanced
+    /// shader is rewritten to index one texture array by the per-material index
+    /// (see `instanced_bindless::bindlessify`) before the same deform-compose and
+    /// strip chain. Only built when the mode is `Bindless`.
+    fn instanced_bindless_shader_modules(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+    ) -> (crate::gpu::ShaderModule, crate::gpu::ShaderModule) {
+        let base = if self.deform.enabled {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced.wgsl"))
+        } else {
+            include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_noop.wgsl"))
+        };
+        let bindless_base = crate::resources::mesh::instanced_bindless::bindlessify(base);
+        let composed = crate::resources::mesh_sidecar::registry::compose_shader(
+            &bindless_base,
+            &self.deform.registrations,
+        );
+        let source = crate::resources::builders::builtin_hook_env(
+            crate::resources::builders::strip_mesh_non_pbr(
+                crate::resources::builders::strip_mesh_discards(
+                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
+                ),
+            ),
+        );
+        let module = crate::resources::builders::wgsl_module(device, label, source.as_ref());
+        let nodiscard = crate::resources::builders::wgsl_module(
+            device,
+            &format!("{label}_nodiscard"),
+            crate::resources::builders::strip_discards(&source),
+        );
+        (module, nodiscard)
+    }
+
+    /// Whether the instanced colour pipelines bind material textures bindlessly.
+    fn bindless_textures(&self) -> bool {
+        self.instancing.material_texture_binding
+            == crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless
+    }
+
     /// Ensure the instanced pipelines and bind group layout are created.
     /// Called lazily when the instanced draw path is first needed.
     pub(crate) fn ensure_instanced_pipelines(&mut self, device: &crate::gpu::Device) {
@@ -242,20 +302,30 @@ impl DeviceResources {
                 ],
             });
 
-        // Instanced mesh shader (plus its discard-free twin for the early-Z
-        // fast path).
-        let (instanced_shader, instanced_shader_nodiscard) =
-            self.instanced_shader_modules(device, "mesh_instanced_shader");
-
+        // Colour pipelines bind material textures per batch (against `instance_bgl`)
+        // or bindlessly (against a texture array); the shadow pipelines below
+        // always use the per-batch `instance_bgl`. Build the colour layout and
+        // shader for the active mode.
+        let bindless = self.bindless_textures();
+        let bindless_bgl = bindless
+            .then(|| crate::resources::mesh::instanced_bindless::bindless_instance_bgl(device));
+        let (colour_shader, colour_shader_nodiscard) = if bindless {
+            self.instanced_bindless_shader_modules(device, "mesh_instanced_bindless_shader")
+        } else {
+            self.instanced_shader_modules(device, "mesh_instanced_shader")
+        };
+        let colour_group1_bgl = bindless_bgl.as_ref().unwrap_or(&instance_bgl);
         let instanced_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "instanced_pipeline_layout",
             &self.binds.camera_bgl,
-            &instance_bgl,
+            colour_group1_bgl,
             self.deform
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
         );
+        let instanced_shader = colour_shader;
+        let instanced_shader_nodiscard = colour_shader_nodiscard;
         let ldr_inst = crate::resources::mesh::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
             device,
             &instanced_layout,
@@ -419,6 +489,10 @@ impl DeviceResources {
         self.instancing.shadow_cascade_bgs = cascade_bgs.map(Some);
 
         self.instancing.bind_group_layout = Some(instance_bgl);
+        // The bindless colour layout (None under the per-batch binding); kept so
+        // the per-frame bindless bind group and the HDR/OIT/cull pipelines below
+        // reuse it instead of rebuilding.
+        self.instancing.bindless_bind_group_layout = bindless_bgl;
         self.instancing.solid_pipeline = Some(solid_instanced);
         self.instancing.solid_two_sided_pipeline = Some(solid_two_sided_instanced);
         self.instancing.solid_nodiscard_pipeline = Some(solid_nodiscard);
@@ -442,17 +516,25 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
+        let bindless = self.bindless_textures();
+        let (inst_shader, inst_shader_nodiscard) = if bindless {
+            self.instanced_bindless_shader_modules(device, "mesh_instanced_bindless_shader_hdr")
+        } else {
+            self.instanced_shader_modules(device, "mesh_instanced_shader_hdr")
+        };
+        let group1_bgl = if bindless {
+            self.instancing.bindless_bind_group_layout.as_ref()
+        } else {
+            self.instancing.bind_group_layout.as_ref()
+        };
+        let Some(group1_bgl) = group1_bgl else {
             return;
         };
-
-        let (inst_shader, inst_shader_nodiscard) =
-            self.instanced_shader_modules(device, "mesh_instanced_shader_hdr");
         let inst_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_pipeline_layout",
             &self.binds.camera_bgl,
-            instance_bgl,
+            group1_bgl,
             self.deform
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
@@ -494,9 +576,7 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let Some(ref instance_bgl) = self.instancing.bind_group_layout else {
-            return;
-        };
+        let bindless = self.bindless_textures();
 
         let instanced_oit_shader = {
             let base = if self.deform.enabled {
@@ -504,8 +584,16 @@ impl DeviceResources {
             } else {
                 include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit_noop.wgsl"))
             };
+            // Rewrite the OIT shader to index the texture array under bindless.
+            let base = if bindless {
+                std::borrow::Cow::Owned(crate::resources::mesh::instanced_bindless::bindlessify(
+                    base,
+                ))
+            } else {
+                std::borrow::Cow::Borrowed(base)
+            };
             let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
+                &base,
                 &self.deform.registrations,
             );
             crate::resources::builders::wgsl_module(
@@ -514,12 +602,20 @@ impl DeviceResources {
                 crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
             )
         };
+        let group1_bgl = if bindless {
+            self.instancing.bindless_bind_group_layout.as_ref()
+        } else {
+            self.instancing.bind_group_layout.as_ref()
+        };
+        let Some(group1_bgl) = group1_bgl else {
+            return;
+        };
         let instanced_oit_layout =
             crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
                 device,
                 "oit_instanced_pipeline_layout",
                 &self.binds.camera_bgl,
-                instance_bgl,
+                group1_bgl,
                 self.deform
                     .enabled
                     .then_some(&self.deform.bind_group_layout),
@@ -765,13 +861,23 @@ impl DeviceResources {
         });
 
         // HDR solid cull pipeline: Rgba16Float target, vs_main_cull, back-face cull.
-        let (instanced_shader, instanced_shader_nodiscard) =
-            self.instanced_shader_modules(device, "mesh_instanced_shader_cull");
+        // Under bindless the colour cull pipelines index the texture array; the
+        // per-batch `cull_bgl` is still built for the shadow-cutout cull path
+        // (masked materials keep albedo in the batch key).
+        let bindless = self.bindless_textures();
+        let bindless_cull_bgl =
+            bindless.then(|| crate::resources::mesh::instanced_bindless::bindless_cull_bgl(device));
+        let cull_colour_bgl = bindless_cull_bgl.as_ref().unwrap_or(&cull_bgl);
+        let (instanced_shader, instanced_shader_nodiscard) = if bindless {
+            self.instanced_bindless_shader_modules(device, "mesh_instanced_bindless_shader_cull")
+        } else {
+            self.instanced_shader_modules(device, "mesh_instanced_shader_cull")
+        };
         let inst_cull_layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
             device,
             "hdr_instanced_cull_pipeline_layout",
             &self.binds.camera_bgl,
-            &cull_bgl,
+            cull_colour_bgl,
             self.deform
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
@@ -812,8 +918,15 @@ impl DeviceResources {
             } else {
                 include_str!(concat!(env!("OUT_DIR"), "/mesh_instanced_oit_noop.wgsl"))
             };
+            let base = if bindless {
+                std::borrow::Cow::Owned(crate::resources::mesh::instanced_bindless::bindlessify(
+                    base,
+                ))
+            } else {
+                std::borrow::Cow::Borrowed(base)
+            };
             let composed = crate::resources::mesh_sidecar::registry::compose_shader(
-                base,
+                &base,
                 &self.deform.registrations,
             );
             crate::resources::builders::wgsl_module(
@@ -826,7 +939,7 @@ impl DeviceResources {
             device,
             "oit_instanced_cull_pipeline_layout",
             &self.binds.camera_bgl,
-            &cull_bgl,
+            cull_colour_bgl,
             self.deform
                 .enabled
                 .then_some(&self.deform.bind_group_layout),
@@ -1002,6 +1115,8 @@ impl DeviceResources {
         ));
 
         self.cull.bind_group_layout = Some(cull_bgl);
+        // The bindless cull colour layout (None under the per-batch binding).
+        self.instancing.bindless_cull_bind_group_layout = bindless_cull_bgl;
     }
 
     /// Get or create the shadow cull instance bind group for a given cascade index.

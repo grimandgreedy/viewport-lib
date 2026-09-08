@@ -810,7 +810,7 @@ impl ViewportRenderer {
                                         batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     );
                                     let Some(inst_tex_bg) =
-                                        cull0.instance_cull_bind_groups.get(&mat_key)
+                                        resources.instanced_cull_colour_bind_group(cull0, mat_key)
                                     else {
                                         continue;
                                     };
@@ -922,7 +922,7 @@ impl ViewportRenderer {
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 let Some(inst_tex_bg) =
-                                    resources.instancing.bind_groups.get(&mat_key)
+                                    resources.instanced_colour_bind_group(mat_key)
                                 else {
                                     continue;
                                 };
@@ -2720,8 +2720,9 @@ impl ViewportRenderer {
                                         .unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
-                                let Some(inst_tex_bg) =
-                                    cull0.instance_cull_bind_groups.get(&mat_key)
+                                let Some(inst_tex_bg) = self
+                                    .resources
+                                    .instanced_cull_colour_bind_group(cull0, mat_key)
                                 else {
                                     continue;
                                 };
@@ -2822,7 +2823,7 @@ impl ViewportRenderer {
                                 batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                             );
                             let Some(inst_tex_bg) =
-                                self.resources.instancing.bind_groups.get(&mat_key)
+                                self.resources.instanced_colour_bind_group(mat_key)
                             else {
                                 continue;
                             };

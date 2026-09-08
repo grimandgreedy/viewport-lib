@@ -74,6 +74,20 @@ impl TextureStore {
         self.store.len()
     }
 
+    /// Total slot count including freed slots: the dense index space the bindless
+    /// texture array spans. A texture's array index is its slot index, which is
+    /// always less than this.
+    pub fn slot_count(&self) -> usize {
+        self.store.slot_count()
+    }
+
+    /// Raw dense-slot lookup with no generation check, for building the bindless
+    /// texture array (which is indexed by slot, not by a live handle). Returns
+    /// `None` for a freed or out-of-range slot.
+    pub fn get_by_index(&self, index: usize) -> Option<&GpuTexture> {
+        self.store.get_by_index(index)
+    }
+
     /// Total bytes charged for the textures currently resident in the store.
     pub fn allocated_bytes(&self) -> u64 {
         self.store.allocated_bytes()

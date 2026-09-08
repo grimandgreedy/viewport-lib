@@ -1,7 +1,7 @@
 //! Instanced (GPU-driven) mesh draw preparation.
 
 use super::*;
-use crate::renderer::instancing_state::MaterialTextureBinding;
+use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
 use viewport_lib_types::ids::TextureId;
 
 /// The batch grouping key for one instanced item: items with an equal key share
@@ -11,6 +11,12 @@ use viewport_lib_types::ids::TextureId;
 /// `Bindless` the shader indexes a texture array by a per-material index, so the
 /// texture ids collapse to `None` and instances of one mesh with different
 /// materials batch together.
+///
+/// One exception under `Bindless`: an alpha-masked material keeps its albedo id
+/// in the key. The shadow-cutout pass stays on the per-batch binding (it does not
+/// bind the material buffer), so it needs one albedo per batch to alpha-test
+/// against. Opaque materials cast shadows through the discard-free pipeline that
+/// samples no texture, so they collapse fully.
 ///
 /// Used by both the sort comparator and the batch-split predicate below, so the
 /// two cannot drift out of sync.
@@ -30,9 +36,17 @@ fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> B
     // Under bindless the texture ids drop out of the key (the array is bound
     // once per frame); keep them only for the per-batch binding path.
     let keep = |id: Option<TextureId>| if textured { id } else { None };
+    // Albedo is kept for an alpha-masked material even under bindless, so the
+    // per-batch shadow-cutout pass has a single albedo to sample per batch.
+    let is_masked = matches!(m.alpha_mode, crate::scene::material::AlphaMode::Mask(_));
+    let albedo = if textured || is_masked {
+        m.texture_id
+    } else {
+        None
+    };
     (
         item.mesh_id.index(),
-        keep(m.texture_id),
+        albedo,
         keep(m.normal_map_id),
         keep(m.ao_map_id),
         keep(m.metallic_roughness_texture_id),
@@ -104,7 +118,7 @@ impl ViewportRenderer {
                 .filter(|(idx, _)| instanceable[*idx])
                 .collect();
 
-            let binding = instancing.material_texture_binding;
+            let binding = resources.instancing.material_texture_binding;
             sorted_items.sort_unstable_by(|(_, a), (_, b)| {
                 // Batch grouping key (shared with the batch-split condition
                 // below). two_sided is part of the key because the two pipelines
@@ -431,6 +445,11 @@ impl ViewportRenderer {
             }
         }
 
+        // Under bindless, the direct colour draws share one frame-constant
+        // texture-array bind group. Rebuild it when the instance buffer or the
+        // texture set changed (a no-op on the per-batch binding).
+        resources.ensure_bindless_colour_bind_group(device, instancing.instance_gen);
+
         (batches_reuploaded, batches_skipped)
     }
 
@@ -482,6 +501,7 @@ impl ViewportRenderer {
             || cull_state.built_free_epoch != resources.resource_free_epoch
         {
             cull_state.instance_cull_bind_groups.clear();
+            cull_state.bindless_cull_bind_group = None;
             cull_state.built_gen = instancing.instance_gen;
             cull_state.built_free_epoch = resources.resource_free_epoch;
         }
@@ -496,6 +516,10 @@ impl ViewportRenderer {
                 batch.emissive_id,
             );
         }
+        // Under bindless the culled colour draws share one texture-array bind
+        // group per viewport (the per-batch groups above still serve the
+        // shadow-cutout cull path); a no-op on the per-batch binding.
+        resources.get_bindless_cull_bind_group(cull_state, device);
 
         // Now take immutable borrows to the GPU buffers for dispatch.
         if let (

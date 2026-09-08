@@ -353,7 +353,7 @@ macro_rules! emit_draw_calls {
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
-                                let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
+                                let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                                 let no_discard = !clipping_active
                                     && !batch.has_alpha_mask
                                     && nodiscard_pipes.0.is_some()
@@ -400,7 +400,7 @@ macro_rules! emit_draw_calls {
                                     batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
-                                let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
+                                let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
                                 let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                                 if cur_chunks != Some(chunks) {

@@ -52,7 +52,7 @@ impl TexTransformGpu {
 }
 
 /// A material's per-slot UV transforms plus its scalar shading parameters, as the
-/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 272
+/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 304
 /// bytes. The scalars are the per-material fields that used to be duplicated into
 /// every `InstanceData` record; moving them here shrinks the per-instance record
 /// to O(instances) transform-free and keeps a single copy per distinct material.

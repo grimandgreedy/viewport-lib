@@ -5,26 +5,6 @@
 use super::indirect;
 use super::types::InstancedBatch;
 
-/// How the instanced mesh path binds material textures for a draw.
-///
-/// `PerBatch` binds the batch's albedo/normal/AO/metallic-roughness/emissive
-/// views into group 1 and includes those texture ids in the batch key, so
-/// instances that differ only in material land in separate batches. `Bindless`
-/// binds one texture array once per frame and lets the shader index it by a
-/// per-material index, so the batch key drops the texture ids and instances of
-/// one mesh with different materials collapse into a single batch.
-///
-/// The mode is chosen once at renderer construction from the device's enabled
-/// features: `Bindless` needs the texture-array feature set (Vulkan/DX12);
-/// Metal and WebGPU stay on `PerBatch`. Both paths render the same result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MaterialTextureBinding {
-    /// One group-1 texture bind per batch; texture ids are part of the batch key.
-    PerBatch,
-    /// One bindless texture array per frame; texture ids drop out of the batch key.
-    Bindless,
-}
-
 pub(crate) struct InstancingState {
     /// Instanced batches prepared for the current frame. Empty when using the
     /// per-object path.
@@ -48,12 +28,6 @@ pub(crate) struct InstancingState {
     /// forming, the actual multi-draw call) be exercised and pixel-compared on
     /// the correctness box. Off by default; set via `set_force_multi_draw`.
     pub(crate) multi_draw_forced: bool,
-    /// How material textures are bound for instanced draws: per-batch group-1
-    /// binds (the portable path) or a single bindless texture array (Vulkan/DX12).
-    /// Fixed at construction from the device's enabled features; it drives both
-    /// the batch key (whether texture ids split batches) and the draw loop
-    /// (per-batch bind group versus one frame-constant array).
-    pub(crate) material_texture_binding: MaterialTextureBinding,
     /// GPU culling compute pipelines and frustum buffer. Created lazily on the first
     /// frame where `gpu_culling_enabled` is true and instance buffers are present.
     pub(crate) cull_resources: Option<indirect::CullResources>,
@@ -134,11 +108,7 @@ impl InstancingState {
         self.multi_draw_supported || self.multi_draw_forced
     }
 
-    pub(crate) fn new(
-        gpu_culling_supported: bool,
-        multi_draw_supported: bool,
-        material_texture_binding: MaterialTextureBinding,
-    ) -> Self {
+    pub(crate) fn new(gpu_culling_supported: bool, multi_draw_supported: bool) -> Self {
         Self {
             batches: Vec::new(),
             use_instancing: false,
@@ -146,7 +116,6 @@ impl InstancingState {
             gpu_culling_enabled: gpu_culling_supported,
             multi_draw_supported,
             multi_draw_forced: false,
-            material_texture_binding,
             cull_resources: None,
             last_scene_generation: u64::MAX,
             last_wireframe_mode: false,
