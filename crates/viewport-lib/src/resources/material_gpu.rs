@@ -52,7 +52,7 @@ impl TexTransformGpu {
 }
 
 /// A material's per-slot UV transforms plus its scalar shading parameters, as the
-/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 240
+/// instanced mesh shaders read them. Matches the WGSL `MaterialGpu` struct, 256
 /// bytes. The scalars are the per-material fields that used to be duplicated into
 /// every `InstanceData` record; moving them here shrinks the per-instance record
 /// to O(instances) transform-free and keeps a single copy per distinct material.
@@ -61,13 +61,20 @@ impl TexTransformGpu {
 /// - `scalars0` = (ambient, diffuse, specular, shininess)
 /// - `scalars1` = (metallic, roughness, normal_strength, _)
 /// - `scalars2` = (emissive.r, emissive.g, emissive.b, ao_range.min)
-/// - `scalars3` = (ao_range.max, param_vis_scale, _, _)
+/// - `scalars3` = (ao_range.max, param_vis_scale, backface_policy, _)
 /// - `flags`    = (use_pbr, use_flat, alpha_mode, param_vis_mode)
+/// - `backface_colour` = the styled-backface colour (see below)
 ///
 /// `alpha_mode` is 0 Opaque / 1 Mask / 2 Blend / 3 BlendPremultiplied (only the
 /// instanced OIT shader reads it, to skip the premultiply for mode 3).
 /// `param_vis_mode` 0 means off; non-zero selects a procedural UV pattern that
 /// replaces the lit colour (mirrors the per-object `uv_vis_mode`).
+/// `backface_policy` is 0 Cull / 1 Identical / 2 DifferentColour / 3 Tint /
+/// 4..7 Pattern (stored as an exact small integer in the f32 slot). For the
+/// styled policies the instanced shader flips the normal and overrides the
+/// colour on back faces. `backface_colour` carries the DifferentColour rgb, the
+/// Tint factor (in `.r`), or the Pattern colour (rgb); the Pattern world scale is
+/// per-instance (transform-dependent) and rides `InstanceData` instead.
 ///
 /// The `has_*` texture flags and `alpha_cutoff` / `alpha_flag` stay per-instance
 /// (in `InstanceData`): the explicit `MeshInstanceItem` path bakes them at upload
@@ -82,9 +89,10 @@ pub(crate) struct MaterialGpu {
     pub(crate) scalars2: [f32; 4],
     pub(crate) scalars3: [f32; 4],
     pub(crate) flags: [u32; 4],
+    pub(crate) backface_colour: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 240);
+const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 256);
 
 impl MaterialGpu {
     /// Build the full GPU material block (transforms + scalars) from a material.
@@ -108,18 +116,41 @@ impl MaterialGpu {
         };
         let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
         let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
+        // Styled back-face policy and colour (the per-item Pattern world scale
+        // rides `InstanceData`, so `backface_colour.w` is left unused here).
+        use crate::scene::material::BackfacePolicy;
+        let backface_policy = match m.backface_policy {
+            BackfacePolicy::Cull => 0u32,
+            BackfacePolicy::Identical => 1,
+            BackfacePolicy::DifferentColour(_) => 2,
+            BackfacePolicy::Tint(_) => 3,
+            BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
+        };
+        let backface_colour = match m.backface_policy {
+            BackfacePolicy::DifferentColour(c) => {
+                let c = c.to_linear_rgb();
+                [c[0], c[1], c[2], 1.0]
+            }
+            BackfacePolicy::Tint(factor) => [factor, 0.0, 0.0, 1.0],
+            BackfacePolicy::Pattern(cfg) => {
+                let cc = cfg.colour.to_linear_rgb();
+                [cc[0], cc[1], cc[2], 0.0]
+            }
+            _ => [0.0; 4],
+        };
         MaterialGpu {
             xf,
             scalars0: [m.ambient, m.diffuse, m.specular, m.shininess],
             scalars1: [m.metallic, m.roughness, m.normal_strength, 0.0],
             scalars2: [e[0], e[1], e[2], m.ao_range[0]],
-            scalars3: [m.ao_range[1], param_vis_scale, 0.0, 0.0],
+            scalars3: [m.ao_range[1], param_vis_scale, backface_policy as f32, 0.0],
             flags: [
                 m.is_pbr() as u32,
                 m.is_flat() as u32,
                 alpha_mode,
                 param_vis_mode,
             ],
+            backface_colour,
         }
     }
 }
@@ -129,7 +160,7 @@ impl MaterialGpu {
 /// the identity block, so any material with no authored transform maps to 0.
 pub(crate) struct MaterialGpuBuilder {
     entries: Vec<MaterialGpu>,
-    lookup: HashMap<[u8; 240], u32>,
+    lookup: HashMap<[u8; 256], u32>,
     /// Set when the capacity was hit and some materials were forced to entry 0.
     pub(crate) overflowed: bool,
 }
@@ -165,7 +196,7 @@ impl MaterialGpuBuilder {
     /// material share an id. On overflow, returns 0.
     pub(crate) fn intern(&mut self, m: &Material) -> u32 {
         let block = MaterialGpu::from_material(m);
-        let key: [u8; 240] = bytemuck::cast(block);
+        let key: [u8; 256] = bytemuck::cast(block);
         if let Some(&id) = self.lookup.get(&key) {
             return id;
         }
@@ -236,5 +267,35 @@ mod tests {
         // Albedo (slot 0) stays identity; normal (slot 1) carries the 4x scale.
         assert_eq!(block.xf[0].offset_scale, [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(block.xf[1].offset_scale, [0.0, 0.0, 4.0, 4.0]);
+    }
+
+    #[test]
+    fn styled_backface_packs_policy_and_colour() {
+        use crate::scene::material::BackfacePolicy;
+        // DifferentColour: policy 2, colour in backface_colour.rgb.
+        let mut m = Material::default();
+        m.backface_policy =
+            BackfacePolicy::DifferentColour(crate::Colour::linear_rgb(0.1, 0.2, 0.3));
+        let b = MaterialGpu::from_material(&m);
+        assert_eq!(u32::try_from(b.scalars3[2] as i64).unwrap(), 2);
+        assert_eq!(
+            [
+                b.backface_colour[0],
+                b.backface_colour[1],
+                b.backface_colour[2]
+            ],
+            [0.1, 0.2, 0.3]
+        );
+
+        // Tint: policy 3, factor in backface_colour.r.
+        let mut m = Material::default();
+        m.backface_policy = BackfacePolicy::Tint(0.4);
+        let b = MaterialGpu::from_material(&m);
+        assert_eq!(b.scalars3[2] as u32, 3);
+        assert!((b.backface_colour[0] - 0.4).abs() < 1e-6);
+
+        // A default material is Cull (policy 0), no styled back-face.
+        let b = MaterialGpu::from_material(&Material::default());
+        assert_eq!(b.scalars3[2] as u32, 0);
     }
 }

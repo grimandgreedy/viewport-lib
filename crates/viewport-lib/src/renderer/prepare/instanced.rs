@@ -28,10 +28,12 @@ impl ViewportRenderer {
         // uses the per-object wireframe_pipeline, not the instanced path, so
         // instance data is now viewport-agnostic.
         //
-        // Items with active_attribute, two-sided policy, matcap, or param_vis are
-        // excluded from the instanced batch filter. Items whose mesh has an active
-        // compute filter result are also excluded so the per-object path can apply
-        // the filtered index buffer (instanced draws always use the full index buffer).
+        // Items with active_attribute, matcap, an emissive texture, a shading
+        // plugin, warp, deform, submesh materials, or overrides are excluded from
+        // the instanced batch filter (see `is_instanceable`). Items whose mesh has
+        // an active compute filter result are also excluded so the per-object path
+        // can apply the filtered index buffer (instanced draws always use the full
+        // index buffer).
         // These flags are set on render items AFTER collect_render_items() (per-frame
         // mutations), so they do NOT bump the scene generation. Use last_instancable_count
         // as a cache key instead of a blanket has_per_frame_mutations flag; this allows
@@ -159,6 +161,24 @@ impl ViewportRenderer {
                             let custom_data_id = resources
                                 .custom_data_builder
                                 .intern(item.settings.custom_data);
+                            // Styled back-face `Pattern` world scale: transform the
+                            // mesh AABB by this instance's model to get its world
+                            // extent, then divide the pattern scale by it. Mirrors
+                            // the per-object derivation (`per_object.rs`). Zero for
+                            // every non-Pattern policy.
+                            let backface_pattern_scale = match item.material.backface_policy {
+                                crate::scene::material::BackfacePolicy::Pattern(cfg) => {
+                                    let world_extent = batch_mesh
+                                        .map(|m| {
+                                            let model = glam::Mat4::from_cols_array_2d(&item.model);
+                                            m.aabb.transformed(&model).longest_side()
+                                        })
+                                        .unwrap_or(1.0)
+                                        .max(1e-6);
+                                    cfg.scale / world_extent
+                                }
+                                _ => 0.0,
+                            };
                             // Recover this item's light-probe SH block (assigned
                             // in the shared prepass, keyed by scene-item index).
                             let probe = probe_indices[*orig_idx];
@@ -199,7 +219,8 @@ impl ViewportRenderer {
                                 light_probe_index: probe.unwrap_or(0),
                                 ignore_clip: item.settings.ignore_clip as u32,
                                 custom_data_id,
-                                _pad: [0; 2],
+                                backface_pattern_scale,
+                                _pad: 0,
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);

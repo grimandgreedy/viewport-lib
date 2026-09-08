@@ -863,24 +863,15 @@ impl ViewportRenderer {
                                 continue;
                             };
 
-                            // Mirror the inclusion filter from
-                            // `sorted_items` (instancing builder). When
-                            // every condition holds, the item was drawn by
-                            // the instanced shadow path and must not be
-                            // drawn again here. Two-sided (`Identical`) meshes
-                            // are now in the instanced batches, so they are
-                            // excluded here via `backface_needs_per_object`.
-                            let in_instanced_batch = item.active_attribute.is_none()
-                                && !backface_needs_per_object(item)
-                                && item.material.matcap_id().is_none()
-                                && item.material.param_vis.is_none()
-                                && !filter_results.iter().any(|r| r.mesh_id == item.mesh_id)
-                                && !resources.deform.has_per_instance_deform_data(
-                                    item.mesh_id,
-                                    item.deform_instance,
-                                )
-                                && mesh.position_override_buffer.is_none()
-                                && mesh.normal_override_buffer.is_none();
+                            // Mirror the instanced-batch inclusion filter
+                            // (`is_instanceable`). When the item is in a batch it
+                            // was already drawn by the instanced shadow path above
+                            // and must not be drawn again here. All back-face
+                            // policies and param-vis now instance, so they are not
+                            // excluded; matcap, emissive texture, submesh, plugin,
+                            // warp, deform, and overrides still fall here.
+                            let in_instanced_batch =
+                                is_instanceable(item, resources, filter_results);
                             if in_instanced_batch {
                                 continue;
                             }

@@ -33,6 +33,14 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
+- **Styled back-face policies now instance.** A material with a
+  `DifferentColour` / `Tint` / `Pattern` back-face policy previously fell to the
+  per-object draw path; it now draws through the two-sided instanced path,
+  rendering the same as before. The instanced mesh shaders read the per-material
+  policy and back-face colour from the material buffer, flip the normal on back
+  faces, and read the transform-dependent `Pattern` scale per instance. No API
+  change; scenes with many instances of a styled-back-face material issue fewer
+  draws.
 - **Param-vis and premultiplied-blend materials now instance.** A material with a
   UV parameterisation visualisation (`param_vis`) or `AlphaMode::BlendPremultiplied`
   previously fell to the per-object draw path; both now draw through the instanced

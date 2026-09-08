@@ -66,7 +66,7 @@ struct InstanceData {
     light_probe_index: u32,               // offset 124
     ignore_clip: u32,                     // offset 128
     custom_data_id: u32,                  // offset 132
-    _pad1: u32,                           // offset 136
+    backface_pattern_scale: f32,          // offset 136
     _pad2: u32,                           // offset 140
 };
 
@@ -78,8 +78,10 @@ struct TexTransform {
 }
 // scalars0 = (ambient, diffuse, specular, shininess)
 // scalars1 = (metallic, roughness, normal_strength, _)
-// scalars2 = (emissive.rgb, ao_min); scalars3 = (ao_max, param_vis_scale, _, _)
+// scalars2 = (emissive.rgb, ao_min); scalars3 = (ao_max, param_vis_scale, backface_policy, _)
 // flags    = (use_pbr, use_flat, alpha_mode, param_vis_mode)
+// backface_colour = styled back-face colour (DiffColour rgb / Tint factor in .r /
+//                   Pattern rgb); Pattern world scale is per-instance
 struct MaterialGpu {
     xf: array<TexTransform, 5>,
     scalars0: vec4<f32>,
@@ -87,6 +89,7 @@ struct MaterialGpu {
     scalars2: vec4<f32>,
     scalars3: vec4<f32>,
     flags: vec4<u32>,
+    backface_colour: vec4<f32>,
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
@@ -382,7 +385,7 @@ fn param_vis_colour(uv: vec2<f32>, mode: u32, scale: f32) -> vec3<f32> {
 
 // Material prep for the instanced transparent path. Unlit fully determines the
 // colour and sets `resolved`; otherwise the surface fields feed compute_lit.
-fn compute_surface(in: VertexOut) -> Surface {
+fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     let inst = instances[in.instance_idx];
     let mat = material_gpu_buf[inst.material_id];
 
@@ -395,7 +398,7 @@ fn compute_surface(in: VertexOut) -> Surface {
     out.ao_factor = 1.0;
     out.mat_uv = in.uv;
     out.alpha = 1.0;
-    out.front_facing = 1u;
+    out.front_facing = select(0u, 1u, is_front);
 
     // Screen-space derivatives of the interpolated inputs, taken here where
     // control flow is still uniform. The shading branches below key off
@@ -430,7 +433,7 @@ fn compute_surface(in: VertexOut) -> Surface {
         inst.colour.a   * in.colour.a   * tex_colour.a,
     );
     out.alpha = obj_colour.a;
-    let base_colour = obj_colour.rgb;
+    var base_colour = obj_colour.rgb;
 
     // Unlit: skip all lighting, return raw colour directly through OIT.
     if inst.unlit != 0u {
@@ -479,6 +482,36 @@ fn compute_surface(in: VertexOut) -> Surface {
         N = normalize(TBN * ts_normal);
     } else {
         N = normalize(in.world_normal);
+    }
+
+    // Styled back-face policy: flip the normal and override the colour on back
+    // faces. Mirrors mesh.wgsl / the opaque instanced path. Policy in scalars3.z:
+    // 2 DifferentColour, 3 Tint, 4..7 Pattern. Cull (0) and Identical (1) do not
+    // enter here. Pattern world scale is per-instance.
+    let backface_policy = u32(mat.scalars3.z);
+    if !is_front && backface_policy >= 2u {
+        N = -N;
+        if backface_policy == 2u {
+            base_colour = mat.backface_colour.rgb;
+        } else if backface_policy == 3u {
+            base_colour = base_colour * (1.0 - mat.backface_colour.r);
+        } else {
+            let pattern_colour = mat.backface_colour.rgb;
+            let pattern_type = backface_policy - 4u;
+            let wp = in.world_pos * inst.backface_pattern_scale;
+            var use_pattern = false;
+            if pattern_type == 0u {
+                let p = (i32(floor(wp.x)) + i32(floor(wp.z))) & 1;
+                use_pattern = p != 0;
+            } else if pattern_type == 1u {
+                use_pattern = fract((wp.x + wp.z) * 0.5) < 0.4;
+            } else if pattern_type == 2u {
+                use_pattern = fract((wp.x + wp.z) * 0.5) < 0.3 || fract((wp.x - wp.z) * 0.5) < 0.3;
+            } else {
+                use_pattern = fract(wp.z * 0.5) < 0.4;
+            }
+            base_colour = select(base_colour, pattern_colour, use_pattern);
+        }
     }
 
     var ao_factor = 1.0;
@@ -631,8 +664,8 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
 }
 
 @fragment
-fn fs_oit_main(in: VertexOut) -> OitOut {
-    let surface = compute_surface(in);
+fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
+    let surface = compute_surface(in, is_front);
 
     // Derivative terms for the lighting stage, taken here while control flow is
     // still uniform (before the resolved early return and compute_lit's

@@ -1287,7 +1287,8 @@ impl DeviceResources {
             light_probe_index: u32,
             ignore_clip: u32,
             custom_data_id: u32,
-            _pad: [u32; 2],
+            backface_pattern_scale: f32,
+            _pad: u32,
         }
 
         const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 144);
@@ -1325,7 +1326,9 @@ impl DeviceResources {
                 // The explicit particle path renders unlit, so the built-in
                 // custom-data emissive read is bypassed; pin to the zero block.
                 custom_data_id: 0,
-                _pad: [0; 2],
+                // Particles use no styled back-face policy.
+                backface_pattern_scale: 0.0,
+                _pad: 0,
             }
         };
         let instances: Vec<GpuInstanceData> = match indices {
@@ -1604,7 +1607,12 @@ pub(crate) struct InstanceData {
     /// Index into `instance_custom_data_buf` (group 0 binding 22): this
     /// instance's raw `[f32; 8]` custom-data payload. 0 is the zero block.
     pub(crate) custom_data_id: u32, //   4 bytes, offset 132
-    pub(crate) _pad: [u32; 2],       //   8 bytes, offset 136 (stride to 144)
+    /// Styled back-face `Pattern` world scale (`cfg.scale / world_extent`), which
+    /// depends on this instance's transform, so it stays per-instance. 0 for every
+    /// non-Pattern policy. The rest of the styled-backface state (policy, colour)
+    /// lives in `material_gpu_buf`.
+    pub(crate) backface_pattern_scale: f32, // 4 bytes, offset 136
+    pub(crate) _pad: u32,            //   4 bytes, offset 140 (stride to 144)
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);

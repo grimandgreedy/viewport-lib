@@ -12,16 +12,17 @@ use super::*;
 /// single source of truth for that decision, used both when building the batches
 /// and when deciding the instanced-batch cache key. An item is excluded when it
 /// is hidden, carries a scalar attribute, carries a GPU vertex warp (the
-/// instanced shader has no warp support), uses a styled back-face policy
-/// (`DifferentColour`/`Tint`/`Pattern`, which need per-item back-face state), a
-/// matcap (a texture bind the instanced path does not yet carry), has a pending
+/// instanced shader has no warp support), uses a matcap (a texture bind the
+/// instanced path does not yet carry), has an emissive texture, has a pending
 /// compute-filter result (which needs a per-item index buffer), carries
 /// per-submesh materials, has per-instance deform data, or its mesh has a
-/// position/normal override buffer bound. `Cull` and `Identical` back-face
-/// policies both render through the instanced path: `Identical` batches use the
-/// two-sided (`cull_mode: None`) instanced pipeline. Param-vis and premultiplied
-/// blend do instance: the instanced shaders read the per-material `param_vis`
-/// mode/scale and `alpha_mode` from `material_gpu_buf`.
+/// position/normal override or baked lightmap. All four back-face policies now
+/// instance: `Cull` and `Identical` use the one- and two-sided pipelines, and the
+/// styled policies (`DifferentColour`/`Tint`/`Pattern`) run on the two-sided
+/// pipeline, where the instanced shaders read the per-material policy/colour from
+/// `material_gpu_buf`, flip the normal on back faces, and read the Pattern world
+/// scale from `InstanceData`. Param-vis and premultiplied blend also instance
+/// (their `param_vis` mode/scale and `alpha_mode` ride `material_gpu_buf`).
 pub(crate) fn is_instanceable(
     item: &SceneRenderItem,
     resources: &DeviceResources,
@@ -37,7 +38,6 @@ pub(crate) fn is_instanceable(
         // `warp_scale`. Keep warp items on the per-object path (matching the
         // per-object writer's own warp exception and the comment there).
         && item.warp_attribute.is_none()
-        && !backface_needs_per_object(item)
         && item.material.matcap_id().is_none()
         // The instanced path carries the emissive factor but does not sample the
         // emissive texture. An emissive-textured material must stay per-object so
@@ -61,19 +61,6 @@ pub(crate) fn is_instanceable(
             // stay per-object or its lightmap silently does not render.
                 && m.lightmap.is_none()
         })
-}
-
-/// Whether an item's back-face handling forces it onto the per-object path.
-///
-/// The instanced path admits the `Cull` and `Identical` policies through both the
-/// opaque and OIT passes, each of which has a two-sided (`cull_mode: None`) twin,
-/// so a two-sided `Identical` item instances at any opacity. The styled policies
-/// (`DifferentColour`/`Tint`/`Pattern`) read a per-item back-face colour and flip
-/// the normal, which the instanced shader does not carry, so they stay
-/// per-object. This is the single predicate the instanced filter and both
-/// paint-path excluded filters share, so they cannot drift.
-pub(crate) fn backface_needs_per_object(item: &SceneRenderItem) -> bool {
-    item.material.backface_needs_per_object()
 }
 
 /// The per-range materials to draw `item` with, when it requests them and
@@ -188,16 +175,40 @@ mod tests {
     use super::*;
     use crate::scene::material::{AlphaMode, BackfacePolicy};
 
-    /// A two-sided alpha-test (`Mask`) card is opaque and must stay on the
-    /// instanced path: `backface_needs_per_object` only forces per-object for
-    /// transparent (blend / opacity < 1) two-sided items, not for `Mask`.
+    /// `Identical` is a two-sided policy but not a styled one, so it is not
+    /// flagged for per-item back-face handling; a two-sided `Mask` card instances
+    /// on the two-sided pipeline.
     #[test]
-    fn two_sided_mask_stays_instanceable() {
+    fn identical_is_not_a_styled_backface() {
         let mut item = SceneRenderItem::default();
         item.material.backface_policy = BackfacePolicy::Identical;
         item.material.alpha_mode = AlphaMode::Mask(0.45);
         assert!(item.material.is_two_sided());
-        assert!(!backface_needs_per_object(&item));
+        assert!(!item.material.backface_needs_per_object());
+    }
+
+    /// Styled back-face policies now instance: the per-material policy/colour ride
+    /// `material_gpu_buf` and the shader flips the normal and overrides the colour
+    /// on back faces.
+    #[test]
+    fn styled_backface_is_instanceable() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mesh = crate::geometry::primitives::grid_plane(1.0, 1.0, 4, 4);
+        let mesh_id = resources.upload_mesh_data(&device, &mesh).unwrap();
+
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        item.material.backface_policy =
+            BackfacePolicy::DifferentColour(crate::Colour::linear_rgb(1.0, 0.0, 0.0));
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a styled-backface item should instance",
+        );
     }
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
