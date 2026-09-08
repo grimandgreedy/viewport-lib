@@ -91,6 +91,8 @@ struct MaterialGpu {
     flags: vec4<u32>,
     backface_colour: vec4<f32>,
     mr_range: vec4<f32>,
+    tex_index0: vec4<u32>,   // bindless array indices: albedo, normal, ao, metallic-roughness
+    tex_index1: vec4<u32>,   // bindless array indices: emissive, unused, unused, unused
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
 
