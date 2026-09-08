@@ -155,8 +155,10 @@ impl ViewportRenderer {
 
                         for (orig_idx, item) in batch_items {
                             let cm = common_material(item);
-                            let material_id =
-                                resources.material_gpu_builder.intern(&item.material);
+                            let material_id = resources.material_gpu_builder.intern(&item.material);
+                            let custom_data_id = resources
+                                .custom_data_builder
+                                .intern(item.settings.custom_data);
                             // Recover this item's light-probe SH block (assigned
                             // in the shared prepass, keyed by scene-item index).
                             let probe = probe_indices[*orig_idx];
@@ -196,7 +198,8 @@ impl ViewportRenderer {
                                 has_light_probe: probe.map_or(0, |_| 1),
                                 light_probe_index: probe.unwrap_or(0),
                                 ignore_clip: item.settings.ignore_clip as u32,
-                                _pad: [0; 3],
+                                custom_data_id,
+                                _pad: [0; 2],
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);

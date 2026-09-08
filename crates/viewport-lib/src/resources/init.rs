@@ -362,6 +362,19 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 22: per-instance custom-data buffer (FRAGMENT,
+                // read-only). Array of `InstanceCustomData` payloads, indexed by
+                // the per-instance `custom_data_id`. Scene-global, group 0.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 22,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -723,8 +736,18 @@ impl DeviceResources {
         let material_gpu_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("material_gpu_buf"),
             size: (std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()
-                * crate::resources::material_gpu::MATERIAL_GPU_CAPACITY)
-                as u64,
+                * crate::resources::material_gpu::MATERIAL_GPU_CAPACITY) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Per-instance custom-data buffer (group 0, binding 22). Fixed capacity
+        // so the handle is stable across frames; the camera bind group binds it
+        // once and never rebuilds for custom-data churn.
+        let instance_custom_data_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("instance_custom_data_buf"),
+            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
+                * crate::resources::custom_data::CUSTOM_DATA_CAPACITY) as u64,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1052,6 +1075,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: material_gpu_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 22,
+                    resource: instance_custom_data_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2507,8 +2534,9 @@ impl DeviceResources {
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
             material_gpu_buf,
-            material_gpu_builder:
-                crate::resources::material_gpu::MaterialGpuBuilder::default(),
+            material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
+            instance_custom_data_buf,
+            custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: 0,
             resource_free_epoch: 0,

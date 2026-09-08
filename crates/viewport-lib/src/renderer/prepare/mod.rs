@@ -174,6 +174,7 @@ impl ViewportRenderer {
         // buffer is uploaded at the end of this function (and again after
         // per-viewport foreground objects intern).
         self.resources.material_gpu_builder.reset();
+        self.resources.custom_data_builder.reset();
 
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
@@ -886,6 +887,7 @@ impl ViewportRenderer {
         // block buffer so the scene pass can index it. Foreground objects
         // re-upload after they intern in `prepare_viewport_internal`.
         self.resources.upload_material_gpu(queue);
+        self.resources.upload_custom_data(queue);
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -930,6 +932,7 @@ impl ViewportRenderer {
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
         self.resources.upload_material_gpu(queue);
+        self.resources.upload_custom_data(queue);
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 

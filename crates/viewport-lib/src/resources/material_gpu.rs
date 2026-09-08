@@ -85,7 +85,9 @@ impl MaterialGpu {
     /// Build the full GPU material block (transforms + scalars) from a material.
     /// The scalar derivations mirror `common_material` (`mesh_material.rs`).
     pub(crate) fn from_material(m: &Material) -> MaterialGpu {
-        use crate::scene::material::TextureSlot::{Albedo, Ao, Emissive, MetallicRoughness, Normal};
+        use crate::scene::material::TextureSlot::{
+            Albedo, Ao, Emissive, MetallicRoughness, Normal,
+        };
         let slots = [Albedo, Normal, Ao, MetallicRoughness, Emissive];
         let mut xf = [TexTransformGpu::IDENTITY; MATERIAL_TEX_SLOTS];
         for (i, slot) in slots.iter().enumerate() {
@@ -195,7 +197,10 @@ mod tests {
         m.metallic = 0.7;
         let b = MaterialGpu::from_material(&m);
         // scalars2.xyz = emissive (HDR nits), scalars1.x = metallic.
-        assert_eq!([b.scalars2[0], b.scalars2[1], b.scalars2[2]], [1.5, 0.25, 4.0]);
+        assert_eq!(
+            [b.scalars2[0], b.scalars2[1], b.scalars2[2]],
+            [1.5, 0.25, 4.0]
+        );
         assert!((b.scalars1[0] - 0.7).abs() < 1e-6);
     }
 

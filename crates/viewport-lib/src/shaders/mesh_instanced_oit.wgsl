@@ -65,7 +65,7 @@ struct InstanceData {
     has_light_probe: u32,                 // offset 120
     light_probe_index: u32,               // offset 124
     ignore_clip: u32,                     // offset 128
-    _pad0: u32,                           // offset 132
+    custom_data_id: u32,                  // offset 132
     _pad1: u32,                           // offset 136
     _pad2: u32,                           // offset 140
 };
@@ -89,6 +89,16 @@ struct MaterialGpu {
     flags: vec4<u32>,
 }
 @group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
+
+// Per-instance custom-data payload (group 0, binding 22). Raw [f32; 8] per
+// instance, indexed by custom_data_id. Slots 0..3 add to emissive (nits); slots
+// 3..8 are a raw channel reserved for material plugins. custom_data_id 0 is the
+// zero block.
+struct CustomData {
+    data0: vec4<f32>,   // slots 0..4
+    data1: vec4<f32>,   // slots 4..8
+}
+@group(0) @binding(22) var<storage, read> instance_custom_data_buf: array<CustomData>;
 
 struct SlotUv {
     uv: vec2<f32>,
@@ -609,7 +619,9 @@ fn fs_oit_main(in: VertexOut) -> OitOut {
 
     // Emissive term: added after lighting so it can push HDR values above 1.0.
     // The instanced path has no emissive texture, so the factor is applied flat.
-    let emissive = material_gpu_buf[instances[in.instance_idx].material_id].scalars2.xyz;
+    // Per-instance custom data slots 0..3 add to emissive (nits); zero is a no-op.
+    let inst_emissive = instance_custom_data_buf[instances[in.instance_idx].custom_data_id].data0.xyz;
+    let emissive = material_gpu_buf[instances[in.instance_idx].material_id].scalars2.xyz + inst_emissive;
     final_rgb += emissive;
     let dbg_emissive_lum = dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722));
 

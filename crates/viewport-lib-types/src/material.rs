@@ -50,6 +50,21 @@ pub struct ItemSettings {
     /// Honoured by item types whose shader samples the clip uniform; types that
     /// do not sample it treat this flag as a no-op.
     pub ignore_clip: bool,
+    /// Raw per-instance material inputs, read by the shading path and (through a
+    /// material plugin) by custom material graphs. Default `[0.0; 8]`.
+    ///
+    /// This is the per-instance channel that lets instances sharing a material
+    /// vary their appearance without breaking batching, matching Unity's
+    /// `MaterialPropertyBlock` GPU-instanced properties and Unreal's ISM / HISM
+    /// per-instance custom float data. It is independent of `Material` (which is
+    /// shared across a batch) and of the per-instance `colour` tint.
+    ///
+    /// Built-in mesh shading reads slots `0..3` as an emissive addition in nits
+    /// (zero is a no-op, so unset custom data changes nothing); slots `3..8` are
+    /// a raw channel reserved for material plugins to interpret. Honoured on the
+    /// scene-graph instanced mesh path; item types that do not sample it treat it
+    /// as a no-op.
+    pub custom_data: [f32; 8],
 }
 
 impl Default for ItemSettings {
@@ -64,6 +79,7 @@ impl Default for ItemSettings {
             cast_shadows: true,
             receive_shadows: true,
             ignore_clip: false,
+            custom_data: [0.0; 8],
         }
     }
 }

@@ -33,6 +33,15 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   counter was always zero.
 
 ### Features
+- **Per-instance custom data.** `ItemSettings` gains `custom_data: [f32; 8]`, a
+  raw per-instance payload that lets instances sharing a `Material` vary their
+  appearance without breaking batching, matching Unity's `MaterialPropertyBlock`
+  GPU-instanced properties and Unreal's ISM / HISM per-instance custom float
+  data. Built-in mesh shading reads slots `0..3` as an emissive addition in nits
+  (zero is a no-op, so existing scenes are unchanged); slots `3..8` are a raw
+  channel for a material plugin to interpret. Honoured on the scene-graph
+  instanced mesh path. The payloads live once in a scene-global GPU buffer
+  indexed by a per-instance id, so unused custom data costs nothing.
 - **Per-texture UV transforms with rotation.** `Material` gains `uv_rotation`
   (a shared rotation, in radians, about the texture centre) and
   `texture_transforms` (an optional per-map `UvTransform` of offset, scale,

@@ -828,6 +828,17 @@ pub struct DeviceResources {
     /// `material_id` indices into `material_gpu_buf`. Reset at each `prepare()`.
     pub(crate) material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder,
 
+    // --- Per-instance custom-data buffer (group 0, binding 22) ---
+    /// Scene-global buffer of per-instance custom-data blocks
+    /// (`InstanceCustomData`, one per distinct payload this frame). Fixed
+    /// capacity, so its handle is stable and the camera bind group never rebuilds
+    /// for it.
+    pub(crate) instance_custom_data_buf: crate::gpu::Buffer,
+    /// Per-frame interner that deduplicates custom-data payloads and hands out
+    /// `custom_data_id` indices into `instance_custom_data_buf`. Reset at each
+    /// `prepare()`.
+    pub(crate) custom_data_builder: crate::resources::custom_data::CustomDataBuilder,
+
     // --- Runtime performance tracking ---
     /// Cumulative bytes of geometry data uploaded since the last `prepare()` reset.
     ///
@@ -1174,12 +1185,37 @@ impl DeviceResources {
             0,
             bytemuck::cast_slice(&entries[..n]),
         );
-        let bytes =
-            (n * std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()) as u64;
+        let bytes = (n * std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()) as u64;
         if self.material_gpu_builder.overflowed {
             tracing::warn!(
                 capacity = crate::resources::material_gpu::MATERIAL_GPU_CAPACITY,
                 "material UV transform buffer overflowed; excess materials fell back to identity"
+            );
+        }
+        self.frame_upload_bytes += bytes;
+    }
+
+    /// Upload the current per-instance custom-data blocks to
+    /// `instance_custom_data_buf`. Called after interning finishes, alongside
+    /// [`upload_material_gpu`](Self::upload_material_gpu). Overwriting a superset
+    /// each time is safe: index 0 is always the zero block and ids only grow
+    /// within a frame, so earlier custom_data_ids stay valid.
+    pub(crate) fn upload_custom_data(&mut self, queue: &crate::gpu::Queue) {
+        let entries = self.custom_data_builder.entries();
+        let n = entries
+            .len()
+            .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
+        queue.write_buffer(
+            &self.instance_custom_data_buf,
+            0,
+            bytemuck::cast_slice(&entries[..n]),
+        );
+        let bytes =
+            (n * std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()) as u64;
+        if self.custom_data_builder.overflowed {
+            tracing::warn!(
+                capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY,
+                "per-instance custom-data buffer overflowed; excess instances fell back to the zero block"
             );
         }
         self.frame_upload_bytes += bytes;
@@ -1310,6 +1346,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: self.material_gpu_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 22,
+                    resource: self.instance_custom_data_buf.as_entire_binding(),
                 },
             ],
         })

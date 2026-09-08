@@ -1286,7 +1286,8 @@ impl DeviceResources {
             has_light_probe: u32,
             light_probe_index: u32,
             ignore_clip: u32,
-            _pad: [u32; 3],
+            custom_data_id: u32,
+            _pad: [u32; 2],
         }
 
         const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 144);
@@ -1321,7 +1322,10 @@ impl DeviceResources {
                 has_light_probe: 0,
                 light_probe_index: 0,
                 ignore_clip: item.settings.ignore_clip as u32,
-                _pad: [0; 3],
+                // The explicit particle path renders unlit, so the built-in
+                // custom-data emissive read is bypassed; pin to the zero block.
+                custom_data_id: 0,
+                _pad: [0; 2],
             }
         };
         let instances: Vec<GpuInstanceData> = match indices {
@@ -1496,7 +1500,7 @@ pub(crate) struct ObjectUniform {
     /// three trailing words keep the 16-byte slot the old `uv_transform` vec4
     /// occupied, so every following offset and the struct size are unchanged.
     pub(crate) material_id: u32, //   4 bytes, offset 256
-    pub(crate) _pad_uv: [u32; 3], //  12 bytes, offset 260
+    pub(crate) _pad_uv: [u32; 3],    //  12 bytes, offset 260
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
     pub(crate) deform_flags: u32, //   4 bytes, offset 272
@@ -1578,7 +1582,7 @@ pub(crate) struct InstanceData {
     /// Which material textures are bound for this batch. These stay per-instance
     /// (the explicit `MeshInstanceItem` path sets them at upload time); the shading
     /// scalars and mode flags they gate live in `material_gpu_buf`.
-    pub(crate) has_texture: u32,     //   4 bytes, offset  88
+    pub(crate) has_texture: u32, //   4 bytes, offset  88
     pub(crate) has_normal_map: u32,  //   4 bytes, offset  92
     pub(crate) has_ao_map: u32,      //   4 bytes, offset  96
     pub(crate) unlit: u32,           //   4 bytes, offset 100
@@ -1590,14 +1594,17 @@ pub(crate) struct InstanceData {
     /// `AlphaMode::Mask` cutoff, and 1 = alpha-test enabled. Stay per-instance:
     /// the instanced shadow-cutout pass reads them without the material buffer.
     pub(crate) alpha_cutoff: f32, //   4 bytes, offset 112
-    pub(crate) alpha_flag: u32,  //   4 bytes, offset 116
+    pub(crate) alpha_flag: u32,      //   4 bytes, offset 116
     /// 1 = take indirect diffuse from `light_probe_sh` at `light_probe_index`.
     pub(crate) has_light_probe: u32, //   4 bytes, offset 120
     /// Base block index into the shared light-probe SH buffer (group 0 binding 18).
     pub(crate) light_probe_index: u32, //   4 bytes, offset 124
     /// 1 = exempt from the global clip planes/volumes.
     pub(crate) ignore_clip: u32, //   4 bytes, offset 128
-    pub(crate) _pad: [u32; 3],   //  12 bytes, offset 132 (stride to 144)
+    /// Index into `instance_custom_data_buf` (group 0 binding 22): this
+    /// instance's raw `[f32; 8]` custom-data payload. 0 is the zero block.
+    pub(crate) custom_data_id: u32, //   4 bytes, offset 132
+    pub(crate) _pad: [u32; 2],       //   8 bytes, offset 136 (stride to 144)
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);
