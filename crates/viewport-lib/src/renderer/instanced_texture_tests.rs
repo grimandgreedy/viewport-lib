@@ -183,8 +183,8 @@ fn region_checksum(bytes: &[u8], width: usize, x0: usize, x1: usize, y0: usize, 
 /// Only the receiver region that the shadow falls on is checksummed, and the
 /// caster never paints there, so the measured change comes from the shadow
 /// silhouette rather than the caster's own surface. The CPU-cull shadow path
-/// (devices without `INDIRECT_FIRST_INSTANCE`, e.g. Metal) is exercised here
-/// too, so this is not gated on GPU culling.
+/// (devices without `INDIRECT_FIRST_INSTANCE`, e.g. WebGPU or older hardware) is
+/// exercised here too, so this is not gated on GPU culling.
 #[test]
 fn instanced_cutout_shadow_reflects_replace_texture() {
     let Some((device, queue)) = headless_device() else {
@@ -330,7 +330,8 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
 }
 
 /// The direct instanced draw path (no GPU culling) reflects a `replace_texture`.
-/// Runs on every backend; on Metal this is the only instanced path available.
+/// Runs on every backend; where GPU culling is unavailable (WebGPU, older
+/// hardware) it is the only instanced path.
 #[test]
 fn instanced_path_reflects_replace_texture() {
     let Some((device, queue)) = headless_device() else {
@@ -442,10 +443,10 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
 /// binding 1) as the draw's group 1. Those bind groups are keyed by texture id and
 /// cached per viewport; `replace_texture` swaps the view under a stable id, so the
 /// key does not change and the cache used to keep drawing the old view. The tests
-/// above cannot catch this: GPU culling needs `INDIRECT_FIRST_INSTANCE`, which
-/// Metal lacks, so on macOS they exercise the direct instanced draw (which was
-/// already correct). This test enables culling and skips where it is unsupported,
-/// so it is the Vulkan/DX12 leg that covers the indirect path.
+/// above exercise the direct instanced draw (which was already correct); this one
+/// enables GPU culling to cover the indirect path, and skips where
+/// `INDIRECT_FIRST_INSTANCE` is unsupported (WebGPU, older hardware). It runs on
+/// Vulkan, DX12, and modern Apple Silicon Metal, which all report the feature.
 #[test]
 fn gpu_culling_indirect_path_reflects_replace_texture() {
     let Some((device, queue)) = headless_device() else {
@@ -456,7 +457,7 @@ fn gpu_culling_indirect_path_reflects_replace_texture() {
     if !renderer.is_gpu_culling_supported() {
         eprintln!(
             "skipping gpu_culling_indirect_path_reflects_replace_texture: \
-             device has no INDIRECT_FIRST_INSTANCE (e.g. Metal)"
+             device has no INDIRECT_FIRST_INSTANCE (e.g. WebGPU or older hardware)"
         );
         return;
     }
@@ -578,8 +579,9 @@ fn bindless_scene(
 /// Both renderers draw the same scene; the only difference is that the bindless
 /// device enabled the texture-array feature set, so it binds one array and drops
 /// the texture ids from the batch key. Unlit albedo output makes the comparison
-/// exact. Runs the direct instanced draw path (Metal has no GPU culling); the
-/// culled bindless path needs a device with `INDIRECT_FIRST_INSTANCE`.
+/// exact. The bindless device requests the full recommended feature set, so where
+/// the adapter also reports `INDIRECT_FIRST_INSTANCE` (Vulkan, DX12, modern Apple
+/// Silicon Metal) this exercises the GPU-culled bindless path, not just the direct one.
 #[test]
 fn bindless_matches_per_batch_and_collapses_batches() {
     let Some((bd, bq)) = headless_bindless_device() else {

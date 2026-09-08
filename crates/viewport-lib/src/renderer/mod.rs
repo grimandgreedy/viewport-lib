@@ -743,8 +743,9 @@ impl ViewportRenderer {
     /// - The bindless texture-array set (texture `binding_array` + non-uniform
     ///   indexing + partially bound) lets the instanced mesh path bind material
     ///   textures once per frame and index them per material, so instances of one
-    ///   mesh with different materials batch together. Present on Vulkan/DX12;
-    ///   without it the path binds textures per batch (the portable default).
+    ///   mesh with different materials batch together. Present on Vulkan, DX12, and
+    ///   Apple Silicon Metal (argument buffers Tier 2); without it (WebGPU, older
+    ///   hardware) the path binds textures per batch (the portable default).
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
