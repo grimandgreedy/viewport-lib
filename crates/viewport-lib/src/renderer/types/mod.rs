@@ -347,6 +347,7 @@ macro_rules! emit_draw_calls {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
@@ -393,6 +394,7 @@ macro_rules! emit_draw_calls {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 let Some(inst_tex_bg) = resources.instancing.bind_groups.get(&mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);

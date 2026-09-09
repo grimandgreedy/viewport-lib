@@ -44,6 +44,14 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   albedo, normal, and AO; metallic-roughness and emissive follow the shared
   transform. Material UV transforms now live in a small per-material GPU buffer
   indexed by a `material_id`, rather than being duplicated into every instance.
+- **Second UV set (`TEXCOORD_1`).** `MeshData` gains
+  `uvs1: Option<Vec<[f32; 2]>>`. A texture slot samples it instead of the primary
+  UVs when its `UvTransform::uv_set` is `1` (glTF `texCoord`), so a lightmap or
+  detail unwrap can be carried per texture. Additive: a mesh without `uvs1`, or a
+  slot left at `uv_set = 0`, is unchanged, and a slot selecting `uv_set = 1` on a
+  mesh with no second set reads `(0, 0)`. Stored as a parallel stream to the
+  shared vertex slab, so meshes and scenes without a second UV set pay nothing.
+  Works on the per-object, instanced, and GPU-driven paths.
 - **Sprite and Ribbon items get true order-independent transparency (OIT)
   on the HDR path.** Alpha-blend and premultiplied sprites/ribbons
   previously composited by ordinary draw-order blending, which visibly

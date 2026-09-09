@@ -90,7 +90,7 @@ struct Object {
     has_metallic_roughness_tex: u32,       // offset 248
     has_emissive_tex: u32,                 // offset 252
     material_id: u32,                      // offset 256 : index into material_gpu_buf
-    _pad_uv0: u32,                         // offset 260
+    uv1_base: u32,                         // offset 260 : mesh base_vertex for the uv1 buffer
     _pad_uv1: u32,                         // offset 264
     _pad_uv2: u32,                         // offset 268
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
@@ -129,9 +129,22 @@ struct SlotUv {
 }
 
 // See mesh.wgsl:material_slot_uv. uv' = rotate((uv*scale+offset)-0.5, rot)+0.5,
-// derivatives rotated by the same angle.
-fn material_slot_uv(mid: u32, slot: u32, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>) -> SlotUv {
+// derivatives rotated by the same angle. rot_tc.y picks uv0 (0) or uv1 (1).
+fn material_slot_uv(
+    mid: u32,
+    slot: u32,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    ddx0: vec2<f32>,
+    ddy0: vec2<f32>,
+    ddx1: vec2<f32>,
+    ddy1: vec2<f32>,
+) -> SlotUv {
     let xf = material_gpu_buf[mid].xf[slot];
+    let use1 = xf.rot_tc.y > 0.5;
+    let uv = select(uv0, uv1, use1);
+    let duvdx = select(ddx0, ddx1, use1);
+    let duvdy = select(ddy0, ddy1, use1);
     let s = xf.offset_scale.zw;
     let o = xf.offset_scale.xy;
     let rot = xf.rot_tc.x;
@@ -209,6 +222,8 @@ var<private> object: Object;
 @group(1) @binding(17) var lightmap_tex: texture_2d_array<f32>;
 // Dominant-direction atlas for a directional lightmap (see mesh.wgsl).
 @group(1) @binding(18) var lightmap_dir_tex: texture_2d_array<f32>;
+// Second UV set (glTF TEXCOORD_1), parallel to the vertex buffer. See mesh.wgsl.
+@group(1) @binding(19) var<storage, read> uv1_buf: array<vec2<f32>>;
 
 fn lightmap_directional_factor(uv: vec2<f32>, page: i32, n_pix: vec3<f32>, n_geo: vec3<f32>) -> f32 {
     let d = textureSampleLevel(lightmap_dir_tex, obj_sampler, uv, page, 0.0);
@@ -243,6 +258,8 @@ struct VertexOut {
     @location(10) @interpolate(flat) lightmap_page: f32,
     // Index of this draw's element in objects[], carried to the fragment stage.
     @location(11) @interpolate(flat) obj_idx: u32,
+    // Second UV set (glTF TEXCOORD_1); vec2(0.0) for meshes without one.
+    @location(12) uv1: vec2<f32>,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -286,6 +303,11 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    // Second UV set from the parallel uv1 stream (mesh-local index + base). See
+    // mesh.wgsl:vs_main.
+    let uv1_len = arrayLength(&uv1_buf);
+    let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
+    out.uv1 = uv1_buf[uv1_idx];
     let buf_len = arrayLength(&scalar_buffer);
     let idx = in.vertex_index;
     let has_attr = object.has_attribute != 0u && buf_len > 0u;
@@ -457,6 +479,8 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // by strict WGSL validators; these feed explicit-gradient sampling.
     let d_uv_dx = dpdx(in.uv);
     let d_uv_dy = dpdy(in.uv);
+    let d_uv1_dx = dpdx(in.uv1);
+    let d_uv1_dy = dpdy(in.uv1);
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
 
@@ -472,13 +496,19 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     }
 
     // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv).
-    let s0 = material_slot_uv(object.material_id, 0u, in.uv, d_uv_dx, d_uv_dy);
+    let s0 = material_slot_uv(
+        object.material_id, 0u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
     let mat_uv = s0.uv;
     out.mat_uv = mat_uv;
     let muv_ddx = s0.ddx;
     let muv_ddy = s0.ddy;
-    let s_normal = material_slot_uv(object.material_id, 1u, in.uv, d_uv_dx, d_uv_dy);
-    let s_ao = material_slot_uv(object.material_id, 2u, in.uv, d_uv_dx, d_uv_dy);
+    let s_normal = material_slot_uv(
+        object.material_id, 1u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let s_ao = material_slot_uv(
+        object.material_id, 2u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
 
     // Sample texture if one is assigned.
     var tex_colour = vec4<f32>(1.0);

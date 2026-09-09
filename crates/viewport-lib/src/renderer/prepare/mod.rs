@@ -730,6 +730,10 @@ impl ViewportRenderer {
                             &resources.material.texture_array_view,
                         ),
                     },
+                    crate::gpu::BindGroupEntry {
+                        binding: 19,
+                        resource: resources.content.fallback_uv1_buf.as_entire_binding(),
+                    },
                 ],
             });
             self.mesh_uniforms.tvm_wireframe_buf = Some(buf);

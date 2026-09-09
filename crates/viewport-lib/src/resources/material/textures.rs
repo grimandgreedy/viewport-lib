@@ -953,7 +953,7 @@ impl DeviceResources {
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
         self.instancing
             .bind_groups
-            .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
+            .retain(|&(a, n, ao, _uv1), _| a != raw && n != raw && ao != raw);
 
         // Invalidate per-mesh object bind groups that sampled the texture so
         // `update_mesh_texture_bind_group` rebuilds them. `last_tex_key`
@@ -1601,6 +1601,18 @@ impl DeviceResources {
             _ => &self.material.emissive_view,
         };
 
+        // Second UV set (binding 19): swap in the mesh's per-chunk uv1 buffer when
+        // it carries one, otherwise keep the zero fallback. The per-object uniform
+        // carries the mesh `base_vertex` so the mesh-local vertex index lands in
+        // its region of the whole-chunk buffer.
+        let uv1_buf: &crate::gpu::Buffer = if mesh.has_uv1 {
+            self.geometry
+                .uv1_chunk_buffer(mesh.vertex_span.chunk)
+                .unwrap_or(&self.content.fallback_uv1_buf)
+        } else {
+            &self.content.fallback_uv1_buf
+        };
+
         mesh.object_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("object_bind_group"),
             layout: &self.binds.object_bgl,
@@ -1676,6 +1688,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 18,
                     resource: crate::gpu::BindingResource::TextureView(lightmap_dir_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: uv1_buf.as_entire_binding(),
                 },
             ],
         });
@@ -1920,6 +1936,16 @@ impl DeviceResources {
             _ => &self.material.emissive_view,
         };
 
+        // Second UV set (binding 19): the mesh's per-chunk uv1 buffer, or the zero
+        // fallback when it has none. See `update_mesh_texture_bind_group`.
+        let uv1_buf: &crate::gpu::Buffer = if mesh.has_uv1 {
+            self.geometry
+                .uv1_chunk_buffer(mesh.vertex_span.chunk)
+                .unwrap_or(&self.content.fallback_uv1_buf)
+        } else {
+            &self.content.fallback_uv1_buf
+        };
+
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("per_item_object_bind_group"),
             layout: &self.binds.object_bgl,
@@ -1995,6 +2021,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 18,
                     resource: crate::gpu::BindingResource::TextureView(lightmap_dir_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: uv1_buf.as_entire_binding(),
                 },
             ],
         });

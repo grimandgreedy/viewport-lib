@@ -579,6 +579,11 @@ pub struct ContentResources {
     /// mesh has no extension-attribute buffer). Single `vec4<f32>(0)` entry;
     /// plugin modules clamp the vertex index so every read resolves to zero.
     pub(crate) fallback_extension_attr_buf: crate::gpu::Buffer,
+    /// Fallback 8-byte zero storage buffer (bound at the mesh bind group's
+    /// second-UV-set slot when the mesh has no `uvs1`). Single `vec2<f32>(0)`
+    /// entry; the mesh shaders clamp the vertex index so every read resolves to
+    /// `vec2(0.0)`.
+    pub(crate) fallback_uv1_buf: crate::gpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
     /// `None` until `ensure_colourmaps_initialized()` has been called.
     pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,
@@ -895,7 +900,7 @@ pub(crate) struct ViewportCullState {
     /// `visibility_index_buf` is resized, when the instance buffer is rebuilt, or
     /// when a texture behind a key is replaced or freed (see `built_free_epoch`).
     pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
+        std::collections::HashMap<(u64, u64, u64, u32), crate::gpu::BindGroup>,
     /// Generation of the shared instance buffers the main cull bind groups were
     /// built against. When it falls behind `InstancingState::instance_gen` the
     /// shared instance storage buffer was rebuilt, so those bind groups (which
@@ -1174,8 +1179,7 @@ impl DeviceResources {
             0,
             bytemuck::cast_slice(&entries[..n]),
         );
-        let bytes =
-            (n * std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()) as u64;
+        let bytes = (n * std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()) as u64;
         if self.material_gpu_builder.overflowed {
             tracing::warn!(
                 capacity = crate::resources::material_gpu::MATERIAL_GPU_CAPACITY,

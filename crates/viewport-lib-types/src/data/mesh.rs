@@ -27,6 +27,16 @@ pub struct MeshData {
     pub indices: Vec<u32>,
     /// Optional per-vertex UV coordinates. `None` means zero-fill [0.0, 0.0].
     pub uvs: Option<Vec<[f32; 2]>>,
+    /// Optional per-vertex second UV set (glTF `TEXCOORD_1`). `None` means the
+    /// mesh carries no second set, and any texture whose transform selects
+    /// `uv_set = 1` falls back to `[0.0, 0.0]`.
+    ///
+    /// A material texture slot samples this set instead of `uvs` when its
+    /// `TextureTransform::uv_set` is 1 (see
+    /// [`Material::with_texture_transform`](crate::material::Material)). Entries
+    /// beyond the slice length default to `[0.0, 0.0]`, matching the forgiving
+    /// `uvs` lookup.
+    pub uvs1: Option<Vec<[f32; 2]>>,
     /// Optional per-vertex tangents [tx, ty, tz, w] where w is handedness (+/-1.0).
     ///
     /// `None` = auto-compute from UVs if available, or zero-fill otherwise.
@@ -70,6 +80,7 @@ impl Default for MeshData {
             normals: Vec::new(),
             indices: Vec::new(),
             uvs: None,
+            uvs1: None,
             tangents: None,
             vertex_colours: None,
             attributes: HashMap::new(),

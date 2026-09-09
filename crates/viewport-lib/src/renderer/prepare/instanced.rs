@@ -155,8 +155,7 @@ impl ViewportRenderer {
 
                         for (orig_idx, item) in batch_items {
                             let cm = common_material(item);
-                            let material_id =
-                                resources.material_gpu_builder.intern(&item.material);
+                            let material_id = resources.material_gpu_builder.intern(&item.material);
                             // Recover this item's light-probe SH block (assigned
                             // in the shared prepass, keyed by scene-item index).
                             let probe = probe_indices[*orig_idx];
@@ -362,20 +361,32 @@ impl ViewportRenderer {
             instancing.last_resource_free_epoch = resources.resource_free_epoch;
 
             for batch in &instancing.batches {
+                let uv1_chunk = resources
+                    .mesh_store
+                    .get(batch.mesh_id)
+                    .map(|m| m.vertex_span.chunk)
+                    .unwrap_or(u32::MAX);
                 resources.get_instance_bind_group(
                     device,
                     batch.texture_id,
                     batch.normal_map_id,
                     batch.ao_map_id,
+                    uv1_chunk,
                 );
             }
         } else {
             for batch in &instancing.batches {
+                let uv1_chunk = resources
+                    .mesh_store
+                    .get(batch.mesh_id)
+                    .map(|m| m.vertex_span.chunk)
+                    .unwrap_or(u32::MAX);
                 resources.get_instance_bind_group(
                     device,
                     batch.texture_id,
                     batch.normal_map_id,
                     batch.ao_map_id,
+                    uv1_chunk,
                 );
             }
         }
@@ -435,12 +446,18 @@ impl ViewportRenderer {
             cull_state.built_free_epoch = resources.resource_free_epoch;
         }
         for batch in &instancing.batches.clone() {
+            let uv1_chunk = resources
+                .mesh_store
+                .get(batch.mesh_id)
+                .map(|m| m.vertex_span.chunk)
+                .unwrap_or(u32::MAX);
             resources.get_instance_cull_bind_group(
                 cull_state,
                 device,
                 batch.texture_id,
                 batch.normal_map_id,
                 batch.ao_map_id,
+                uv1_chunk,
             );
         }
 

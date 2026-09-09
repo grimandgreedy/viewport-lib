@@ -99,9 +99,22 @@ struct SlotUv {
 }
 
 // See mesh.wgsl:material_slot_uv. uv' = rotate((uv*scale+offset)-0.5, rot)+0.5,
-// derivatives rotated by the same angle.
-fn material_slot_uv(mid: u32, slot: u32, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>) -> SlotUv {
+// derivatives rotated by the same angle. rot_tc.y picks uv0 (0) or uv1 (1).
+fn material_slot_uv(
+    mid: u32,
+    slot: u32,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    ddx0: vec2<f32>,
+    ddy0: vec2<f32>,
+    ddx1: vec2<f32>,
+    ddy1: vec2<f32>,
+) -> SlotUv {
     let xf = material_gpu_buf[mid].xf[slot];
+    let use1 = xf.rot_tc.y > 0.5;
+    let uv = select(uv0, uv1, use1);
+    let duvdx = select(ddx0, ddx1, use1);
+    let duvdy = select(ddy0, ddy1, use1);
     let s = xf.offset_scale.zw;
     let o = xf.offset_scale.xy;
     let rot = xf.rot_tc.x;
@@ -163,6 +176,9 @@ struct ClipVolumeUB {
 @group(1) @binding(3) var                normal_map:         texture_2d<f32>;
 @group(1) @binding(4) var                ao_map:             texture_2d<f32>;
 @group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;
+// Second UV set (glTF TEXCOORD_1) for this batch's vertex-slab chunk. See
+// mesh_instanced.wgsl; `vertex_index` is chunk-global, indexing this directly.
+@group(1) @binding(6) var<storage, read> uv1_buf: array<vec2<f32>>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -181,12 +197,21 @@ struct VertexOut {
     @location(3) uv:             vec2<f32>,
     @location(4) world_tangent:  vec4<f32>,
     @location(5) @interpolate(flat) instance_idx: u32,
+    // Second UV set (glTF TEXCOORD_1); vec2(0.0) for meshes without one.
+    @location(6) uv1: vec2<f32>,
 };
 
 struct OitOut {
     @location(0) accum:  vec4<f32>,
     @location(1) reveal: f32,
 };
+
+// Second UV set for the current vertex (chunk-global index, clamped). See
+// mesh_instanced.wgsl:load_uv1.
+fn load_uv1(vertex_index: u32) -> vec2<f32> {
+    let n = arrayLength(&uv1_buf);
+    return uv1_buf[min(vertex_index, max(n, 1u) - 1u)];
+}
 
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
@@ -211,6 +236,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    out.uv1 = load_uv1(in.vertex_index);
     out.instance_idx = idx;
     return out;
 }
@@ -241,6 +267,7 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    out.uv1 = load_uv1(in.vertex_index);
     out.instance_idx = actual_idx;
     return out;
 }
@@ -365,6 +392,8 @@ fn compute_surface(in: VertexOut) -> Surface {
     // rejected by strict WGSL validators; these feed explicit-gradient sampling.
     let d_uv_dx = dpdx(in.uv);
     let d_uv_dy = dpdy(in.uv);
+    let d_uv1_dx = dpdx(in.uv1);
+    let d_uv1_dy = dpdy(in.uv1);
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
 
@@ -377,13 +406,19 @@ fn compute_surface(in: VertexOut) -> Surface {
     }
 
     // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv).
-    let s0 = material_slot_uv(inst.material_id, 0u, in.uv, d_uv_dx, d_uv_dy);
+    let s0 = material_slot_uv(
+        inst.material_id, 0u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
     let mat_uv = s0.uv;
     out.mat_uv = mat_uv;
     let muv_ddx = s0.ddx;
     let muv_ddy = s0.ddy;
-    let s_normal = material_slot_uv(inst.material_id, 1u, in.uv, d_uv_dx, d_uv_dy);
-    let s_ao = material_slot_uv(inst.material_id, 2u, in.uv, d_uv_dx, d_uv_dy);
+    let s_normal = material_slot_uv(
+        inst.material_id, 1u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let s_ao = material_slot_uv(
+        inst.material_id, 2u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
 
     var tex_colour = vec4<f32>(1.0);
     if inst.has_texture == 1u { tex_colour = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy); }
