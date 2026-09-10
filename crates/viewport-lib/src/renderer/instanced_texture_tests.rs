@@ -729,3 +729,122 @@ fn bindless_keeps_mesh_instance_path_per_batch() {
         "the mesh-instance batch must render under bindless",
     );
 }
+
+/// A material plugin whose final colour is exactly `surf.base_colour` (albedo x
+/// tint), so its output is deterministic and driven entirely by the sampled
+/// albedo. Under bindless the albedo is fetched from the texture array by the
+/// material's per-slot index, so this doubles as a check that the bindlessified
+/// plugin shader indexes the array correctly.
+#[cfg(test)]
+struct AlbedoPlugin;
+#[cfg(test)]
+impl crate::MaterialPlugin for AlbedoPlugin {
+    fn name(&self) -> &'static str {
+        "bindless_albedo_test"
+    }
+    fn wgsl_body(&self) -> String {
+        "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour;
+}
+"
+        .to_string()
+    }
+}
+
+/// The four distinct-albedo planes of `bindless_scene`, each drawing through the
+/// `AlbedoPlugin` material plugin. Returns the frame plus the plugin id.
+#[cfg(test)]
+fn bindless_plugin_scene(
+    renderer: &mut ViewportRenderer,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+) -> FrameData {
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(device, &AlbedoPlugin)
+        .expect("register plugin");
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(device, &crate::primitives::plane(0.8, 0.8))
+        .unwrap();
+    let xs = [-1.5f32, -0.5, 0.5, 1.5];
+    let items = BINDLESS_COLOURS
+        .iter()
+        .zip(xs)
+        .map(|(colour, x)| {
+            let tex = renderer
+                .resources_mut()
+                .upload_texture(device, queue, 2, 2, &solid_rgba(2, 2, *colour))
+                .unwrap();
+            let mut it = textured_plane(mesh, tex, x);
+            it.material.shading_plugin = Some(plugin);
+            it
+        })
+        .collect::<Vec<_>>();
+    frame_for(items)
+}
+
+/// A material plugin instances under bindless (its group-1 shape rewritten to the
+/// texture array) and renders pixel-identically to the per-batch plugin path.
+///
+/// Both renderers draw the same four distinct-albedo plugin planes. The per-batch
+/// device keeps one batch per texture; the bindless device drops the texture ids
+/// and collapses them to a single batch, indexing the albedo array by material.
+/// The plugin's output is the sampled albedo, so a wrong index would change the
+/// image. Neither path may drop a plugin item to the per-object path.
+#[test]
+fn bindless_plugin_instances_and_matches_per_batch() {
+    let Some((bd, bq)) = headless_bindless_device() else {
+        eprintln!("skipping: no adapter with the bindless texture feature set");
+        return;
+    };
+    let Some((pd, pq)) = headless_device() else {
+        eprintln!("skipping: no adapter available");
+        return;
+    };
+
+    let mut per_batch = ViewportRenderer::new(&pd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let per_frame = bindless_plugin_scene(&mut per_batch, &pd, &pq);
+    let per_img = per_batch.render_offscreen(&pd, &pq, &per_frame, W, H);
+    let per_stats = per_batch.last_frame_stats();
+
+    let mut bindless = ViewportRenderer::new(&bd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let bindless_frame = bindless_plugin_scene(&mut bindless, &bd, &bq);
+    let bindless_img = bindless.render_offscreen(&bd, &bq, &bindless_frame, W, H);
+    let bindless_stats = bindless.last_frame_stats();
+
+    // Both paths instanced every plugin item.
+    assert_eq!(
+        per_stats.per_object_items, 0,
+        "per-batch plugin items should instance, not fall per-object",
+    );
+    assert_eq!(
+        bindless_stats.per_object_items, 0,
+        "bindless plugin items should instance, not fall per-object",
+    );
+
+    // Bindless drops the texture ids: four distinct-albedo plugin planes on one
+    // mesh collapse to a single batch, where per-batch keeps four.
+    assert!(
+        per_stats.instanced_batches >= 4,
+        "per-batch keeps one plugin batch per texture (got {})",
+        per_stats.instanced_batches,
+    );
+    assert_eq!(
+        bindless_stats.instanced_batches, 1,
+        "bindless collapses the plugin instances into one batch (got {})",
+        bindless_stats.instanced_batches,
+    );
+
+    // Pixel parity: the bindlessified plugin shader indexed the albedo array
+    // correctly and matches the per-batch plugin shading exactly.
+    assert_eq!(
+        checksum(&bindless_img),
+        checksum(&per_img),
+        "bindless and per-batch plugin shading must render the same image",
+    );
+}

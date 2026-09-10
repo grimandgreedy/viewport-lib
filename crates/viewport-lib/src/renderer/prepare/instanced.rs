@@ -36,16 +36,25 @@ type BatchGroupKey = (
     Option<(u32, u32)>,
 );
 
-/// Form the opaque draw groups for GPU-driven submission and size + upload the
-/// buffers the compaction pass and the count-multi-draw need. Returns whether the
-/// path is active (bindless + native multi-draw + built cull pipelines + at least
-/// one group); when inactive it clears `draw_groups` so the draw loop falls back
-/// to CPU run-forming.
+/// Form the opaque and OIT draw groups for GPU-driven submission and size + upload
+/// the buffers the compaction pass and the count-multi-draw need. Returns whether
+/// the path is active (bindless + native multi-draw + built cull pipelines + at
+/// least one group); when inactive it clears the group lists so the draw loop falls
+/// back to CPU run-forming.
 ///
-/// The group key mirrors the draw loop's run key exactly (two-sidedness,
-/// discard-free eligibility, and geometry chunk over contiguous opaque batches),
-/// so the groups drawn here match the runs the CPU path would have formed. The
-/// texture bind group is constant under bindless, so it is not part of the key.
+/// The group key mirrors the draw loop's run key exactly (transparency,
+/// two-sidedness, discard-free eligibility, and geometry chunk over contiguous
+/// batches), so the groups drawn here match the runs the CPU path would have
+/// formed. The texture bind group is constant under bindless, so it is not part of
+/// the key. Each group also carries that geometry chunk and its pipeline selectors,
+/// so the draw loop binds and draws straight from the group without a per-group
+/// mesh-store lookup.
+///
+/// The group lists and their per-batch metadata are cached on
+/// `(batches_gen, clipping_active, nodiscard)`: while those hold the batch topology
+/// is unchanged, so a steady frame skips the batch-list walk and the group-buffer
+/// upload entirely (only the per-viewport compaction sizing runs on the CPU, and
+/// the compaction itself on the GPU).
 fn build_and_upload_draw_groups(
     resources: &DeviceResources,
     instancing: &mut InstancingState,
@@ -63,6 +72,8 @@ fn build_and_upload_draw_groups(
         bindless && instancing.multi_draw_supported && resources.cull.hdr_solid_pipeline.is_some();
     if !active {
         instancing.draw_groups.clear();
+        instancing.oit_draw_groups.clear();
+        instancing.draw_group_cache_key = None;
         return false;
     }
     let clipping_active = frame
@@ -78,97 +89,135 @@ fn build_and_upload_draw_groups(
             .is_some();
 
     let n = instancing.batches.len();
-    let mut group_id = vec![crate::renderer::indirect::NO_GROUP; n];
-    let mut group_arg_base = vec![0u32; n];
-    let mut opaque_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
-    let mut oit_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
-    // Opaque and transparent batches are grouped in one pass so both draws share a
-    // single compaction and one `draw_counts` slot space. The run key includes
-    // `is_transparent`, so a group is always a maximal contiguous batch range of
-    // one kind: consecutive groups have adjacent arg ranges and never overlap in
-    // the compacted buffer, whichever way the two kinds interleave. `next_group`
-    // is the global slot each group takes in `draw_counts` (its `count_index`).
-    let mut next_group = 0u32;
-    // (run key, index within the group vec the key's transparency bit selects).
-    let mut cur: Option<((bool, bool, bool, u32, u32), usize)> = None;
-    for (b, batch) in instancing.batches.iter().enumerate() {
-        let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
-            cur = None;
-            continue;
-        };
-        let transparent = batch.is_transparent;
-        // OIT has no discard-free variant; only the opaque pass keys on it.
-        let no_discard = !transparent && !clipping_active && !batch.has_alpha_mask && nodiscard;
-        let key = (
-            transparent,
-            batch.two_sided,
-            no_discard,
-            mesh.vertex_span.chunk,
-            mesh.index_span.chunk,
+    // The group structure is a pure function of the batch list (`batches_gen`
+    // bumps on any batch change), the clip state, and discard-free eligibility.
+    // While all three hold, the groups and their per-batch metadata are still
+    // valid: skip re-walking the batch list and re-uploading the group buffers,
+    // so a topology-stable frame does no CPU group forming at all. The per-viewport
+    // compaction buffers are still sized below (a new or grown viewport), and the
+    // GPU compaction still runs each frame.
+    let want = (instancing.batches_gen, clipping_active, nodiscard);
+    let cached = instancing.draw_group_cache_key == Some(want)
+        && instancing.group_id_buf.is_some()
+        && (!instancing.draw_groups.is_empty() || !instancing.oit_draw_groups.is_empty());
+
+    if !cached {
+        let mut group_id = vec![crate::renderer::indirect::NO_GROUP; n];
+        let mut group_arg_base = vec![0u32; n];
+        let mut opaque_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
+        let mut oit_groups: Vec<crate::renderer::instancing_state::DrawGroup> = Vec::new();
+        // Opaque and transparent batches are grouped in one pass so both draws share
+        // a single compaction and one `draw_counts` slot space. The run key includes
+        // `is_transparent`, so a group is always a maximal contiguous batch range of
+        // one kind: consecutive groups have adjacent arg ranges and never overlap in
+        // the compacted buffer, whichever way the two kinds interleave. `next_group`
+        // is the global slot each group takes in `draw_counts` (its `count_index`).
+        let mut next_group = 0u32;
+        // (run key, index within the group vec the key's transparency bit selects).
+        let mut cur: Option<((bool, bool, bool, u32, u32), usize)> = None;
+        for (b, batch) in instancing.batches.iter().enumerate() {
+            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                cur = None;
+                continue;
+            };
+            // Material-plugin batches draw through their own composed pipeline plus
+            // a per-variant group-3 bind, which the built-in count-multi-draw path
+            // cannot supply, so they are left out of the groups (their `group_id`
+            // stays `NO_GROUP`, so the compaction skips them and the count draw
+            // never emits them). They draw in the dedicated plugin sub-loop instead.
+            // Breaking the run here also splits two same-key built-in runs that a
+            // plugin batch sits between into separate groups, which is correct: each
+            // built-in group's compacted args occupy its own arg-base range and the
+            // skipped plugin slot is simply never read.
+            if batch.shading_plugin.is_some() {
+                cur = None;
+                continue;
+            }
+            let transparent = batch.is_transparent;
+            // OIT has no discard-free variant; only the opaque pass keys on it.
+            let no_discard = !transparent && !clipping_active && !batch.has_alpha_mask && nodiscard;
+            let vertex_chunk = mesh.vertex_span.chunk;
+            let index_chunk = mesh.index_span.chunk;
+            let key = (
+                transparent,
+                batch.two_sided,
+                no_discard,
+                vertex_chunk,
+                index_chunk,
+            );
+            let vec_ref = if transparent {
+                &mut oit_groups
+            } else {
+                &mut opaque_groups
+            };
+            let gv = match cur {
+                Some((k, gv)) if k == key => {
+                    vec_ref[gv].size += 1;
+                    gv
+                }
+                _ => {
+                    let count_index = next_group;
+                    next_group += 1;
+                    vec_ref.push(crate::renderer::instancing_state::DrawGroup {
+                        arg_base: b as u32,
+                        size: 1,
+                        two_sided: batch.two_sided,
+                        no_discard,
+                        vertex_chunk,
+                        index_chunk,
+                        count_index,
+                    });
+                    let gv = vec_ref.len() - 1;
+                    cur = Some((key, gv));
+                    gv
+                }
+            };
+            group_id[b] = vec_ref[gv].count_index;
+            group_arg_base[b] = vec_ref[gv].arg_base;
+        }
+
+        if opaque_groups.is_empty() && oit_groups.is_empty() {
+            instancing.draw_groups.clear();
+            instancing.oit_draw_groups.clear();
+            instancing.draw_group_cache_key = None;
+            return false;
+        }
+
+        // Per-batch group metadata (scene-global): grow to `n` batches.
+        if instancing.group_buf_capacity < n {
+            let cap = (n * 2).max(64);
+            let mk = |label: &str| {
+                device.create_buffer(&crate::gpu::BufferDescriptor {
+                    label: Some(label),
+                    size: (cap * std::mem::size_of::<u32>()) as u64,
+                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            };
+            instancing.group_id_buf = Some(mk("draw_group_id_buf"));
+            instancing.group_arg_base_buf = Some(mk("draw_group_arg_base_buf"));
+            instancing.group_buf_capacity = cap;
+        }
+        queue.write_buffer(
+            instancing.group_id_buf.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&group_id),
         );
-        let vec_ref = if transparent {
-            &mut oit_groups
-        } else {
-            &mut opaque_groups
-        };
-        let gv = match cur {
-            Some((k, gv)) if k == key => {
-                vec_ref[gv].size += 1;
-                gv
-            }
-            _ => {
-                let count_index = next_group;
-                next_group += 1;
-                vec_ref.push(crate::renderer::instancing_state::DrawGroup {
-                    arg_base: b as u32,
-                    size: 1,
-                    two_sided: batch.two_sided,
-                    no_discard,
-                    count_index,
-                });
-                let gv = vec_ref.len() - 1;
-                cur = Some((key, gv));
-                gv
-            }
-        };
-        group_id[b] = vec_ref[gv].count_index;
-        group_arg_base[b] = vec_ref[gv].arg_base;
-    }
+        queue.write_buffer(
+            instancing.group_arg_base_buf.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&group_arg_base),
+        );
 
-    if opaque_groups.is_empty() && oit_groups.is_empty() {
-        instancing.draw_groups.clear();
-        instancing.oit_draw_groups.clear();
-        return false;
+        instancing.draw_groups = opaque_groups;
+        instancing.oit_draw_groups = oit_groups;
+        instancing.draw_group_cache_key = Some(want);
     }
-
-    // Per-batch group metadata (scene-global): grow to `n` batches.
-    if instancing.group_buf_capacity < n {
-        let cap = (n * 2).max(64);
-        let mk = |label: &str| {
-            device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some(label),
-                size: (cap * std::mem::size_of::<u32>()) as u64,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
-        instancing.group_id_buf = Some(mk("draw_group_id_buf"));
-        instancing.group_arg_base_buf = Some(mk("draw_group_arg_base_buf"));
-        instancing.group_buf_capacity = cap;
-    }
-    queue.write_buffer(
-        instancing.group_id_buf.as_ref().unwrap(),
-        0,
-        bytemuck::cast_slice(&group_id),
-    );
-    queue.write_buffer(
-        instancing.group_arg_base_buf.as_ref().unwrap(),
-        0,
-        bytemuck::cast_slice(&group_arg_base),
-    );
 
     // Per-viewport compaction outputs: compacted args (one DrawIndexedIndirect =
     // 20 bytes per batch slot) and per-group survivor counts (u32; at most `n`).
+    // Sized every call (independent of the topology cache): a viewport added or
+    // resized this frame needs its own buffers even when the groups are unchanged.
     if cull_state.compact_capacity < n {
         let cap = (n * 2).max(64);
         cull_state.compacted_args_buf = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -190,8 +239,6 @@ fn build_and_upload_draw_groups(
         cull_state.compact_capacity = cap;
     }
 
-    instancing.draw_groups = opaque_groups;
-    instancing.oit_draw_groups = oit_groups;
     true
 }
 
@@ -248,18 +295,24 @@ impl ViewportRenderer {
         // uses the per-object wireframe_pipeline, not the instanced path, so
         // instance data is now viewport-agnostic.
         //
-        // Items with active_attribute, matcap, an emissive texture, a shading
-        // plugin, warp, deform, submesh materials, or overrides are excluded from
-        // the instanced batch filter (see `is_instanceable`). Items whose mesh has
-        // an active compute filter result are also excluded so the per-object path
-        // can apply the filtered index buffer (instanced draws always use the full
-        // index buffer).
+        // Items with active_attribute, matcap, warp, deform, submesh materials,
+        // or overrides are excluded from the instanced batch filter (see
+        // `is_instanceable`). Items whose mesh has an active compute filter result
+        // are also excluded so the per-object path can apply the filtered index
+        // buffer (instanced draws always use the full index buffer).
         // These flags are set on render items AFTER collect_render_items() (per-frame
         // mutations), so they do NOT bump the scene generation. Use last_instancable_count
         // as a cache key instead of a blanket has_per_frame_mutations flag; this allows
         // scenes that mix instanced and non-instanced items (e.g. one two-sided mesh +
         // many static boxes) to still hit the instanced batch cache on frames where the
         // filtered set is unchanged.
+        //
+        // Material identity (texture ids, emissive/plugin selection) is NOT in this
+        // cache key: a change to it is a scene change and must bump
+        // `frame.scene.generation`, like any other material edit. Emissive-textured
+        // and shading-plugin items now instance (they used to fall per-object), so a
+        // per-frame swap of those no longer changes `instancable_count` on its own;
+        // the generation bump is what rebuilds the batch list for them.
         let instancable_count = instanceable.iter().filter(|&&b| b).count();
         let cache_valid = instancable_count == instancing.last_instancable_count
             && frame.scene.generation == instancing.last_scene_generation

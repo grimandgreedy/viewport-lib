@@ -351,6 +351,11 @@ macro_rules! emit_draw_calls {
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &opaque_batches {
+                                // Plugin batches draw in the dedicated plugin
+                                // sub-loop below (their own pipeline + group-3
+                                // params bind); the built-in pipeline would shade
+                                // them without the plugin hook.
+                                if batch.shading_plugin.is_some() { continue; }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -392,6 +397,57 @@ macro_rules! emit_draw_calls {
                         }
                     }
 
+                    // Material-plugin opaque instanced batches (LDR): one call
+                    // each through the plugin's composed instanced pipeline plus
+                    // its group-3 params bind. The built-in opaque loop above
+                    // skips these. Mirrors the HDR plugin sub-loop; drawn before
+                    // the transparent batches so depth ordering matches built-in.
+                    if !frame.viewport.wireframe_mode
+                        && opaque_batches.iter().any(|b| b.shading_plugin.is_some())
+                    {
+                        bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
+                        let mut cur_chunks: Option<(u32, u32)> = None;
+                        let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+                        for batch in &opaque_batches {
+                            if batch.shading_plugin.is_none() { continue; }
+                            let Some((plug_pipes, mat_bg)) =
+                                resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
+                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
+                            let mat_key = (
+                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            );
+                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
+                            let pipeline: &crate::gpu::RenderPipeline = if batch.two_sided {
+                                &plug_pipes.ldr.solid_two_sided
+                            } else {
+                                &plug_pipes.ldr.solid
+                            };
+                            if cur_pipe != Some(pipeline as *const _) {
+                                render_pass.set_pipeline(pipeline);
+                                cur_pipe = Some(pipeline as *const _);
+                            }
+                            render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                            bind_material_group!(render_pass, mat_bg);
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if cur_chunks != Some(chunks) {
+                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                                render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
+                                cur_chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            render_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                batch.instance_offset..batch.instance_offset + batch.instance_count,
+                            );
+                        }
+                    }
+
                     // Draw transparent instanced batches.
                     if !transparent_batches.is_empty() && !frame.viewport.wireframe_mode {
                         if let Some(ref pipeline) = resources.instancing.transparent_pipeline {
@@ -399,6 +455,9 @@ macro_rules! emit_draw_calls {
                             bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for batch in &transparent_batches {
+                                // Plugin batches draw in the dedicated plugin
+                                // sub-loop below.
+                                if batch.shading_plugin.is_some() { continue; }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
                                 let mat_key = (
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -423,6 +482,51 @@ macro_rules! emit_draw_calls {
                                     batch.instance_offset..batch.instance_offset + batch.instance_count,
                                 );
                             }
+                        }
+                    }
+
+                    // Material-plugin transparent instanced batches (LDR): the
+                    // alpha-blend plugin pipeline, drawn after the transparent
+                    // built-in loop above (which skips them).
+                    if !frame.viewport.wireframe_mode
+                        && transparent_batches.iter().any(|b| b.shading_plugin.is_some())
+                    {
+                        bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
+                        let mut cur_chunks: Option<(u32, u32)> = None;
+                        let mut cur_pipe: Option<*const crate::gpu::RenderPipeline> = None;
+                        for batch in &transparent_batches {
+                            if batch.shading_plugin.is_none() { continue; }
+                            let Some((plug_pipes, mat_bg)) =
+                                resources.material_plugin_instanced_draw(batch.shading_plugin) else { continue };
+                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else { continue };
+                            let mat_key = (
+                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                            );
+                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
+                            let pipeline = &plug_pipes.ldr.transparent;
+                            if cur_pipe != Some(pipeline as *const _) {
+                                render_pass.set_pipeline(pipeline);
+                                cur_pipe = Some(pipeline as *const _);
+                            }
+                            render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                            bind_material_group!(render_pass, mat_bg);
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if cur_chunks != Some(chunks) {
+                                render_pass.set_vertex_buffer(0, resources.geometry.vertex_chunk_slice(chunks.0));
+                                render_pass.set_index_buffer(resources.geometry.index_chunk_slice(chunks.1), crate::gpu::IndexFormat::Uint32);
+                                cur_chunks = Some(chunks);
+                            }
+                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                            let first_index = resources.geometry.first_index(mesh.index_span);
+                            render_pass.draw_indexed(
+                                first_index..first_index + mesh.index_count,
+                                base_vertex,
+                                batch.instance_offset..batch.instance_offset + batch.instance_count,
+                            );
                         }
                     }
 

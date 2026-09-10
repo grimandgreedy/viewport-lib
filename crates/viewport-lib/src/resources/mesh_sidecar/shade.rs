@@ -600,17 +600,33 @@ pub(crate) struct MaterialPluginVariantGpu {
 
 /// The instanced twin of [`MaterialPluginPipelines`]: the plugin's shading
 /// composed onto `mesh_instanced.wgsl` / `mesh_instanced_oit.wgsl` and built on
-/// the instanced 4-group layout (camera, instance storage + per-batch textures,
-/// deform, plugin params). Present only for the per-batch (non-bindless) texture
-/// path; under bindless, plugin items stay on the per-object path. Lets a plugin
-/// material draw one instanced call per batch instead of one call per object.
+/// the instanced 4-group layout (camera, instance storage + material textures,
+/// deform, plugin params). Group 1 carries either the per-batch five textures or,
+/// under bindless, the one material-texture array (the composed shader is rewritten
+/// to match, like the built-in instanced shader). Lets a plugin material draw one
+/// instanced call per batch instead of one call per object, on both the LDR
+/// (`emit_draw_calls`) and HDR scene / OIT passes.
 pub(crate) struct MaterialPluginInstancedPipelines {
+    /// LDR instanced pipelines drawn into the swapchain by the `emit_draw_calls`
+    /// path: solid, two-sided, and alpha-blend transparent, all `vs_main`. Built
+    /// with the renderer's target format and sample count (both fixed at
+    /// construction), mirroring the built-in `instancing.solid_pipeline` set.
+    pub ldr: crate::resources::mesh::mesh_pipelines::LdrInstancedMeshPipelines,
     /// HDR opaque instanced pipelines, keyed by facedness and discard-free
     /// early-Z eligibility (mirrors `instancing.hdr_solid*`).
     pub hdr_opaque: crate::renderer::pipeline_key::PipelineVariantSet,
     /// OIT accumulate instanced pipelines, keyed by facedness (mirrors
     /// `oit.instanced_pipeline` / `_two_sided`).
     pub oit: crate::renderer::pipeline_key::PipelineVariantSet,
+    /// GPU-culled twins of `hdr_opaque` / `oit` (the `vs_main_cull` entry reading
+    /// `visibility_indices`), built against the cull group-1 layout so a plugin
+    /// batch can draw its frustum/occlusion-culled instances from the cull-written
+    /// indirect args. Keyed by facedness only (the cull pipelines use the
+    /// discarding shader, so there is no discard-free axis). `None` when the device
+    /// cannot GPU-cull (no cull layout built), in which case plugin batches draw
+    /// every instance directly.
+    pub cull: Option<crate::renderer::pipeline_key::PipelineVariantSet>,
+    pub oit_cull: Option<crate::renderer::pipeline_key::PipelineVariantSet>,
 }
 
 /// GPU state per registered material plugin: the shared bind group layout and
@@ -1130,15 +1146,17 @@ impl crate::resources::DeviceResources {
         if gpu.instanced_pipelines.is_some() {
             return;
         }
-        // The plugin instanced pipelines bind the per-batch group-1 layout; the
-        // bindless texture array has a different group-1 shape, so plugin items
-        // draw per-object when bindless is active.
-        if self.bindless_textures() {
-            return;
-        }
-        // Reuse the built-in instanced group-1 layout; if it does not exist yet
-        // the instanced pipelines have not been ensured this run, so defer.
-        if self.instancing.bind_group_layout.is_none() {
+        // Reuse the built-in instanced group-1 layout: per-batch (five textures)
+        // or bindless (one texture array). Whichever the mode selects must already
+        // exist; if not, the instanced pipelines have not been ensured this run, so
+        // defer.
+        let bindless = self.bindless_textures();
+        let have_layout = if bindless {
+            self.instancing.bindless_bind_group_layout.is_some()
+        } else {
+            self.instancing.bind_group_layout.is_some()
+        };
+        if !have_layout {
             return;
         }
         let hook_id = ShadingHookId(id.plugin_index() as usize);
@@ -1151,6 +1169,19 @@ impl crate::resources::DeviceResources {
             return;
         };
         let name = self.shade_hooks[id.plugin_index() as usize].desc.name;
+
+        // Under bindless the group-1 material textures collapse to one array, so
+        // the composed shader is rewritten to index it per material, exactly as the
+        // built-in bindless instanced shader is (`instanced_bindless::bindlessify`).
+        // Per-batch keeps the shipped five-texture form.
+        let (mesh_src, oit_src) = if bindless {
+            (
+                crate::resources::mesh::instanced_bindless::bindlessify(&mesh_src),
+                crate::resources::mesh::instanced_bindless::bindlessify(&oit_src),
+            )
+        } else {
+            (mesh_src, oit_src)
+        };
 
         let mesh_final_src =
             crate::resources::builders::strip_debug_vis(mesh_src, self.debug_vis_shaders)
@@ -1175,16 +1206,23 @@ impl crate::resources::DeviceResources {
             .material_plugins
             .get(&id.plugin_index())
             .expect("checked above");
-        let instance_bgl = self
-            .instancing
-            .bind_group_layout
-            .as_ref()
-            .expect("checked above");
-        // Camera (0), instance storage + per-batch textures (1), deform (2),
-        // plugin params (3). Deform is always present so the plugin params sit
-        // at group 3, matching the composer's `@group(3)` bindings (a material
-        // plugin requires max_bind_groups >= 4, which implies the deform group
-        // is available). Mirrors the per-object plugin layout.
+        let instance_bgl = if bindless {
+            self.instancing
+                .bindless_bind_group_layout
+                .as_ref()
+                .expect("checked above")
+        } else {
+            self.instancing
+                .bind_group_layout
+                .as_ref()
+                .expect("checked above")
+        };
+        // Camera (0), instance storage + material textures (1: five per-batch
+        // textures, or one bindless array), deform (2), plugin params (3). Deform
+        // is always present so the plugin params sit at group 3, matching the
+        // composer's `@group(3)` bindings (a material plugin requires
+        // max_bind_groups >= 4, which implies the deform group is available).
+        // Mirrors the per-object plugin layout.
         let layout_label = format!("material_plugin_{name}_instanced_layout");
         let layout = crate::resources::builders::pipeline_layout(
             device,
@@ -1195,6 +1233,13 @@ impl crate::resources::DeviceResources {
                 &self.deform.bind_group_layout,
                 &gpu.bind_group_layout,
             ],
+        );
+        let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
+            device,
+            &layout,
+            &mesh_module,
+            self.target_format,
+            self.sample_count,
         );
         let hdr = crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
             device,
@@ -1233,10 +1278,66 @@ impl crate::resources::DeviceResources {
                 key.two_sided,
             )
         });
+        // GPU-culled twins, built against the cull group-1 layout (per-batch
+        // `cull_bgl` or the bindless cull array) when it exists. The mesh / OIT
+        // modules already carry the `vs_main_cull` entry (composed from the
+        // instanced shaders), so this reuses them with that entry and the cull
+        // layout, letting a plugin batch draw its culled instances from the
+        // cull-written indirect args. Absent when the device cannot GPU-cull.
+        let cull_group1 = if bindless {
+            self.instancing.bindless_cull_bind_group_layout.as_ref()
+        } else {
+            self.cull.bind_group_layout.as_ref()
+        };
+        let (cull, oit_cull) = if let Some(cull_bgl) = cull_group1 {
+            let cull_layout_label = format!("material_plugin_{name}_instanced_cull_layout");
+            let cull_layout = crate::resources::builders::pipeline_layout(
+                device,
+                cull_layout_label.as_str(),
+                &[
+                    &self.binds.camera_bgl,
+                    cull_bgl,
+                    &self.deform.bind_group_layout,
+                    &gpu.bind_group_layout,
+                ],
+            );
+            let cull_set = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+                crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
+                    device,
+                    &cull_layout,
+                    &mesh_module,
+                    &format!("material_plugin_{name}_instanced_cull"),
+                    if key.two_sided {
+                        None
+                    } else {
+                        Some(crate::gpu::Face::Back)
+                    },
+                )
+            });
+            let oit_cull_set = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+                crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
+                    device,
+                    &cull_layout,
+                    &oit_module,
+                    &format!("material_plugin_{name}_oit_instanced_cull"),
+                    "vs_main_cull",
+                    key.two_sided,
+                )
+            });
+            (Some(cull_set), Some(oit_cull_set))
+        } else {
+            (None, None)
+        };
         self.material_plugins
             .get_mut(&id.plugin_index())
             .expect("checked above")
-            .instanced_pipelines = Some(MaterialPluginInstancedPipelines { hdr_opaque, oit });
+            .instanced_pipelines = Some(MaterialPluginInstancedPipelines {
+            ldr,
+            hdr_opaque,
+            oit,
+            cull,
+            oit_cull,
+        });
     }
 
     /// Resolve a material's plugin selection to its pipeline set and the

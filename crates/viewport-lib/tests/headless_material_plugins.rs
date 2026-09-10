@@ -447,3 +447,193 @@ fn example_reference_plugins_register() {
         .register_material_plugin(&device, &surface_detail_plugin::ParallaxPlugin)
         .expect("parallax plugin registers");
 }
+
+/// A plugin material on several instances of one mesh must draw through the
+/// instanced plugin path on the LDR (`Direct`) frame, not fall back to one
+/// draw per object. Proves the LDR `emit_draw_calls` plugin sub-loop: the
+/// batch stats show the plugin items instanced (`per_object_items == 0`), the
+/// render completes without a validation error (wgpu's uncaptured-error
+/// handler panics on failure), and the plugin shading changes the output.
+#[test]
+fn material_plugin_instances_on_ldr_path() {
+    struct ToonPlugin;
+    impl viewport_lib::MaterialPlugin for ToonPlugin {
+        fn name(&self) -> &'static str {
+            "toon_ldr_instanced"
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    let ndl = max(dot(surf.normal, light.l), 0.0);
+    let stepped = ceil(ndl * 3.0) / 3.0;
+    return surf.base_colour * stepped * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour * 0.2 * surf.ao;
+}
+"
+            .to_string()
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    // The low-power test device never enables bindless, so plugin items take
+    // the per-batch instanced path (bindless would route them per-object).
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &ToonPlugin)
+        .expect("register material plugin");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
+
+    // Four instances of the one mesh at the origin: they overlap into one
+    // visible box but still form a four-instance batch, which is all the
+    // routing assertion needs. Matches the single-item test's visible framing.
+    let make = |plugin: Option<viewport_lib::MaterialPluginId>| {
+        let mut it = SceneRenderItem::default();
+        it.mesh_id = mesh_id;
+        it.material.shading_plugin = plugin;
+        it
+    };
+
+    // Built-in shading reference.
+    let builtin_items: Vec<_> = (0..4).map(|_| make(None)).collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(builtin_items.into());
+    let builtin = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    // Same four instances, now selecting the plugin. Bump the scene generation
+    // so the instanced batch cache rebuilds (a material change is a scene
+    // change; the cache keys on the generation for exactly this).
+    let plugin_items: Vec<_> = (0..4).map(|_| make(Some(plugin_id))).collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(plugin_items.into());
+    frame.scene.generation += 1;
+    let toon = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    let stats = renderer.last_frame_stats();
+    assert_eq!(
+        stats.per_object_items, 0,
+        "plugin instances must not fall back to the per-object path on LDR"
+    );
+    assert!(
+        stats.instanced_batches >= 1,
+        "the four plugin instances must form at least one instanced batch"
+    );
+    assert_ne!(
+        builtin, toon,
+        "the plugin shading must change the instanced LDR output"
+    );
+}
+
+/// A plugin batch rides GPU culling: with culling on, plugin instances draw
+/// through the plugin's `vs_main_cull` pipeline from the cull-written indirect
+/// args, and for an all-visible scene that renders pixel-identically to the same
+/// plugin drawn unculled. Completing both renders is also the validation
+/// assertion (the culled draw binds the cull group-1 layout and the indirect
+/// args, so a layout or offset mistake panics the uncaptured-error handler).
+/// Exercises the per-batch (non-bindless) cull plugin path on the HDR scene pass.
+#[test]
+fn material_plugin_batch_rides_gpu_culling() {
+    struct ToonPlugin;
+    impl viewport_lib::MaterialPlugin for ToonPlugin {
+        fn name(&self) -> &'static str {
+            "toon_cull_instanced"
+        }
+        fn wgsl_body(&self) -> String {
+            "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    let ndl = max(dot(surf.normal, light.l), 0.0);
+    return surf.base_colour * ndl * light.radiance * light.shadow;
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour * 0.2 * surf.ao;
+}
+"
+            .to_string()
+        }
+    }
+
+    // Needs INDIRECT_FIRST_INSTANCE for the GPU-culled indirect draw; skip where
+    // the adapter lacks it. Per-batch textures (not bindless), so this covers the
+    // per-batch cull plugin pipeline + `instance_cull_bind_groups` bind path.
+    let Some((device, queue)) = headless_device_with_indirect() else {
+        eprintln!("skipping: no adapter with INDIRECT_FIRST_INSTANCE");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &box_mesh())
+        .unwrap();
+    let plugin_id = renderer
+        .resources_mut()
+        .register_material_plugin(&device, &ToonPlugin)
+        .expect("register material plugin");
+
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [64.0, 64.0];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    // The cull plugin path is on the HDR scene pass.
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
+
+    let items: Vec<_> = (0..4)
+        .map(|_| {
+            let mut it = SceneRenderItem::default();
+            it.mesh_id = mesh_id;
+            it.material.shading_plugin = Some(plugin_id);
+            it
+        })
+        .collect();
+    frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+    // Culled: plugin batches draw from the cull-written indirect args.
+    renderer.enable_gpu_driven_culling();
+    let culled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+    let culled_stats = renderer.last_frame_stats();
+
+    // Unculled reference: same instances drawn directly.
+    renderer.disable_gpu_driven_culling();
+    let unculled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+
+    assert_eq!(
+        culled_stats.per_object_items, 0,
+        "plugin instances must instance, not fall to the per-object path"
+    );
+    // Guard against a false pass where nothing drew (two blank frames also
+    // compare equal): the box must actually be visible.
+    let bg = &culled[0..4];
+    assert!(
+        culled.chunks_exact(4).any(|p| p != bg),
+        "the plugin box must be visible, not an empty frame"
+    );
+    // The whole box is in frustum, so culling removes nothing: the culled plugin
+    // path must render the same image as the direct one.
+    assert_eq!(
+        culled, unculled,
+        "the GPU-culled plugin draw must match the unculled draw for an all-visible scene"
+    );
+}

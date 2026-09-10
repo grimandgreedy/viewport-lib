@@ -32,8 +32,9 @@ pub(crate) fn is_instanceable(
         && item.active_attribute.is_none()
         // Material-plugin items instance once the plugin's instanced pipeline set
         // is built (the plugin's shading composed onto the instanced modules, on
-        // the group-3 layout). Until then, or under bindless / on an unknown id
-        // where no instanced set exists, they draw through the per-object path.
+        // the group-3 layout, for the active per-batch or bindless binding). Until
+        // then, or on an unknown id where no instanced set exists, they draw through
+        // the per-object path.
         && match item.material.shading_plugin {
             None => true,
             Some(pid) => resources.material_plugin_instanced_ready(pid),

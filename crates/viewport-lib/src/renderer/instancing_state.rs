@@ -10,17 +10,22 @@ use super::types::InstancedBatch;
 /// `multi_draw_indexed_indirect_count`. `arg_base` is the group's first batch
 /// index (its base into the compacted args + the per-batch args), `size` the
 /// number of batches (the multi-draw `max_count`); `two_sided` / `no_discard`
-/// pick the pipeline. `count_index` is the group's slot in the shared
-/// `draw_counts` buffer: opaque and transparent (OIT) groups share one global
-/// index space and one compaction pass, so this is the group's position across
-/// both lists, not its index within one list. Built at prepare only under the
-/// bindless + native-multi-draw GPU-driven path; empty otherwise.
+/// pick the pipeline. `vertex_chunk` / `index_chunk` are the shared-slab chunks
+/// the whole run draws from, so the draw loop binds the geometry buffers straight
+/// from the group without looking the run's first batch back up in the mesh store.
+/// `count_index` is the group's slot in the shared `draw_counts` buffer: opaque
+/// and transparent (OIT) groups share one global index space and one compaction
+/// pass, so this is the group's position across both lists, not its index within
+/// one list. Built at prepare only under the bindless + native-multi-draw
+/// GPU-driven path; empty otherwise.
 #[derive(Clone, Copy)]
 pub(crate) struct DrawGroup {
     pub(crate) arg_base: u32,
     pub(crate) size: u32,
     pub(crate) two_sided: bool,
     pub(crate) no_discard: bool,
+    pub(crate) vertex_chunk: u32,
+    pub(crate) index_chunk: u32,
     pub(crate) count_index: u32,
 }
 
@@ -133,6 +138,13 @@ pub(crate) struct InstancingState {
     pub(crate) group_arg_base_buf: Option<crate::gpu::Buffer>,
     /// Capacity (in batches) of `group_id_buf` / `group_arg_base_buf`.
     pub(crate) group_buf_capacity: usize,
+    /// The `(batches_gen, clipping_active, nodiscard)` the current `draw_groups`,
+    /// `oit_draw_groups`, and `group_id_buf` / `group_arg_base_buf` were built for.
+    /// While it holds, the GPU-driven submission is topology-stable: the CPU need
+    /// not re-walk the batch list to re-form the groups or re-upload the per-batch
+    /// group metadata (only the per-viewport compaction runs each frame, on the
+    /// GPU). `None` when the groups are cold or the GPU-driven path is inactive.
+    pub(crate) draw_group_cache_key: Option<(u64, bool, bool)>,
 }
 
 impl InstancingState {
@@ -176,6 +188,7 @@ impl InstancingState {
             group_id_buf: None,
             group_arg_base_buf: None,
             group_buf_capacity: 0,
+            draw_group_cache_key: None,
         }
     }
 }

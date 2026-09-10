@@ -806,18 +806,12 @@ impl ViewportRenderer {
                                         let mut cur_pipe: Option<(bool, bool)> = None;
                                         let mut cur_chunks: Option<(u32, u32)> = None;
                                         for group in self.instancing.draw_groups.iter() {
-                                            let Some(first) = self
-                                                .instancing
-                                                .batches
-                                                .get(group.arg_base as usize)
-                                            else {
-                                                continue;
-                                            };
-                                            let Some(mesh) =
-                                                resources.mesh_store.get(first.mesh_id)
-                                            else {
-                                                continue;
-                                            };
+                                            // The group carries its pipeline
+                                            // selectors and geometry chunk, so no
+                                            // per-group batch / mesh-store lookup
+                                            // is needed (the count path draws every
+                                            // batch's args from the compacted
+                                            // buffer the GPU wrote).
                                             let pipe_key = (group.two_sided, group.no_discard);
                                             if cur_pipe != Some(pipe_key) {
                                                 let key = PipelineKey {
@@ -834,8 +828,7 @@ impl ViewportRenderer {
                                                 ));
                                                 cur_pipe = Some(pipe_key);
                                             }
-                                            let chunks =
-                                                (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                            let chunks = (group.vertex_chunk, group.index_chunk);
                                             if cur_chunks != Some(chunks) {
                                                 render_pass.set_vertex_buffer(
                                                     0,
@@ -1071,8 +1064,19 @@ impl ViewportRenderer {
                                 resources,
                                 &resources.deform.dummy_bind_group
                             );
+                            // When GPU culling ran this frame, a plugin batch draws
+                            // its culled instances from the cull-written indirect
+                            // args through the plugin's `vs_main_cull` pipeline; the
+                            // cull kernel wrote args + visibility for every batch,
+                            // including plugin ones (they are only excluded from the
+                            // count-multi-draw compaction, not the cull). Otherwise
+                            // it draws every instance directly.
+                            let plugin_indirect = (self.instancing.gpu_culling_enabled
+                                && resources.cull.hdr_solid_pipeline.is_some())
+                            .then(|| cull0.indirect_args_buf.as_ref())
+                            .flatten();
                             let mut cur_chunks: Option<(u32, u32)> = None;
-                            for (_, batch) in &opaque_batches {
+                            for (batch_global_idx, batch) in &opaque_batches {
                                 if batch.shading_plugin.is_none() {
                                     continue;
                                 }
@@ -1094,20 +1098,14 @@ impl ViewportRenderer {
                                         .unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 );
-                                let Some(inst_tex_bg) =
-                                    resources.instanced_colour_bind_group(mat_key)
-                                else {
-                                    continue;
-                                };
                                 let no_discard = !clipping_active && !batch.has_alpha_mask;
                                 let key = PipelineKey {
                                     two_sided: batch.two_sided,
                                     no_discard_eligible: no_discard,
                                     ..PipelineKey::default()
                                 };
-                                render_pass.set_pipeline(plug_pipes.hdr_opaque.get(key));
-                                render_pass.set_bind_group(1, inst_tex_bg, &[]);
-                                bind_material_group!(render_pass, mat_bg);
+                                // Geometry chunk binds once per change; both draw
+                                // paths read the same slab chunk.
                                 let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                                 if cur_chunks != Some(chunks) {
                                     render_pass.set_vertex_buffer(
@@ -1122,14 +1120,41 @@ impl ViewportRenderer {
                                         .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                     cur_chunks = Some(chunks);
                                 }
-                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                                let first_index = resources.geometry.first_index(mesh.index_span);
-                                render_pass.draw_indexed(
-                                    first_index..first_index + mesh.index_count,
-                                    base_vertex,
-                                    batch.instance_offset
-                                        ..batch.instance_offset + batch.instance_count,
-                                );
+                                let culled = plugin_indirect
+                                    .zip(plug_pipes.cull.as_ref())
+                                    .and_then(|(indirect_buf, cull_set)| {
+                                        resources
+                                            .instanced_cull_colour_bind_group(cull0, mat_key)
+                                            .map(|bg| (indirect_buf, cull_set, bg))
+                                    });
+                                if let Some((indirect_buf, cull_set, cull_bg)) = culled {
+                                    render_pass.set_pipeline(cull_set.get(key));
+                                    render_pass.set_bind_group(1, cull_bg, &[]);
+                                    bind_material_group!(render_pass, mat_bg);
+                                    render_pass.draw_indexed_indirect(
+                                        indirect_buf,
+                                        *batch_global_idx as u64 * 20,
+                                    );
+                                } else {
+                                    let Some(inst_tex_bg) =
+                                        resources.instanced_colour_bind_group(mat_key)
+                                    else {
+                                        continue;
+                                    };
+                                    render_pass.set_pipeline(plug_pipes.hdr_opaque.get(key));
+                                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                    bind_material_group!(render_pass, mat_bg);
+                                    let base_vertex =
+                                        resources.geometry.base_vertex(mesh.vertex_span);
+                                    let first_index =
+                                        resources.geometry.first_index(mesh.index_span);
+                                    render_pass.draw_indexed(
+                                        first_index..first_index + mesh.index_count,
+                                        base_vertex,
+                                        batch.instance_offset
+                                            ..batch.instance_offset + batch.instance_count,
+                                    );
+                                }
                                 self.frame_main_draw_commands
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
@@ -2869,15 +2894,10 @@ impl ViewportRenderer {
                                     let mut cur_two_sided: Option<bool> = None;
                                     let mut cur_chunks: Option<(u32, u32)> = None;
                                     for group in self.instancing.oit_draw_groups.iter() {
-                                        let Some(first) =
-                                            self.instancing.batches.get(group.arg_base as usize)
-                                        else {
-                                            continue;
-                                        };
-                                        let Some(mesh) = resources.mesh_store.get(first.mesh_id)
-                                        else {
-                                            continue;
-                                        };
+                                        // Pipeline selector and geometry chunk come
+                                        // from the group itself; the per-batch args
+                                        // are drawn from the compacted buffer, so no
+                                        // batch / mesh-store lookup is needed here.
                                         if cur_two_sided != Some(group.two_sided) {
                                             oit_pass.set_pipeline(if group.two_sided {
                                                 pipeline_two_sided
@@ -2886,8 +2906,7 @@ impl ViewportRenderer {
                                             });
                                             cur_two_sided = Some(group.two_sided);
                                         }
-                                        let chunks =
-                                            (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                        let chunks = (group.vertex_chunk, group.index_chunk);
                                         if cur_chunks != Some(chunks) {
                                             oit_pass.set_vertex_buffer(
                                                 0,
@@ -3109,8 +3128,17 @@ impl ViewportRenderer {
                         .any(|b| b.is_transparent && b.shading_plugin.is_some())
                     {
                         bind_deform_group!(oit_pass, resources, &resources.deform.dummy_bind_group);
+                        // As on the opaque plugin path: a plugin batch draws its
+                        // culled instances from the cull-written indirect args
+                        // through the plugin's `vs_main_cull` OIT pipeline when
+                        // culling ran, else every instance directly.
+                        let plugin_indirect = (self.instancing.gpu_culling_enabled
+                            && resources.cull.hdr_solid_pipeline.is_some())
+                        .then(|| cull0.indirect_args_buf.as_ref())
+                        .flatten();
                         let mut cur_chunks: Option<(u32, u32)> = None;
-                        for batch in &self.instancing.batches {
+                        for (batch_global_idx, batch) in self.instancing.batches.iter().enumerate()
+                        {
                             if !batch.is_transparent || batch.shading_plugin.is_none() {
                                 continue;
                             }
@@ -3132,17 +3160,10 @@ impl ViewportRenderer {
                                     .unwrap_or(u64::MAX),
                                 batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                             );
-                            let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key)
-                            else {
-                                continue;
-                            };
                             let key = PipelineKey {
                                 two_sided: batch.two_sided,
                                 ..PipelineKey::default()
                             };
-                            oit_pass.set_pipeline(plug_pipes.oit.get(key));
-                            oit_pass.set_bind_group(1, inst_tex_bg, &[]);
-                            bind_material_group!(oit_pass, mat_bg);
                             let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
                             if cur_chunks != Some(chunks) {
                                 oit_pass.set_vertex_buffer(
@@ -3157,13 +3178,39 @@ impl ViewportRenderer {
                                     .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                 cur_chunks = Some(chunks);
                             }
-                            let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
-                            let first_index = resources.geometry.first_index(mesh.index_span);
-                            oit_pass.draw_indexed(
-                                first_index..first_index + mesh.index_count,
-                                base_vertex,
-                                batch.instance_offset..batch.instance_offset + batch.instance_count,
-                            );
+                            let culled = plugin_indirect
+                                .zip(plug_pipes.oit_cull.as_ref())
+                                .and_then(|(indirect_buf, cull_set)| {
+                                    resources
+                                        .instanced_cull_colour_bind_group(cull0, mat_key)
+                                        .map(|bg| (indirect_buf, cull_set, bg))
+                                });
+                            if let Some((indirect_buf, cull_set, cull_bg)) = culled {
+                                oit_pass.set_pipeline(cull_set.get(key));
+                                oit_pass.set_bind_group(1, cull_bg, &[]);
+                                bind_material_group!(oit_pass, mat_bg);
+                                oit_pass.draw_indexed_indirect(
+                                    indirect_buf,
+                                    batch_global_idx as u64 * 20,
+                                );
+                            } else {
+                                let Some(inst_tex_bg) =
+                                    resources.instanced_colour_bind_group(mat_key)
+                                else {
+                                    continue;
+                                };
+                                oit_pass.set_pipeline(plug_pipes.oit.get(key));
+                                oit_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                bind_material_group!(oit_pass, mat_bg);
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
+                                oit_pass.draw_indexed(
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
+                                    batch.instance_offset
+                                        ..batch.instance_offset + batch.instance_count,
+                                );
+                            }
                             self.frame_main_draw_commands
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }

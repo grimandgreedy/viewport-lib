@@ -305,12 +305,10 @@ impl ViewportRenderer {
         let mut plugin_builds = 0usize;
         let mut plugin_builds_deferred = 0usize;
         let mut cold_seen: Vec<u32> = Vec::new();
-        // Instanced plugin pipelines only exist on the per-batch texture path and
-        // are drawn only by the HDR scene / OIT passes; under bindless, or on an
-        // LDR frame (whose `emit_draw_calls` path draws plugins per-object), they
-        // stay per-object, so do not spend build slots on a set that never draws.
-        let instanced_plugins_possible =
-            !resources.bindless_textures() && frame.effects.display.is_hdr();
+        // The instanced plugin set is built for the active texture-binding mode
+        // (per-batch five textures, or one bindless array) and drawn by both the
+        // LDR (`emit_draw_calls`) and HDR scene / OIT passes, so it is built on any
+        // frame type and either binding mode.
         for item in scene_items.iter() {
             let Some(pid) = item.material.shading_plugin else {
                 continue;
@@ -322,8 +320,7 @@ impl ViewportRenderer {
             // set lets plugin items join instanced batches (see `is_instanceable`).
             // Build both so a plugin material reaches full parity.
             let need_object = resources.material_plugin_needs_build(pid);
-            let need_instanced =
-                instanced_plugins_possible && !resources.material_plugin_instanced_ready(pid);
+            let need_instanced = !resources.material_plugin_instanced_ready(pid);
             if !need_object && !need_instanced {
                 continue;
             }
@@ -337,8 +334,13 @@ impl ViewportRenderer {
             }
             if need_instanced {
                 // The instanced set reuses the built-in instanced group-1 layout;
-                // ensure it exists (idempotent) before composing on top of it.
+                // ensure it exists (idempotent) before composing on top of it. Also
+                // ensure the cull layout so the plugin set can build its
+                // `vs_main_cull` twins and plugin batches ride GPU culling; the cull
+                // pipelines are valid on any device and are only drawn when culling
+                // actually runs. Both calls are idempotent.
                 resources.ensure_instanced_pipelines(device);
+                resources.ensure_cull_instance_pipelines(device);
                 resources.ensure_material_plugin_instanced_pipelines(device, pid);
             }
             plugin_builds += 1;
