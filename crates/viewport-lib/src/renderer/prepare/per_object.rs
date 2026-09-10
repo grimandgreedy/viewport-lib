@@ -169,7 +169,20 @@ pub(super) fn build_object_uniform(
             0
         },
         material_id,
-        _pad_uv: [0; 3],
+        uv1_base: {
+            // Per-object draws bind a mesh vertex sub-slice, so the vertex index
+            // the shader sees is mesh-local. Add the mesh's base vertex to index
+            // the whole-chunk uv1 buffer. 0 when the mesh has no second UV set
+            // (it binds the zero fallback and the index is clamped to entry 0).
+            resources
+                .mesh_store
+                .get(item.mesh_id)
+                .filter(|mesh| mesh.has_uv1)
+                .map_or(0, |mesh| {
+                    resources.geometry.base_vertex(mesh.vertex_span) as u32
+                })
+        },
+        _pad_uv: [0; 2],
         deform_flags: resources.deform.flag_bits(item.mesh_id),
         normal_strength: cm.normal_strength,
         ao_range: cm.ao_range,
@@ -464,7 +477,8 @@ impl ViewportRenderer {
                         has_metallic_roughness_tex: 0,
                         has_emissive_tex: 0,
                         material_id: 0,
-                        _pad_uv: [0; 3],
+                        uv1_base: 0,
+                        _pad_uv: [0; 2],
                         deform_flags: 0,
                         normal_strength: 1.0,
                         ao_range: [0.0, 1.0],
@@ -810,6 +824,10 @@ impl ViewportRenderer {
                             resource: crate::gpu::BindingResource::TextureView(
                                 &resources.material.texture_array_view,
                             ),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 19,
+                            resource: resources.content.fallback_uv1_buf.as_entire_binding(),
                         },
                     ],
                 });

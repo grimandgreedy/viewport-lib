@@ -53,6 +53,10 @@ pub(crate) struct MeshPrep {
     /// source `MeshData` did not carry its own tangents. `None` means the
     /// source tangents (if any) should be used directly.
     pub computed_tangents: Option<Vec<[f32; 4]>>,
+    /// Second UV set packed as raw bytes (one `vec2<f32>` per vertex,
+    /// zero-padded to the vertex count) for the parallel uv1 slab stream.
+    /// `None` when the source `MeshData` carried no `uvs1`.
+    pub uv1_bytes: Option<Vec<u8>>,
     /// CPU copies retained on the mesh for picking. Cloned here rather
     /// than in `assemble_mesh_data` so the async path pays the memcpy on
     /// the worker thread instead of inside the apply step.
@@ -114,6 +118,7 @@ impl DeviceResources {
             &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
+            &self.content.fallback_uv1_buf,
             vertices,
             indices,
         );
@@ -222,9 +227,22 @@ impl DeviceResources {
             })
             .collect();
 
+        // Pack the second UV set parallel to the vertices (one vec2 per vertex,
+        // zero-padded / truncated to the vertex count, matching the forgiving
+        // `uvs` lookup). Left `None` when the mesh has no `uvs1`, so meshes
+        // without a second set allocate nothing in the uv1 slab stream.
+        let uv1_bytes = data.uvs1.as_ref().map(|uvs1| {
+            let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
+            for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
+                *dst = *src;
+            }
+            bytemuck::cast_slice(&packed).to_vec()
+        });
+
         MeshPrep {
             vertices,
             computed_tangents,
+            uv1_bytes,
             cpu_positions: data.positions.clone(),
             cpu_normals: data.normals.clone(),
             cpu_indices: data.indices.clone(),
@@ -243,6 +261,7 @@ impl DeviceResources {
         let MeshPrep {
             vertices,
             computed_tangents,
+            uv1_bytes,
             cpu_positions,
             cpu_normals,
             cpu_indices,
@@ -269,8 +288,10 @@ impl DeviceResources {
             &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
+            &self.content.fallback_uv1_buf,
             &vertices,
             &data.indices,
+            uv1_bytes,
             None,
         );
         mesh.cpu_positions = Some(cpu_positions);
@@ -349,6 +370,20 @@ impl DeviceResources {
         let vertex_chunk = self.geometry.vertex_chunk_buffer(vertex_span);
         let index_chunk = self.geometry.index_chunk_buffer(index_span);
 
+        // Second UV set: pack it (cheap vec2 copy) and record the parallel uv1
+        // write now, while `&mut self.geometry` is in scope. The data is small
+        // next to a streamed mesh, so it does not need the chunked GPU step; the
+        // deferred write flushes with the geometry at the next `process_uploads`.
+        if let Some(uvs1) = data.uvs1.as_ref() {
+            let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
+            for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
+                *dst = *src;
+            }
+            self.geometry.ensure_uv1_chunk(device, vertex_span.chunk);
+            self.geometry
+                .enqueue_uv1(vertex_span, bytemuck::cast_slice(&packed).to_vec());
+        }
+
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu_then_gpu_chunked(move |progress| {
@@ -366,6 +401,9 @@ impl DeviceResources {
                 let MeshPrep {
                     vertices,
                     computed_tangents,
+                    // The uv1 stream is recorded up front in
+                    // `begin_upload_mesh_data`, not through the chunked GPU step.
+                    uv1_bytes: _,
                     cpu_positions,
                     cpu_normals,
                     cpu_indices,
@@ -466,10 +504,12 @@ impl DeviceResources {
                                 &resources.content.fallback_extension_attr_buf,
                                 &resources.material.metallic_roughness_view,
                                 &resources.material.emissive_view,
+                                &resources.content.fallback_uv1_buf,
                                 vertex_span,
                                 index_span,
                                 data.indices.len() as u32,
                                 aabb,
+                                data.uvs1.is_some(),
                             );
                             mesh.cpu_positions = Some(cpu_positions);
                             mesh.cpu_normals = Some(cpu_normals);
@@ -1399,8 +1439,16 @@ impl DeviceResources {
             &self.content.fallback_extension_attr_buf,
             &self.material.metallic_roughness_view,
             &self.material.emissive_view,
+            &self.content.fallback_uv1_buf,
             &vertices,
             &data.indices,
+            data.uvs1.as_ref().map(|uvs1| {
+                let mut packed: Vec<[f32; 2]> = vec![[0.0, 0.0]; data.positions.len()];
+                for (dst, src) in packed.iter_mut().zip(uvs1.iter()) {
+                    *dst = *src;
+                }
+                bytemuck::cast_slice(&packed).to_vec()
+            }),
             None,
         );
         new_mesh.cpu_positions = Some(data.positions.clone());
@@ -2402,6 +2450,7 @@ impl DeviceResources {
         fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
+        fallback_uv1_buf: &crate::gpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
     ) -> GpuMesh {
@@ -2425,8 +2474,10 @@ impl DeviceResources {
             fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
+            fallback_uv1_buf,
             vertices,
             indices,
+            None,
             None,
         )
     }
@@ -2451,8 +2502,10 @@ impl DeviceResources {
         fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
+        fallback_uv1_buf: &crate::gpu::Buffer,
         vertices: &[Vertex],
         indices: &[u32],
+        uv1_bytes: Option<Vec<u8>>,
         normal_line_verts: Option<&[Vertex]>,
     ) -> GpuMesh {
         use bytemuck::cast_slice;
@@ -2466,6 +2519,13 @@ impl DeviceResources {
         let index_span = geometry.alloc_index(device, index_bytes);
         geometry.enqueue_vertex(vertex_span, cast_slice(vertices).to_vec());
         geometry.enqueue_index(index_span, cast_slice(indices).to_vec());
+        // Second UV set: record the parallel uv1 write into this mesh's region of
+        // the per-chunk uv1 buffer (created lazily here on first use).
+        let has_uv1 = uv1_bytes.is_some();
+        if let Some(bytes) = uv1_bytes {
+            geometry.ensure_uv1_chunk(device, vertex_span.chunk);
+            geometry.enqueue_uv1(vertex_span, bytes);
+        }
 
         let aabb = crate::scene::aabb::Aabb::from_positions(
             &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
@@ -2489,10 +2549,12 @@ impl DeviceResources {
             fallback_extension_attr_buf,
             fallback_metallic_roughness_view,
             fallback_emissive_view,
+            fallback_uv1_buf,
             vertex_span,
             index_span,
             indices.len() as u32,
             aabb,
+            has_uv1,
         );
         if let Some(nl_verts) = normal_line_verts
             && !nl_verts.is_empty()
@@ -2538,10 +2600,12 @@ impl DeviceResources {
         fallback_extension_attr_buf: &crate::gpu::Buffer,
         fallback_metallic_roughness_view: &crate::gpu::TextureView,
         fallback_emissive_view: &crate::gpu::TextureView,
+        fallback_uv1_buf: &crate::gpu::Buffer,
         vertex_span: crate::resources::mesh::geometry_slab::SlabSpan,
         index_span: crate::resources::mesh::geometry_slab::SlabSpan,
         index_count: u32,
         aabb: crate::scene::aabb::Aabb,
+        has_uv1: bool,
     ) -> GpuMesh {
         use bytemuck::cast_slice;
 
@@ -2586,7 +2650,8 @@ impl DeviceResources {
             has_metallic_roughness_tex: 0,
             has_emissive_tex: 0,
             material_id: 0,
-            _pad_uv: [0; 3],
+            uv1_base: 0,
+            _pad_uv: [0; 2],
             deform_flags: 0,
             normal_strength: 1.0,
             ao_range: [0.0, 1.0],
@@ -2703,6 +2768,14 @@ impl DeviceResources {
                         fallback_lightmap_array_view,
                     ),
                 },
+                // 19: second UV set (uv1). Bound to the zero fallback here; the
+                // real per-chunk uv1 buffer is swapped in by the material
+                // bind-group rebuild on the mesh's first prepare when it carries
+                // `MeshData::uvs1`.
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -2746,7 +2819,8 @@ impl DeviceResources {
             has_metallic_roughness_tex: 0,
             has_emissive_tex: 0,
             material_id: 0,
-            _pad_uv: [0; 3],
+            uv1_base: 0,
+            _pad_uv: [0; 2],
             deform_flags: 0,
             normal_strength: 1.0,
             ao_range: [0.0, 1.0],
@@ -2860,6 +2934,12 @@ impl DeviceResources {
                         fallback_lightmap_array_view,
                     ),
                 },
+                // 19: second UV set (uv1). Normal-line rendering never samples a
+                // texture, so the zero fallback is always correct here.
+                crate::gpu::BindGroupEntry {
+                    binding: 19,
+                    resource: fallback_uv1_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -2908,6 +2988,7 @@ impl DeviceResources {
             normal_override_slice: None,
             extension_attr_buffer: None,
             lightmap: None,
+            has_uv1,
             lightmap_gen: 0,
             position_override_gen: 0,
             normal_override_gen: 0,

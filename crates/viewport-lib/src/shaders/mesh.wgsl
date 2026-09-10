@@ -105,7 +105,7 @@ struct Object {
     has_metallic_roughness_tex: u32,       // offset 248
     has_emissive_tex: u32,                 // offset 252
     material_id: u32,                      // offset 256 : index into material_gpu_buf
-    _pad_uv0: u32,                         // offset 260
+    uv1_base: u32,                         // offset 260 : mesh base_vertex for the uv1 buffer
     _pad_uv1: u32,                         // offset 264
     _pad_uv2: u32,                         // offset 268
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
@@ -166,8 +166,25 @@ struct SlotUv {
 // Scale and offset apply first (so rotation 0 reproduces the prior behaviour),
 // then rotation about the texture centre. The derivatives are rotated by the
 // same angle, or mip selection is wrong on rotated tiling.
-fn material_slot_uv(mid: u32, slot: u32, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>) -> SlotUv {
+//
+// The slot's `rot_tc.y` selects which vertex UV set feeds the transform: 0 = the
+// interleaved uv0, 1 = the uv1 stream (glTF `TEXCOORD_1`). Both sets and their
+// derivatives are passed so the choice stays per-slot.
+fn material_slot_uv(
+    mid: u32,
+    slot: u32,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    ddx0: vec2<f32>,
+    ddy0: vec2<f32>,
+    ddx1: vec2<f32>,
+    ddy1: vec2<f32>,
+) -> SlotUv {
     let xf = material_gpu_buf[mid].xf[slot];
+    let use1 = xf.rot_tc.y > 0.5;
+    let uv = select(uv0, uv1, use1);
+    let duvdx = select(ddx0, ddx1, use1);
+    let duvdy = select(ddy0, ddy1, use1);
     let s = xf.offset_scale.zw;
     let o = xf.offset_scale.xy;
     let rot = xf.rot_tc.x;
@@ -264,6 +281,12 @@ var<private> object: Object;
 // direction (world space), w = directionality. Gated on object.lightmap_directional;
 // the 1x1 fallback is bound (and ignored) for flat lightmaps.
 @group(1) @binding(18) var lightmap_dir_tex: texture_2d_array<f32>;
+// Second UV set (glTF TEXCOORD_1), one vec2 per vertex, parallel to the vertex
+// buffer in the shared slab. Indexed by `object.uv1_base + vertex_index` (the
+// per-object draw binds a mesh sub-slice, so the base recovers the global index
+// into this whole-chunk buffer). The one-entry zero fallback is bound for meshes
+// without a second UV set; the index is clamped so every read stays in range.
+@group(1) @binding(19) var<storage, read> uv1_buf: array<vec2<f32>>;
 
 // Directional-lightmap response: scale the baked radiance by how the shading
 // normal (post normal-map) faces the baked dominant light, relative to the
@@ -306,6 +329,9 @@ struct VertexOut {
     // Index of this draw's element in the group 1 binding 0 objects[] array,
     // carried to the fragment stage so it re-selects the same object.
     @location(11) @interpolate(flat) obj_idx: u32,
+    // Second UV set (glTF TEXCOORD_1), interpolated for texture slots whose
+    // transform selects uv_set = 1. vec2(0.0) for meshes without a second set.
+    @location(12) uv1: vec2<f32>,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -372,6 +398,13 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    // Second UV set: read from the parallel uv1 stream. The per-object draw binds
+    // a mesh sub-slice, so the vertex index is mesh-local; add the mesh base to
+    // index the whole-chunk buffer. The index is clamped so the zero fallback
+    // (one entry, bound for meshes without a second set) stays in range.
+    let uv1_len = arrayLength(&uv1_buf);
+    let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
+    out.uv1 = uv1_buf[uv1_idx];
     // Read scalar attribute value for this vertex, guarded by has_attribute and buffer length.
     let buf_len = arrayLength(&scalar_buffer);
     let idx = in.vertex_index;
@@ -576,6 +609,8 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // (browsers). These feed the explicit-gradient sampling used from here on.
     let d_uv_dx = dpdx(in.uv);
     let d_uv_dy = dpdy(in.uv);
+    let d_uv1_dx = dpdx(in.uv1);
+    let d_uv1_dy = dpdy(in.uv1);
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
     let d_wn_dx = dpdx(in.world_normal);
@@ -603,14 +638,21 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv
     // and, under a shared transform, the MR/emissive samples). Identity
     // material_id 0 passes the authored UV through unchanged.
-    let s0 = material_slot_uv(object.material_id, 0u, in.uv, d_uv_dx, d_uv_dy);
+    let s0 = material_slot_uv(
+        object.material_id, 0u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
     let mat_uv = s0.uv;
     out.mat_uv = mat_uv;
     let muv_ddx = s0.ddx;
     let muv_ddy = s0.ddy;
-    // Normal (slot 1) and AO (slot 2) can carry their own transform override.
-    let s_normal = material_slot_uv(object.material_id, 1u, in.uv, d_uv_dx, d_uv_dy);
-    let s_ao = material_slot_uv(object.material_id, 2u, in.uv, d_uv_dx, d_uv_dy);
+    // Normal (slot 1) and AO (slot 2) can carry their own transform override,
+    // including their own uv_set.
+    let s_normal = material_slot_uv(
+        object.material_id, 1u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let s_ao = material_slot_uv(
+        object.material_id, 2u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
 
     // Sample texture if one is assigned; fallback texture is 1x1 white (neutral multiply).
     var tex_colour = vec4<f32>(1.0);

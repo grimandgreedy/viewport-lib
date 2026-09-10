@@ -363,6 +363,7 @@ macro_rules! emit_draw_calls {
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 // Combined (instance storage + texture) bind group, primed in prepare().
                                 let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
@@ -419,6 +420,7 @@ macro_rules! emit_draw_calls {
                                 batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
                             );
                             let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                             let pipeline: &crate::gpu::RenderPipeline = if batch.two_sided {
@@ -465,6 +467,7 @@ macro_rules! emit_draw_calls {
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                                 render_pass.set_bind_group(1, inst_tex_bg, &[]);
@@ -505,6 +508,7 @@ macro_rules! emit_draw_calls {
                                 batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
                             );
                             let Some(inst_tex_bg) = resources.instanced_colour_bind_group(mat_key) else { continue };
                             let pipeline = &plug_pipes.ldr.transparent;

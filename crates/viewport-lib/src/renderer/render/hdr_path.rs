@@ -797,12 +797,10 @@ impl ViewportRenderer {
                                 // skip the CPU run-forming entirely.
                                 let mut did_groups = false;
                                 if !self.instancing.draw_groups.is_empty() {
-                                    if let (Some(compacted), Some(counts), Some(bg)) = (
+                                    if let (Some(compacted), Some(counts)) = (
                                         cull0.compacted_args_buf.as_ref(),
                                         cull0.draw_counts_buf.as_ref(),
-                                        cull0.bindless_cull_bind_group.as_ref(),
                                     ) {
-                                        render_pass.set_bind_group(1, bg, &[]);
                                         let mut cur_pipe: Option<(bool, bool)> = None;
                                         let mut cur_chunks: Option<(u32, u32)> = None;
                                         for group in self.instancing.draw_groups.iter() {
@@ -830,6 +828,16 @@ impl ViewportRenderer {
                                             }
                                             let chunks = (group.vertex_chunk, group.index_chunk);
                                             if cur_chunks != Some(chunks) {
+                                                // The colour bind group carries this
+                                                // chunk's uv1 buffer, so rebind group 1
+                                                // whenever the slab chunk changes.
+                                                let Some(bg) = cull0
+                                                    .bindless_cull_bind_groups
+                                                    .get(&resources.uv1_chunk_key(chunks.0))
+                                                else {
+                                                    continue;
+                                                };
+                                                render_pass.set_bind_group(1, bg, &[]);
                                                 render_pass.set_vertex_buffer(
                                                     0,
                                                     resources.geometry.vertex_chunk_slice(chunks.0),
@@ -881,6 +889,7 @@ impl ViewportRenderer {
                                             .map(|t| t.raw())
                                             .unwrap_or(u64::MAX),
                                         batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                     );
                                     let Some(inst_tex_bg) =
                                         resources.instanced_cull_colour_bind_group(cull0, mat_key)
@@ -997,6 +1006,7 @@ impl ViewportRenderer {
                                         .map(|t| t.raw())
                                         .unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 let Some(inst_tex_bg) =
                                     resources.instanced_colour_bind_group(mat_key)
@@ -1097,6 +1107,7 @@ impl ViewportRenderer {
                                         .map(|t| t.raw())
                                         .unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 let no_discard = !clipping_active && !batch.has_alpha_mask;
                                 let key = PipelineKey {
@@ -2885,12 +2896,10 @@ impl ViewportRenderer {
                             // bindless + native-multi-draw gate as the opaque path.
                             let mut did_oit_groups = false;
                             if !self.instancing.oit_draw_groups.is_empty() {
-                                if let (Some(compacted), Some(counts), Some(bg)) = (
+                                if let (Some(compacted), Some(counts)) = (
                                     cull0.compacted_args_buf.as_ref(),
                                     cull0.draw_counts_buf.as_ref(),
-                                    cull0.bindless_cull_bind_group.as_ref(),
                                 ) {
-                                    oit_pass.set_bind_group(1, bg, &[]);
                                     let mut cur_two_sided: Option<bool> = None;
                                     let mut cur_chunks: Option<(u32, u32)> = None;
                                     for group in self.instancing.oit_draw_groups.iter() {
@@ -2908,6 +2917,16 @@ impl ViewportRenderer {
                                         }
                                         let chunks = (group.vertex_chunk, group.index_chunk);
                                         if cur_chunks != Some(chunks) {
+                                            // The colour bind group carries this
+                                            // chunk's uv1 buffer, so rebind group 1
+                                            // whenever the slab chunk changes.
+                                            let Some(bg) = cull0
+                                                .bindless_cull_bind_groups
+                                                .get(&resources.uv1_chunk_key(chunks.0))
+                                            else {
+                                                continue;
+                                            };
+                                            oit_pass.set_bind_group(1, bg, &[]);
                                             oit_pass.set_vertex_buffer(
                                                 0,
                                                 resources.geometry.vertex_chunk_slice(chunks.0),
@@ -2971,6 +2990,7 @@ impl ViewportRenderer {
                                         .map(|t| t.raw())
                                         .unwrap_or(u64::MAX),
                                     batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 let Some(inst_tex_bg) = self
                                     .resources
@@ -3075,6 +3095,7 @@ impl ViewportRenderer {
                                     .map(|t| t.raw())
                                     .unwrap_or(u64::MAX),
                                 batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
                             );
                             let Some(inst_tex_bg) =
                                 self.resources.instanced_colour_bind_group(mat_key)
@@ -3159,6 +3180,7 @@ impl ViewportRenderer {
                                     .map(|t| t.raw())
                                     .unwrap_or(u64::MAX),
                                 batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
                             );
                             let key = PipelineKey {
                                 two_sided: batch.two_sided,

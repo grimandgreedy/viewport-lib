@@ -647,6 +647,11 @@ impl ViewportRenderer {
             instancing.last_resource_free_epoch = resources.resource_free_epoch;
 
             for batch in &instancing.batches {
+                let uv1_chunk = resources
+                    .mesh_store
+                    .get(batch.mesh_id)
+                    .map(|m| m.vertex_span.chunk)
+                    .unwrap_or(u32::MAX);
                 resources.get_instance_bind_group(
                     device,
                     batch.texture_id,
@@ -654,10 +659,24 @@ impl ViewportRenderer {
                     batch.ao_map_id,
                     batch.metallic_roughness_id,
                     batch.emissive_id,
+                    uv1_chunk,
+                );
+                // Under bindless, the direct colour draws bind one texture-array
+                // group per vertex-slab chunk (the chunk supplies the uv1 buffer);
+                // a no-op on the per-batch binding.
+                resources.ensure_bindless_colour_bind_group(
+                    device,
+                    instancing.instance_gen,
+                    uv1_chunk,
                 );
             }
         } else {
             for batch in &instancing.batches {
+                let uv1_chunk = resources
+                    .mesh_store
+                    .get(batch.mesh_id)
+                    .map(|m| m.vertex_span.chunk)
+                    .unwrap_or(u32::MAX);
                 resources.get_instance_bind_group(
                     device,
                     batch.texture_id,
@@ -665,14 +684,18 @@ impl ViewportRenderer {
                     batch.ao_map_id,
                     batch.metallic_roughness_id,
                     batch.emissive_id,
+                    uv1_chunk,
+                );
+                // Under bindless, the direct colour draws bind one texture-array
+                // group per vertex-slab chunk (the chunk supplies the uv1 buffer);
+                // a no-op on the per-batch binding.
+                resources.ensure_bindless_colour_bind_group(
+                    device,
+                    instancing.instance_gen,
+                    uv1_chunk,
                 );
             }
         }
-
-        // Under bindless, the direct colour draws share one frame-constant
-        // texture-array bind group. Rebuild it when the instance buffer or the
-        // texture set changed (a no-op on the per-batch binding).
-        resources.ensure_bindless_colour_bind_group(device, instancing.instance_gen);
 
         (batches_reuploaded, batches_skipped)
     }
@@ -725,11 +748,16 @@ impl ViewportRenderer {
             || cull_state.built_free_epoch != resources.resource_free_epoch
         {
             cull_state.instance_cull_bind_groups.clear();
-            cull_state.bindless_cull_bind_group = None;
+            cull_state.bindless_cull_bind_groups.clear();
             cull_state.built_gen = instancing.instance_gen;
             cull_state.built_free_epoch = resources.resource_free_epoch;
         }
         for batch in &instancing.batches.clone() {
+            let uv1_chunk = resources
+                .mesh_store
+                .get(batch.mesh_id)
+                .map(|m| m.vertex_span.chunk)
+                .unwrap_or(u32::MAX);
             resources.get_instance_cull_bind_group(
                 cull_state,
                 device,
@@ -738,12 +766,13 @@ impl ViewportRenderer {
                 batch.ao_map_id,
                 batch.metallic_roughness_id,
                 batch.emissive_id,
+                uv1_chunk,
             );
+            // Under bindless the culled colour draws bind one texture-array group
+            // per viewport per vertex-slab chunk (the per-batch groups above still
+            // serve the shadow-cutout cull path); a no-op on the per-batch binding.
+            resources.get_bindless_cull_bind_group(cull_state, device, uv1_chunk);
         }
-        // Under bindless the culled colour draws share one texture-array bind
-        // group per viewport (the per-batch groups above still serve the
-        // shadow-cutout cull path); a no-op on the per-batch binding.
-        resources.get_bindless_cull_bind_group(cull_state, device);
 
         // GPU-driven submission: form the opaque draw groups and size the
         // per-viewport compaction buffers. Active only under the bindless +

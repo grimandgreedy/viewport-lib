@@ -18,12 +18,16 @@ pub(crate) struct InstancingResources {
     pub(crate) bindless_bind_group_layout: Option<crate::gpu::BindGroupLayout>,
     /// Bindless cull group-1 layout (the above plus the visibility buffer).
     pub(crate) bindless_cull_bind_group_layout: Option<crate::gpu::BindGroupLayout>,
-    /// The frame-constant bindless colour bind group (instances + texture array +
-    /// sampler), used by every direct colour draw under `Bindless`. Rebuilt when
-    /// the instance buffer or texture set changes (see `bindless_signature`).
-    pub(crate) bindless_bind_group: Option<crate::gpu::BindGroup>,
+    /// Bindless colour bind groups (instances + texture array + sampler + the
+    /// chunk's uv1 buffer), used by the direct colour draws under `Bindless`. The
+    /// instances, texture array, and sampler are frame-constant; only the uv1
+    /// buffer varies per vertex-slab chunk, so these are keyed by the uv1 chunk
+    /// discriminator (`uv1_chunk_key`): the chunk index when the chunk carries a
+    /// uv1 stream, else `u32::MAX` (all no-uv1 chunks share one group binding the
+    /// zero fallback). Cleared and rebuilt when the signature below changes.
+    pub(crate) bindless_bind_groups: std::collections::HashMap<u32, crate::gpu::BindGroup>,
     /// Change signature `(instance_gen, texture slot_count, free_epoch)` the
-    /// `bindless_bind_group` was built for; a mismatch triggers a rebuild.
+    /// `bindless_bind_groups` were built for; a mismatch clears and rebuilds them.
     pub(crate) bindless_signature: Option<(u64, usize, u64)>,
     /// Bind group layout for the instanced storage buffer + textures (group 1).
     pub(crate) bind_group_layout: Option<crate::gpu::BindGroupLayout>,
@@ -37,8 +41,14 @@ pub(crate) struct InstancingResources {
     /// one specific texture combination (bindings 1-4). Keyed by
     /// (albedo_id, normal_map_id, ao_map_id) using u64::MAX for fallback slots.
     /// Invalidated when the storage buffer is resized.
+    /// Keyed by `(albedo, normal, ao, metallic_roughness, emissive, uv1_chunk)`.
+    /// The first five components are texture ids (`u64::MAX` for fallback slots);
+    /// the last is the vertex-slab chunk index when that chunk has a uv1 buffer,
+    /// else `u32::MAX` (all no-uv1 chunks share one bind group that binds the zero
+    /// fallback), so batches differing only by which chunk's uv1 stream they sample
+    /// get distinct bind groups.
     pub(crate) bind_groups:
-        std::collections::HashMap<(u64, u64, u64, u64, u64), crate::gpu::BindGroup>,
+        std::collections::HashMap<(u64, u64, u64, u64, u64, u32), crate::gpu::BindGroup>,
     /// Instanced solid render pipeline (TriangleList, opaque).
     pub(crate) solid_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Two-sided (`cull_mode: None`) variant of `solid_pipeline` for
@@ -296,6 +306,21 @@ impl DeviceResources {
                             sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
                             view_dimension: crate::gpu::TextureViewDimension::D2,
                             multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 8: second UV set (uv1) for this batch's vertex-slab
+                    // chunk. The instanced draw binds the whole chunk vertex buffer
+                    // with a per-mesh base_vertex, so `vertex_index` is chunk-global
+                    // and indexes this whole-chunk buffer directly. The zero
+                    // fallback is bound for chunks with no second UV set.
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
                     },
@@ -888,6 +913,17 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 8: second UV set (uv1) for the chunk (see instance_bgl).
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1255,7 +1291,9 @@ impl DeviceResources {
                         resource: vis_buf.as_entire_binding(),
                     },
                     // MR/emissive are required by `cull_bgl` but the shadow cutout
-                    // pass never samples them; bind the fallback views.
+                    // pass never samples them; bind the fallback views. Shadow
+                    // cut-out sampling only reads albedo alpha on uv0, so the uv1
+                    // slot (binding 8) gets the zero fallback buffer too.
                     crate::gpu::BindGroupEntry {
                         binding: 6,
                         resource: crate::gpu::BindingResource::TextureView(
@@ -1268,6 +1306,10 @@ impl DeviceResources {
                             &self.material.emissive_view,
                         ),
                     },
+                    crate::gpu::BindGroupEntry {
+                        binding: 8,
+                        resource: self.content.fallback_uv1_buf.as_entire_binding(),
+                    },
                 ],
             });
             shadow_cull.shadow_cutout_cull_bgs.insert(key, bg);
@@ -1279,6 +1321,25 @@ impl DeviceResources {
     ///
     /// Identical to `get_instance_bind_group` but uses `instance_cull_bind_group_layout`
     /// and includes the `visibility_index_buf` at binding 5.
+    /// uv1 cache discriminator for a vertex-slab chunk: the chunk index when the
+    /// chunk carries a uv1 stream, else `u32::MAX` so every no-uv1 chunk shares
+    /// one bind group (which binds the zero fallback).
+    pub(crate) fn uv1_chunk_key(&self, chunk: u32) -> u32 {
+        if self.geometry.uv1_chunk_buffer(chunk).is_some() {
+            chunk
+        } else {
+            u32::MAX
+        }
+    }
+
+    /// The uv1 storage buffer to bind (whole) for a chunk: its parallel uv1
+    /// buffer, or the one-entry zero fallback when the chunk has no second UV set.
+    pub(crate) fn uv1_chunk_or_fallback(&self, chunk: u32) -> &crate::gpu::Buffer {
+        self.geometry
+            .uv1_chunk_buffer(chunk)
+            .unwrap_or(&self.content.fallback_uv1_buf)
+    }
+
     pub(crate) fn get_instance_cull_bind_group<'a>(
         &self,
         cull_state: &'a mut crate::resources::ViewportCullState,
@@ -1288,6 +1349,7 @@ impl DeviceResources {
         ao_map_id: Option<crate::resources::TextureId>,
         mr_id: Option<crate::resources::TextureId>,
         emissive_id: Option<crate::resources::TextureId>,
+        uv1_chunk: u32,
     ) -> Option<&'a crate::gpu::BindGroup> {
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -1295,12 +1357,14 @@ impl DeviceResources {
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             mr_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            self.uv1_chunk_key(uv1_chunk),
         );
 
         if !cull_state.instance_cull_bind_groups.contains_key(&key) {
             let bgl = self.cull.bind_group_layout.as_ref()?;
             let inst_buf = self.instancing.storage_buf.as_ref()?;
             let vis_buf = cull_state.visibility_index_buf.as_ref()?;
+            let uv1_buf = self.uv1_chunk_or_fallback(uv1_chunk);
 
             let albedo_view = match albedo_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
@@ -1369,6 +1433,10 @@ impl DeviceResources {
                         binding: 7,
                         resource: crate::gpu::BindingResource::TextureView(emissive_view),
                     },
+                    crate::gpu::BindGroupEntry {
+                        binding: 8,
+                        resource: uv1_buf.as_entire_binding(),
+                    },
                 ],
             });
             cull_state.instance_cull_bind_groups.insert(key, bg);
@@ -1391,18 +1459,25 @@ impl DeviceResources {
         ao_map_id: Option<crate::resources::TextureId>,
         mr_id: Option<crate::resources::TextureId>,
         emissive_id: Option<crate::resources::TextureId>,
+        uv1_chunk: u32,
     ) -> Option<&crate::gpu::BindGroup> {
+        let uv1_key = self.uv1_chunk_key(uv1_chunk);
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             mr_id.map(|t| t.raw()).unwrap_or(u64::MAX),
             emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+            uv1_key,
         );
 
         if !self.instancing.bind_groups.contains_key(&key) {
             let bgl = self.instancing.bind_group_layout.as_ref()?;
             let buf = self.instancing.storage_buf.as_ref()?;
+            let uv1_buf = self
+                .geometry
+                .uv1_chunk_buffer(uv1_chunk)
+                .unwrap_or(&self.content.fallback_uv1_buf);
 
             let albedo_view = match albedo_id {
                 Some(id) if self.content.textures.get(id).is_some() => {
@@ -1466,6 +1541,10 @@ impl DeviceResources {
                     crate::gpu::BindGroupEntry {
                         binding: 7,
                         resource: crate::gpu::BindingResource::TextureView(emissive_view),
+                    },
+                    crate::gpu::BindGroupEntry {
+                        binding: 8,
+                        resource: uv1_buf.as_entire_binding(),
                     },
                 ],
             });
@@ -1608,6 +1687,13 @@ impl DeviceResources {
             }
             _ => &self.material.texture.view,
         };
+        // Second UV set for this batch's mesh chunk (whole-chunk buffer, indexed
+        // by the chunk-global vertex index), or the zero fallback.
+        let uv1_buf = self
+            .mesh_store
+            .get(mesh_id)
+            .and_then(|m| self.geometry.uv1_chunk_buffer(m.vertex_span.chunk))
+            .unwrap_or(&self.content.fallback_uv1_buf);
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("mesh_instance_bg"),
             layout: bgl,
@@ -1647,6 +1733,10 @@ impl DeviceResources {
                     resource: crate::gpu::BindingResource::TextureView(
                         &self.material.emissive_view,
                     ),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 8,
+                    resource: uv1_buf.as_entire_binding(),
                 },
             ],
         });
@@ -1771,7 +1861,13 @@ pub(crate) struct ObjectUniform {
     /// three trailing words keep the 16-byte slot the old `uv_transform` vec4
     /// occupied, so every following offset and the struct size are unchanged.
     pub(crate) material_id: u32, //   4 bytes, offset 256
-    pub(crate) _pad_uv: [u32; 3],    //  12 bytes, offset 260
+    /// First vertex of this mesh in its shared vertex-slab chunk
+    /// (`GeometrySlab::base_vertex`). The per-object draw binds a mesh sub-slice,
+    /// so `@builtin(vertex_index)` is mesh-local; adding this base recovers the
+    /// global index into the whole-chunk uv1 buffer (binding 19). 0 for meshes
+    /// without a second UV set (they bind the one-entry zero fallback).
+    pub(crate) uv1_base: u32, //   4 bytes, offset 260
+    pub(crate) _pad_uv: [u32; 2],    //   8 bytes, offset 264
     /// Bit `i` set when deformer slot `i` is active for this draw. Zero when
     /// no deformer registry has attached data for this mesh.
     pub(crate) deform_flags: u32, //   4 bytes, offset 272

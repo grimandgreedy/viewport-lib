@@ -579,6 +579,11 @@ pub struct ContentResources {
     /// mesh has no extension-attribute buffer). Single `vec4<f32>(0)` entry;
     /// plugin modules clamp the vertex index so every read resolves to zero.
     pub(crate) fallback_extension_attr_buf: crate::gpu::Buffer,
+    /// Fallback 8-byte zero storage buffer (bound at the mesh bind group's
+    /// second-UV-set slot when the mesh has no `uvs1`). Single `vec2<f32>(0)`
+    /// entry; the mesh shaders clamp the vertex index so every read resolves to
+    /// `vec2(0.0)`.
+    pub(crate) fallback_uv1_buf: crate::gpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
     /// `None` until `ensure_colourmaps_initialized()` has been called.
     pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,
@@ -902,16 +907,19 @@ pub(crate) struct ViewportCullState {
     /// Per-texture-key bind groups for the main cull pipelines. These also serve
     /// as the group-1 bind for the indirect draw, so they sample the albedo,
     /// normal, and ao views (bindings 1/3/4). Keyed by
-    /// (albedo_id, normal_map_id, ao_map_id, mr_id, emissive_id); invalidated when
-    /// `visibility_index_buf` is resized, when the instance buffer is rebuilt, or
-    /// when a texture behind a key is replaced or freed (see `built_free_epoch`).
+    /// (albedo_id, normal_map_id, ao_map_id, mr_id, emissive_id, uv1_chunk);
+    /// invalidated when `visibility_index_buf` is resized, when the instance buffer
+    /// is rebuilt, or when a texture behind a key is replaced or freed (see
+    /// `built_free_epoch`).
     pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<(u64, u64, u64, u64, u64), crate::gpu::BindGroup>,
-    /// The bindless cull bind group for this viewport (instances + texture array +
-    /// sampler + this viewport's visibility buffer). Used by the culled colour
-    /// draws under `Bindless` instead of `instance_cull_bind_groups`. Rebuilt with
-    /// the same `built_gen` / `built_free_epoch` staleness checks as the map.
-    pub(crate) bindless_cull_bind_group: Option<crate::gpu::BindGroup>,
+        std::collections::HashMap<(u64, u64, u64, u64, u64, u32), crate::gpu::BindGroup>,
+    /// The bindless cull bind groups for this viewport (instances + texture array +
+    /// sampler + this viewport's visibility buffer + a vertex-slab chunk's uv1
+    /// buffer). Used by the culled colour draws under `Bindless` instead of
+    /// `instance_cull_bind_groups`. Keyed by the uv1 chunk discriminator
+    /// (`uv1_chunk_key`); rebuilt with the same `built_gen` / `built_free_epoch`
+    /// staleness checks as that map.
+    pub(crate) bindless_cull_bind_groups: std::collections::HashMap<u32, crate::gpu::BindGroup>,
     /// GPU-driven submission (bindless + native multi-draw only): this viewport's
     /// compacted draw args, holding each pipeline group's visible batches packed to
     /// the front of its range. Written by the compaction pass from this viewport's
@@ -950,7 +958,7 @@ impl ViewportCullState {
             indirect_args_buf: None,
             batch_output_capacity: 0,
             instance_cull_bind_groups: std::collections::HashMap::new(),
-            bindless_cull_bind_group: None,
+            bindless_cull_bind_groups: std::collections::HashMap::new(),
             compacted_args_buf: None,
             draw_counts_buf: None,
             compact_capacity: 0,
@@ -987,7 +995,7 @@ impl ViewportCullState {
             self.visibility_index_capacity = new_cap;
             // The cull bind groups bind the vis buffer at binding 5.
             self.instance_cull_bind_groups.clear();
-            self.bindless_cull_bind_group = None;
+            self.bindless_cull_bind_groups.clear();
         }
 
         // Counter and indirect-args buffers, sized like the shared batch-meta buffer.

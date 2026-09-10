@@ -95,6 +95,11 @@ pub struct GpuMesh {
     /// via `DeviceResources::set_lightmap`; `None` for meshes without one, which
     /// bind the shared fallbacks and skip the shader branch.
     pub(crate) lightmap: Option<crate::resources::lightmap::MeshLightmap>,
+    /// Whether this mesh carries a second UV set (`MeshData::uvs1`). When true its
+    /// object bind group binds the parallel uv1 chunk buffer at binding 19 and the
+    /// per-object uniform carries the mesh `base_vertex`; when false it binds the
+    /// zero fallback and any `uv_set = 1` texture sample reads `vec2(0.0)`.
+    pub(crate) has_uv1: bool,
     /// Monotonic counter bumped by `set_lightmap` / `clear_lightmap`. Folded
     /// into `last_tex_key` so the object bind group rebuilds and rebinds the
     /// real UV1 buffer and lightmap texture (or the fallbacks) on the next

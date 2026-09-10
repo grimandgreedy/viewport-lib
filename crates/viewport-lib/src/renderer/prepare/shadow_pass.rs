@@ -693,12 +693,22 @@ impl ViewportRenderer {
                         &resources.instancing.shadow_pipeline,
                         &resources.instancing.shadow_two_sided_pipeline,
                         instancing.batches.first().and_then(|b| {
+                            // Shadow depth draws only need the instance storage at
+                            // binding 0; any matching bind group works, but the key
+                            // must include the batch's uv1 chunk discriminator to
+                            // find one.
+                            let uv1_key = resources
+                                .mesh_store
+                                .get(b.mesh_id)
+                                .map(|m| resources.uv1_chunk_key(m.vertex_span.chunk))
+                                .unwrap_or(u32::MAX);
                             resources.instancing.bind_groups.get(&(
                                 b.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.metallic_roughness_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 b.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                uv1_key,
                             ))
                         }),
                     ) {
@@ -765,6 +775,7 @@ impl ViewportRenderer {
                                             .map(|t| t.raw())
                                             .unwrap_or(u64::MAX),
                                         batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                     ))
                                 } else {
                                     None
