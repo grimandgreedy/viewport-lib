@@ -56,9 +56,9 @@ pub(crate) fn is_instanceable(
         // A per-material sampler (wrap/filter/aniso) is bound at group-1 binding 2
         // on the per-object path. The instanced/bindless path shares one sampler
         // across a batch (and, under bindless, across the whole texture array), so
-        // it cannot honour a per-material sampler until the bindless sampler heap
-        // (instanced-parity C5) carries one per slot. Until then, a material that
-        // sets a sampler draws per-object so its wrap mode is not silently dropped.
+        // it cannot honour a per-material sampler until a bindless sampler heap
+        // carries one per slot. Until then, a material that sets a sampler draws
+        // per-object so its wrap mode is not silently dropped.
         && item.material.selected_sampler().is_none()
         // Per-submesh materials mean one draw per index range, each with its
         // own object bind group; the instanced path draws the whole mesh in
