@@ -38,6 +38,19 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   outside the crate now needs a `_ =>` arm. No behaviour change; no variant was added.
 
 ### Features
+- **Shared layer mask: visibility, per-camera cull, and light channels.** One
+  32-bit layer vocabulary read by three new fields, all defaulting to `!0` (every
+  layer), so existing scenes are unchanged. `ItemSettings::visibility_mask` sets
+  which layers an item belongs to; `CameraFrame::cull_mask` (or
+  `CameraFrame::with_cull_mask`) sets which layers a camera draws, culling any item
+  that shares no bit with it CPU-side at scene collect (the quad-view / editor-layer
+  filter, no GPU cost at the default); `LightSource::channel_mask` confines a light
+  to the items whose mask it intersects, AND-tested per light in the lit mesh
+  shaders. Honoured on the mesh-family per-object and instanced paths, including
+  the GPU-driven cull kernel: each viewport's `cull_mask` AND-tests the
+  per-instance mask there too, so a per-viewport layer filter narrows the shared
+  instanced batches in the split multi-viewport API (the shared `prepare_scene`
+  keeps every layer at its default `!0`).
 - **Bindless material textures on the instanced path.** On a device with the
   texture-array feature set (Apple Silicon Metal with argument buffers Tier 2,
   Vulkan, and DX12; not WebGPU or older hardware), the instanced colour pipelines

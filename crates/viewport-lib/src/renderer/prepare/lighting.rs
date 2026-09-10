@@ -236,7 +236,8 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: 0.0,
-                    _reserved: [0.0; 2],
+                    channel_mask: src.channel_mask,
+                    _reserved: 0,
                 },
                 LightKind::Point {
                     position,
@@ -256,7 +257,8 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: *radius,
-                    _reserved: [0.0; 2],
+                    channel_mask: src.channel_mask,
+                    _reserved: 0,
                 },
                 LightKind::Spot {
                     position,
@@ -279,7 +281,8 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: *radius,
-                    _reserved: [0.0; 2],
+                    channel_mask: src.channel_mask,
+                    _reserved: 0,
                 },
                 _ => unreachable!("unhandled LightKind variant"),
             }

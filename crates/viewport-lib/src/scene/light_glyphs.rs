@@ -193,6 +193,7 @@ fn resolve_light_for_glyph(src: &LightSource, world: glam::Mat4) -> LightSource 
     out.intensity = src.intensity;
     out.importance = src.importance;
     out.cast_shadows = src.cast_shadows;
+    out.channel_mask = src.channel_mask;
     out
 }
 

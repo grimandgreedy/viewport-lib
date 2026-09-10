@@ -194,6 +194,15 @@ pub struct LightSource {
     ///
     /// Default: true. Disable per-light to skip the shadow render work.
     pub cast_shadows: bool,
+    /// Which layers this light illuminates, as a 32-bit mask. Default `!0`
+    /// (every layer). A light only contributes to an item when this mask
+    /// shares a bit with the item's `ItemSettings::visibility_mask`
+    /// (`channel_mask & visibility_mask != 0`), so the default lights
+    /// everything. Use it to confine a light to a subset of the scene (a rig
+    /// light that must not touch the environment, a highlight light for the
+    /// selected layer). Honoured by the mesh-family lit paths; the AND-test
+    /// runs per light in the shader.
+    pub channel_mask: u32,
 }
 
 impl Default for LightSource {
@@ -214,6 +223,7 @@ impl Default for LightSource {
             intensity: core::f32::consts::PI,
             importance: 1.0,
             cast_shadows: true,
+            channel_mask: !0,
         }
     }
 }

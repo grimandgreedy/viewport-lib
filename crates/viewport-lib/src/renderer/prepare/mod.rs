@@ -239,6 +239,18 @@ impl ViewportRenderer {
             surfaces.iter().cloned().chain(extra).collect()
         };
 
+        // Per-camera layer cull. Drop any mesh-family item whose
+        // `visibility_mask` shares no bit with this camera's `cull_mask`
+        // (the AND is zero). Runs before LOD, instancing, shadow, and picking
+        // read the list, so a layer-culled item is absent from every pass.
+        // This is the CPU half of the shared layer mask: it costs one AND per
+        // item, is inert at the default (`!0 & anything != 0`), and needs no
+        // GPU carrier. The GPU-driven instanced cull does not yet honour the
+        // mask; items dropped here never reach it, but a batch visible to the
+        // camera still runs its full GPU cull regardless of per-light channels.
+        let cull_mask = frame.camera.cull_mask;
+        scene_items_owned.retain(|item| (item.settings.visibility_mask & cull_mask) != 0);
+
         // Resolve LOD groups to concrete meshes before anything reads the draw
         // list. Items with a `lod_group` get their `mesh_id` overwritten with the
         // level for their on-screen size; items without one are untouched. Both

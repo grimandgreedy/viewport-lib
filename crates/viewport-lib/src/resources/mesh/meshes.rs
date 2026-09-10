@@ -2669,7 +2669,9 @@ impl DeviceResources {
             lightmap_index: 0,
             has_shadowmask: 0,
             ignore_clip: 0,
-            _pad_ls: 0,
+            // Template uniform for mesh registration; real per-item masks are
+            // written by the prepare path. `!0` = lit by every light.
+            object_mask: !0,
         };
         let object_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("object_uniform_buf"),
@@ -2838,7 +2840,9 @@ impl DeviceResources {
             lightmap_index: 0,
             has_shadowmask: 0,
             ignore_clip: 0,
-            _pad_ls: 0,
+            // Template uniform for mesh registration; real per-item masks are
+            // written by the prepare path. `!0` = lit by every light.
+            object_mask: !0,
         };
         let normal_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("normal_uniform_buf"),

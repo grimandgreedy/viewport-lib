@@ -125,8 +125,9 @@ struct Object {
     lightmap_index: u32,                   // offset 352 : base atlas layer, added to the per-vertex page
     has_shadowmask: u32,                   // offset 356 : 1 = the binding-18 atlas is a shadowmask
     ignore_clip: u32,                      // offset 360 : 1 = exempt from clip planes/volumes
-    // The vec4 higher up keeps the struct 16-aligned, so WGSL rounds its size up
-    // to 368 to match the Rust ObjectUniform (ignore_clip + a trailing u32 pad).
+    object_mask: u32,                      // offset 364 : layer mask, AND-tested per light
+    // The vec4 higher up keeps the struct 16-aligned, so its size is 368 and
+    // matches the Rust ObjectUniform.
 };
 
 // Per-material UV transform block (group 0, binding 21). One entry per distinct
@@ -909,6 +910,7 @@ fn compute_lit(
         for (var j: u32 = 0u; j < pbr_range.count; j = j + 1u) {
             let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
+            if !light_in_channel(l, objects[in.obj_idx].object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
@@ -1030,6 +1032,7 @@ fn compute_lit(
         for (var j: u32 = 0u; j < bp_range.count; j = j + 1u) {
             let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
+            if !light_in_channel(l, objects[in.obj_idx].object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let light_dir = ev.l;

@@ -65,6 +65,21 @@ pub struct ItemSettings {
     /// scene-graph instanced mesh path; item types that do not sample it treat it
     /// as a no-op.
     pub custom_data: [f32; 8],
+    /// Layer membership for this item, as a 32-bit mask. Default `!0` (member
+    /// of every layer). Two things read it, both AND-tests against another
+    /// mask, so the default is inert:
+    ///
+    /// - Per-camera cull: an item is skipped on a camera whose
+    ///   `CameraFrame::cull_mask` shares no bit with this mask
+    ///   (`visibility_mask & cull_mask == 0`). This is the quad-view /
+    ///   editor-layer filter: give each camera the layers it should draw.
+    /// - Light channels: a light only lights an item when the light's
+    ///   `LightSource::channel_mask` shares a bit with this mask. Lets a light
+    ///   affect a chosen subset of the scene.
+    ///
+    /// Honoured by mesh-family items (the scene-graph per-object and instanced
+    /// paths); item types that do not carry the mask treat it as `!0`.
+    pub visibility_mask: u32,
 }
 
 impl Default for ItemSettings {
@@ -80,6 +95,7 @@ impl Default for ItemSettings {
             receive_shadows: true,
             ignore_clip: false,
             custom_data: [0.0; 8],
+            visibility_mask: !0,
         }
     }
 }

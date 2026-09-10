@@ -478,7 +478,7 @@ impl ViewportRenderer {
                                 ignore_clip: item.settings.ignore_clip as u32,
                                 custom_data_id,
                                 backface_pattern_scale,
-                                _reserved_mask: 0,
+                                object_mask: item.settings.visibility_mask,
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -833,6 +833,12 @@ impl ViewportRenderer {
                 viewport: hiz_dims,
                 hiz_view,
                 do_occlusion: built,
+                // Per-object masks ride the instance storage buffer (aligned with
+                // the AABB index). With it bound, the cull AND-tests each against
+                // this viewport's cull_mask, so a per-viewport layer filter
+                // narrows the shared instanced batches.
+                instance_data: resources.instancing.storage_buf.as_ref(),
+                cull_mask: frame.camera.cull_mask,
             };
             cull.dispatch(
                 &mut encoder,

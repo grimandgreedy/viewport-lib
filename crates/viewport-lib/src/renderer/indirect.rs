@@ -17,7 +17,7 @@ use crate::plugin_api::{BatchMeta, CullSubmission};
 use crate::resources::{FrustumPlane, FrustumUniform};
 
 /// Bind group layout entry count for the cull compute pass.
-const CULL_BGL_ENTRY_COUNT: usize = 8;
+const CULL_BGL_ENTRY_COUNT: usize = 9;
 
 /// Per-frame inputs for the HiZ occlusion test, supplied only by the
 /// main-camera cull. Shadow and single-mesh dispatches pass `None`, which
@@ -33,6 +33,14 @@ pub(super) struct MainCullExtras<'a> {
     /// Caller's request to run the occlusion test. Ignored when `hiz_view`
     /// is `None`.
     pub(super) do_occlusion: bool,
+    /// Per-instance record buffer (the instanced `InstanceData` storage buffer),
+    /// read by the cull for each instance's `object_mask`. `None` leaves the
+    /// layer-mask reject off and binds the fallback buffer.
+    pub(super) instance_data: Option<&'a crate::gpu::Buffer>,
+    /// Camera layer mask AND-tested against each instance's `object_mask`.
+    /// `!0` (and the default) keeps everything; only consulted when
+    /// `instance_data` is `Some`.
+    pub(super) cull_mask: u32,
 }
 
 /// Per-batch group assignment for GPU draw-list compaction: which pipeline group
@@ -78,6 +86,11 @@ pub(super) struct CullResources {
     /// pyramid (shadow, single-mesh, or occlusion disabled). Keeps the bind
     /// group layout satisfied; never sampled because `do_occlusion` is 0.
     fallback_hiz_view: crate::gpu::TextureView,
+    /// One 144-byte `InstanceData` slot bound at binding 8 when a dispatch does
+    /// not run the layer-mask reject (shadow, single-mesh, plugin submissions).
+    /// Keeps the bind group layout satisfied; never read because `do_mask_cull`
+    /// is 0.
+    fallback_instance_data: crate::gpu::Buffer,
     /// Cull breakdown counters for the main dispatch: [total, frustum_visible].
     /// Cleared each main dispatch, copied to the readback staging buffer.
     main_stats_buf: crate::gpu::Buffer,
@@ -193,6 +206,15 @@ impl CullResources {
         let fallback_hiz_view =
             fallback_hiz.create_view(&crate::gpu::TextureViewDescriptor::default());
 
+        // One InstanceData-sized slot for dispatches that do not run the
+        // layer-mask reject. Zeroed; never read (do_mask_cull = 0 for them).
+        let fallback_instance_data = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("cull_fallback_instance_data"),
+            size: std::mem::size_of::<crate::resources::mesh::instancing::InstanceData>() as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Two u32 counters: [total, frustum_visible]. COPY_SRC for the readback
         // copy, COPY_DST for the per-frame clear.
         let main_stats_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -222,6 +244,7 @@ impl CullResources {
             scratch_meta_buf,
             scratch_counter_buf,
             fallback_hiz_view,
+            fallback_instance_data,
             main_stats_buf,
             scratch_stats_buf,
         }
@@ -282,6 +305,15 @@ impl CullResources {
         let hiz_view = extras
             .and_then(|e| e.hiz_view)
             .unwrap_or(&self.fallback_hiz_view);
+        // Layer-mask reject runs only when the main cull supplies the instance
+        // buffer. Without it, bind the fallback and leave the reject off.
+        let instance_data_buf = extras
+            .and_then(|e| e.instance_data)
+            .unwrap_or(&self.fallback_instance_data);
+        let (cull_mask, do_mask_cull): (u32, u32) = match extras {
+            Some(e) if e.instance_data.is_some() => (e.cull_mask, 1),
+            _ => (!0, 0),
+        };
         // The main cull records its breakdown; other dispatches scribble into
         // the scratch slot so they do not clobber the readback counters.
         let stats_buf = if extras.is_some() {
@@ -301,7 +333,8 @@ impl CullResources {
             do_occlusion,
             view_proj,
             viewport,
-            _reserved: [0.0, 0.0],
+            cull_mask,
+            do_mask_cull,
         };
         queue.write_buffer(
             frustum_buf,
@@ -351,6 +384,10 @@ impl CullResources {
                 crate::gpu::BindGroupEntry {
                     binding: 7,
                     resource: stats_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 8,
+                    resource: instance_data_buf.as_entire_binding(),
                 },
             ],
         });
@@ -600,6 +637,18 @@ impl CullResources {
                 visibility: compute,
                 ty: crate::gpu::BindingType::Buffer {
                     ty: crate::gpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 8: per-instance records (read-only storage), read for the
+            // per-object layer mask in the camera cull reject.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: compute,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },

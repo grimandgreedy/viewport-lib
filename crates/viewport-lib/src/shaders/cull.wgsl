@@ -35,7 +35,13 @@ struct FrustumUniform {
     // HiZ mip-0 dimensions in pixels (matches the depth target the pyramid was
     // built from), used to map projected boxes to texel footprints.
     viewport:       vec2<f32>,
-    _pad0:          vec2<f32>,
+    // Camera layer mask: an instance is culled when its per-object mask shares
+    // no bit with this. Only meaningful when do_mask_cull == 1.
+    cull_mask:      u32,
+    // 1 = run the per-camera layer-mask reject (main cull with a real instance
+    // buffer bound at binding 8), 0 = skip it (shadow / single-mesh / plugin
+    // dispatches bind the fallback instance buffer).
+    do_mask_cull:   u32,
 }
 
 struct InstanceAabb {
@@ -44,6 +50,31 @@ struct InstanceAabb {
     max:          vec3<f32>,
     // 1 = participates in shadow casting, 0 = skipped during shadow cull.
     cast_shadows: u32,
+}
+
+// Per-instance record, matching the 144-byte `InstanceData` in
+// `mesh_instanced.wgsl` and the Rust `InstanceData`. The cull reads only
+// `object_mask` (offset 140); the other fields keep the array stride at 144 so
+// the instance index aligns with `instance_aabbs`.
+struct InstanceData {
+    model:                  mat4x4<f32>,  // offset 0
+    colour:                 vec4<f32>,    // offset 64
+    selected:               u32,          // offset 80
+    wireframe:              u32,          // offset 84
+    has_texture:            u32,          // offset 88
+    has_normal_map:         u32,          // offset 92
+    has_ao_map:             u32,          // offset 96
+    unlit:                  u32,          // offset 100
+    receive_shadows:        u32,          // offset 104
+    material_id:            u32,          // offset 108
+    alpha_cutoff:           f32,          // offset 112
+    alpha_flag:             u32,          // offset 116
+    has_light_probe:        u32,          // offset 120
+    light_probe_index:      u32,          // offset 124
+    ignore_clip:            u32,          // offset 128
+    custom_data_id:         u32,          // offset 132
+    backface_pattern_scale: f32,          // offset 136
+    object_mask:            u32,          // offset 140
 }
 
 struct BatchMeta {
@@ -80,6 +111,10 @@ struct DrawIndirect {
 // opt-out), [1] = instances surviving the frustum test (before occlusion).
 // The drawn count comes from the indirect args. Cleared each main dispatch.
 @group(0) @binding(7) var<storage, read_write> cull_stats:         array<atomic<u32>, 2>;
+// Per-instance records (144-byte stride), read only for `object_mask` in the
+// layer-mask reject. Bound with a 1-element fallback when do_mask_cull is off
+// (shadow / single-mesh / plugin dispatches) so the layout is always satisfied.
+@group(0) @binding(8) var<storage, read>       instance_data:      array<InstanceData>;
 
 // Returns true if the AABB is entirely on the outer (negative) side of the plane.
 // Uses the positive-vertex method: take the corner most aligned with the plane
@@ -166,6 +201,16 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     // Per-receiver shadow opt-out: shadow cull dispatches skip instances that
     // are marked as non-shadow casters via `ItemSettings.cast_shadows = false`.
     if frustum.shadow_pass == 1u && aabb.cast_shadows == 0u {
+        return;
+    }
+
+    // Per-camera layer cull: drop an instance whose object mask shares no bit
+    // with the camera's cull mask. Gated, so dispatches that bind the fallback
+    // instance buffer (shadow, single-mesh, plugin submissions) skip it. This
+    // mirrors the CPU-side collect cull and is what makes a per-viewport
+    // `cull_mask` filter the shared instanced batches in multi-viewport.
+    if frustum.do_mask_cull == 1u
+        && (instance_data[i].object_mask & frustum.cull_mask) == 0u {
         return;
     }
 

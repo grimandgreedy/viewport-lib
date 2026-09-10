@@ -67,7 +67,7 @@ struct InstanceData {
     ignore_clip: u32,                     // offset 128
     custom_data_id: u32,                  // offset 132
     backface_pattern_scale: f32,          // offset 136
-    _pad2: u32,                           // offset 140
+    object_mask: u32,                     // offset 140 : layer mask, AND-tested per light
 };
 
 // Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
@@ -626,6 +626,7 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         let pbr_range = cluster_light_range(in.world_pos, lights_uniform.count);
         for (var j = 0u; j < pbr_range.count; j++) {
             let i = cluster_light_global(pbr_range, j);
+            if !light_in_channel(lights_storage[i], instances[in.instance_idx].object_mask) { continue; }
             let ev = eval_light(lights_storage[i], in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
@@ -684,6 +685,7 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         let bp_range = cluster_light_range(in.world_pos, lights_uniform.count);
         for (var j = 0u; j < bp_range.count; j++) {
             let i = cluster_light_global(bp_range, j);
+            if !light_in_channel(lights_storage[i], instances[in.instance_idx].object_mask) { continue; }
             let ev = eval_light(lights_storage[i], in.world_pos);
             if !ev.in_range { continue; }
             // Transparent surfaces: skip shadow map sampling.

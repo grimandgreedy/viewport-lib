@@ -69,7 +69,7 @@ struct InstanceData {
     ignore_clip: u32,                     // offset 128
     custom_data_id: u32,                  // offset 132
     backface_pattern_scale: f32,          // offset 136
-    _pad2: u32,                           // offset 140
+    object_mask: u32,                     // offset 140 : layer mask, AND-tested per light
 };
 
 // Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
@@ -653,6 +653,7 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         for (var j = 0u; j < pbr_range.count; j++) {
             let i = cluster_light_global(pbr_range, j);
             let l = lights_storage[i];
+            if !light_in_channel(l, inst.object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let L = ev.l;
@@ -726,6 +727,7 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
         for (var j = 0u; j < bp_range.count; j++) {
             let i = cluster_light_global(bp_range, j);
             let l = lights_storage[i];
+            if !light_in_channel(l, inst.object_mask) { continue; }
             let ev = eval_light(l, in.world_pos);
             if !ev.in_range { continue; }
             let light_dir = ev.l;

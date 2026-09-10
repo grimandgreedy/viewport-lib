@@ -219,7 +219,8 @@ pub struct CameraUniform {
 /// - outer_angle:       f32        =  4 bytes
 /// - _pad_align:        u32        =  4 bytes  (bridge to 16-byte boundary for spot_direction)
 /// - spot_direction:    `[f32; 3]` = 12 bytes  (spot only; at offset 112 to match WGSL vec3 align)
-/// - _reserved:         `[f32; 2]` =  8 bytes  (reserved tail to 144; see the field)
+/// - channel_mask:      u32        =  4 bytes  (layer mask; AND-tested per object)
+/// - _reserved:         u32        =  4 bytes  (reserved tail to 144; see the field)
 /// Total: 64+12+4+12+4+4+4+4+4+12+20 = 144 bytes
 ///
 /// Note: WGSL `vec3<f32>` has AlignOf=16, so `spot_direction` must start at offset 112.
@@ -258,13 +259,17 @@ pub struct SingleLightUniform {
     /// Source radius (world units) for point/spot lights: clamps the
     /// inverse-square falloff near the light and sizes a finite emitter.
     pub radius: f32, //  4 bytes, offset 132
-    /// Reserved tail (two lanes, offset 136, to a 144-byte struct). Earmarked for
-    /// future light extensions: a `channel_mask` (AND-tested against the per-object
-    /// mask in `eval_light`), plus area-light size and cookie/IES handles. Note
-    /// only two lanes remain free (`point_shadow_slot` / `point_shadow_near` /
-    /// `radius` took three), so not every earmark fits without growing the record.
-    /// Unread today and uploaded as 0.
-    pub _reserved: [f32; 2], //  8 bytes, offset 136 : total 144
+    /// Layer mask this light illuminates (offset 136). AND-tested in the lit
+    /// mesh shaders against each object's mask; a light whose bits do not
+    /// intersect the object's mask is skipped for that fragment. Wired from
+    /// `LightSource::channel_mask`; `!0` (the default) lights everything.
+    pub channel_mask: u32, //  4 bytes, offset 136
+    /// Reserved tail (one lane, offset 140, to a 144-byte struct). Earmarked for
+    /// one of the remaining light extensions: an area-light size word or a
+    /// cookie/IES handle (only one lane is left after `channel_mask`, so the
+    /// other rides a parallel per-light buffer when it lands). Unread today and
+    /// uploaded as 0.
+    pub _reserved: u32, //  4 bytes, offset 140 : total 144
 }
 
 /// GPU-side lights header uniform (binding 3 of group 0).
@@ -379,10 +384,15 @@ pub(crate) struct FrustumUniform {
     /// HiZ mip-0 dimensions in pixels (the depth target the pyramid was built
     /// from).
     pub(crate) viewport: [f32; 2],
-    /// Reserved cull-uniform spare (two lanes). One is earmarked for the camera
-    /// `cull_mask` that the GPU-driven cull phase will AND-test against each
-    /// instance's visibility mask. Unread today and uploaded as 0.
-    pub(crate) _reserved: [f32; 2],
+    /// Camera layer mask. The cull kernel rejects an instance when its
+    /// per-object mask (read from the instance buffer at cull binding 8) shares
+    /// no bit with this. Only consulted when `do_mask_cull == 1`; wired from
+    /// `CameraFrame::cull_mask`.
+    pub(crate) cull_mask: u32,
+    /// 1 = run the per-camera layer-mask reject (main cull, real instance buffer
+    /// bound), 0 = skip it (shadow / single-mesh / plugin dispatches bind the
+    /// fallback instance buffer and leave this off).
+    pub(crate) do_mask_cull: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 192);

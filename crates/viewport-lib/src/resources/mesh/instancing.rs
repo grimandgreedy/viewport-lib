@@ -1621,7 +1621,7 @@ impl DeviceResources {
             ignore_clip: u32,
             custom_data_id: u32,
             backface_pattern_scale: f32,
-            _pad: u32,
+            object_mask: u32,
         }
 
         const _: () = assert!(std::mem::size_of::<GpuInstanceData>() == 144);
@@ -1661,7 +1661,7 @@ impl DeviceResources {
                 custom_data_id: 0,
                 // Particles use no styled back-face policy.
                 backface_pattern_scale: 0.0,
-                _pad: 0,
+                object_mask: item.settings.visibility_mask,
             }
         };
         let instances: Vec<GpuInstanceData> = match indices {
@@ -1925,8 +1925,12 @@ pub(crate) struct ObjectUniform {
     /// clip-object indicator meshes and any annotation that must stay visible
     /// where the scene is clipped. Default 0. Offset 360.
     pub(crate) ignore_clip: u32, //   4 bytes, offset 360
-    /// Pads the struct to a 16-byte multiple (368) for the uniform layout.
-    pub(crate) _pad_ls: u32, //   4 bytes, offset 364
+    /// Shared per-object layer mask (a `u32`). The lit per-object shaders
+    /// AND-test it against each light's `channel_mask` to skip lights that do
+    /// not illuminate this object's layers. Wired from
+    /// `ItemSettings::visibility_mask`; `!0` takes every light. Occupies the
+    /// word that padded the struct to 368 bytes, so the layout is unchanged.
+    pub(crate) object_mask: u32, //   4 bytes, offset 364
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectUniform>() == 368);
@@ -1976,11 +1980,13 @@ pub(crate) struct InstanceData {
     /// non-Pattern policy. The rest of the styled-backface state (policy, colour)
     /// lives in `material_gpu_buf`.
     pub(crate) backface_pattern_scale: f32, // 4 bytes, offset 136
-    /// Reserved: the shared per-object visibility / light-channel mask (a `u32`
-    /// layer mask, AND-tested against the per-light and per-camera masks). Unread
-    /// by any shader today and uploaded as 0; the forward-compat seam keeps this
-    /// lane (the only free one in the 144-byte record) stable for that feature.
-    pub(crate) _reserved_mask: u32, //   4 bytes, offset 140 (stride to 144)
+    /// Shared per-object layer mask (a `u32`). The lit instanced shaders
+    /// AND-test it against each light's `channel_mask` to skip lights that do
+    /// not illuminate this object's layers. Wired from
+    /// `ItemSettings::visibility_mask`; `!0` (the default) takes every light.
+    /// The per-camera cull half of the same mask is applied CPU-side before an
+    /// instance reaches this buffer, so it is not re-tested here.
+    pub(crate) object_mask: u32, //   4 bytes, offset 140 (stride to 144)
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);
