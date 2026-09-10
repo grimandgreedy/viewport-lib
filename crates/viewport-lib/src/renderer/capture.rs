@@ -1342,6 +1342,81 @@ mod tests {
         );
     }
 
+    // The per-camera layer cull also reaches the foreground object pass: a
+    // foreground item whose visibility_mask is disjoint from the viewport's
+    // cull_mask is dropped, matching the scene pass. (Foreground items bypass the
+    // shared scene collect, so this is enforced in prepare_foreground_objects.)
+    #[test]
+    fn foreground_objects_honour_the_cull_mask() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping foreground_objects_honour_the_cull_mask: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::primitives::cube(1.0))
+            .unwrap();
+
+        let build_frame = |cull_mask: u32, mode: crate::PipelineMode| {
+            let cam = Camera {
+                center: glam::Vec3::ZERO,
+                distance: 5.0,
+                ..Camera::default()
+            };
+            let mut frame = FrameData::default();
+            frame.camera.render_camera = {
+                let mut rc = RenderCamera::from_camera(&cam);
+                rc.aspect = 1.0;
+                rc
+            };
+            frame.camera.viewport_size = [64.0, 64.0];
+            frame.camera.cull_mask = cull_mask;
+            frame.viewport.show_grid = false;
+            frame.viewport.show_axes_indicator = false;
+            frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+            frame.effects.display.mode = mode;
+
+            // A bright unlit box, submitted only as a foreground item (not a
+            // scene surface), in layer 0b01.
+            let mut item = crate::SceneRenderItem {
+                mesh_id: mesh,
+                ..Default::default()
+            };
+            item.material.base_colour = [1.0, 1.0, 1.0].into();
+            item.settings.unlit = true;
+            item.settings.visibility_mask = 0b01;
+            frame.scene.foreground_items = vec![item];
+            frame
+        };
+
+        let coverage = |px: &[u8]| px.chunks_exact(4).filter(|p| p[0] > 20).count();
+
+        // Both render paths draw the foreground pass from their own item list, so
+        // check each.
+        for mode in [crate::PipelineMode::Direct, crate::PipelineMode::Hdr] {
+            // Matching layer: the foreground box draws.
+            let frame = build_frame(0b01, mode);
+            let lit = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let lit_cov = coverage(&lit);
+            assert!(
+                lit_cov > 50,
+                "a matching cull_mask must draw the foreground box ({mode:?}, coverage {lit_cov})"
+            );
+
+            // Disjoint layer: the foreground box is culled, leaving the black clear.
+            let frame = build_frame(0b10, mode);
+            let culled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let culled_cov = coverage(&culled);
+            assert_eq!(
+                culled_cov, 0,
+                "a disjoint cull_mask must drop the foreground box ({mode:?}, coverage \
+                 {culled_cov})"
+            );
+        }
+    }
+
     // Records how often each dispatched item-type plugin hook was called.
     #[derive(Default)]
     struct PluginCalls {
