@@ -67,6 +67,21 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   path, rendering the same as before. The instanced mesh shaders read the
   per-material param-vis mode/scale and alpha mode from the material buffer. No API
   change; scenes that use these materials on many instances issue fewer draws.
+- **Material-plugin materials instance on more paths.** A material with a
+  `shading_plugin` now draws through the instanced path on LDR frames and under
+  bindless textures, not only the HDR per-batch path, so a custom-shaded material
+  on many instances batches instead of issuing one draw per object. Plugin
+  instances also ride GPU frustum / occlusion culling on devices that support it
+  (`INDIRECT_FIRST_INSTANCE`), drawing only the visible instances. The plugin's
+  shading is composed onto the instanced mesh shaders for each path (a bindless
+  variant indexing the texture array, and a `vs_main_cull` variant reading the
+  visibility buffer); an item still falls to the per-object path until the
+  plugin's instanced pipelines are built. A plugin that reads the per-vertex
+  extension attribute (`surf.attr` from `MeshData::extension_attributes`) stays on
+  the per-object path regardless, since the instanced path has no per-vertex
+  extension-attribute binding (there `surf.attr` is the per-instance custom-data
+  channel); this keeps such a plugin correct as a scene grows past the instancing
+  threshold. No API change; rendering is unchanged.
 - **Per-instance custom data.** `ItemSettings` gains `custom_data: [f32; 8]`, a
   raw per-instance payload that lets instances sharing a `Material` vary their
   appearance without breaking batching, matching Unity's `MaterialPropertyBlock`

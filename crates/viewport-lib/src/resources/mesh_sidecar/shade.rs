@@ -1373,11 +1373,24 @@ impl crate::resources::DeviceResources {
 
     /// True once the plugin's instanced pipeline set is built: plugin materials
     /// selecting it can join instanced batches rather than drawing per-object.
-    /// `false` for an unknown id, a cold or invalidated set, or under bindless.
+    /// `false` for an unknown id or a cold or invalidated set. Built for both the
+    /// per-batch and bindless binding modes.
     pub(crate) fn material_plugin_instanced_ready(&self, id: MaterialPluginId) -> bool {
         self.material_plugins
             .get(&id.plugin_index())
             .is_some_and(|gpu| gpu.instanced_pipelines.is_some())
+    }
+
+    /// Whether the plugin's shading body reads the per-vertex extension attribute
+    /// (`surf.attr` sourced from `MeshData::extension_attributes`). The instanced
+    /// mesh path has no per-vertex extension-attribute binding: its `surf.attr`
+    /// carries the per-instance custom-data channel instead, so a plugin that
+    /// reads the vertex attribute would read the wrong data if instanced, and must
+    /// draw per-object to see it. `false` for an unknown id.
+    pub(crate) fn material_plugin_reads_vertex_attribute(&self, id: MaterialPluginId) -> bool {
+        self.shade_hooks
+            .get(id.plugin_index() as usize)
+            .is_some_and(|h| h.desc.reads_vertex_attribute)
     }
 }
 

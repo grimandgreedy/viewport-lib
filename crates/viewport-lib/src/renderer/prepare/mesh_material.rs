@@ -34,10 +34,18 @@ pub(crate) fn is_instanceable(
         // is built (the plugin's shading composed onto the instanced modules, on
         // the group-3 layout, for the active per-batch or bindless binding). Until
         // then, or on an unknown id where no instanced set exists, they draw through
-        // the per-object path.
+        // the per-object path. A plugin that reads the per-vertex extension
+        // attribute stays per-object regardless: the instanced path has no
+        // per-vertex extension-attribute binding (its `surf.attr` is the
+        // per-instance custom-data channel), so instancing such a plugin would feed
+        // it the wrong data. This mirrors the per-object-only `active_attribute`
+        // exclusion above.
         && match item.material.shading_plugin {
             None => true,
-            Some(pid) => resources.material_plugin_instanced_ready(pid),
+            Some(pid) => {
+                resources.material_plugin_instanced_ready(pid)
+                    && !resources.material_plugin_reads_vertex_attribute(pid)
+            }
         }
         // A GPU vertex warp is a per-object-only feature: the instanced pipeline
         // has no warp support and would draw the mesh undeformed, ignoring
