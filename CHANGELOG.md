@@ -38,6 +38,17 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   outside the crate now needs a `_ =>` arm. No behaviour change; no variant was added.
 
 ### Features
+- **Per-material sampler state (`SamplerKey`).** `Material` gains
+  `sampler: [Option<SamplerKey>; MATERIAL_TEXTURE_SLOTS]` (set with
+  `Material::with_sampler`), where `SamplerKey` carries wrap mode (`WrapMode`:
+  repeat / clamp / mirror), filtering (`TextureFilter`: nearest / linear),
+  anisotropy, and a reserved LOD bias. A material can now clamp or mirror a
+  texture, or pick nearest filtering, instead of the one shared repeat/linear
+  sampler bound before. Resolved through a deduped sampler palette and bound at
+  group-1 binding 2 on the per-object draw path; a material that sets a sampler
+  draws per-object (the instanced/bindless path keeps the shared sampler until
+  the bindless sampler heap carries one per slot). Default (all `None`) is the
+  previous repeat/linear behaviour, so nothing changes for existing materials.
 - **Shared layer mask: visibility, per-camera cull, and light channels.** One
   32-bit layer vocabulary read by three new fields, all defaulting to `!0` (every
   layer), so existing scenes are unchanged. `ItemSettings::visibility_mask` sets

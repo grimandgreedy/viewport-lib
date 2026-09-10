@@ -618,6 +618,7 @@ impl ViewportRenderer {
                         item.warp_attribute.as_deref(),
                         mat.metallic_roughness_texture_id,
                         mat.emissive_texture_id,
+                        mat.selected_sampler(),
                     ) else {
                         continue;
                     };
@@ -639,6 +640,7 @@ impl ViewportRenderer {
                             item.warp_attribute.as_deref(),
                             mat.metallic_roughness_texture_id,
                             mat.emissive_texture_id,
+                            mat.selected_sampler(),
                             None,
                         ) {
                             bind_groups_built += 1;
@@ -933,6 +935,7 @@ impl ViewportRenderer {
                 item.warp_attribute.as_deref(),
                 item.material.metallic_roughness_texture_id,
                 item.material.emissive_texture_id,
+                item.material.selected_sampler(),
                 prev_key,
             );
             if let Some((bg, key)) = built {

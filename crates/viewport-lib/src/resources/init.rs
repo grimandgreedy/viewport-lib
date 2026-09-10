@@ -2440,6 +2440,7 @@ impl DeviceResources {
                 emissive: fallback_emissive_texture,
                 emissive_view: fallback_emissive_texture_view,
                 sampler: material_sampler,
+                sampler_palette: std::sync::Mutex::new(std::collections::HashMap::new()),
                 lut_sampler,
                 depth_read_sampler,
                 depth_read_bgl,
