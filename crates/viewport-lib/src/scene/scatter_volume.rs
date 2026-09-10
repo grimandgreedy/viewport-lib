@@ -135,6 +135,7 @@ impl ScatterVolume {
 
 /// Spatial bounds of a [`ScatterVolume`].
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum ScatterShape {
     /// Axis-aligned box.
     Box(Aabb),

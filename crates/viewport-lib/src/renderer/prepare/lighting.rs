@@ -236,7 +236,7 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: 0.0,
-                    _pad: [0.0; 2],
+                    _reserved: [0.0; 2],
                 },
                 LightKind::Point {
                     position,
@@ -256,7 +256,7 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: *radius,
-                    _pad: [0.0; 2],
+                    _reserved: [0.0; 2],
                 },
                 LightKind::Spot {
                     position,
@@ -279,7 +279,7 @@ impl ViewportRenderer {
                     point_shadow_slot: -1,
                     point_shadow_near: 0.1,
                     radius: *radius,
-                    _pad: [0.0; 2],
+                    _reserved: [0.0; 2],
                 },
                 _ => unreachable!("unhandled LightKind variant"),
             }

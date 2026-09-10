@@ -478,7 +478,7 @@ impl ViewportRenderer {
                                 ignore_clip: item.settings.ignore_clip as u32,
                                 custom_data_id,
                                 backface_pattern_scale,
-                                _pad: 0,
+                                _reserved_mask: 0,
                             });
                             if let Some(mesh) = batch_mesh {
                                 let model = glam::Mat4::from_cols_array_2d(&item.model);
@@ -503,7 +503,7 @@ impl ViewportRenderer {
                             vis_offset: instance_offset,
                             is_transparent: if is_transparent { 1 } else { 0 },
                             base_vertex: mesh_base_vertex,
-                            _pad: 0,
+                            _reserved_flags: 0,
                         });
 
                         instanced_batches.push(InstancedBatch {

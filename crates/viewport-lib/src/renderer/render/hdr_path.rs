@@ -349,7 +349,7 @@ impl ViewportRenderer {
                 .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
                 .unwrap_or(0.5),
             foreground_enabled: if self.foreground_active(frame) { 1 } else { 0 },
-            _pad: [0; 3],
+            _reserved_vignette: [0; 3],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();

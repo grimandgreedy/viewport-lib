@@ -31,6 +31,11 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   variant, a material-plugin item with no discard-free early-Z twin); both gaps
   are closed, so every pass now has a pipeline for every axis it draws and the
   counter was always zero.
+- **`#[non_exhaustive]` on the enums that will grow.** `ShadingModel`, `AlphaMode`,
+  and `BackfacePolicy` (plus the animation-clip `Channel`, `Interpolation`,
+  `TrackValue`, `TrackValues`, and `ScatterShape`) are now non-exhaustive, so future
+  variants can be added without a breaking change. A `match` on one of these from
+  outside the crate now needs a `_ =>` arm. No behaviour change; no variant was added.
 
 ### Features
 - **Bindless material textures on the instanced path.** On a device with the

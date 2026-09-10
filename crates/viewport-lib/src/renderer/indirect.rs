@@ -301,7 +301,7 @@ impl CullResources {
             do_occlusion,
             view_proj,
             viewport,
-            _pad0: [0.0, 0.0],
+            _reserved: [0.0, 0.0],
         };
         queue.write_buffer(
             frustum_buf,

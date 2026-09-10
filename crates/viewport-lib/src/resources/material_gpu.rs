@@ -143,6 +143,8 @@ impl MaterialGpu {
             crate::scene::material::AlphaMode::Mask(_) => 1,
             crate::scene::material::AlphaMode::Blend => 2,
             crate::scene::material::AlphaMode::BlendPremultiplied => 3,
+            // Forward-compat: an unknown future mode renders as Opaque (the default).
+            _ => 0,
         };
         let param_vis_mode = m.param_vis.map_or(0u32, |pv| pv.mode as u32);
         let param_vis_scale = m.param_vis.map_or(8.0, |pv| pv.scale);
@@ -155,6 +157,8 @@ impl MaterialGpu {
             BackfacePolicy::DifferentColour(_) => 2,
             BackfacePolicy::Tint(_) => 3,
             BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
+            // Forward-compat: an unknown future policy renders as Cull (the default).
+            _ => 0,
         };
         let backface_colour = match m.backface_policy {
             BackfacePolicy::DifferentColour(c) => {

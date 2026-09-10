@@ -102,6 +102,8 @@ pub(super) fn build_object_uniform(
             crate::scene::material::BackfacePolicy::DifferentColour(_) => 2,
             crate::scene::material::BackfacePolicy::Tint(_) => 3,
             crate::scene::material::BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
+            // Forward-compat: an unknown future policy renders as Cull (the default).
+            _ => 0,
         },
         backface_colour: match m.backface_policy {
             crate::scene::material::BackfacePolicy::DifferentColour(c) => {
@@ -153,6 +155,8 @@ pub(super) fn build_object_uniform(
             // The OIT fragment shader reads 3 as "RGB is already premultiplied":
             // it skips the `* alpha` it applies to straight-blend colour.
             crate::scene::material::AlphaMode::BlendPremultiplied => 3,
+            // Forward-compat: an unknown future mode renders as Opaque (the default).
+            _ => 0,
         },
         alpha_cutoff: match m.alpha_mode {
             crate::scene::material::AlphaMode::Mask(c) => c,

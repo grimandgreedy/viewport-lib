@@ -1604,7 +1604,7 @@ impl ViewportRenderer {
             vis_offset: 0,
             is_transparent: 0,
             base_vertex: draw.base_vertex,
-            _pad: 0,
+            _reserved_flags: 0,
         };
         queue.write_buffer(meta_buf, 0, bytemuck::bytes_of(&meta));
         queue.write_buffer(counter_buf, 0, &[0u8; 4]);

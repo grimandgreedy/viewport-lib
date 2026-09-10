@@ -21,7 +21,10 @@ pub(crate) struct ToneMapUniform {
     /// foreground-coverage test that skips SSAO/contact-shadow/EDL/LIC on
     /// pixels covered by foreground geometry.
     pub(crate) foreground_enabled: u32,
-    pub(crate) _pad: [u32; 3],
+    /// Reserved: vignette scalars (amount, radius, softness), applied in
+    /// `tone_map.wgsl` when non-zero. Unread today and uploaded as 0, so tone
+    /// mapping is unchanged; the forward-compat seam keeps these three lanes stable.
+    pub(crate) _reserved_vignette: [u32; 3],
 }
 
 const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 80);

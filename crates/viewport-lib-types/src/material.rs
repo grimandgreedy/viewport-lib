@@ -95,6 +95,7 @@ impl Default for ItemSettings {
 /// top of `Pbr` as separate fields on `Material` rather than as variants here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum ShadingModel {
     /// Blinn-Phong lit shading using `ambient` / `diffuse` / `specular` / `shininess`.
     Phong,
@@ -229,6 +230,7 @@ impl Default for PatternConfig {
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum BackfacePolicy {
     /// Back faces are culled (invisible). Default.
     Cull,
@@ -264,6 +266,7 @@ impl Default for BackfacePolicy {
 /// Controls how the fragment alpha value is interpreted by the renderer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum AlphaMode {
     /// Alpha is ignored; the surface is always fully opaque. Default.
     Opaque,

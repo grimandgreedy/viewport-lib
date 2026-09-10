@@ -1976,7 +1976,11 @@ pub(crate) struct InstanceData {
     /// non-Pattern policy. The rest of the styled-backface state (policy, colour)
     /// lives in `material_gpu_buf`.
     pub(crate) backface_pattern_scale: f32, // 4 bytes, offset 136
-    pub(crate) _pad: u32,            //   4 bytes, offset 140 (stride to 144)
+    /// Reserved: the shared per-object visibility / light-channel mask (a `u32`
+    /// layer mask, AND-tested against the per-light and per-camera masks). Unread
+    /// by any shader today and uploaded as 0; the forward-compat seam keeps this
+    /// lane (the only free one in the 144-byte record) stable for that feature.
+    pub(crate) _reserved_mask: u32, //   4 bytes, offset 140 (stride to 144)
 }
 
 const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);
@@ -2068,8 +2072,10 @@ pub struct BatchMeta {
     /// `DrawIndexedIndirect` it emits so the bind-once draw path can bind the
     /// whole chunk and offset per mesh.
     pub base_vertex: i32,
-    /// Padding to keep the struct 16-byte aligned.
-    pub _pad: u32,
+    /// Reserved: a per-batch flag word for the GPU-driven cull phase (e.g. the
+    /// per-batch side of the shared visibility mask). Keeps the struct 16-byte
+    /// aligned; unread by any shader today and uploaded as 0.
+    pub _reserved_flags: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<BatchMeta>() == 32);
