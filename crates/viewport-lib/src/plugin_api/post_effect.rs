@@ -149,7 +149,7 @@ pub struct PostEffectResizeContext<'a> {
 /// here); then every HDR frame runs [`prepare`](Self::prepare) (uniform
 /// writes) followed by [`encode`](Self::encode) (pass encoding) for each
 /// viewport where [`enabled`](Self::enabled) returns true.
-pub trait PostEffectProducer: Send + 'static {
+pub trait PostEffectProducer: Send + Sync + 'static {
     /// Stable identifying name, used in diagnostics and pass labels.
     fn type_name(&self) -> &'static str;
 
@@ -230,7 +230,7 @@ pub trait PostEffectProducer: Send + 'static {
 /// [`on_viewport_resized`]: Self::on_viewport_resized
 /// [`prepare`]: Self::prepare
 /// [`encode`]: Self::encode
-pub trait PostEffectStage: Send + 'static {
+pub trait PostEffectStage: Send + Sync + 'static {
     /// Stable identifying name, used in diagnostics and pass labels.
     fn type_name(&self) -> &'static str;
 
