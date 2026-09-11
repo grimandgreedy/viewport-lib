@@ -7,6 +7,9 @@ rendered faithfully. Breaking, and on-screen colour changes on upgrade (the
 repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
 
 ### Breaking
+- **`gpu_phase::_RESERVED_INTERNAL` removed.** The constant was a dead
+  reservation ("currently unused") for a mid-frame plugin band that will
+  never live on `GpuPlugin`; `PRE_PREPARE` and `POST_PAINT` are unchanged.
 - **`Colour` type.** `viewport_lib::Colour` carries a colour's space and stores
   it linear. Build from a hex/picker value with `Colour::rgb` / `hex` / `srgb` /
   `hsl` (decoded to linear), or from an already-linear value with
