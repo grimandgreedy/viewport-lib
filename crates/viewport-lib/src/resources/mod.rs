@@ -102,6 +102,7 @@ pub use self::types::ViewportGpuResources;
 // GlyphBaseMesh and OverlayUniform are re-exported for crate-internal use even
 // though their current consumers reference them through their domain modules.
 #[allow(unused_imports)]
+pub(crate) use self::postprocess::composite::CompositeInputs;
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,

@@ -315,6 +315,20 @@ impl ViewportRenderer {
         // background for the same scene.
         let hdr_clear_rgb = [bg_colour[0], bg_colour[1], bg_colour[2]];
 
+        // Which effect inputs feed the tone-map composite this frame. Built
+        // once here so the uniform's enable lanes below and the bind group's
+        // view selection share one source and cannot disagree.
+        let composite_inputs = crate::resources::CompositeInputs {
+            bloom: pp.bloom.enabled,
+            ssao: pp.ssao,
+            contact_shadows: pp.contact_shadows.enabled,
+            lic: scene_items
+                .iter()
+                .any(|i| i.lic.is_some() && !i.settings.hidden),
+            dof: pp.dof.enabled,
+            foreground: self.foreground_active(frame),
+        };
+
         // Upload tone map uniform into the per-viewport buffer.
         let mode = match frame.effects.display.operator {
             crate::renderer::ToneMapping::Reinhard => 0u32,
@@ -323,32 +337,26 @@ impl ViewportRenderer {
         };
         let tm_uniform = crate::resources::ToneMapUniform {
             // Exposure is applied from the per-viewport exposure state buffer
-            // (binding 9), not this field; kept at 1.0 for layout stability.
+            // (the composite's exposure slot), not this field; kept at 1.0 for
+            // layout stability.
             exposure: 1.0,
             mode,
-            bloom_enabled: if pp.bloom.enabled { 1 } else { 0 },
-            ssao_enabled: if pp.ssao { 1 } else { 0 },
-            contact_shadows_enabled: if pp.contact_shadows.enabled { 1 } else { 0 },
+            bloom_enabled: composite_inputs.bloom as u32,
+            ssao_enabled: composite_inputs.ssao as u32,
+            contact_shadows_enabled: composite_inputs.contact_shadows as u32,
             edl_enabled: if pp.edl.enabled { 1 } else { 0 },
             edl_radius: pp.edl.radius,
             edl_strength: pp.edl.strength,
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
-            lic_enabled: if scene_items
-                .iter()
-                .any(|i| i.lic.is_some() && !i.settings.hidden)
-            {
-                1
-            } else {
-                0
-            },
+            lic_enabled: composite_inputs.lic as u32,
             lic_strength: scene_items
                 .iter()
                 .filter(|i| !i.settings.hidden)
                 .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
                 .unwrap_or(0.5),
-            foreground_enabled: if self.foreground_active(frame) { 1 } else { 0 },
+            foreground_enabled: composite_inputs.foreground as u32,
             _reserved_vignette: [0; 3],
         };
         {
@@ -465,7 +473,7 @@ impl ViewportRenderer {
         // draws into hdr_view after the SSAA resolve, so the depth target is
         // scene-sized (matching hdr_view, OIT, and the other post-resolve
         // passes), not SSAA-sized.
-        let use_foreground = self.foreground_active(frame);
+        let use_foreground = composite_inputs.foreground;
         if use_foreground {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
             let [sw, sh] = hdr.scene_size;
@@ -473,21 +481,11 @@ impl ViewportRenderer {
                 .ensure_viewport_foreground_depth(device, hdr, sw, sh);
         }
 
-        // Rebuild tone-map bind group with correct bloom/AO/DoF texture views.
+        // Rebuild the tone-map bind group with this frame's composite inputs.
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
-            self.resources.rebuild_tone_map_bind_group(
-                device,
-                hdr,
-                pp.bloom.enabled,
-                pp.ssao,
-                pp.contact_shadows.enabled,
-                scene_items
-                    .iter()
-                    .any(|i| i.lic.is_some() && !i.settings.hidden),
-                pp.dof.enabled,
-                use_foreground,
-            );
+            self.resources
+                .rebuild_tone_map_bind_group(device, hdr, composite_inputs);
         }
 
         // -----------------------------------------------------------------------
