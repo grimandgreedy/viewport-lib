@@ -39,8 +39,7 @@ pub(crate) struct PostProcessResources {
     pub(crate) ssao: producer::SsaoProducer,
     pub(crate) bloom: producer::BloomProducer,
     pub(crate) contact_shadow: producer::ContactShadowProducer,
-    pub(crate) dof_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) dof_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) dof: producer::DofProducer,
     pub(crate) bloom_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) ao_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) cs_placeholder_view: Option<crate::gpu::TextureView>,
@@ -62,10 +61,18 @@ pub(crate) struct PostProcessResources {
     pub(crate) dyn_res_linear_sampler: Option<crate::gpu::Sampler>,
 }
 
-impl PostProcessResources {
-    /// The composite-input producers, in encode order.
-    pub(crate) fn producers(&self) -> [&dyn producer::PostProducer; 3] {
-        [&self.ssao, &self.contact_shadow, &self.bloom]
+impl DeviceResources {
+    /// The composite-input producers, in encode order. Exposure runs last:
+    /// its metering reads the sharp scene HDR and its result feeds the
+    /// composite's exposure slot.
+    pub(crate) fn post_producers(&self) -> [&dyn producer::PostProducer; 5] {
+        [
+            &self.post.ssao,
+            &self.post.contact_shadow,
+            &self.post.bloom,
+            &self.post.dof,
+            &self.exposure,
+        ]
     }
 }
 
@@ -1212,8 +1219,8 @@ impl DeviceResources {
             &dof_bgl,
             crate::gpu::TextureFormat::Rgba16Float,
         );
-        self.post.dof_bgl = Some(dof_bgl);
-        self.post.dof_pipeline = Some(dof_pipeline);
+        self.post.dof.bgl = Some(dof_bgl);
+        self.post.dof.pipeline = Some(dof_pipeline);
 
         self.oit.pipeline = Some(oit_pipeline);
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
@@ -1859,6 +1866,11 @@ impl DeviceResources {
                     binding: composite::slot::EXPOSURE,
                     resource: exposure_state_buf.as_entire_binding(),
                 },
+                // Neutral stand-in; the shader gates on `grade_enabled`.
+                crate::gpu::BindGroupEntry {
+                    binding: composite::slot::GRADE_LUT,
+                    resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),
+                },
             ],
         });
         let bloom_threshold_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -1979,7 +1991,8 @@ impl DeviceResources {
         });
         let dof_bgl = self
             .post
-            .dof_bgl
+            .dof
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let dof_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2392,9 +2405,12 @@ impl DeviceResources {
                 bg: contact_shadow_bg,
                 uniform_buf: cs_uniform_buf,
             },
-            dof_texture: dof_tex,
-            dof_view,
-            dof_uniform_buf,
+            dof: producer::DofViewport {
+                texture: dof_tex,
+                view: dof_view,
+                bg: dof_bg,
+                uniform_buf: dof_uniform_buf,
+            },
             fxaa_texture: fxaa_tex,
             fxaa_view,
             ssaa_colour_texture,
@@ -2426,7 +2442,6 @@ impl DeviceResources {
             outline_edge_uniform_buf,
             outline_composite_bind_group,
             tone_map_bind_group,
-            dof_bg,
             fxaa_bind_group,
             tone_map_uniform_buf,
             exposure_state_buf,
@@ -2511,7 +2526,7 @@ impl DeviceResources {
         };
 
         let tone_map_hdr_input: &crate::gpu::TextureView = if inputs.dof {
-            &hdr.dof_view
+            &hdr.dof.view
         } else {
             &hdr.hdr_view
         };
@@ -2563,14 +2578,24 @@ impl DeviceResources {
                     binding: composite::slot::EXPOSURE,
                     resource: hdr.exposure_state_buf.as_entire_binding(),
                 },
+                crate::gpu::BindGroupEntry {
+                    binding: composite::slot::GRADE_LUT,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        inputs
+                            .grade_lut
+                            .and_then(|id| self.content.textures.get(id))
+                            .map(|t| &t.view)
+                            .unwrap_or(ao_placeholder),
+                    ),
+                },
             ],
         });
 
         // The DOF gather pass also reads the foreground coverage mask; rebuild
         // its bind group so the mask view matches this frame.
         if inputs.dof {
-            if let Some(dof_bgl) = &self.post.dof_bgl {
-                hdr.dof_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            if let Some(dof_bgl) = &self.post.dof.bgl {
+                hdr.dof.bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("dof_bg"),
                     layout: dof_bgl,
                     entries: &[
@@ -2590,7 +2615,7 @@ impl DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 3,
-                            resource: hdr.dof_uniform_buf.as_entire_binding(),
+                            resource: hdr.dof.uniform_buf.as_entire_binding(),
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 4,

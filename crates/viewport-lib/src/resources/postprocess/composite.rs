@@ -23,6 +23,10 @@ pub(crate) mod slot {
     pub(crate) const LIC: u32 = 7;
     pub(crate) const FOREGROUND_DEPTH: u32 = 8;
     pub(crate) const EXPOSURE: u32 = 9;
+    /// Colour-grading strip LUT, sampled after tone mapping. A neutral
+    /// placeholder is bound when grading is off (the shader gates on the
+    /// uniform's `grade_enabled`).
+    pub(crate) const GRADE_LUT: u32 = 10;
 }
 
 /// GPU-side shape of one composite binding.
@@ -52,6 +56,7 @@ const BINDINGS: &[(u32, BindingKind)] = &[
     (slot::LIC, BindingKind::FilterableTexture),
     (slot::FOREGROUND_DEPTH, BindingKind::DepthTexture),
     (slot::EXPOSURE, BindingKind::StorageReadOnly),
+    (slot::GRADE_LUT, BindingKind::FilterableTexture),
 ];
 
 /// Build the tone-map bind group layout from the binding table.
@@ -114,4 +119,7 @@ pub(crate) struct CompositeInputs {
     /// The foreground pass ran this frame; bind its depth as the coverage
     /// mask.
     pub(crate) foreground: bool,
+    /// Colour-grading LUT to bind at `slot::GRADE_LUT`, already validated
+    /// against the texture store (`None` binds the neutral placeholder).
+    pub(crate) grade_lut: Option<crate::resources::TextureId>,
 }

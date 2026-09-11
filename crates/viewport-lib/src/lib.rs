@@ -299,8 +299,9 @@ pub use renderer::{
     StreamtubeRefItem, StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef,
     SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
     TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
-    ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSelectionInfo,
-    VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeItem, VolumeMeshItem,
+    VolumeSelectionInfo, VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 

@@ -38,6 +38,16 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   outside the crate now needs a `_ =>` arm. No behaviour change; no variant was added.
 
 ### Features
+- **Vignette.** `PostProcessSettings.vignette: VignetteSettings` (`enabled`,
+  `amount`, `radius`, `softness`) darkens the image toward the corners at the
+  end of the tone-map composite, covering the background too. Off by default;
+  HDR pipeline only, like every post effect.
+- **Colour-grading LUT.** `PostProcessSettings.grade_lut: Option<TextureId>`
+  applies a strip lookup texture (`n` slices of `n` x `n` laid out
+  horizontally; red across a slice, green down it, blue selects the slice)
+  after tone mapping, covering the background too. Upload the LUT in a
+  non-sRGB format so the values pass through unmodified. `None` (the default)
+  leaves colours untouched.
 - **Per-material sampler state (`SamplerKey`).** `Material` gains
   `sampler: [Option<SamplerKey>; MATERIAL_TEXTURE_SLOTS]` (set with
   `Material::with_sampler`), where `SamplerKey` carries wrap mode (`WrapMode`:

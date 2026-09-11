@@ -318,6 +318,21 @@ impl ViewportRenderer {
         // Which effect inputs feed the tone-map composite this frame. Built
         // once here so the uniform's enable lanes below and the bind group's
         // view selection share one source and cannot disagree.
+        // The grade LUT is validated against the texture store up front: the
+        // renderer needs an owned texture to read the LUT's height, so ids
+        // registered as external views are ignored.
+        let grade_lut = pp.grade_lut.filter(|id| {
+            self.resources
+                .content
+                .textures
+                .get(*id)
+                .is_some_and(|t| t.texture.is_some())
+        });
+        let grade_lut_size = grade_lut
+            .and_then(|id| self.resources.content.textures.get(id))
+            .and_then(|t| t.texture.as_ref())
+            .map(|t| t.height() as f32)
+            .unwrap_or(0.0);
         let composite_inputs = crate::resources::CompositeInputs {
             bloom: pp.bloom.enabled,
             ssao: pp.ssao,
@@ -327,6 +342,7 @@ impl ViewportRenderer {
                 .any(|i| i.lic.is_some() && !i.settings.hidden),
             dof: pp.dof.enabled,
             foreground: self.foreground_active(frame),
+            grade_lut,
         };
 
         // Upload tone map uniform into the per-viewport buffer.
@@ -357,7 +373,16 @@ impl ViewportRenderer {
                 .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
                 .unwrap_or(0.5),
             foreground_enabled: composite_inputs.foreground as u32,
-            _reserved_vignette: [0; 3],
+            vignette_amount: if pp.vignette.enabled {
+                pp.vignette.amount.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            vignette_radius: pp.vignette.radius,
+            vignette_softness: pp.vignette.softness,
+            grade_enabled: composite_inputs.grade_lut.is_some() as u32,
+            grade_lut_size,
+            _pad: [0; 2],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -367,47 +392,23 @@ impl ViewportRenderer {
                 bytemuck::cast_slice(&[tm_uniform]),
             );
 
-            // Producer uniforms: SSAO, contact shadows, and bloom each derive
-            // their per-frame uniform from the same inputs.
+            // Producer uniforms: every composite-input producer derives its
+            // per-frame uniform from the same inputs.
             let inputs = crate::resources::ProducerFrameInputs {
                 post: pp,
                 proj: frame.camera.render_camera.projection,
                 view: frame.camera.render_camera.view,
+                near: frame.camera.render_camera.near,
+                far: frame.camera.render_camera.far,
                 first_light: frame.effects.lighting.lights.first(),
+                foreground_active: composite_inputs.foreground,
+                exposure: frame.effects.display.exposure,
             };
-            for producer in self.resources.post.producers() {
+            for producer in self.resources.post_producers() {
                 if producer.enabled(&inputs) {
                     producer.upload(queue, hdr, &inputs);
                 }
             }
-        }
-
-        // Upload DoF uniform when enabled.
-        if pp.dof.enabled {
-            let (w, h) = {
-                let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-                (hdr.scene_size[0] as f32, hdr.scene_size[1] as f32)
-            };
-            let dof_uniform = crate::resources::DofUniform {
-                focal_distance: pp.dof.focal_distance,
-                focal_range: pp.dof.focal_range,
-                max_blur_radius: pp.dof.max_blur_radius,
-                near_plane: frame.camera.render_camera.near,
-                far_plane: frame.camera.render_camera.far,
-                viewport_width: w,
-                viewport_height: h,
-                foreground_enabled: if self.foreground_active(frame) {
-                    1.0
-                } else {
-                    0.0
-                },
-            };
-            let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-            queue.write_buffer(
-                &hdr.dof_uniform_buf,
-                0,
-                bytemuck::cast_slice(&[dof_uniform]),
-            );
         }
 
         // Pre-allocate the foreground depth target so the tone-map / DOF bind
@@ -495,7 +496,6 @@ impl ViewportRenderer {
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
         self.hdr_post_effects(&ctx, &mut encoder);
-        self.hdr_exposure(&ctx, &mut encoder);
         self.hdr_tonemap_resolve(&ctx, &mut encoder);
         self.hdr_scene_overlays(&ctx, &mut encoder);
         self.hdr_final_overlay(&ctx, &mut encoder);
@@ -4314,123 +4314,29 @@ impl ViewportRenderer {
         let throttle_effects = self.degradation_effects_throttled;
 
         // -----------------------------------------------------------------------
-        // Composite-input producers (SSAO, contact shadows, bloom), in the
-        // fixed encode order.
+        // Composite-input producers (SSAO, contact shadows, bloom, DoF,
+        // exposure), in the fixed encode order. The throttle skips the
+        // throttleable producers only; exposure always resolves.
         // -----------------------------------------------------------------------
-        if !throttle_effects {
-            let inputs = crate::resources::ProducerFrameInputs {
-                post: pp,
-                proj: frame.camera.render_camera.projection,
-                view: frame.camera.render_camera.view,
-                first_light: frame.effects.lighting.lights.first(),
-            };
-            let timing = crate::resources::ProducerTiming {
-                query_set: self.ts_query_set.as_ref(),
-                written_mask: &self.ts_written_mask,
-            };
-            for producer in self.resources.post.producers() {
-                if producer.enabled(&inputs) {
-                    producer.encode(slot_hdr, encoder, &timing);
-                }
+        let inputs = crate::resources::ProducerFrameInputs {
+            post: pp,
+            proj: frame.camera.render_camera.projection,
+            view: frame.camera.render_camera.view,
+            near: frame.camera.render_camera.near,
+            far: frame.camera.render_camera.far,
+            first_light: frame.effects.lighting.lights.first(),
+            foreground_active: self.foreground_active(frame),
+            exposure: frame.effects.display.exposure,
+        };
+        let timing = crate::resources::ProducerTiming {
+            query_set: self.ts_query_set.as_ref(),
+            written_mask: &self.ts_written_mask,
+        };
+        for producer in self.resources.post_producers() {
+            if producer.enabled(&inputs) && (!throttle_effects || !producer.throttleable()) {
+                producer.encode(slot_hdr, encoder, &inputs, &timing);
             }
         }
-
-        // -----------------------------------------------------------------------
-        // Depth of field pass: HDR + depth -> dof_texture (when enabled).
-        // -----------------------------------------------------------------------
-        if pp.dof.enabled && !throttle_effects {
-            if let Some(dof_pipeline) = &self.resources.post.dof_pipeline {
-                let mut dof_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("dof_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: &slot_hdr.dof_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                dof_pass.set_pipeline(dof_pipeline);
-                dof_pass.set_bind_group(0, &slot_hdr.dof_bg, &[]);
-                dof_pass.draw(0..3, 0..1);
-            }
-        }
-    }
-
-    /// Resolve the pre-tone-map exposure multiplier into the per-viewport
-    /// exposure state buffer, which the tone map reads (binding 9).
-    ///
-    /// Manual / PhysicalCamera compute the multiplier on the CPU and write the
-    /// buffer directly. Automatic writes the metering params and dispatches the
-    /// clear -> build -> resolve compute passes here, in the same submission,
-    /// before the tone map — so a single dirty render is correctly exposed on
-    /// its own frame (no CPU readback, no cross-frame dependency).
-    fn hdr_exposure(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
-        let frame = ctx.frame;
-        let queue = ctx.queue;
-        let vp_idx = ctx.vp_idx;
-        let exposure = frame.effects.display.exposure;
-        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-
-        // Manual / PhysicalCamera: write the exposure state buffer directly.
-        if let Some(mult) = exposure.manual_multiplier() {
-            let ev_used = exposure.base_ev100().unwrap_or(0.0) - exposure.compensation;
-            let state = crate::resources::gpu::exposure::ExposureState {
-                exposure: mult,
-                current_ev: ev_used,
-                target_ev: ev_used,
-                adapting: 0.0,
-            };
-            queue.write_buffer(
-                &slot_hdr.exposure_state_buf,
-                0,
-                bytemuck::cast_slice(&[state]),
-            );
-            return;
-        }
-
-        // Automatic: fill the metering params and dispatch the compute passes.
-        let auto = match exposure.mode {
-            crate::renderer::types::ExposureMode::Automatic(a) => a,
-            // `manual_multiplier()` returned `None` only for `Automatic`.
-            _ => return,
-        };
-        let [sw, sh] = slot_hdr.scene_size;
-        let range = crate::resources::gpu::exposure::LOG_LUM_MAX
-            - crate::resources::gpu::exposure::LOG_LUM_MIN;
-        let params = crate::resources::gpu::exposure::ExposureParams {
-            min_log_lum: crate::resources::gpu::exposure::LOG_LUM_MIN,
-            inv_log_lum_range: 1.0 / range,
-            log_lum_range: range,
-            k_factor: crate::renderer::types::METER_CALIBRATION_K,
-            min_ev: auto.min_ev,
-            max_ev: auto.max_ev.max(auto.min_ev),
-            compensation: exposure.compensation,
-            exposure_boost: crate::renderer::types::INTERIM_EXPOSURE_BOOST,
-            speed_up: auto.speed_up.max(0.0),
-            speed_down: auto.speed_down.max(0.0),
-            dt: auto.dt,
-            low_percent: auto.low_percent.clamp(0.0, 0.98),
-            high_percent: auto.high_percent.clamp(0.02, 1.0),
-            tex_width: sw as f32,
-            tex_height: sh as f32,
-            center_weight: auto.center_weight.clamp(0.0, 1.0),
-            adaptation: auto.adaptation.clamp(0.0, 1.0),
-            _pad: [0.0; 3],
-        };
-        self.resources
-            .exposure
-            .write_params(queue, &slot_hdr.exposure_params_buf, &params);
-        self.resources
-            .exposure
-            .dispatch(encoder, &slot_hdr.exposure_bind_group, sw, sh);
     }
 
     fn hdr_tonemap_resolve(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {

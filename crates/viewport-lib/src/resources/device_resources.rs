@@ -27,11 +27,7 @@ pub(crate) struct ViewportHdrState {
     pub bloom: crate::resources::postprocess::producer::BloomViewport,
     pub ssao: crate::resources::postprocess::producer::SsaoViewport,
     pub contact_shadow: crate::resources::postprocess::producer::ContactShadowViewport,
-
-    // --- Depth of field ---
-    pub dof_texture: crate::gpu::Texture,
-    pub dof_view: crate::gpu::TextureView,
-    pub dof_uniform_buf: crate::gpu::Buffer,
+    pub dof: crate::resources::postprocess::producer::DofViewport,
 
     // --- Surface LIC ---
     /// Encodes screen-space flow vector per surface pixel (Rgba8Unorm, viewport-sized).
@@ -108,7 +104,6 @@ pub(crate) struct ViewportHdrState {
 
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
-    pub dof_bg: crate::gpu::BindGroup,
     pub fxaa_bind_group: crate::gpu::BindGroup,
 
     // --- Per-viewport uniform buffers ---

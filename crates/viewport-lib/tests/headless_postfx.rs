@@ -689,3 +689,114 @@ fn bloom_firefly_cap_bounds_blob_size() {
         "capped bloom blob should stay small; got {c} bright pixels"
     );
 }
+
+/// Vignette: enabling it must darken the corners while leaving the image
+/// centre unchanged, and the default (disabled) state must not move a pixel.
+#[test]
+fn vignette_darkens_corners_only() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let size = 64u32;
+    let bg = [0.5, 0.5, 0.5, 1.0];
+    let mut render = |vignette: bool| -> Vec<u8> {
+        let mut frame = tonemap_frame(size, bg);
+        if vignette {
+            frame.effects.post_process.vignette.enabled = true;
+            frame.effects.post_process.vignette.amount = 0.8;
+            frame.effects.post_process.vignette.radius = 0.2;
+            frame.effects.post_process.vignette.softness = 0.3;
+        }
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let off = render(false);
+    let on = render(true);
+    let luma = |px: &[u8], x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+
+    let centre_off = luma(&off, size / 2, size / 2);
+    let centre_on = luma(&on, size / 2, size / 2);
+    let corner_off = luma(&off, 1, 1);
+    let corner_on = luma(&on, 1, 1);
+
+    // Centre sits inside the vignette radius: unchanged.
+    assert!(
+        (centre_off - centre_on).abs() <= 3,
+        "vignette changed the centre: {centre_off} -> {centre_on}"
+    );
+    // Corner is at full falloff: clearly darker.
+    assert!(
+        corner_on < corner_off - 100,
+        "vignette did not darken the corner: {corner_off} -> {corner_on}"
+    );
+}
+
+/// Colour-grading LUT: a strip LUT that zeroes the red channel must remove
+/// red from the output while leaving green essentially unchanged, and an
+/// unset `grade_lut` must not change the image.
+#[test]
+fn grade_lut_remaps_colour() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // 16-slice strip LUT (64x... width n*n = 256, height 16): identity in
+    // green and blue, red forced to zero. Uploaded through the linear
+    // (non-sRGB) path so the values pass through unmodified.
+    let n = 16u32;
+    let mut lut = Vec::with_capacity((n * n * n * 4) as usize);
+    for g in 0..n {
+        for b in 0..n {
+            for r in 0..n {
+                let _ = r;
+                let unit = |v: u32| ((v as f32 / (n - 1) as f32) * 255.0).round() as u8;
+                lut.extend_from_slice(&[0, unit(g), unit(b), 255]);
+            }
+        }
+    }
+    let lut_id = renderer
+        .resources_mut()
+        .upload_normal_map(&device, &queue, n * n, n, &lut)
+        .unwrap();
+
+    let size = 32u32;
+    let bg = [0.5, 0.25, 0.25, 1.0];
+    let mut render = |grade: bool| -> Vec<u8> {
+        let mut frame = tonemap_frame(size, bg);
+        if grade {
+            frame.effects.post_process.grade_lut = Some(lut_id);
+        }
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let off = render(false);
+    let on = render(true);
+    let at = |px: &[u8], c: usize| px[(((size / 2) * size + size / 2) * 4) as usize + c] as i32;
+
+    // Red is zeroed by the LUT; green survives roughly unchanged.
+    assert!(
+        at(&off, 0) > 100,
+        "background red unexpectedly dim with grading off: {}",
+        at(&off, 0)
+    );
+    assert!(
+        at(&on, 0) < 20,
+        "grade LUT did not zero red: {} -> {}",
+        at(&off, 0),
+        at(&on, 0)
+    );
+    assert!(
+        (at(&off, 1) - at(&on, 1)).abs() <= 12,
+        "grade LUT shifted green too far: {} -> {}",
+        at(&off, 1),
+        at(&on, 1)
+    );
+}

@@ -82,7 +82,7 @@ pub use self::types::{
     StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
     TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
     TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
-    VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
     aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 

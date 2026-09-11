@@ -16,7 +16,13 @@ pub(crate) struct ProducerFrameInputs<'a> {
     pub(crate) post: &'a crate::PostProcessSettings,
     pub(crate) proj: glam::Mat4,
     pub(crate) view: glam::Mat4,
+    pub(crate) near: f32,
+    pub(crate) far: f32,
     pub(crate) first_light: Option<&'a crate::LightSource>,
+    /// The foreground pass runs this frame (DoF passes foreground pixels
+    /// through unblurred).
+    pub(crate) foreground_active: bool,
+    pub(crate) exposure: crate::ExposureSettings,
 }
 
 /// GPU timestamp plumbing for producer passes, mirroring the renderer's
@@ -87,6 +93,12 @@ pub(crate) trait PostProducer {
     /// Whether the effect is switched on this frame (settings only; the
     /// degradation throttle is applied by the caller at encode time).
     fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool;
+    /// Whether the degradation throttle may skip this producer's passes.
+    /// Exposure returns `false`: skipping it would leave a stale multiplier
+    /// in the state buffer the tone map always reads.
+    fn throttleable(&self) -> bool {
+        true
+    }
     /// Write this frame's uniforms into the viewport's buffers.
     fn upload(
         &self,
@@ -99,6 +111,7 @@ pub(crate) trait PostProducer {
         &self,
         hdr: &ViewportHdrState,
         encoder: &mut crate::gpu::CommandEncoder,
+        inputs: &ProducerFrameInputs<'_>,
         timing: &ProducerTiming<'_>,
     );
 }
@@ -157,6 +170,7 @@ impl PostProducer for SsaoProducer {
         &self,
         hdr: &ViewportHdrState,
         encoder: &mut crate::gpu::CommandEncoder,
+        _inputs: &ProducerFrameInputs<'_>,
         timing: &ProducerTiming<'_>,
     ) {
         let Some(pipeline) = &self.pipeline else {
@@ -260,6 +274,7 @@ impl PostProducer for ContactShadowProducer {
         &self,
         hdr: &ViewportHdrState,
         encoder: &mut crate::gpu::CommandEncoder,
+        _inputs: &ProducerFrameInputs<'_>,
         _timing: &ProducerTiming<'_>,
     ) {
         let Some(pipeline) = &self.pipeline else {
@@ -339,6 +354,7 @@ impl PostProducer for BloomProducer {
         &self,
         hdr: &ViewportHdrState,
         encoder: &mut crate::gpu::CommandEncoder,
+        _inputs: &ProducerFrameInputs<'_>,
         timing: &ProducerTiming<'_>,
     ) {
         let Some(threshold_pipeline) = &self.threshold_pipeline else {
@@ -393,5 +409,163 @@ impl PostProducer for BloomProducer {
                 );
             }
         }
+    }
+}
+
+// --- Depth of field ---
+
+/// Shared depth-of-field state: the gather pipeline + layout.
+#[derive(Default)]
+pub(crate) struct DofProducer {
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+}
+
+/// Per-viewport depth-of-field state. DoF does not add a composite slot: its
+/// output substitutes the composite's primary colour input.
+// The texture field keeps the GPU allocation alive; the pass binds the view.
+#[allow(dead_code)]
+pub(crate) struct DofViewport {
+    pub(crate) texture: crate::gpu::Texture,
+    pub(crate) view: crate::gpu::TextureView,
+    /// Rebuilt alongside the tone-map bind group when DoF is active, so the
+    /// foreground coverage view matches the frame.
+    pub(crate) bg: crate::gpu::BindGroup,
+    pub(crate) uniform_buf: crate::gpu::Buffer,
+}
+
+impl PostProducer for DofProducer {
+    fn enabled(&self, inputs: &ProducerFrameInputs<'_>) -> bool {
+        inputs.post.dof.enabled
+    }
+
+    fn upload(
+        &self,
+        queue: &crate::gpu::Queue,
+        hdr: &ViewportHdrState,
+        inputs: &ProducerFrameInputs<'_>,
+    ) {
+        let settings = &inputs.post.dof;
+        let [sw, sh] = hdr.scene_size;
+        let uniform = super::uniforms::DofUniform {
+            focal_distance: settings.focal_distance,
+            focal_range: settings.focal_range,
+            max_blur_radius: settings.max_blur_radius,
+            near_plane: inputs.near,
+            far_plane: inputs.far,
+            viewport_width: sw as f32,
+            viewport_height: sh as f32,
+            foreground_enabled: if inputs.foreground_active { 1.0 } else { 0.0 },
+        };
+        queue.write_buffer(&hdr.dof.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
+    }
+
+    fn encode(
+        &self,
+        hdr: &ViewportHdrState,
+        encoder: &mut crate::gpu::CommandEncoder,
+        _inputs: &ProducerFrameInputs<'_>,
+        _timing: &ProducerTiming<'_>,
+    ) {
+        let Some(pipeline) = &self.pipeline else {
+            return;
+        };
+        fullscreen_pass(
+            encoder,
+            "dof_pass",
+            &hdr.dof.view,
+            crate::gpu::Color::BLACK,
+            pipeline,
+            &hdr.dof.bg,
+            None,
+        );
+    }
+}
+
+// --- Auto-exposure ---
+
+/// Exposure as a producer: it fills the composite's exposure-state buffer
+/// slot rather than a texture. Manual / PhysicalCamera modes write the
+/// multiplier CPU-side at upload; Automatic writes the metering params at
+/// upload and dispatches the clear -> build -> resolve compute passes at
+/// encode, in the same submission, before the tone map, so a single dirty
+/// render is correctly exposed on its own frame.
+impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
+    fn enabled(&self, _inputs: &ProducerFrameInputs<'_>) -> bool {
+        // Some exposure mode is always active; Manual still needs its
+        // upload-time state write.
+        true
+    }
+
+    fn throttleable(&self) -> bool {
+        false
+    }
+
+    fn upload(
+        &self,
+        queue: &crate::gpu::Queue,
+        hdr: &ViewportHdrState,
+        inputs: &ProducerFrameInputs<'_>,
+    ) {
+        let exposure = inputs.exposure;
+
+        // Manual / PhysicalCamera: write the exposure state buffer directly.
+        if let Some(mult) = exposure.manual_multiplier() {
+            let ev_used = exposure.base_ev100().unwrap_or(0.0) - exposure.compensation;
+            let state = crate::resources::gpu::exposure::ExposureState {
+                exposure: mult,
+                current_ev: ev_used,
+                target_ev: ev_used,
+                adapting: 0.0,
+            };
+            queue.write_buffer(&hdr.exposure_state_buf, 0, bytemuck::cast_slice(&[state]));
+            return;
+        }
+
+        // Automatic: fill the metering params for the encode-time dispatch.
+        let auto = match exposure.mode {
+            crate::ExposureMode::Automatic(a) => a,
+            // `manual_multiplier()` returned `None` only for `Automatic`.
+            _ => return,
+        };
+        let [sw, sh] = hdr.scene_size;
+        let range = crate::resources::gpu::exposure::LOG_LUM_MAX
+            - crate::resources::gpu::exposure::LOG_LUM_MIN;
+        let params = crate::resources::gpu::exposure::ExposureParams {
+            min_log_lum: crate::resources::gpu::exposure::LOG_LUM_MIN,
+            inv_log_lum_range: 1.0 / range,
+            log_lum_range: range,
+            k_factor: viewport_lib_types::effects::postprocess::METER_CALIBRATION_K,
+            min_ev: auto.min_ev,
+            max_ev: auto.max_ev.max(auto.min_ev),
+            compensation: exposure.compensation,
+            exposure_boost: viewport_lib_types::effects::postprocess::INTERIM_EXPOSURE_BOOST,
+            speed_up: auto.speed_up.max(0.0),
+            speed_down: auto.speed_down.max(0.0),
+            dt: auto.dt,
+            low_percent: auto.low_percent.clamp(0.0, 0.98),
+            high_percent: auto.high_percent.clamp(0.02, 1.0),
+            tex_width: sw as f32,
+            tex_height: sh as f32,
+            center_weight: auto.center_weight.clamp(0.0, 1.0),
+            adaptation: auto.adaptation.clamp(0.0, 1.0),
+            _pad: [0.0; 3],
+        };
+        self.write_params(queue, &hdr.exposure_params_buf, &params);
+    }
+
+    fn encode(
+        &self,
+        hdr: &ViewportHdrState,
+        encoder: &mut crate::gpu::CommandEncoder,
+        inputs: &ProducerFrameInputs<'_>,
+        _timing: &ProducerTiming<'_>,
+    ) {
+        // Manual / PhysicalCamera resolved everything at upload.
+        if inputs.exposure.manual_multiplier().is_some() {
+            return;
+        }
+        let [sw, sh] = hdr.scene_size;
+        self.dispatch(encoder, &hdr.exposure_bind_group, sw, sh);
     }
 }

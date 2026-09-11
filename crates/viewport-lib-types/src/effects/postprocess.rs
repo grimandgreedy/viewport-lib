@@ -335,6 +335,18 @@ pub struct PostProcessSettings {
     pub edl: EdlSettings,
     /// Depth-of-field bokeh settings.
     pub dof: DofSettings,
+    /// Vignette (corner darkening) settings.
+    pub vignette: VignetteSettings,
+    /// Colour-grading lookup texture, applied after tone mapping. `None` =
+    /// no grading.
+    ///
+    /// The id must reference a strip LUT uploaded through the renderer's
+    /// texture API: `n` slices of `n` x `n` laid out horizontally (width
+    /// `n * n`, height `n`), where red indexes across a slice, green down it,
+    /// and blue selects the slice. Upload it in a non-sRGB format so the
+    /// values pass through unmodified; texture ids registered as external
+    /// views are ignored (the renderer cannot read their dimensions).
+    pub grade_lut: Option<crate::ids::TextureId>,
 }
 
 impl Default for PostProcessSettings {
@@ -347,6 +359,40 @@ impl Default for PostProcessSettings {
             contact_shadows: ContactShadowSettings::default(),
             edl: EdlSettings::default(),
             dof: DofSettings::default(),
+            vignette: VignetteSettings::default(),
+            grade_lut: None,
+        }
+    }
+}
+
+/// Vignette settings, grouped on [`PostProcessSettings::vignette`].
+///
+/// Darkens the image toward the corners, applied at the very end of the
+/// tone-map composite (after grading), so it affects the background too.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct VignetteSettings {
+    /// Enable the vignette.
+    pub enabled: bool,
+    /// Darkening strength at full falloff, `0.0..=1.0`. Default: `0.5`.
+    pub amount: f32,
+    /// Distance from the image centre where darkening starts, as a fraction
+    /// of the centre-to-corner distance (0 = centre, 1 = corner).
+    /// Default: `0.6`.
+    pub radius: f32,
+    /// Width of the falloff band past `radius`, in the same units.
+    /// Default: `0.45`.
+    pub softness: f32,
+}
+
+impl Default for VignetteSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            amount: 0.5,
+            radius: 0.6,
+            softness: 0.45,
         }
     }
 }
