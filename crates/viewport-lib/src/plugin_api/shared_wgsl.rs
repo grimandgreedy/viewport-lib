@@ -817,6 +817,37 @@ fn viewport_pick_fs(
 }
 "#;
 
+/// Fullscreen-triangle vertex stage for post-effect passes.
+///
+/// Prepend to a fragment-only post shader and build with
+/// [`build_post_effect_pipeline`](crate::resources::DeviceResources::build_post_effect_pipeline):
+/// the pipeline draws three vertices with no vertex buffer, and the
+/// fragment stage receives `ViewportPostVsOut` with `uv` in [0, 1] (origin
+/// top-left, matching texture sampling). Declare the fragment entry as
+/// `fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32>`.
+pub const POST_EFFECT_VS_WGSL: &str = r#"
+// @viewport-wgsl-version: 1
+// Fullscreen triangle for post-effect passes: three vertices, no vertex
+// buffer, uv in [0, 1] with the origin at the top-left.
+
+struct ViewportPostVsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0)       uv:  vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> ViewportPostVsOut {
+    let positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0),
+    );
+    let p = positions[vi];
+    let uv = vec2<f32>((p.x + 1.0) * 0.5, (1.0 - p.y) * 0.5);
+    return ViewportPostVsOut(vec4<f32>(p, 0.0, 1.0), uv);
+}
+"#;
+
 /// Module directive required by [`SHARED_PICK_PRIM_WGSL`], per wgpu leg.
 ///
 /// naga 29 only accepts `@builtin(primitive_index)` in a module that starts

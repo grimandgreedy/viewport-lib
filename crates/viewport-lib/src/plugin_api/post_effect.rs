@@ -10,14 +10,16 @@
 //!   shadows, and surface LIC fill. Registering a producer for a slot while
 //!   the corresponding built-in is switched off replaces that effect's
 //!   implementation; the composite treats the two identically.
-//! - A stage runs after tone mapping, in display space, chained with the
-//!   built-in FXAA: each stage reads the previous stage's output and writes
-//!   the next stage's input, and the last stage writes the frame's final
-//!   target.
+//! - A [`PostEffectStage`] runs after tone mapping, in display space,
+//!   chained with the built-in FXAA by an explicit order key: each stage
+//!   reads the previous stage's output and writes the next stage's input,
+//!   and the last stage writes the frame's final target.
 //!
 //! Producers and stages register on
 //! [`ViewportRenderer`](crate::renderer::ViewportRenderer) with
-//! [`add_post_effect_producer`](crate::renderer::ViewportRenderer::add_post_effect_producer),
+//! [`add_post_effect_producer`](crate::renderer::ViewportRenderer::add_post_effect_producer)
+//! and
+//! [`add_post_effect_stage`](crate::renderer::ViewportRenderer::add_post_effect_stage),
 //! because their passes are encoded inside the renderer's own frame, at
 //! positions that only exist mid-encode. This is the same placement rule
 //! that puts [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin) on the
@@ -69,6 +71,29 @@ pub enum PostEffectSlot {
 /// to unregister.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PostEffectProducerId(pub(crate) u64);
+
+/// Handle returned by
+/// [`add_post_effect_stage`](crate::renderer::ViewportRenderer::add_post_effect_stage);
+/// pass it to
+/// [`remove_post_effect_stage`](crate::renderer::ViewportRenderer::remove_post_effect_stage)
+/// to unregister.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PostEffectStageId(pub(crate) u64);
+
+/// Well-known order keys for the post-effect stage chain.
+///
+/// Stages run in ascending order of the `i32` key given at registration;
+/// stages sharing a key run in registration order, with built-in stages
+/// first. Keys below [`ANTI_ALIASING`] run before the built-in FXAA (still
+/// on tone-mapped LDR input); keys above run after it.
+pub mod stage_order {
+    /// The built-in FXAA stage's position in the chain.
+    pub const ANTI_ALIASING: i32 = 0;
+    /// The conventional band for external stages: after anti-aliasing, so
+    /// FXAA does not soften the stage's output. Space related stages
+    /// around this value.
+    pub const EXTERNAL_DEFAULT: i32 = 100;
+}
 
 /// Per-frame, per-viewport inputs handed to a producer's
 /// [`prepare`](PostEffectProducer::prepare) and
@@ -164,9 +189,90 @@ pub trait PostEffectProducer: Send + 'static {
     /// Encode the producer's passes into the frame, and return the view to
     /// bind at [`slot`](Self::slot) for this viewport this frame. `None`
     /// leaves the slot to the built-in effect (or its disabled placeholder).
+    ///
+    /// The returned view must be sampleable with a filtering sampler (any
+    /// filterable float format works; the built-ins use `Rgba16Float` for
+    /// bloom and `R8Unorm` for the single-channel slots). When both this
+    /// producer and the built-in effect for the slot are active, this view
+    /// wins and a once-per-slot debug log records the conflict; switch the
+    /// built-in off in [`PostProcessSettings`](crate::PostProcessSettings)
+    /// when replacing it.
     fn encode<'a>(
         &'a mut self,
         encoder: &mut crate::gpu::CommandEncoder,
         ctx: &PostEffectContext<'_>,
     ) -> Option<&'a crate::gpu::TextureView>;
+}
+
+/// A display-space pass that runs after the tone-map composite, chained
+/// with the built-in FXAA by the order key given at registration.
+///
+/// The chain routes targets: whichever stage (or the composite itself)
+/// runs before this one renders into [`input_view`](Self::input_view), and
+/// this stage's [`encode`](Self::encode) reads that input and writes the
+/// `target` it is handed (the next stage's input, or the frame's final
+/// target). No blits and no ping-pong management are needed: owning one
+/// input texture per viewport is the whole contract.
+///
+/// The input texture must match the renderer's LDR target format
+/// ([`DeviceResources::target_format`](crate::resources::DeviceResources::target_format)),
+/// be scene-sized (`scene_size` from the resize context: the chain runs at
+/// scene resolution when dynamic-resolution scaling is active), and carry
+/// `RENDER_ATTACHMENT | TEXTURE_BINDING` usage. Allocate it in
+/// [`on_viewport_resized`](Self::on_viewport_resized).
+///
+/// Lifecycle matches [`PostEffectProducer`]: deferred [`init_gpu`]
+/// (build pipelines), [`on_viewport_resized`] (allocate the per-viewport
+/// input), then per HDR frame [`prepare`] and [`encode`] while
+/// [`enabled`](Self::enabled) returns true.
+///
+/// [`init_gpu`]: Self::init_gpu
+/// [`on_viewport_resized`]: Self::on_viewport_resized
+/// [`prepare`]: Self::prepare
+/// [`encode`]: Self::encode
+pub trait PostEffectStage: Send + 'static {
+    /// Stable identifying name, used in diagnostics and pass labels.
+    fn type_name(&self) -> &'static str;
+
+    /// Whether the stage runs this frame. Stages carry their own settings;
+    /// the host mutates them through its own handle to the stage's state.
+    fn enabled(&self) -> bool;
+
+    /// Build pipelines, layouts, and shared (viewport-independent) GPU
+    /// state. Called once after registration, when the renderer first runs
+    /// with the device, and again after device recreation.
+    fn init_gpu(&mut self, _device: &crate::gpu::Device) {}
+
+    /// The wgpu device was recreated (device loss, surface re-init). All
+    /// previously created GPU resources are invalid; `init_gpu` is called
+    /// again after this, followed by `on_viewport_resized` for each live
+    /// viewport.
+    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {}
+
+    /// A viewport's render targets were (re)created. Allocate or resize the
+    /// per-viewport input texture and bind groups for `ctx.viewport_index`
+    /// here.
+    fn on_viewport_resized(
+        &mut self,
+        _device: &crate::gpu::Device,
+        _ctx: &PostEffectResizeContext<'_>,
+    ) {
+    }
+
+    /// Write this frame's uniforms. Runs before any pass of the frame is
+    /// encoded.
+    fn prepare(&mut self, _queue: &crate::gpu::Queue, _ctx: &PostEffectContext<'_>) {}
+
+    /// The stage's input for `viewport_index`: whoever runs before this
+    /// stage in the chain renders into this view.
+    fn input_view(&self, viewport_index: usize) -> &crate::gpu::TextureView;
+
+    /// Encode the stage's pass: read [`input_view`](Self::input_view) for
+    /// `ctx.viewport_index`, write `target`.
+    fn encode(
+        &mut self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        target: &crate::gpu::TextureView,
+        ctx: &PostEffectContext<'_>,
+    );
 }

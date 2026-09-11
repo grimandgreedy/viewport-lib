@@ -335,8 +335,6 @@ pub(crate) enum RenderMode {
     Derivative,
 }
 
-/// Owns the GPU pipelines and per-frame state for rendering a scene. Call
-/// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// A registered external post-effect producer plus its lifecycle state.
 struct RegisteredPostEffectProducer {
     id: crate::plugin_api::PostEffectProducerId,
@@ -346,6 +344,21 @@ struct RegisteredPostEffectProducer {
     producer: Box<dyn crate::plugin_api::PostEffectProducer>,
 }
 
+/// A registered external post-effect stage plus its chain key and lifecycle
+/// state.
+struct RegisteredPostEffectStage {
+    id: crate::plugin_api::PostEffectStageId,
+    /// Chain position; the built-in FXAA sits at
+    /// `post_effect::stage_order::ANTI_ALIASING`.
+    order: i32,
+    /// `init_gpu` has run against the current device (deferred, as for
+    /// producers).
+    gpu_ready: bool,
+    stage: Box<dyn crate::plugin_api::PostEffectStage>,
+}
+
+/// Owns the GPU pipelines and per-frame state for rendering a scene. Call
+/// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// issue draw calls.
 pub struct ViewportRenderer {
     resources: DeviceResources,
@@ -363,6 +376,18 @@ pub struct ViewportRenderer {
     post_effect_producers: Vec<RegisteredPostEffectProducer>,
     /// Source for [`PostEffectProducerId`](crate::plugin_api::PostEffectProducerId)s.
     next_post_effect_producer_id: u64,
+    /// Externally registered post-effect stages, in registration order; the
+    /// chain sorts by each stage's order key at encode time.
+    post_effect_stages: Vec<RegisteredPostEffectStage>,
+    /// Source for [`PostEffectStageId`](crate::plugin_api::PostEffectStageId)s.
+    next_post_effect_stage_id: u64,
+    /// This viewport frame's external composite-slot contributions: the
+    /// views returned by producer `encode` calls. Cleared per render call.
+    frame_external_slot_views: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)>,
+    /// Slots that have logged the external-overrides-built-in conflict (one
+    /// bit per `PostEffectSlot` variant), so the debug log fires once per
+    /// slot per renderer.
+    post_effect_slot_warned: u8,
     /// Monotonic frame counter passed to plugin contexts.
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
@@ -982,6 +1007,10 @@ impl ViewportRenderer {
             item_type_plugins: std::collections::HashMap::new(),
             post_effect_producers: Vec::new(),
             next_post_effect_producer_id: 0,
+            post_effect_stages: Vec::new(),
+            next_post_effect_stage_id: 0,
+            frame_external_slot_views: Vec::new(),
+            post_effect_slot_warned: 0,
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
@@ -1706,11 +1735,48 @@ impl ViewportRenderer {
         self.post_effect_producers.retain(|p| p.id != id);
     }
 
-    /// Run deferred GPU init for post-effect producers registered since the
-    /// last render: `init_gpu`, then `on_viewport_resized` for each viewport
-    /// that already has render targets.
+    /// Register a [`PostEffectStage`](crate::plugin_api::PostEffectStage) at
+    /// `order` in the post-composite chain.
+    ///
+    /// The chain runs in ascending order of the key; the built-in FXAA sits
+    /// at [`stage_order::ANTI_ALIASING`](crate::plugin_api::post_effect::stage_order::ANTI_ALIASING)
+    /// (0), and [`stage_order::EXTERNAL_DEFAULT`](crate::plugin_api::post_effect::stage_order::EXTERNAL_DEFAULT)
+    /// (100) is the conventional post-AA band. Negative keys run before AA.
+    /// Stages sharing a key run in registration order, built-ins first. The
+    /// stage's `init_gpu` runs on the next render, followed by
+    /// `on_viewport_resized` for every viewport that already has render
+    /// targets; each HDR frame then runs `prepare` and `encode` per viewport
+    /// while `enabled` returns true.
+    ///
+    /// Returns an id for [`remove_post_effect_stage`](Self::remove_post_effect_stage).
+    pub fn add_post_effect_stage(
+        &mut self,
+        stage: Box<dyn crate::plugin_api::PostEffectStage>,
+        order: i32,
+    ) -> crate::plugin_api::PostEffectStageId {
+        self.next_post_effect_stage_id += 1;
+        let id = crate::plugin_api::PostEffectStageId(self.next_post_effect_stage_id);
+        self.post_effect_stages.push(RegisteredPostEffectStage {
+            id,
+            order,
+            gpu_ready: false,
+            stage,
+        });
+        id
+    }
+
+    /// Unregister a post-effect stage. Unknown ids are ignored.
+    pub fn remove_post_effect_stage(&mut self, id: crate::plugin_api::PostEffectStageId) {
+        self.post_effect_stages.retain(|s| s.id != id);
+    }
+
+    /// Run deferred GPU init for post-effect producers and stages registered
+    /// since the last render: `init_gpu`, then `on_viewport_resized` for
+    /// each viewport that already has render targets.
     pub(crate) fn init_pending_post_effect_producers(&mut self, device: &crate::gpu::Device) {
-        if self.post_effect_producers.iter().all(|p| p.gpu_ready) {
+        if self.post_effect_producers.iter().all(|p| p.gpu_ready)
+            && self.post_effect_stages.iter().all(|s| s.gpu_ready)
+        {
             return;
         }
         let live: Vec<crate::plugin_api::PostEffectResizeContext<'_>> = self
@@ -1738,6 +1804,16 @@ impl ViewportRenderer {
             }
             entry.gpu_ready = true;
         }
+        for entry in &mut self.post_effect_stages {
+            if entry.gpu_ready {
+                continue;
+            }
+            entry.stage.init_gpu(device);
+            for ctx in &live {
+                entry.stage.on_viewport_resized(device, ctx);
+            }
+            entry.gpu_ready = true;
+        }
     }
 
     /// Notify every registered item-type plugin that the wgpu device has been
@@ -1760,12 +1836,17 @@ impl ViewportRenderer {
             plugin.on_device_recreated(device, queue);
             plugin.init_gpu(device, &shared);
         }
-        // Post-effect producers follow the same shape, then re-receive the
-        // per-viewport resize signal so their targets are rebuilt against the
-        // new device.
+        // Post-effect producers and stages follow the same shape, then
+        // re-receive the per-viewport resize signal so their targets are
+        // rebuilt against the new device.
         for entry in &mut self.post_effect_producers {
             entry.producer.on_device_recreated(device, queue);
             entry.producer.init_gpu(device);
+            entry.gpu_ready = true;
+        }
+        for entry in &mut self.post_effect_stages {
+            entry.stage.on_device_recreated(device, queue);
+            entry.stage.init_gpu(device);
             entry.gpu_ready = true;
         }
         for (vp_idx, slot) in self.viewport_slots.iter().enumerate() {
@@ -1780,6 +1861,9 @@ impl ViewportRenderer {
             };
             for entry in &mut self.post_effect_producers {
                 entry.producer.on_viewport_resized(device, &ctx);
+            }
+            for entry in &mut self.post_effect_stages {
+                entry.stage.on_viewport_resized(device, &ctx);
             }
         }
     }
@@ -3219,8 +3303,8 @@ impl ViewportRenderer {
                 scene_h.max(1),
                 ssaa_factor,
             ));
-            // Tell post-effect producers this viewport's targets changed so
-            // they can reallocate their own. Producers still awaiting
+            // Tell post-effect producers and stages this viewport's targets
+            // changed so they can reallocate their own. Any still awaiting
             // deferred `init_gpu` get this signal during that init instead.
             let hdr = slot.hdr.as_ref().unwrap();
             let ctx = crate::plugin_api::PostEffectResizeContext {
@@ -3232,6 +3316,11 @@ impl ViewportRenderer {
             for entry in &mut self.post_effect_producers {
                 if entry.gpu_ready {
                     entry.producer.on_viewport_resized(device, &ctx);
+                }
+            }
+            for entry in &mut self.post_effect_stages {
+                if entry.gpu_ready {
+                    entry.stage.on_viewport_resized(device, &ctx);
                 }
             }
         }

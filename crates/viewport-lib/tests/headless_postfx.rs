@@ -981,3 +981,317 @@ fn post_effect_producer_lifecycle() {
     renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(log.lock().unwrap().is_empty());
 }
+
+/// External producer slot contribution: a producer that fills the
+/// ambient-occlusion composite slot with a 0.25 grey (via a clear pass on
+/// its own texture) must darken covered geometry even though the built-in
+/// SSAO is off, because its returned view is bound at the slot and the
+/// enable lane is forced on.
+#[test]
+fn post_effect_producer_fills_slot() {
+    struct GreyAo {
+        views: std::collections::HashMap<usize, (wgpu::Texture, wgpu::TextureView)>,
+    }
+
+    impl viewport_lib::PostEffectProducer for GreyAo {
+        fn type_name(&self) -> &'static str {
+            "grey_ao"
+        }
+        fn slot(&self) -> viewport_lib::PostEffectSlot {
+            viewport_lib::PostEffectSlot::AmbientOcclusion
+        }
+        fn enabled(&self) -> bool {
+            true
+        }
+        fn on_viewport_resized(
+            &mut self,
+            device: &wgpu::Device,
+            ctx: &viewport_lib::PostEffectResizeContext<'_>,
+        ) {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("grey_ao_texture"),
+                size: wgpu::Extent3d {
+                    width: ctx.scene_size[0],
+                    height: ctx.scene_size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            self.views.insert(ctx.viewport_index, (tex, view));
+        }
+        fn encode<'a>(
+            &'a mut self,
+            encoder: &mut wgpu::CommandEncoder,
+            ctx: &viewport_lib::PostEffectContext<'_>,
+        ) -> Option<&'a wgpu::TextureView> {
+            let (_, view) = self.views.get(&ctx.viewport_index)?;
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("grey_ao_clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.25,
+                            g: 0.25,
+                            b: 0.25,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            Some(view)
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let size = 64u32;
+    let render = |with_producer: bool| -> Vec<u8> {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &quad_mesh())
+            .unwrap();
+        if with_producer {
+            renderer.add_post_effect_producer(Box::new(GreyAo {
+                views: std::collections::HashMap::new(),
+            }));
+        }
+        let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
+        item.material = Material::from_colour([0.6, 0.6, 0.6]);
+        item.settings.unlit = true;
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let base = render(false);
+    let with_ao = render(true);
+    let luma = |px: &[u8], x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+    let base_centre = luma(&base, size / 2, size / 2);
+    let ao_centre = luma(&with_ao, size / 2, size / 2);
+    assert!(
+        ao_centre < base_centre - 60,
+        "external AO slot did not darken geometry: base {base_centre}, with producer {ao_centre}"
+    );
+}
+
+/// External stage chained after the composite: a stage built with
+/// `build_post_effect_pipeline` and the shared fullscreen vertex stage
+/// inverts the frame; the chain must route the composite into the stage's
+/// input and the stage into the final target with no host plumbing.
+#[test]
+fn post_effect_stage_inverts_output() {
+    struct Invert {
+        pipeline: wgpu::RenderPipeline,
+        bgl: wgpu::BindGroupLayout,
+        sampler: wgpu::Sampler,
+        per_viewport:
+            std::collections::HashMap<usize, (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+    }
+
+    impl viewport_lib::PostEffectStage for Invert {
+        fn type_name(&self) -> &'static str {
+            "invert"
+        }
+        fn enabled(&self) -> bool {
+            true
+        }
+        fn on_viewport_resized(
+            &mut self,
+            device: &wgpu::Device,
+            ctx: &viewport_lib::PostEffectResizeContext<'_>,
+        ) {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("invert_input"),
+                size: wgpu::Extent3d {
+                    width: ctx.scene_size[0],
+                    height: ctx.scene_size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("invert_bg"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            self.per_viewport
+                .insert(ctx.viewport_index, (tex, view, bg));
+        }
+        fn input_view(&self, viewport_index: usize) -> &wgpu::TextureView {
+            &self.per_viewport[&viewport_index].1
+        }
+        fn encode(
+            &mut self,
+            encoder: &mut wgpu::CommandEncoder,
+            target: &wgpu::TextureView,
+            ctx: &viewport_lib::PostEffectContext<'_>,
+        ) {
+            let (_, _, bg) = &self.per_viewport[&ctx.viewport_index];
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("invert_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let size = 64u32;
+    let render = |with_stage: bool| -> Vec<u8> {
+        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &quad_mesh())
+            .unwrap();
+        if with_stage {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("invert_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+            let src = format!(
+                "{}{}",
+                viewport_lib::plugin_api::shared_wgsl::POST_EFFECT_VS_WGSL,
+                r#"
+@group(0) @binding(0) var input_texture: texture_2d<f32>;
+@group(0) @binding(1) var input_sampler: sampler;
+
+@fragment
+fn fs_main(in: ViewportPostVsOut) -> @location(0) vec4<f32> {
+    let c = textureSample(input_texture, input_sampler, in.uv);
+    return vec4<f32>(vec3<f32>(1.0) - c.rgb, 1.0);
+}
+"#
+            );
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("invert_shader"),
+                source: wgpu::ShaderSource::Wgsl(src.into()),
+            });
+            let pipeline = renderer.resources().build_post_effect_pipeline(
+                &device,
+                "invert_pipeline",
+                &shader,
+                &bgl,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                None,
+            );
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            renderer.add_post_effect_stage(
+                Box::new(Invert {
+                    pipeline,
+                    bgl,
+                    sampler,
+                    per_viewport: std::collections::HashMap::new(),
+                }),
+                viewport_lib::plugin_api::post_effect::stage_order::EXTERNAL_DEFAULT,
+            );
+        }
+        let mut frame = tonemap_frame(size, [0.1, 0.1, 0.1, 1.0]);
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.8)).to_cols_array_2d();
+        item.material = Material::from_colour([0.8, 0.8, 0.8]);
+        item.settings.unlit = true;
+        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+        renderer.render_offscreen(&device, &queue, &frame, size, size)
+    };
+
+    let base = render(false);
+    let inverted = render(true);
+    let luma = |px: &[u8], x: u32, y: u32| {
+        let i = ((y * size + x) * 4) as usize;
+        px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32
+    };
+    // Dark background corner must flip bright; bright quad centre must flip
+    // dark. In sRGB bytes: linear 0.1 background is ~89 per channel (~267
+    // luma) and its inverse ~246 (~738); the linear 0.8 quad is ~231 (~693)
+    // and its inverse ~124 (~371).
+    let base_corner = luma(&base, 2, 2);
+    let inv_corner = luma(&inverted, 2, 2);
+    let base_centre = luma(&base, size / 2, size / 2);
+    let inv_centre = luma(&inverted, size / 2, size / 2);
+    assert!(
+        base_corner < 350 && inv_corner > 600,
+        "background did not invert: base {base_corner}, inverted {inv_corner}"
+    );
+    assert!(
+        base_centre > 600 && inv_centre < base_centre - 200,
+        "quad did not invert: base {base_centre}, inverted {inv_centre}"
+    );
+}

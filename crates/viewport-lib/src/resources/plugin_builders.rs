@@ -586,6 +586,45 @@ impl DeviceResources {
             },
         )
     }
+
+    /// Build a fullscreen post-effect pipeline for a
+    /// [`PostEffectProducer`](crate::plugin_api::PostEffectProducer) or
+    /// [`PostEffectStage`](crate::plugin_api::PostEffectStage) pass.
+    ///
+    /// Fixed shape shared by every post pass: a three-vertex fullscreen
+    /// triangle (`vs_main` / `fs_main` entry points; see
+    /// [`shared_wgsl::POST_EFFECT_VS_WGSL`](crate::plugin_api::shared_wgsl::POST_EFFECT_VS_WGSL)
+    /// for a ready-made vertex stage), one bind group layout at group 0, no
+    /// depth-stencil, single-sampled, no culling.
+    ///
+    /// `target_format` is the format of the view the pass renders into:
+    /// [`HDR_COLOR_FORMAT`] for a producer pass writing an HDR-domain
+    /// texture, the producer's own texture format for single-channel slots,
+    /// or [`target_format`](Self::target_format) for a stage pass (stage
+    /// inputs and the final target share the renderer's LDR format).
+    pub fn build_post_effect_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+        shader: &crate::gpu::ShaderModule,
+        bind_group_layout: &crate::gpu::BindGroupLayout,
+        target_format: crate::gpu::TextureFormat,
+        blend: Option<crate::gpu::BlendState>,
+    ) -> crate::gpu::RenderPipeline {
+        let layout = crate::resources::builders::pipeline_layout(
+            device,
+            format!("{label}_layout").as_str(),
+            &[bind_group_layout],
+        );
+        crate::resources::builders::build_fullscreen_pipeline(
+            device,
+            label,
+            &layout,
+            shader,
+            target_format,
+            blend,
+        )
+    }
 }
 
 /// Inputs to a plugin pipeline builder. All builders take this struct; the

@@ -2479,12 +2479,25 @@ impl DeviceResources {
     /// Rebuild the tone-map bind group for a per-viewport HDR state, binding
     /// each enabled input's live texture view and each disabled input's
     /// neutral placeholder, per `inputs`.
+    ///
+    /// `slot_overrides` carries this frame's external producer
+    /// contributions: an entry replaces the slot's built-in (or placeholder)
+    /// view, and the last entry for a slot wins. The caller is responsible
+    /// for forcing the matching enable lanes on in `inputs` and the uniform.
     pub(crate) fn rebuild_tone_map_bind_group(
         &self,
         device: &crate::gpu::Device,
         hdr: &mut ViewportHdrState,
         inputs: composite::CompositeInputs,
+        slot_overrides: &[(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)],
     ) {
+        let overridden = |slot: crate::plugin_api::PostEffectSlot| {
+            slot_overrides
+                .iter()
+                .rev()
+                .find(|(s, _)| *s == slot)
+                .map(|(_, v)| v)
+        };
         let bgl = match &self.post.tone_map_bgl {
             Some(b) => b,
             None => return,
@@ -2517,21 +2530,32 @@ impl DeviceResources {
             foreground_placeholder
         };
 
-        let bloom_view = if inputs.bloom {
-            &hdr.bloom.pong_view
-        } else {
-            bloom_placeholder
-        };
-        let ao_view = if inputs.ssao {
-            &hdr.ssao.blur_view
-        } else {
-            ao_placeholder
-        };
-        let cs_view = if inputs.contact_shadows {
-            &hdr.contact_shadow.view
-        } else {
-            cs_placeholder
-        };
+        let bloom_view =
+            overridden(crate::plugin_api::PostEffectSlot::Bloom).unwrap_or(if inputs.bloom {
+                &hdr.bloom.pong_view
+            } else {
+                bloom_placeholder
+            });
+        let ao_view = overridden(crate::plugin_api::PostEffectSlot::AmbientOcclusion).unwrap_or(
+            if inputs.ssao {
+                &hdr.ssao.blur_view
+            } else {
+                ao_placeholder
+            },
+        );
+        let cs_view = overridden(crate::plugin_api::PostEffectSlot::ContactShadow).unwrap_or(
+            if inputs.contact_shadows {
+                &hdr.contact_shadow.view
+            } else {
+                cs_placeholder
+            },
+        );
+        let lic_view =
+            overridden(crate::plugin_api::PostEffectSlot::SurfaceLic).unwrap_or(if inputs.lic {
+                &hdr.lic_output_view
+            } else {
+                self.lic.placeholder_view.as_ref().unwrap_or(cs_placeholder)
+            });
 
         let tone_map_hdr_input: &crate::gpu::TextureView = if inputs.dof {
             &hdr.dof.view
@@ -2572,11 +2596,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: composite::slot::LIC,
-                    resource: crate::gpu::BindingResource::TextureView(if inputs.lic {
-                        &hdr.lic_output_view
-                    } else {
-                        self.lic.placeholder_view.as_ref().unwrap_or(cs_placeholder)
-                    }),
+                    resource: crate::gpu::BindingResource::TextureView(lic_view),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: composite::slot::FOREGROUND_DEPTH,

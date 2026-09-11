@@ -41,6 +41,25 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   outside the crate now needs a `_ =>` arm. No behaviour change; no variant was added.
 
 ### Features
+- **Post-effect plugin surface.** External post effects now register on the
+  renderer via `plugin_api::post_effect`. A `PostEffectProducer` runs before
+  tone mapping, reads the HDR scene colour and depth, and contributes its
+  output to a named composite slot (`PostEffectSlot`: `Bloom`,
+  `AmbientOcclusion`, `ContactShadow`, `SurfaceLic`), replacing the built-in
+  implementation when the host switches that effect off (if both are active
+  the external view wins and a debug log fires once per slot). A
+  `PostEffectStage` runs after tone mapping in a chain shared with the
+  built-in FXAA, ordered by an explicit `i32` key
+  (`stage_order::ANTI_ALIASING` = 0 is FXAA, `stage_order::EXTERNAL_DEFAULT`
+  = 100 is the conventional post-AA band, negative keys run before AA); the
+  chain routes each stage's output into the next stage's input and the last
+  stage into the frame's final target, so no host blits or ping-pong are
+  needed. Register with `ViewportRenderer::add_post_effect_producer` /
+  `add_post_effect_stage(stage, order)` (matching `remove_*`); `init_gpu` is
+  deferred to the next render and `on_viewport_resized` fires per viewport.
+  `DeviceResources::build_post_effect_pipeline` builds the standard
+  fullscreen pass shape and `shared_wgsl::POST_EFFECT_VS_WGSL` provides the
+  matching vertex stage.
 - **Vignette.** `PostProcessSettings.vignette: VignetteSettings` (`enabled`,
   `amount`, `radius`, `softness`) darkens the image toward the corners at the
   end of the tone-map composite, covering the background too. Off by default;

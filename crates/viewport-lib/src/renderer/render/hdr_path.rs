@@ -18,6 +18,11 @@ struct HdrFrameCtx<'a> {
     h: u32,
     ssaa_factor: u32,
     hdr_clear_rgb: [f32; 3],
+    /// The frame's composite inputs and tone-map uniform as computed in the
+    /// preamble, kept so the tone-map stage can re-derive them with external
+    /// slot contributions applied.
+    composite_inputs: crate::resources::CompositeInputs,
+    tm_uniform: crate::resources::ToneMapUniform,
 }
 
 /// Build the per-frame, per-viewport context handed to external post-effect
@@ -428,15 +433,21 @@ impl ViewportRenderer {
             }
         }
 
-        // External post-effect producers: run any deferred GPU init, then
-        // this frame's uniform writes.
+        // External post-effect producers and stages: run any deferred GPU
+        // init, then this frame's uniform writes.
         self.init_pending_post_effect_producers(device);
-        if !self.post_effect_producers.is_empty() {
+        self.frame_external_slot_views.clear();
+        if !self.post_effect_producers.is_empty() || !self.post_effect_stages.is_empty() {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
             let ctx = post_effect_ctx(hdr, frame, vp_idx);
             for entry in &mut self.post_effect_producers {
                 if entry.gpu_ready && entry.producer.enabled() {
                     entry.producer.prepare(queue, &ctx);
+                }
+            }
+            for entry in &mut self.post_effect_stages {
+                if entry.gpu_ready && entry.stage.enabled() {
+                    entry.stage.prepare(queue, &ctx);
                 }
             }
         }
@@ -455,10 +466,12 @@ impl ViewportRenderer {
         }
 
         // Rebuild the tone-map bind group with this frame's composite inputs.
+        // External producers have not encoded yet; if any contribute a slot
+        // view this frame, the tone-map stage rebuilds again with overrides.
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
             self.resources
-                .rebuild_tone_map_bind_group(device, hdr, composite_inputs);
+                .rebuild_tone_map_bind_group(device, hdr, composite_inputs, &[]);
         }
 
         // -----------------------------------------------------------------------
@@ -509,6 +522,8 @@ impl ViewportRenderer {
             h,
             ssaa_factor,
             hdr_clear_rgb,
+            composite_inputs,
+            tm_uniform,
         };
 
         self.hdr_scene_pass(&ctx, &mut encoder);
@@ -4369,14 +4384,42 @@ impl ViewportRenderer {
         }
 
         // External post-effect producers run after the built-ins, in
-        // registration order, under the same throttle.
+        // registration order, under the same throttle. Returned views are
+        // collected and bound at their slots when the tone-map stage
+        // rebuilds the composite bind group; the last producer for a slot
+        // wins, and an external view over an enabled built-in logs once.
         if !self.post_effect_producers.is_empty() && !throttle_effects {
+            let ci = ctx.composite_inputs;
             let ctx = post_effect_ctx(slot_hdr, frame, vp_idx);
+            let mut collected: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)> =
+                std::mem::take(&mut self.frame_external_slot_views);
             for entry in &mut self.post_effect_producers {
-                if entry.gpu_ready && entry.producer.enabled() {
-                    let _slot_view = entry.producer.encode(encoder, &ctx);
+                if !(entry.gpu_ready && entry.producer.enabled()) {
+                    continue;
                 }
+                let slot = entry.producer.slot();
+                let Some(view) = entry.producer.encode(encoder, &ctx) else {
+                    continue;
+                };
+                let view = view.clone();
+                let (builtin_on, slot_bit) = match slot {
+                    crate::plugin_api::PostEffectSlot::Bloom => (ci.bloom, 1u8),
+                    crate::plugin_api::PostEffectSlot::AmbientOcclusion => (ci.ssao, 2),
+                    crate::plugin_api::PostEffectSlot::ContactShadow => (ci.contact_shadows, 4),
+                    crate::plugin_api::PostEffectSlot::SurfaceLic => (ci.lic, 8),
+                };
+                if builtin_on && self.post_effect_slot_warned & slot_bit == 0 {
+                    self.post_effect_slot_warned |= slot_bit;
+                    tracing::debug!(
+                        "post-effect producer '{}' overrides the enabled built-in {:?} slot; \
+                         switch the built-in off when replacing it",
+                        entry.producer.type_name(),
+                        slot,
+                    );
+                }
+                collected.push((slot, view));
             }
+            self.frame_external_slot_views = collected;
         }
     }
 
@@ -4385,6 +4428,47 @@ impl ViewportRenderer {
         let vp_idx = ctx.vp_idx;
         let frame = ctx.frame;
         let pp = &frame.effects.post_process;
+        // Bind this frame's external composite contributions: force the
+        // matching enable lanes on and rebuild the tone-map bind group with
+        // the producer views at their slots. The uniform rewrite is staged
+        // before this encoder's submission, so it wins over the preamble's
+        // write of the same buffer.
+        if !self.frame_external_slot_views.is_empty() {
+            let mut inputs = ctx.composite_inputs;
+            let mut uniform = ctx.tm_uniform;
+            for (slot, _) in &self.frame_external_slot_views {
+                match slot {
+                    crate::plugin_api::PostEffectSlot::Bloom => {
+                        inputs.bloom = true;
+                        uniform.bloom_enabled = 1;
+                    }
+                    crate::plugin_api::PostEffectSlot::AmbientOcclusion => {
+                        inputs.ssao = true;
+                        uniform.ssao_enabled = 1;
+                    }
+                    crate::plugin_api::PostEffectSlot::ContactShadow => {
+                        inputs.contact_shadows = true;
+                        uniform.contact_shadows_enabled = 1;
+                    }
+                    crate::plugin_api::PostEffectSlot::SurfaceLic => {
+                        inputs.lic = true;
+                        uniform.lic_enabled = 1;
+                    }
+                }
+            }
+            let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
+            ctx.queue.write_buffer(
+                &hdr.tone_map_uniform_buf,
+                0,
+                bytemuck::cast_slice(&[uniform]),
+            );
+            self.resources.rebuild_tone_map_bind_group(
+                ctx.device,
+                hdr,
+                inputs,
+                &self.frame_external_slot_views,
+            );
+        }
         let slot = &self.viewport_slots[vp_idx];
         let slot_hdr = slot.hdr.as_ref().unwrap();
         // -----------------------------------------------------------------------
@@ -4395,25 +4479,44 @@ impl ViewportRenderer {
         // upscale-blitted to output_view at native resolution.
         // -----------------------------------------------------------------------
         let use_hdr_upscale = slot_hdr.upscale_bind_group.is_some();
-        // The post-composite stage chain (FXAA today): the composite renders
-        // into the first enabled stage's input, each stage into the next
-        // enabled stage's input, and the last into the frame's final target.
-        let stages: Vec<&dyn crate::resources::PostStage> = self
-            .resources
-            .post_stages()
-            .into_iter()
-            .filter(|s| s.enabled(pp))
-            .collect();
-        let final_target: &crate::gpu::TextureView = if use_hdr_upscale {
-            slot_hdr.upscale_view.as_ref().unwrap()
+        // The post-composite stage chain: built-in stages (FXAA) and external
+        // stages merged in ascending order-key order (stable: ties keep
+        // built-ins first, then registration order). The composite renders
+        // into the first stage's input, each stage into the next stage's
+        // input, and the last into the frame's final target.
+        enum ChainEntry<'a> {
+            Builtin(&'a dyn crate::resources::PostStage),
+            External(usize),
+        }
+        let mut chain: Vec<(i32, ChainEntry<'_>)> = Vec::new();
+        for s in self.resources.post_stages() {
+            if s.enabled(pp) {
+                chain.push((
+                    crate::plugin_api::post_effect::stage_order::ANTI_ALIASING,
+                    ChainEntry::Builtin(s),
+                ));
+            }
+        }
+        for (i, entry) in self.post_effect_stages.iter().enumerate() {
+            if entry.gpu_ready && entry.stage.enabled() {
+                chain.push((entry.order, ChainEntry::External(i)));
+            }
+        }
+        chain.sort_by_key(|(order, _)| *order);
+        let final_target: crate::gpu::TextureView = if use_hdr_upscale {
+            slot_hdr.upscale_view.as_ref().unwrap().clone()
         } else {
-            output_view
+            output_view.clone()
         };
         if let Some(tone_map_pipeline) = &self.resources.post.tone_map_pipeline {
-            let tone_target: &crate::gpu::TextureView = stages
-                .first()
-                .map(|s| s.input_view(slot_hdr))
-                .unwrap_or(final_target);
+            let tone_target: crate::gpu::TextureView = match chain.first() {
+                Some((_, ChainEntry::Builtin(s))) => s.input_view(slot_hdr).clone(),
+                Some((_, ChainEntry::External(j))) => {
+                    self.post_effect_stages[*j].stage.input_view(vp_idx).clone()
+                }
+                None => final_target.clone(),
+            };
+            let tone_target = &tone_target;
             let tone_ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
                     1 << crate::renderer::GPU_TS_POST,
@@ -4455,12 +4558,23 @@ impl ViewportRenderer {
                 query_set: self.ts_query_set.as_ref(),
                 written_mask: &self.ts_written_mask,
             };
-            for (i, stage) in stages.iter().enumerate() {
-                let target = stages
-                    .get(i + 1)
-                    .map(|next| next.input_view(slot_hdr))
-                    .unwrap_or(final_target);
-                stage.encode(slot_hdr, encoder, target, &timing);
+            for i in 0..chain.len() {
+                let target: crate::gpu::TextureView = match chain.get(i + 1) {
+                    Some((_, ChainEntry::Builtin(s))) => s.input_view(slot_hdr).clone(),
+                    Some((_, ChainEntry::External(j))) => {
+                        self.post_effect_stages[*j].stage.input_view(vp_idx).clone()
+                    }
+                    None => final_target.clone(),
+                };
+                match &chain[i].1 {
+                    ChainEntry::Builtin(s) => s.encode(slot_hdr, encoder, &target, &timing),
+                    ChainEntry::External(j) => {
+                        let stage_ctx = post_effect_ctx(slot_hdr, frame, vp_idx);
+                        self.post_effect_stages[*j]
+                            .stage
+                            .encode(encoder, &target, &stage_ctx);
+                    }
+                }
             }
         }
 
