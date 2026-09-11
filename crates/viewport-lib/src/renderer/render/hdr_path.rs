@@ -20,6 +20,27 @@ struct HdrFrameCtx<'a> {
     hdr_clear_rgb: [f32; 3],
 }
 
+/// Build the per-frame, per-viewport context handed to external post-effect
+/// producers.
+fn post_effect_ctx<'a>(
+    slot_hdr: &'a crate::resources::ViewportHdrState,
+    frame: &'a FrameData,
+    viewport_index: usize,
+) -> crate::plugin_api::PostEffectContext<'a> {
+    crate::plugin_api::PostEffectContext {
+        viewport_index,
+        scene_size: slot_hdr.scene_size,
+        output_size: slot_hdr.output_size,
+        proj: frame.camera.render_camera.projection,
+        view: frame.camera.render_camera.view,
+        near: frame.camera.render_camera.near,
+        far: frame.camera.render_camera.far,
+        scene_colour: &slot_hdr.hdr_view,
+        scene_depth: &slot_hdr.hdr_depth_only_view,
+        post: &frame.effects.post_process,
+    }
+}
+
 /// Screen-space scissor for one decal's fullscreen quad.
 enum DecalScissor {
     /// The decal projects entirely off screen: skip the draw.
@@ -403,6 +424,19 @@ impl ViewportRenderer {
             for producer in self.resources.post_producers() {
                 if producer.enabled(&inputs) {
                     producer.upload(queue, hdr, &inputs);
+                }
+            }
+        }
+
+        // External post-effect producers: run any deferred GPU init, then
+        // this frame's uniform writes.
+        self.init_pending_post_effect_producers(device);
+        if !self.post_effect_producers.is_empty() {
+            let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
+            let ctx = post_effect_ctx(hdr, frame, vp_idx);
+            for entry in &mut self.post_effect_producers {
+                if entry.gpu_ready && entry.producer.enabled() {
+                    entry.producer.prepare(queue, &ctx);
                 }
             }
         }
@@ -4331,6 +4365,17 @@ impl ViewportRenderer {
         for producer in self.resources.post_producers() {
             if producer.enabled(&inputs) && (!throttle_effects || !producer.throttleable()) {
                 producer.encode(slot_hdr, encoder, &inputs, &timing);
+            }
+        }
+
+        // External post-effect producers run after the built-ins, in
+        // registration order, under the same throttle.
+        if !self.post_effect_producers.is_empty() && !throttle_effects {
+            let ctx = post_effect_ctx(slot_hdr, frame, vp_idx);
+            for entry in &mut self.post_effect_producers {
+                if entry.gpu_ready && entry.producer.enabled() {
+                    let _slot_view = entry.producer.encode(encoder, &ctx);
+                }
             }
         }
     }

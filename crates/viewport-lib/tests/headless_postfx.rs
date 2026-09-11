@@ -882,3 +882,102 @@ fn lic_strength_is_per_item() {
         "strength-2 item shows no LIC modulation (spread {right_spread})"
     );
 }
+
+/// External post-effect producer lifecycle: deferred `init_gpu`, the
+/// per-viewport resize signal, per-frame `prepare` + `encode` while enabled,
+/// the self-gate, and removal.
+#[test]
+fn post_effect_producer_lifecycle() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    struct Probe {
+        log: Arc<Mutex<Vec<String>>>,
+        enabled: Arc<AtomicBool>,
+    }
+
+    impl viewport_lib::PostEffectProducer for Probe {
+        fn type_name(&self) -> &'static str {
+            "probe"
+        }
+        fn slot(&self) -> viewport_lib::PostEffectSlot {
+            viewport_lib::PostEffectSlot::Bloom
+        }
+        fn enabled(&self) -> bool {
+            self.enabled.load(Ordering::Relaxed)
+        }
+        fn init_gpu(&mut self, _device: &wgpu::Device) {
+            self.log.lock().unwrap().push("init_gpu".into());
+        }
+        fn on_viewport_resized(
+            &mut self,
+            _device: &wgpu::Device,
+            ctx: &viewport_lib::PostEffectResizeContext<'_>,
+        ) {
+            self.log.lock().unwrap().push(format!(
+                "resize:{}:{}x{}",
+                ctx.viewport_index, ctx.scene_size[0], ctx.scene_size[1]
+            ));
+        }
+        fn prepare(&mut self, _queue: &wgpu::Queue, ctx: &viewport_lib::PostEffectContext<'_>) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("prepare:{}", ctx.viewport_index));
+        }
+        fn encode<'a>(
+            &'a mut self,
+            _encoder: &mut wgpu::CommandEncoder,
+            ctx: &viewport_lib::PostEffectContext<'_>,
+        ) -> Option<&'a wgpu::TextureView> {
+            assert_eq!(ctx.scene_size, [64, 64]);
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("encode:{}", ctx.viewport_index));
+            None
+        }
+    }
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let enabled = Arc::new(AtomicBool::new(true));
+    let id = renderer.add_post_effect_producer(Box::new(Probe {
+        log: log.clone(),
+        enabled: enabled.clone(),
+    }));
+
+    let size = 64u32;
+    let frame = tonemap_frame(size, [0.3, 0.3, 0.3, 1.0]);
+
+    // Frame 1: deferred init runs against the live viewport, then the
+    // per-frame pair.
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert_eq!(
+        log.lock().unwrap().as_slice(),
+        ["init_gpu", "resize:0:64x64", "prepare:0", "encode:0"]
+    );
+
+    // Frame 2: only the per-frame pair.
+    log.lock().unwrap().clear();
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert_eq!(log.lock().unwrap().as_slice(), ["prepare:0", "encode:0"]);
+
+    // Disabled: the self-gate skips both calls.
+    enabled.store(false, Ordering::Relaxed);
+    log.lock().unwrap().clear();
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(log.lock().unwrap().is_empty());
+
+    // Removed: nothing fires even when re-enabled.
+    enabled.store(true, Ordering::Relaxed);
+    renderer.remove_post_effect_producer(id);
+    log.lock().unwrap().clear();
+    renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(log.lock().unwrap().is_empty());
+}

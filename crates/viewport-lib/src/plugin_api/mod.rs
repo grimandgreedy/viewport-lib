@@ -93,6 +93,7 @@
 pub mod cull;
 pub mod install;
 pub mod item_type;
+pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
 
@@ -101,6 +102,10 @@ pub use install::{PluginInstallCtx, ViewportPlugin, install_plugin};
 pub use item_type::{
     DepthReadContext, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickPassContext, PickRay, PluginItemCollection, ShadowCastContext,
+};
+pub use post_effect::{
+    PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,
+    PostEffectSlot,
 };
 pub use target_desc::{
     DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND,

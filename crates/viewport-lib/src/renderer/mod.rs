@@ -337,6 +337,15 @@ pub(crate) enum RenderMode {
 
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
+/// A registered external post-effect producer plus its lifecycle state.
+struct RegisteredPostEffectProducer {
+    id: crate::plugin_api::PostEffectProducerId,
+    /// `init_gpu` has run against the current device. Registration has no
+    /// device parameter, so GPU init is deferred to the next render.
+    gpu_ready: bool,
+    producer: Box<dyn crate::plugin_api::PostEffectProducer>,
+}
+
 /// issue draw calls.
 pub struct ViewportRenderer {
     resources: DeviceResources,
@@ -348,6 +357,12 @@ pub struct ViewportRenderer {
     /// `paint` fire when a matching collection is on `SceneFrame`.
     item_type_plugins:
         std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::ItemTypePlugin>>,
+    /// Externally registered post-effect producers, in registration order.
+    /// `init_gpu` is deferred to the first render with the device; per-frame
+    /// `prepare` / `encode` run on the HDR path, per viewport.
+    post_effect_producers: Vec<RegisteredPostEffectProducer>,
+    /// Source for [`PostEffectProducerId`](crate::plugin_api::PostEffectProducerId)s.
+    next_post_effect_producer_id: u64,
     /// Monotonic frame counter passed to plugin contexts.
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
@@ -965,6 +980,8 @@ impl ViewportRenderer {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: std::collections::HashMap::new(),
+            post_effect_producers: Vec::new(),
+            next_post_effect_producer_id: 0,
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
@@ -1660,6 +1677,69 @@ impl ViewportRenderer {
         self.item_type_plugins.contains_key(type_name)
     }
 
+    /// Register a [`PostEffectProducer`](crate::plugin_api::PostEffectProducer).
+    ///
+    /// The producer's `init_gpu` runs on the next render (registration takes
+    /// no device), followed by `on_viewport_resized` for every viewport that
+    /// already has render targets. From then on, each HDR frame runs
+    /// `prepare` and `encode` per viewport while `enabled` returns true.
+    /// Producers run after the built-in effects, in registration order.
+    ///
+    /// Returns an id for [`remove_post_effect_producer`](Self::remove_post_effect_producer).
+    pub fn add_post_effect_producer(
+        &mut self,
+        producer: Box<dyn crate::plugin_api::PostEffectProducer>,
+    ) -> crate::plugin_api::PostEffectProducerId {
+        self.next_post_effect_producer_id += 1;
+        let id = crate::plugin_api::PostEffectProducerId(self.next_post_effect_producer_id);
+        self.post_effect_producers
+            .push(RegisteredPostEffectProducer {
+                id,
+                gpu_ready: false,
+                producer,
+            });
+        id
+    }
+
+    /// Unregister a post-effect producer. Unknown ids are ignored.
+    pub fn remove_post_effect_producer(&mut self, id: crate::plugin_api::PostEffectProducerId) {
+        self.post_effect_producers.retain(|p| p.id != id);
+    }
+
+    /// Run deferred GPU init for post-effect producers registered since the
+    /// last render: `init_gpu`, then `on_viewport_resized` for each viewport
+    /// that already has render targets.
+    pub(crate) fn init_pending_post_effect_producers(&mut self, device: &crate::gpu::Device) {
+        if self.post_effect_producers.iter().all(|p| p.gpu_ready) {
+            return;
+        }
+        let live: Vec<crate::plugin_api::PostEffectResizeContext<'_>> = self
+            .viewport_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(vp_idx, slot)| {
+                slot.hdr
+                    .as_ref()
+                    .map(|hdr| crate::plugin_api::PostEffectResizeContext {
+                        viewport_index: vp_idx,
+                        scene_size: hdr.scene_size,
+                        output_size: hdr.output_size,
+                        _reserved: std::marker::PhantomData,
+                    })
+            })
+            .collect();
+        for entry in &mut self.post_effect_producers {
+            if entry.gpu_ready {
+                continue;
+            }
+            entry.producer.init_gpu(device);
+            for ctx in &live {
+                entry.producer.on_viewport_resized(device, ctx);
+            }
+            entry.gpu_ready = true;
+        }
+    }
+
     /// Notify every registered item-type plugin that the wgpu device has been
     /// recreated (device loss, surface re-init, host-driven reset).
     ///
@@ -1679,6 +1759,28 @@ impl ViewportRenderer {
         for plugin in self.item_type_plugins.values_mut() {
             plugin.on_device_recreated(device, queue);
             plugin.init_gpu(device, &shared);
+        }
+        // Post-effect producers follow the same shape, then re-receive the
+        // per-viewport resize signal so their targets are rebuilt against the
+        // new device.
+        for entry in &mut self.post_effect_producers {
+            entry.producer.on_device_recreated(device, queue);
+            entry.producer.init_gpu(device);
+            entry.gpu_ready = true;
+        }
+        for (vp_idx, slot) in self.viewport_slots.iter().enumerate() {
+            let Some(hdr) = slot.hdr.as_ref() else {
+                continue;
+            };
+            let ctx = crate::plugin_api::PostEffectResizeContext {
+                viewport_index: vp_idx,
+                scene_size: hdr.scene_size,
+                output_size: hdr.output_size,
+                _reserved: std::marker::PhantomData,
+            };
+            for entry in &mut self.post_effect_producers {
+                entry.producer.on_viewport_resized(device, &ctx);
+            }
         }
     }
 
@@ -3117,6 +3219,21 @@ impl ViewportRenderer {
                 scene_h.max(1),
                 ssaa_factor,
             ));
+            // Tell post-effect producers this viewport's targets changed so
+            // they can reallocate their own. Producers still awaiting
+            // deferred `init_gpu` get this signal during that init instead.
+            let hdr = slot.hdr.as_ref().unwrap();
+            let ctx = crate::plugin_api::PostEffectResizeContext {
+                viewport_index,
+                scene_size: hdr.scene_size,
+                output_size: hdr.output_size,
+                _reserved: std::marker::PhantomData,
+            };
+            for entry in &mut self.post_effect_producers {
+                if entry.gpu_ready {
+                    entry.producer.on_viewport_resized(device, &ctx);
+                }
+            }
         }
     }
 }
