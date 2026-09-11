@@ -367,76 +367,18 @@ impl ViewportRenderer {
                 bytemuck::cast_slice(&[tm_uniform]),
             );
 
-            // Upload SSAO uniform if needed.
-            if pp.ssao {
-                let proj = frame.camera.render_camera.projection;
-                let inv_proj = proj.inverse();
-                let ssao_uniform = crate::resources::SsaoUniform {
-                    inv_proj: inv_proj.to_cols_array_2d(),
-                    proj: proj.to_cols_array_2d(),
-                    radius: 0.5,
-                    bias: 0.025,
-                    _pad: [0.0; 2],
-                };
-                queue.write_buffer(
-                    &hdr.ssao_uniform_buf,
-                    0,
-                    bytemuck::cast_slice(&[ssao_uniform]),
-                );
-            }
-
-            // Upload contact shadow uniform if needed.
-            if pp.contact_shadows.enabled {
-                let proj = frame.camera.render_camera.projection;
-                let inv_proj = proj.inverse();
-                let light_dir_world: glam::Vec3 =
-                    if let Some(l) = frame.effects.lighting.lights.first() {
-                        match l.kind {
-                            LightKind::Directional { direction } => {
-                                glam::Vec3::from(direction).normalize()
-                            }
-                            LightKind::Spot { direction, .. } => {
-                                // Spot::direction is the shining direction
-                                // (light -> scene); the march needs the
-                                // surface -> light direction, so negate.
-                                -glam::Vec3::from(direction).normalize()
-                            }
-                            _ => glam::Vec3::new(0.0, -1.0, 0.0),
-                        }
-                    } else {
-                        glam::Vec3::new(0.0, -1.0, 0.0)
-                    };
-                let view = frame.camera.render_camera.view;
-                let light_dir_view = view.transform_vector3(light_dir_world).normalize();
-                let world_up_view = view.transform_vector3(glam::Vec3::Z).normalize();
-                let cs_uniform = crate::resources::ContactShadowUniform {
-                    inv_proj: inv_proj.to_cols_array_2d(),
-                    proj: proj.to_cols_array_2d(),
-                    light_dir_view: [light_dir_view.x, light_dir_view.y, light_dir_view.z, 0.0],
-                    world_up_view: [world_up_view.x, world_up_view.y, world_up_view.z, 0.0],
-                    params: [
-                        pp.contact_shadows.max_distance,
-                        pp.contact_shadows.steps as f32,
-                        pp.contact_shadows.thickness,
-                        0.0,
-                    ],
-                };
-                queue.write_buffer(
-                    &hdr.contact_shadow_uniform_buf,
-                    0,
-                    bytemuck::cast_slice(&[cs_uniform]),
-                );
-            }
-
-            // Upload bloom uniform if needed.
-            if pp.bloom.enabled {
-                let bloom_u = crate::resources::BloomUniform {
-                    threshold: pp.bloom.threshold,
-                    intensity: pp.bloom.intensity,
-                    horizontal: 0,
-                    max_brightness: pp.bloom.max_brightness,
-                };
-                queue.write_buffer(&hdr.bloom_uniform_buf, 0, bytemuck::cast_slice(&[bloom_u]));
+            // Producer uniforms: SSAO, contact shadows, and bloom each derive
+            // their per-frame uniform from the same inputs.
+            let inputs = crate::resources::ProducerFrameInputs {
+                post: pp,
+                proj: frame.camera.render_camera.projection,
+                view: frame.camera.render_camera.view,
+                first_light: frame.effects.lighting.lights.first(),
+            };
+            for producer in self.resources.post.producers() {
+                if producer.enabled(&inputs) {
+                    producer.upload(queue, hdr, &inputs);
+                }
             }
         }
 
@@ -4372,202 +4314,23 @@ impl ViewportRenderer {
         let throttle_effects = self.degradation_effects_throttled;
 
         // -----------------------------------------------------------------------
-        // SSAO pass.
+        // Composite-input producers (SSAO, contact shadows, bloom), in the
+        // fixed encode order.
         // -----------------------------------------------------------------------
-        if pp.ssao && !throttle_effects {
-            if let Some(ssao_pipeline) = &self.resources.post.ssao_pipeline {
-                // The SSAO slot begins on the occlusion pass and ends on the
-                // blur pass (or on the occlusion pass when there is no blur).
-                let has_blur = self.resources.post.ssao_blur_pipeline.is_some();
-                {
-                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, true, !has_blur);
-                    let mut ssao_pass =
-                        encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(any(wgpu29, wgpu30))]
-                            multiview_mask: None,
-                            label: Some("ssao_pass"),
-                            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                                view: &slot_hdr.ssao_view,
-                                resolve_target: None,
-                                ops: crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::WHITE),
-                                    store: crate::gpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: ts,
-                            occlusion_query_set: None,
-                        });
-                    ssao_pass.set_pipeline(ssao_pipeline);
-                    ssao_pass.set_bind_group(0, &slot_hdr.ssao_bg, &[]);
-                    ssao_pass.draw(0..3, 0..1);
-                }
-
-                // SSAO blur pass.
-                if let Some(ssao_blur_pipeline) = &self.resources.post.ssao_blur_pipeline {
-                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, false, true);
-                    let mut ssao_blur_pass =
-                        encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(any(wgpu29, wgpu30))]
-                            multiview_mask: None,
-                            label: Some("ssao_blur_pass"),
-                            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                                view: &slot_hdr.ssao_blur_view,
-                                resolve_target: None,
-                                ops: crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::WHITE),
-                                    store: crate::gpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: ts,
-                            occlusion_query_set: None,
-                        });
-                    ssao_blur_pass.set_pipeline(ssao_blur_pipeline);
-                    ssao_blur_pass.set_bind_group(0, &slot_hdr.ssao_blur_bg, &[]);
-                    ssao_blur_pass.draw(0..3, 0..1);
-                }
-            }
-        }
-
-        // -----------------------------------------------------------------------
-        // Contact shadow pass.
-        // -----------------------------------------------------------------------
-        if pp.contact_shadows.enabled && !throttle_effects {
-            if let Some(cs_pipeline) = &self.resources.post.contact_shadow_pipeline {
-                let mut cs_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("contact_shadow_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: &slot_hdr.contact_shadow_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::WHITE),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                cs_pass.set_pipeline(cs_pipeline);
-                cs_pass.set_bind_group(0, &slot_hdr.contact_shadow_bg, &[]);
-                cs_pass.draw(0..3, 0..1);
-            }
-        }
-
-        // -----------------------------------------------------------------------
-        // Bloom passes.
-        // -----------------------------------------------------------------------
-        if pp.bloom.enabled && !throttle_effects {
-            // Threshold pass: extract bright pixels into bloom_threshold_texture.
-            if let Some(bloom_threshold_pipeline) = &self.resources.post.bloom_threshold_pipeline {
-                // The bloom slot begins on the threshold pass and ends on the
-                // last blur pass (or here when there is no blur pipeline).
-                let has_blur = self.resources.post.bloom_blur_pipeline.is_some();
-                {
-                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_BLOOM, true, !has_blur);
-                    let mut threshold_pass =
-                        encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(any(wgpu29, wgpu30))]
-                            multiview_mask: None,
-                            label: Some("bloom_threshold_pass"),
-                            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                                view: &slot_hdr.bloom_threshold_view,
-                                resolve_target: None,
-                                ops: crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                                    store: crate::gpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: ts,
-                            occlusion_query_set: None,
-                        });
-                    threshold_pass.set_pipeline(bloom_threshold_pipeline);
-                    threshold_pass.set_bind_group(0, &slot_hdr.bloom_threshold_bg, &[]);
-                    threshold_pass.draw(0..3, 0..1);
-                }
-
-                // 4 ping-pong H+V blur passes for a wide glow.
-                // Pass 1: threshold -> ping -> pong. Passes 2-4: pong -> ping -> pong.
-                if let Some(blur_pipeline) = &self.resources.post.bloom_blur_pipeline {
-                    let blur_h_bg = &slot_hdr.bloom_blur_h_bg;
-                    let blur_h_pong_bg = &slot_hdr.bloom_blur_h_pong_bg;
-                    let blur_v_bg = &slot_hdr.bloom_blur_v_bg;
-                    let bloom_ping_view = &slot_hdr.bloom_ping_view;
-                    let bloom_pong_view = &slot_hdr.bloom_pong_view;
-                    const BLUR_ITERATIONS: usize = 4;
-                    for i in 0..BLUR_ITERATIONS {
-                        // H pass: pass 0 reads threshold, subsequent passes read pong.
-                        let h_bg = if i == 0 { blur_h_bg } else { blur_h_pong_bg };
-                        {
-                            let mut h_pass =
-                                encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                    #[cfg(any(wgpu29, wgpu30))]
-                                    multiview_mask: None,
-                                    label: Some("bloom_blur_h_pass"),
-                                    color_attachments: &[Some(
-                                        crate::gpu::RenderPassColorAttachment {
-                                            view: bloom_ping_view,
-                                            resolve_target: None,
-                                            ops: crate::gpu::Operations {
-                                                load: crate::gpu::LoadOp::Clear(
-                                                    crate::gpu::Color::BLACK,
-                                                ),
-                                                store: crate::gpu::StoreOp::Store,
-                                            },
-                                            depth_slice: None,
-                                        },
-                                    )],
-                                    depth_stencil_attachment: None,
-                                    timestamp_writes: None,
-                                    occlusion_query_set: None,
-                                });
-                            h_pass.set_pipeline(blur_pipeline);
-                            h_pass.set_bind_group(0, h_bg, &[]);
-                            h_pass.draw(0..3, 0..1);
-                        }
-                        // V pass: ping -> pong. The last iteration closes the
-                        // bloom timing slot.
-                        {
-                            let ts = (i == BLUR_ITERATIONS - 1)
-                                .then(|| {
-                                    self.ts_writes_for(crate::renderer::GPU_TS_BLOOM, false, true)
-                                })
-                                .flatten();
-                            let mut v_pass =
-                                encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                    #[cfg(any(wgpu29, wgpu30))]
-                                    multiview_mask: None,
-                                    label: Some("bloom_blur_v_pass"),
-                                    color_attachments: &[Some(
-                                        crate::gpu::RenderPassColorAttachment {
-                                            view: bloom_pong_view,
-                                            resolve_target: None,
-                                            ops: crate::gpu::Operations {
-                                                load: crate::gpu::LoadOp::Clear(
-                                                    crate::gpu::Color::BLACK,
-                                                ),
-                                                store: crate::gpu::StoreOp::Store,
-                                            },
-                                            depth_slice: None,
-                                        },
-                                    )],
-                                    depth_stencil_attachment: None,
-                                    timestamp_writes: ts,
-                                    occlusion_query_set: None,
-                                });
-                            v_pass.set_pipeline(blur_pipeline);
-                            v_pass.set_bind_group(0, blur_v_bg, &[]);
-                            v_pass.draw(0..3, 0..1);
-                        }
-                    }
+        if !throttle_effects {
+            let inputs = crate::resources::ProducerFrameInputs {
+                post: pp,
+                proj: frame.camera.render_camera.projection,
+                view: frame.camera.render_camera.view,
+                first_light: frame.effects.lighting.lights.first(),
+            };
+            let timing = crate::resources::ProducerTiming {
+                query_set: self.ts_query_set.as_ref(),
+                written_mask: &self.ts_written_mask,
+            };
+            for producer in self.resources.post.producers() {
+                if producer.enabled(&inputs) {
+                    producer.encode(slot_hdr, encoder, &timing);
                 }
             }
         }

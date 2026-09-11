@@ -11,6 +11,7 @@ use super::*;
 pub(crate) mod composite;
 pub(crate) mod lic;
 pub(crate) mod oit;
+pub(crate) mod producer;
 pub(crate) mod targets;
 pub(crate) mod uniforms;
 
@@ -31,22 +32,15 @@ pub(crate) struct PostProcessResources {
     pub(crate) ssaa_resolve_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) ssaa_resolve_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) fxaa_sampler: Option<crate::gpu::Sampler>,
-    pub(crate) bloom_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) ssao_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) ssao_blur_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) tone_map_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) tone_map_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) bloom_threshold_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) bloom_blur_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) ssao_noise_texture: Option<crate::gpu::Texture>,
-    pub(crate) ssao_noise_view: Option<crate::gpu::TextureView>,
-    pub(crate) ssao_kernel_buf: Option<crate::gpu::Buffer>,
-    pub(crate) ssao_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) ssao_blur_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// The composite-input producers' shared state (pipelines, layouts,
+    /// static resources). Per-viewport state lives on `ViewportHdrState`.
+    pub(crate) ssao: producer::SsaoProducer,
+    pub(crate) bloom: producer::BloomProducer,
+    pub(crate) contact_shadow: producer::ContactShadowProducer,
     pub(crate) dof_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dof_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) contact_shadow_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) contact_shadow_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) bloom_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) ao_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) cs_placeholder_view: Option<crate::gpu::TextureView>,
@@ -66,6 +60,13 @@ pub(crate) struct PostProcessResources {
     pub(crate) dyn_res_upscale_ds_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) dyn_res_linear_sampler: Option<crate::gpu::Sampler>,
+}
+
+impl PostProcessResources {
+    /// The composite-input producers, in encode order.
+    pub(crate) fn producers(&self) -> [&dyn producer::PostProducer; 3] {
+        [&self.ssao, &self.contact_shadow, &self.bloom]
+    }
 }
 
 impl DeviceResources {
@@ -271,7 +272,7 @@ impl DeviceResources {
     ) {
         // Guard: if all three sentinel fields exist, everything is created.
         if self.post.tone_map_pipeline.is_some()
-            && self.post.bloom_bgl.is_some()
+            && self.post.bloom.bgl.is_some()
             && self.post.fxaa_sampler.is_some()
         {
             return;
@@ -417,7 +418,7 @@ impl DeviceResources {
         }
 
         // --- SSAO noise (one-time) ---
-        if self.post.ssao_noise_view.is_none() {
+        if self.post.ssao.noise_view.is_none() {
             let noise_data: Vec<u8> = (0..16)
                 .flat_map(|i| {
                     let angle = (i as f32 / 16.0) * std::f32::consts::TAU;
@@ -460,13 +461,13 @@ impl DeviceResources {
                     depth_or_array_layers: 1,
                 },
             );
-            self.post.ssao_noise_view =
+            self.post.ssao.noise_view =
                 Some(noise_tex.create_view(&crate::gpu::TextureViewDescriptor::default()));
-            self.post.ssao_noise_texture = Some(noise_tex);
+            self.post.ssao.noise_texture = Some(noise_tex);
         }
 
         // --- SSAO kernel (one-time) ---
-        if self.post.ssao_kernel_buf.is_none() {
+        if self.post.ssao.kernel_buf.is_none() {
             let kernel_data: Vec<[f32; 4]> = (0..64)
                 .map(|i| {
                     let t = i as f32 / 64.0;
@@ -489,7 +490,7 @@ impl DeviceResources {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, kernel_bytes);
-            self.post.ssao_kernel_buf = Some(buf);
+            self.post.ssao.kernel_buf = Some(buf);
         }
 
         // --- Shared samplers ---
@@ -1074,20 +1075,20 @@ impl DeviceResources {
         self.outline.composite_sampler = Some(outline_sampler);
 
         self.post.tone_map_bgl = Some(tone_map_bgl);
-        self.post.bloom_bgl = Some(bloom_bgl);
-        self.post.ssao_bgl = Some(ssao_bgl);
-        self.post.ssao_blur_bgl = Some(ssao_blur_bgl);
-        self.post.contact_shadow_bgl = Some(cs_bgl);
+        self.post.bloom.bgl = Some(bloom_bgl);
+        self.post.ssao.bgl = Some(ssao_bgl);
+        self.post.ssao.blur_bgl = Some(ssao_blur_bgl);
+        self.post.contact_shadow.bgl = Some(cs_bgl);
         self.post.fxaa_bgl = Some(fxaa_bgl);
         self.oit.composite_bgl = Some(oit_composite_bgl);
         self.outline.composite_bgl = Some(outline_composite_bgl);
 
         self.post.tone_map_pipeline = Some(tone_map_pipeline);
-        self.post.bloom_threshold_pipeline = Some(bloom_threshold_pipeline);
-        self.post.bloom_blur_pipeline = Some(bloom_blur_pipeline);
-        self.post.ssao_pipeline = Some(ssao_pipeline);
-        self.post.ssao_blur_pipeline = Some(ssao_blur_pipeline);
-        self.post.contact_shadow_pipeline = Some(cs_pipeline);
+        self.post.bloom.threshold_pipeline = Some(bloom_threshold_pipeline);
+        self.post.bloom.blur_pipeline = Some(bloom_blur_pipeline);
+        self.post.ssao.pipeline = Some(ssao_pipeline);
+        self.post.ssao.blur_pipeline = Some(ssao_blur_pipeline);
+        self.post.contact_shadow.pipeline = Some(cs_pipeline);
         self.post.fxaa_pipeline = Some(fxaa_pipeline);
 
         // --- SSAA resolve pipeline ---
@@ -1748,12 +1749,14 @@ impl DeviceResources {
             .expect("ensure_hdr_shared not called");
         let ssao_noise_view = self
             .post
-            .ssao_noise_view
+            .ssao
+            .noise_view
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_kernel_buf = self
             .post
-            .ssao_kernel_buf
+            .ssao
+            .kernel_buf
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let tone_map_bgl = self
@@ -1763,22 +1766,26 @@ impl DeviceResources {
             .expect("ensure_hdr_shared not called");
         let bloom_bgl = self
             .post
-            .bloom_bgl
+            .bloom
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_bgl = self
             .post
-            .ssao_bgl
+            .ssao
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_blur_bgl = self
             .post
-            .ssao_blur_bgl
+            .ssao
+            .blur_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let cs_bgl = self
             .post
-            .contact_shadow_bgl
+            .contact_shadow
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let fxaa_bgl = self
@@ -2355,21 +2362,39 @@ impl DeviceResources {
             hdr_depth_view,
             hdr_depth_only_view,
             hdr_stencil_only_view,
-            bloom_threshold_texture: bloom_threshold_tex,
-            bloom_threshold_view,
-            bloom_ping_texture: bloom_ping_tex,
-            bloom_ping_view,
-            bloom_pong_texture: bloom_pong_tex,
-            bloom_pong_view,
-            ssao_texture: ssao_tex,
-            ssao_view,
-            ssao_blur_texture: ssao_blur_tex,
-            ssao_blur_view,
+            bloom: producer::BloomViewport {
+                threshold_texture: bloom_threshold_tex,
+                threshold_view: bloom_threshold_view,
+                ping_texture: bloom_ping_tex,
+                ping_view: bloom_ping_view,
+                pong_texture: bloom_pong_tex,
+                pong_view: bloom_pong_view,
+                threshold_bg: bloom_threshold_bg,
+                blur_h_bg: bloom_blur_h_bg,
+                blur_v_bg: bloom_blur_v_bg,
+                blur_h_pong_bg: bloom_blur_h_pong_bg,
+                uniform_buf: bloom_uniform_buf,
+                h_uniform_buf: bloom_h_uniform_buf,
+                v_uniform_buf: bloom_v_uniform_buf,
+            },
+            ssao: producer::SsaoViewport {
+                texture: ssao_tex,
+                view: ssao_view,
+                blur_texture: ssao_blur_tex,
+                blur_view: ssao_blur_view,
+                bg: ssao_bg,
+                blur_bg: ssao_blur_bg,
+                uniform_buf: ssao_uniform_buf,
+            },
+            contact_shadow: producer::ContactShadowViewport {
+                texture: cs_tex,
+                view: cs_view,
+                bg: contact_shadow_bg,
+                uniform_buf: cs_uniform_buf,
+            },
             dof_texture: dof_tex,
             dof_view,
             dof_uniform_buf,
-            contact_shadow_texture: cs_tex,
-            contact_shadow_view: cs_view,
             fxaa_texture: fxaa_tex,
             fxaa_view,
             ssaa_colour_texture,
@@ -2401,21 +2426,9 @@ impl DeviceResources {
             outline_edge_uniform_buf,
             outline_composite_bind_group,
             tone_map_bind_group,
-            bloom_threshold_bg,
-            bloom_blur_h_bg,
-            bloom_blur_v_bg,
-            bloom_blur_h_pong_bg,
-            ssao_bg,
-            ssao_blur_bg,
             dof_bg,
-            contact_shadow_bg,
             fxaa_bind_group,
             tone_map_uniform_buf,
-            bloom_uniform_buf,
-            bloom_h_uniform_buf,
-            bloom_v_uniform_buf,
-            ssao_uniform_buf,
-            contact_shadow_uniform_buf: cs_uniform_buf,
             exposure_state_buf,
             exposure_histogram_buf,
             exposure_params_buf,
@@ -2482,17 +2495,17 @@ impl DeviceResources {
         };
 
         let bloom_view = if inputs.bloom {
-            &hdr.bloom_pong_view
+            &hdr.bloom.pong_view
         } else {
             bloom_placeholder
         };
         let ao_view = if inputs.ssao {
-            &hdr.ssao_blur_view
+            &hdr.ssao.blur_view
         } else {
             ao_placeholder
         };
         let cs_view = if inputs.contact_shadows {
-            &hdr.contact_shadow_view
+            &hdr.contact_shadow.view
         } else {
             cs_placeholder
         };

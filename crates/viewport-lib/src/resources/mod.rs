@@ -103,6 +103,7 @@ pub use self::types::ViewportGpuResources;
 // though their current consumers reference them through their domain modules.
 #[allow(unused_imports)]
 pub(crate) use self::postprocess::composite::CompositeInputs;
+pub(crate) use self::postprocess::producer::{ProducerFrameInputs, ProducerTiming};
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,

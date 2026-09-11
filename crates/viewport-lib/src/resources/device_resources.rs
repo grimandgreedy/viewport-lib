@@ -23,28 +23,15 @@ pub(crate) struct ViewportHdrState {
     pub hdr_depth_only_view: crate::gpu::TextureView,
     pub hdr_stencil_only_view: crate::gpu::TextureView,
 
-    // --- Bloom ---
-    pub bloom_threshold_texture: crate::gpu::Texture,
-    pub bloom_threshold_view: crate::gpu::TextureView,
-    pub bloom_ping_texture: crate::gpu::Texture,
-    pub bloom_ping_view: crate::gpu::TextureView,
-    pub bloom_pong_texture: crate::gpu::Texture,
-    pub bloom_pong_view: crate::gpu::TextureView,
-
-    // --- SSAO ---
-    pub ssao_texture: crate::gpu::Texture,
-    pub ssao_view: crate::gpu::TextureView,
-    pub ssao_blur_texture: crate::gpu::Texture,
-    pub ssao_blur_view: crate::gpu::TextureView,
+    // --- Composite-input producers (targets, bind groups, uniforms) ---
+    pub bloom: crate::resources::postprocess::producer::BloomViewport,
+    pub ssao: crate::resources::postprocess::producer::SsaoViewport,
+    pub contact_shadow: crate::resources::postprocess::producer::ContactShadowViewport,
 
     // --- Depth of field ---
     pub dof_texture: crate::gpu::Texture,
     pub dof_view: crate::gpu::TextureView,
     pub dof_uniform_buf: crate::gpu::Buffer,
-
-    // --- Contact shadow ---
-    pub contact_shadow_texture: crate::gpu::Texture,
-    pub contact_shadow_view: crate::gpu::TextureView,
 
     // --- Surface LIC ---
     /// Encodes screen-space flow vector per surface pixel (Rgba8Unorm, viewport-sized).
@@ -121,28 +108,11 @@ pub(crate) struct ViewportHdrState {
 
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
-    pub bloom_threshold_bg: crate::gpu::BindGroup,
-    /// H-blur bind group that reads from bloom_threshold (pass 0 only).
-    pub bloom_blur_h_bg: crate::gpu::BindGroup,
-    /// V-blur bind group that reads from bloom_ping.
-    pub bloom_blur_v_bg: crate::gpu::BindGroup,
-    /// H-blur bind group that reads from bloom_pong (passes 1+).
-    pub bloom_blur_h_pong_bg: crate::gpu::BindGroup,
-    pub ssao_bg: crate::gpu::BindGroup,
-    pub ssao_blur_bg: crate::gpu::BindGroup,
     pub dof_bg: crate::gpu::BindGroup,
-    pub contact_shadow_bg: crate::gpu::BindGroup,
     pub fxaa_bind_group: crate::gpu::BindGroup,
 
     // --- Per-viewport uniform buffers ---
     pub tone_map_uniform_buf: crate::gpu::Buffer,
-    pub bloom_uniform_buf: crate::gpu::Buffer,
-    /// Constant H-blur uniform buffer (horizontal=1, written once at creation).
-    pub bloom_h_uniform_buf: crate::gpu::Buffer,
-    /// Constant V-blur uniform buffer (horizontal=0, written once at creation).
-    pub bloom_v_uniform_buf: crate::gpu::Buffer,
-    pub ssao_uniform_buf: crate::gpu::Buffer,
-    pub contact_shadow_uniform_buf: crate::gpu::Buffer,
 
     // --- Auto-exposure (per-viewport) ---
     /// 16-byte `ExposureState`: the linear exposure multiplier the tone map
