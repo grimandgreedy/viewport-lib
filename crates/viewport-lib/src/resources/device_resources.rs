@@ -40,7 +40,6 @@ pub(crate) struct ViewportHdrState {
     // --- Depth of field ---
     pub dof_texture: crate::gpu::Texture,
     pub dof_view: crate::gpu::TextureView,
-    pub dof_bind_group: crate::gpu::BindGroup,
     pub dof_uniform_buf: crate::gpu::Buffer,
 
     // --- Contact shadow ---
