@@ -105,5 +105,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let intensity = select(0.5, sum / f32(count), count > 0u);
-    return vec4<f32>(intensity, 0.0, 0.0, 1.0);
+    // Bake the item's strength (blue channel, normalised by the CPU-side
+    // LIC_STRENGTH_ENCODE_MAX = 4.0) into the output: the composite applies
+    // a fixed 2x modulation, so scaling the deviation from neutral here is
+    // exactly the old global-strength formula, per item. Clamped by the
+    // R8Unorm target at extreme strengths.
+    let centre = textureSampleLevel(lic_vector_tex, lin_samp, in.uv, 0.0);
+    let strength = centre.b * 4.0;
+    let modulated = clamp(0.5 + strength * (intensity - 0.5), 0.0, 1.0);
+    return vec4<f32>(modulated, 0.0, 0.0, 1.0);
 }

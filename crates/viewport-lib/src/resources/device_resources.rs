@@ -45,9 +45,8 @@ pub(crate) struct ViewportHdrState {
     /// Uniform buffer for LicAdvectUniform (steps, step_size, viewport dims).
     pub lic_uniform_buf: crate::gpu::Buffer,
 
-    // --- FXAA ---
-    pub fxaa_texture: crate::gpu::Texture,
-    pub fxaa_view: crate::gpu::TextureView,
+    // --- FXAA (post-composite stage) ---
+    pub fxaa: crate::resources::postprocess::producer::FxaaViewport,
 
     // --- SSAA (allocated when ssaa_factor > 1) ---
     /// Supersampled colour render target. `None` when ssaa_factor == 1.
@@ -104,7 +103,6 @@ pub(crate) struct ViewportHdrState {
 
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
-    pub fxaa_bind_group: crate::gpu::BindGroup,
 
     // --- Per-viewport uniform buffers ---
     pub tone_map_uniform_buf: crate::gpu::Buffer,

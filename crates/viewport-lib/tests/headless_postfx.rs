@@ -800,3 +800,85 @@ fn grade_lut_remaps_colour() {
         at(&on, 1)
     );
 }
+
+/// Surface LIC strength is per item: with two LIC items whose strengths
+/// differ, each item's region must reflect its own strength. Regression test
+/// for the old behaviour where the composite took the FIRST visible item's
+/// strength as a global knob (here the first item's strength is 0, which
+/// would have disabled the effect for both).
+#[test]
+fn lic_strength_is_per_item() {
+    use viewport_lib::{AttributeData, LicOverlay, SurfaceLICConfig};
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // A quad with a uniform horizontal flow field.
+    let mut mesh = quad_mesh();
+    mesh.attributes.insert(
+        "flow".to_string(),
+        AttributeData::VertexVector(vec![[1.0, 0.0, 0.0]; 4]),
+    );
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &mesh)
+        .unwrap();
+
+    let size = 96u32;
+    let bg = [0.1, 0.1, 0.1, 1.0];
+    let mut frame = tonemap_frame(size, bg);
+
+    // Two side-by-side LIC quads: the FIRST has strength 0 (no modulation),
+    // the second a strong modulation.
+    let make_item = |x: f32, strength: f32| {
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh;
+        item.model = (glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0))
+            * glam::Mat4::from_scale(glam::Vec3::splat(0.9)))
+        .to_cols_array_2d();
+        item.material = Material::from_colour([0.7, 0.7, 0.7]);
+        item.settings.unlit = true;
+        let mut lic = LicOverlay::new("flow", SurfaceLICConfig::default());
+        lic.config.strength = strength;
+        item.lic = Some(lic);
+        item
+    };
+    frame.scene.surfaces =
+        SurfaceSubmission::Flat(vec![make_item(-0.5, 0.0), make_item(0.5, 2.0)].into());
+
+    // Two renders: the first creates the viewport's HDR slot (the LIC advect
+    // uniform is written at prepare time only once the slot exists), the
+    // second carries the live LIC parameters.
+    let _warm = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    // Per-row luma spread inside each quad's horizontal band: LIC streaks
+    // give neighbouring pixels along a row visibly different values, a flat
+    // (unmodulated) surface does not.
+    let spread = |x0: u32, x1: u32| -> i32 {
+        let y = size / 2;
+        let mut min = i32::MAX;
+        let mut max = i32::MIN;
+        for x in x0..x1 {
+            let i = ((y * size + x) * 4) as usize;
+            let l = px[i] as i32 + px[i + 1] as i32 + px[i + 2] as i32;
+            min = min.min(l);
+            max = max.max(l);
+        }
+        max - min
+    };
+    // The quads land at roughly x in [37, 46] (left) and [48, 60] (right)
+    // under the default camera; sample safely inside each.
+    let left_spread = spread(38, 46);
+    let right_spread = spread(49, 60);
+
+    assert!(
+        left_spread <= 12,
+        "strength-0 item shows LIC modulation (spread {left_spread})"
+    );
+    assert!(
+        right_spread >= 40,
+        "strength-2 item shows no LIC modulation (spread {right_spread})"
+    );
+}

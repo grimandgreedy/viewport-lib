@@ -367,11 +367,7 @@ impl ViewportRenderer {
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
             lic_enabled: composite_inputs.lic as u32,
-            lic_strength: scene_items
-                .iter()
-                .filter(|i| !i.settings.hidden)
-                .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
-                .unwrap_or(0.5),
+            _pad_lic: 0.0,
             foreground_enabled: composite_inputs.foreground as u32,
             vignette_amount: if pp.vignette.enabled {
                 pp.vignette.amount.clamp(0.0, 1.0)
@@ -4353,16 +4349,26 @@ impl ViewportRenderer {
         // resolution. The result lands in upscale_view (scene-res) and is then
         // upscale-blitted to output_view at native resolution.
         // -----------------------------------------------------------------------
-        let use_fxaa = pp.fxaa;
         let use_hdr_upscale = slot_hdr.upscale_bind_group.is_some();
+        // The post-composite stage chain (FXAA today): the composite renders
+        // into the first enabled stage's input, each stage into the next
+        // enabled stage's input, and the last into the frame's final target.
+        let stages: Vec<&dyn crate::resources::PostStage> = self
+            .resources
+            .post_stages()
+            .into_iter()
+            .filter(|s| s.enabled(pp))
+            .collect();
+        let final_target: &crate::gpu::TextureView = if use_hdr_upscale {
+            slot_hdr.upscale_view.as_ref().unwrap()
+        } else {
+            output_view
+        };
         if let Some(tone_map_pipeline) = &self.resources.post.tone_map_pipeline {
-            let tone_target: &crate::gpu::TextureView = if use_fxaa {
-                &slot_hdr.fxaa_view
-            } else if use_hdr_upscale {
-                slot_hdr.upscale_view.as_ref().unwrap()
-            } else {
-                output_view
-            };
+            let tone_target: &crate::gpu::TextureView = stages
+                .first()
+                .map(|s| s.input_view(slot_hdr))
+                .unwrap_or(final_target);
             let tone_ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
                     1 << crate::renderer::GPU_TS_POST,
@@ -4397,36 +4403,19 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // FXAA pass: fxaa_texture -> upscale_view (scaled) or output_view (1:1).
+        // Post-composite stages, chained toward the final target.
         // -----------------------------------------------------------------------
-        if use_fxaa {
-            if let Some(fxaa_pipeline) = &self.resources.post.fxaa_pipeline {
-                let fxaa_target: &crate::gpu::TextureView = if use_hdr_upscale {
-                    slot_hdr.upscale_view.as_ref().unwrap()
-                } else {
-                    output_view
-                };
-                let ts = self.ts_writes_for(crate::renderer::GPU_TS_FXAA, true, true);
-                let mut fxaa_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("fxaa_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: fxaa_target,
-                        resolve_target: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: ts,
-                    occlusion_query_set: None,
-                });
-                fxaa_pass.set_pipeline(fxaa_pipeline);
-                fxaa_pass.set_bind_group(0, &slot_hdr.fxaa_bind_group, &[]);
-                fxaa_pass.draw(0..3, 0..1);
+        {
+            let timing = crate::resources::ProducerTiming {
+                query_set: self.ts_query_set.as_ref(),
+                written_mask: &self.ts_written_mask,
+            };
+            for (i, stage) in stages.iter().enumerate() {
+                let target = stages
+                    .get(i + 1)
+                    .map(|next| next.input_view(slot_hdr))
+                    .unwrap_or(final_target);
+                stage.encode(slot_hdr, encoder, target, &timing);
             }
         }
 

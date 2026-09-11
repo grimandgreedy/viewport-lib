@@ -569,3 +569,74 @@ impl PostProducer for crate::resources::gpu::exposure::ExposureResources {
         self.dispatch(encoder, &hdr.exposure_bind_group, sw, sh);
     }
 }
+
+// --- Post-composite stages ---
+
+/// A display-space pass that runs after the tone-map composite. Stages
+/// chain: the composite renders into the first enabled stage's input
+/// texture, each stage renders into the next enabled stage's input, and the
+/// last enabled stage renders into the frame's final target (the upscale
+/// texture or the output view).
+pub(crate) trait PostStage {
+    /// Whether the stage runs this frame.
+    fn enabled(&self, post: &crate::PostProcessSettings) -> bool;
+    /// The stage's input texture: whoever runs before it renders into this.
+    fn input_view<'a>(&self, hdr: &'a ViewportHdrState) -> &'a crate::gpu::TextureView;
+    /// Encode the stage's pass, reading `input_view` and writing `target`.
+    fn encode(
+        &self,
+        hdr: &ViewportHdrState,
+        encoder: &mut crate::gpu::CommandEncoder,
+        target: &crate::gpu::TextureView,
+        timing: &ProducerTiming<'_>,
+    );
+}
+
+/// Shared FXAA state: the pipeline, its layout, and the dedicated sampler.
+#[derive(Default)]
+pub(crate) struct FxaaStage {
+    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) sampler: Option<crate::gpu::Sampler>,
+}
+
+/// Per-viewport FXAA state: the stage's input texture and the bind group
+/// that samples it.
+// The texture field keeps the GPU allocation alive; the pass binds the view.
+#[allow(dead_code)]
+pub(crate) struct FxaaViewport {
+    pub(crate) texture: crate::gpu::Texture,
+    pub(crate) view: crate::gpu::TextureView,
+    pub(crate) bind_group: crate::gpu::BindGroup,
+}
+
+impl PostStage for FxaaStage {
+    fn enabled(&self, post: &crate::PostProcessSettings) -> bool {
+        post.fxaa
+    }
+
+    fn input_view<'a>(&self, hdr: &'a ViewportHdrState) -> &'a crate::gpu::TextureView {
+        &hdr.fxaa.view
+    }
+
+    fn encode(
+        &self,
+        hdr: &ViewportHdrState,
+        encoder: &mut crate::gpu::CommandEncoder,
+        target: &crate::gpu::TextureView,
+        timing: &ProducerTiming<'_>,
+    ) {
+        let Some(pipeline) = &self.pipeline else {
+            return;
+        };
+        fullscreen_pass(
+            encoder,
+            "fxaa_pass",
+            target,
+            crate::gpu::Color::BLACK,
+            pipeline,
+            &hdr.fxaa.bind_group,
+            timing.writes(crate::renderer::GPU_TS_FXAA, true, true),
+        );
+    }
+}

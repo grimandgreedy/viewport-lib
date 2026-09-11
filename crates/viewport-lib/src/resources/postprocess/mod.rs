@@ -27,11 +27,10 @@ pub(crate) use self::oit::OitResources;
 /// intermediate textures and per-frame uniforms live on `ViewportHdrState`.
 #[derive(Default)]
 pub(crate) struct PostProcessResources {
-    pub(crate) fxaa_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) fxaa_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// The post-composite stage chain's shared state.
+    pub(crate) fxaa: producer::FxaaStage,
     pub(crate) ssaa_resolve_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) ssaa_resolve_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) fxaa_sampler: Option<crate::gpu::Sampler>,
     pub(crate) tone_map_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) tone_map_bgl: Option<crate::gpu::BindGroupLayout>,
     /// The composite-input producers' shared state (pipelines, layouts,
@@ -73,6 +72,11 @@ impl DeviceResources {
             &self.post.dof,
             &self.exposure,
         ]
+    }
+
+    /// The post-composite stages, in chain order.
+    pub(crate) fn post_stages(&self) -> [&dyn producer::PostStage; 1] {
+        [&self.post.fxaa]
     }
 }
 
@@ -280,7 +284,7 @@ impl DeviceResources {
         // Guard: if all three sentinel fields exist, everything is created.
         if self.post.tone_map_pipeline.is_some()
             && self.post.bloom.bgl.is_some()
-            && self.post.fxaa_sampler.is_some()
+            && self.post.fxaa.sampler.is_some()
         {
             return;
         }
@@ -1077,7 +1081,7 @@ impl DeviceResources {
         // Store everything
         self.post.pp_linear_sampler = Some(linear_sampler);
         self.post.pp_nearest_sampler = Some(nearest_sampler);
-        self.post.fxaa_sampler = Some(fxaa_sampler);
+        self.post.fxaa.sampler = Some(fxaa_sampler);
         self.oit.composite_sampler = Some(oit_sampler);
         self.outline.composite_sampler = Some(outline_sampler);
 
@@ -1086,7 +1090,7 @@ impl DeviceResources {
         self.post.ssao.bgl = Some(ssao_bgl);
         self.post.ssao.blur_bgl = Some(ssao_blur_bgl);
         self.post.contact_shadow.bgl = Some(cs_bgl);
-        self.post.fxaa_bgl = Some(fxaa_bgl);
+        self.post.fxaa.bgl = Some(fxaa_bgl);
         self.oit.composite_bgl = Some(oit_composite_bgl);
         self.outline.composite_bgl = Some(outline_composite_bgl);
 
@@ -1096,7 +1100,7 @@ impl DeviceResources {
         self.post.ssao.pipeline = Some(ssao_pipeline);
         self.post.ssao.blur_pipeline = Some(ssao_blur_pipeline);
         self.post.contact_shadow.pipeline = Some(cs_pipeline);
-        self.post.fxaa_pipeline = Some(fxaa_pipeline);
+        self.post.fxaa.pipeline = Some(fxaa_pipeline);
 
         // --- SSAA resolve pipeline ---
         let ssaa_resolve_bgl =
@@ -1726,7 +1730,8 @@ impl DeviceResources {
             .expect("ensure_hdr_shared not called");
         let fxaa_sampler = self
             .post
-            .fxaa_sampler
+            .fxaa
+            .sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let oit_sampler = self
@@ -1797,7 +1802,8 @@ impl DeviceResources {
             .expect("ensure_hdr_shared not called");
         let fxaa_bgl = self
             .post
-            .fxaa_bgl
+            .fxaa
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let oit_composite_bgl = self
@@ -2411,8 +2417,11 @@ impl DeviceResources {
                 bg: dof_bg,
                 uniform_buf: dof_uniform_buf,
             },
-            fxaa_texture: fxaa_tex,
-            fxaa_view,
+            fxaa: producer::FxaaViewport {
+                texture: fxaa_tex,
+                view: fxaa_view,
+                bind_group: fxaa_bind_group,
+            },
             ssaa_colour_texture,
             ssaa_colour_view,
             ssaa_depth_texture,
@@ -2442,7 +2451,6 @@ impl DeviceResources {
             outline_edge_uniform_buf,
             outline_composite_bind_group,
             tone_map_bind_group,
-            fxaa_bind_group,
             tone_map_uniform_buf,
             exposure_state_buf,
             exposure_histogram_buf,

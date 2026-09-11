@@ -31,11 +31,22 @@ pub(crate) struct LicAdvectUniform {
     pub(crate) vp_height: f32,
 }
 
-/// Uniform for the LIC surface pass (model matrix per object, 64 bytes).
+/// Highest per-item LIC strength the vector texture's blue channel can
+/// encode: the surface pass writes `strength / LIC_STRENGTH_ENCODE_MAX` and
+/// the advect pass decodes it back, so per-item strength survives the
+/// Rgba8Unorm carrier. Strengths above this clamp.
+pub(crate) const LIC_STRENGTH_ENCODE_MAX: f32 = 4.0;
+
+/// Uniform for the LIC surface pass (per object, 80 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct LicObjectUniform {
     pub(crate) model: [[f32; 4]; 4],
+    /// The item's `SurfaceLICConfig::strength`, pre-normalised by
+    /// `LIC_STRENGTH_ENCODE_MAX` for the vector texture's blue channel, so
+    /// the advect output carries per-item strength per pixel.
+    pub(crate) strength: f32,
+    pub(crate) _pad: [f32; 3],
 }
 
 /// Per-frame GPU data for one Surface LIC item, created in `prepare()`.

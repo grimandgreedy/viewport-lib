@@ -516,7 +516,16 @@ impl ViewportRenderer {
                             if let Some(bgl) = &resources.lic.surface_bgl {
                                 use crate::resources::LicObjectUniform;
                                 let model = item.model;
-                                let obj_data = LicObjectUniform { model };
+                                let obj_data = LicObjectUniform {
+                                    model,
+                                    // Pre-normalised for the vector texture's
+                                    // 8-bit blue channel; the advect pass
+                                    // decodes by the same constant.
+                                    strength: (lic.config.strength.max(0.0)
+                                        / crate::resources::LIC_STRENGTH_ENCODE_MAX)
+                                        .min(1.0),
+                                    _pad: [0.0; 3],
+                                };
                                 let obj_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                                     label: Some("lic_object_uniform"),
                                     size: std::mem::size_of::<LicObjectUniform>() as u64,
@@ -546,10 +555,14 @@ impl ViewportRenderer {
                         }
                     }
                 }
-                // Write LicAdvectUniform to the per-viewport buffer.
-                if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index]
-                    .hdr
-                    .as_ref()
+                // Write LicAdvectUniform to the per-viewport buffer. The slot
+                // may not exist yet on the very first frame (it is created at
+                // render time); the advect uniform is then written next frame
+                // and the advect output stays neutral meanwhile.
+                if let Some(hdr) = self
+                    .viewport_slots
+                    .get(frame.camera.viewport_index)
+                    .and_then(|s| s.hdr.as_ref())
                 {
                     if let Some((_, first_lic)) = lic_scene_items.first() {
                         let [vw, vh] = hdr.scene_size;

@@ -14,7 +14,7 @@ struct ToneMapUniform {
     near_plane:              f32,
     far_plane:               f32,
     lic_enabled:             u32,
-    lic_strength:            f32,
+    _pad_lic:                f32,
     foreground_enabled:      u32,
     vignette_amount:         f32,
     vignette_radius:         f32,
@@ -241,12 +241,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = colour * (1.0 - edl_factor);
     }
 
-    // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no change).
-    // A surface effect, so it only applies where geometry was shaded.
+    // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no
+    // change). Per-item strength is baked into the advect output, so the
+    // composite applies a fixed 2x mapping. A surface effect, so it only
+    // applies where geometry was shaded.
     if !is_background && !covered && params.lic_enabled != 0u {
         let lic_val = textureSampleLevel(lic_texture, hdr_sampler, in.uv, 0.0).r;
-        let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
-        colour = colour * max(0.0, lic_factor);
+        colour = colour * max(0.0, lic_val * 2.0);
     }
 
     // Pre-tone-mapping exposure (from the exposure state buffer).
