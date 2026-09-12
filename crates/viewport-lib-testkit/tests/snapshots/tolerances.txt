@@ -20,4 +20,8 @@
 # populate this file from the probe's report for any scene that is not
 # bit-identical there.
 
-many_objects 1 40   # instanced-path 1-LSB float; probe floor on Apple M4 / Metal
+# GPU-driven culling claims instance and draw-list slots in arrival order, so
+# submission order (and with it a handful of 1-LSB pixels) varies frame to
+# frame. Measured floor on Apple M4 / Metal; remove this line if the compaction
+# is ever made deterministic, and the scene goes back to an exact golden.
+many_objects 1 40
