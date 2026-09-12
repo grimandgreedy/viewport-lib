@@ -104,7 +104,10 @@ struct Object {
     alpha_cutoff: f32,                     // offset 244
     has_metallic_roughness_tex: u32,       // offset 248
     has_emissive_tex: u32,                 // offset 252
-    uv_transform: vec4<f32>,               // offset 256 : (offset.xy, scale.xy)
+    material_id: u32,                      // offset 256 : index into material_gpu_buf
+    uv1_base: u32,                         // offset 260 : mesh base_vertex for the uv1 buffer
+    _pad_uv1: u32,                         // offset 264
+    _pad_uv2: u32,                         // offset 268
     deform_flags: u32,                     // offset 272 : bit i set when deformer slot i is active for this draw
     normal_strength: f32,                  // offset 276 : scales tangent normal XY (also aligns next vec2)
     ao_range: vec2<f32>,                   // offset 280 : (min, max) remap of AO map R sample
@@ -125,6 +128,64 @@ struct Object {
     // The vec4 higher up keeps the struct 16-aligned, so WGSL rounds its size up
     // to 368 to match the Rust ObjectUniform (ignore_clip + a trailing u32 pad).
 };
+
+// Per-material UV transform block (group 0, binding 21). One entry per distinct
+// transform this frame; material_id 0 is identity. Slot order: 0 albedo, 1
+// normal, 2 AO, 3 metallic-roughness, 4 emissive.
+struct TexTransform {
+    offset_scale: vec4<f32>,   // (offset.x, offset.y, scale.x, scale.y)
+    rot_tc: vec4<f32>,         // (rotation_radians, f32(uv_set), 0, 0)
+}
+struct MaterialGpu {
+    xf: array<TexTransform, 5>,
+}
+@group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
+
+// A transformed UV plus its screen-space derivatives, for textureSampleGrad.
+struct SlotUv {
+    uv: vec2<f32>,
+    ddx: vec2<f32>,
+    ddy: vec2<f32>,
+}
+
+// Apply a material texture slot's UV transform:
+//   uv' = rotate((mesh_uv * scale + offset) - 0.5, rotation) + 0.5
+// Scale and offset apply first (so rotation 0 reproduces the prior behaviour),
+// then rotation about the texture centre. The derivatives are rotated by the
+// same angle, or mip selection is wrong on rotated tiling.
+//
+// The slot's `rot_tc.y` selects which vertex UV set feeds the transform: 0 = the
+// interleaved uv0, 1 = the uv1 stream (glTF `TEXCOORD_1`). Both sets and their
+// derivatives are passed so the choice stays per-slot.
+fn material_slot_uv(
+    mid: u32,
+    slot: u32,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    ddx0: vec2<f32>,
+    ddy0: vec2<f32>,
+    ddx1: vec2<f32>,
+    ddy1: vec2<f32>,
+) -> SlotUv {
+    let xf = material_gpu_buf[mid].xf[slot];
+    let use1 = xf.rot_tc.y > 0.5;
+    let uv = select(uv0, uv1, use1);
+    let duvdx = select(ddx0, ddx1, use1);
+    let duvdy = select(ddy0, ddy1, use1);
+    let s = xf.offset_scale.zw;
+    let o = xf.offset_scale.xy;
+    let rot = xf.rot_tc.x;
+    let c = cos(rot);
+    let sn = sin(rot);
+    let base = uv * s + o - vec2<f32>(0.5, 0.5);
+    let dx = duvdx * s;
+    let dy = duvdy * s;
+    var r: SlotUv;
+    r.uv = vec2<f32>(c * base.x - sn * base.y, sn * base.x + c * base.y) + vec2<f32>(0.5, 0.5);
+    r.ddx = vec2<f32>(c * dx.x - sn * dx.y, sn * dx.x + c * dx.y);
+    r.ddy = vec2<f32>(c * dy.x - sn * dy.y, sn * dy.x + c * dy.y);
+    return r;
+}
 
 struct ClipVolumeEntry {
     volume_type: u32,
@@ -207,6 +268,12 @@ var<private> object: Object;
 // direction (world space), w = directionality. Gated on object.lightmap_directional;
 // the 1x1 fallback is bound (and ignored) for flat lightmaps.
 @group(1) @binding(18) var lightmap_dir_tex: texture_2d_array<f32>;
+// Second UV set (glTF TEXCOORD_1), one vec2 per vertex, parallel to the vertex
+// buffer in the shared slab. Indexed by `object.uv1_base + vertex_index` (the
+// per-object draw binds a mesh sub-slice, so the base recovers the global index
+// into this whole-chunk buffer). The one-entry zero fallback is bound for meshes
+// without a second UV set; the index is clamped so every read stays in range.
+@group(1) @binding(19) var<storage, read> uv1_buf: array<vec2<f32>>;
 
 // Directional-lightmap response: scale the baked radiance by how the shading
 // normal (post normal-map) faces the baked dominant light, relative to the
@@ -249,6 +316,9 @@ struct VertexOut {
     // Index of this draw's element in the group 1 binding 0 objects[] array,
     // carried to the fragment stage so it re-selects the same object.
     @location(11) @interpolate(flat) obj_idx: u32,
+    // Second UV set (glTF TEXCOORD_1), interpolated for texture slots whose
+    // transform selects uv_set = 1. vec2(0.0) for meshes without a second set.
+    @location(12) uv1: vec2<f32>,
     // Plugin vertex-attribute varying: the composer adds a @location(8)
     // member here for hooks that read the per-vertex extension attribute.
     // <viewport-shade-slot:vertex-out>
@@ -315,6 +385,13 @@ fn vs_main(in: VertexIn, @builtin(instance_index) instance_index: u32) -> Vertex
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    // Second UV set: read from the parallel uv1 stream. The per-object draw binds
+    // a mesh sub-slice, so the vertex index is mesh-local; add the mesh base to
+    // index the whole-chunk buffer. The index is clamped so the zero fallback
+    // (one entry, bound for meshes without a second set) stays in range.
+    let uv1_len = arrayLength(&uv1_buf);
+    let uv1_idx = min(object.uv1_base + in.vertex_index, max(uv1_len, 1u) - 1u);
+    out.uv1 = uv1_buf[uv1_idx];
     // Read scalar attribute value for this vertex, guarded by has_attribute and buffer length.
     let buf_len = arrayLength(&scalar_buffer);
     let idx = in.vertex_index;
@@ -519,6 +596,8 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // (browsers). These feed the explicit-gradient sampling used from here on.
     let d_uv_dx = dpdx(in.uv);
     let d_uv_dy = dpdy(in.uv);
+    let d_uv1_dx = dpdx(in.uv1);
+    let d_uv1_dy = dpdy(in.uv1);
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
     let d_wn_dx = dpdx(in.world_normal);
@@ -543,14 +622,24 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         return out;
     }
 
-    // Per-material UV transform: atlas region / tiling selection. Identity
-    // (offset 0,0 scale 1,1) passes the authored UV through unchanged.
-    let mat_uv = in.uv * object.uv_transform.zw + object.uv_transform.xy;
+    // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv
+    // and, under a shared transform, the MR/emissive samples). Identity
+    // material_id 0 passes the authored UV through unchanged.
+    let s0 = material_slot_uv(
+        object.material_id, 0u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let mat_uv = s0.uv;
     out.mat_uv = mat_uv;
-    // Gradient of the transformed UV: the transform scale/offset is a per-object
-    // uniform, so d(mat_uv) = d(in.uv) * scale, exact and valid in any control flow.
-    let muv_ddx = d_uv_dx * object.uv_transform.zw;
-    let muv_ddy = d_uv_dy * object.uv_transform.zw;
+    let muv_ddx = s0.ddx;
+    let muv_ddy = s0.ddy;
+    // Normal (slot 1) and AO (slot 2) can carry their own transform override,
+    // including their own uv_set.
+    let s_normal = material_slot_uv(
+        object.material_id, 1u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let s_ao = material_slot_uv(
+        object.material_id, 2u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
 
     // Sample texture if one is assigned; fallback texture is 1x1 white (neutral multiply).
     var tex_colour = vec4<f32>(1.0);
@@ -620,7 +709,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if object.has_normal_map != 0u {
-        let nm_sample = textureSampleGrad(normal_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).rgb;
+        let nm_sample = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).rgb;
         var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
         ts_unpacked.x = ts_unpacked.x * object.normal_strength;
         ts_unpacked.y = ts_unpacked.y * object.normal_strength;
@@ -674,7 +763,7 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
     // before it drives shading; identity `(0, 1)` is a no-op.
     var ao_factor = 1.0;
     if object.has_ao_map != 0u {
-        let raw_ao = textureSampleGrad(ao_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).r;
+        let raw_ao = textureSampleGrad(ao_map, obj_sampler, s_ao.uv, s_ao.ddx, s_ao.ddy).r;
         ao_factor = mix(object.ao_range.x, object.ao_range.y, raw_ao);
     }
 

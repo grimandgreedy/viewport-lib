@@ -205,7 +205,7 @@ pub use scene::aabb::Aabb;
 pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
-    ParamVisMode, PatternConfig, ShadingModel,
+    ParamVisMode, PatternConfig, ShadingModel, TextureSlot, UvTransform,
 };
 pub use scene::scene::{
     DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,

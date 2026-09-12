@@ -33,6 +33,9 @@ fn main() {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None,
         force_fallback_adapter: false,
+        // wgpu 30 added this field to the adapter-options struct.
+        #[cfg(wgpu30)]
+        apply_limit_buckets: false,
     }))
     .expect("no wgpu adapter");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {

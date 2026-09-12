@@ -156,7 +156,6 @@ pub(super) struct CommonMaterial {
     pub(super) unlit: u32,
     pub(super) receive_shadows: u32,
     pub(super) use_flat: u32,
-    pub(super) uv_transform: [f32; 4],
     pub(super) ao_range: [f32; 2],
     pub(super) alpha_cutoff: f32,
     pub(super) alpha_flag: u32,
@@ -186,7 +185,6 @@ pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
         unlit: if item.settings.unlit { 1 } else { 0 },
         receive_shadows: if item.settings.receive_shadows { 1 } else { 0 },
         use_flat: if m.is_flat() { 1 } else { 0 },
-        uv_transform: [m.uv_offset[0], m.uv_offset[1], m.uv_scale[0], m.uv_scale[1]],
         ao_range: m.ao_range,
         alpha_cutoff: match m.alpha_mode {
             crate::scene::material::AlphaMode::Mask(c) => c,

@@ -141,8 +141,11 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
+                    // Lights are read only in the fragment stage. Kept FRAGMENT-only
+                    // so it does not consume one of Metal's per-stage vertex buffer
+                    // slots (the per-object mesh pipeline binds many vertex-stage
+                    // storage buffers and is slot-sensitive).
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -176,8 +179,9 @@ impl DeviceResources {
                 // Binding 6: clip volume uniform (box/sphere/plane extended clip region).
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 6,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
+                    // Clip-volume tests run only in the fragment stage (discard), so
+                    // keep this FRAGMENT-only to free a Metal vertex buffer slot.
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -341,6 +345,19 @@ impl DeviceResources {
                 // light_probe_index is the volume sentinel.
                 crate::gpu::BindGroupLayoutEntry {
                     binding: 20,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 21: per-material UV transform buffer (FRAGMENT,
+                // read-only). Array of `MaterialGpu` transform blocks, indexed by
+                // the per-draw `material_id`. Scene-global, so it lives in group 0.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 21,
                     visibility: crate::gpu::ShaderStages::FRAGMENT,
                     ty: crate::gpu::BindingType::Buffer {
                         ty: crate::gpu::BufferBindingType::Storage { read_only: true },
@@ -581,6 +598,21 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 19: second UV set (uv1) storage stream (VERTEX). The
+                // per-chunk parallel buffer for meshes with `MeshData::uvs1`, or
+                // the one-entry zero fallback otherwise. A material texture slot
+                // samples it instead of the interleaved uv0 when its
+                // `UvTransform::uv_set` is 1.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 19,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -700,6 +732,17 @@ impl DeviceResources {
             label: Some("light_storage_buf"),
             size: (std::mem::size_of::<crate::resources::SingleLightUniform>()
                 * crate::resources::MAX_SCENE_LIGHTS) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Per-material UV transform buffer (group 0, binding 13). Fixed capacity
+        // so the handle is stable across frames; the camera bind group binds it
+        // once and never rebuilds for material churn.
+        let material_gpu_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("material_gpu_buf"),
+            size: (std::mem::size_of::<crate::resources::material_gpu::MaterialGpu>()
+                * crate::resources::material_gpu::MATERIAL_GPU_CAPACITY) as u64,
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1023,6 +1066,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 20,
                     resource: light_probe_volume_fallback.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 21,
+                    resource: material_gpu_buf.as_entire_binding(),
                 },
             ],
         });
@@ -1928,6 +1975,19 @@ impl DeviceResources {
         crate::resources::builders::write_mapped(fallback_extension_attr_buf.slice(..), &[0u8; 16]);
         fallback_extension_attr_buf.unmap();
 
+        // Zero uv1 stream bound at the mesh bind group's second-UV-set slot for
+        // meshes without a second UV set (`MeshData::uvs1 == None`). A one-entry
+        // `vec2<f32>`; the shader clamps any index to 0, so the sample reads
+        // `vec2(0.0)`.
+        let fallback_uv1_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("fallback_uv1_buf"),
+            size: 8, // one vec2<f32>
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        crate::resources::builders::write_mapped(fallback_uv1_buf.slice(..), &[0u8; 8]);
+        fallback_uv1_buf.unmap();
+
         // ------------------------------------------------------------------
         // Hardcoded unit cube mesh (test scene object)
         // Created here : after fallback textures : so the combined bind group
@@ -1957,6 +2017,7 @@ impl DeviceResources {
             &fallback_extension_attr_buf,
             &fallback_metallic_roughness_texture_view,
             &fallback_emissive_texture_view,
+            &fallback_uv1_buf,
             &cube_verts,
             &cube_indices,
         );
@@ -2391,6 +2452,7 @@ impl DeviceResources {
                 fallback_position_override_buf,
                 fallback_normal_override_buf,
                 fallback_extension_attr_buf,
+                fallback_uv1_buf,
                 builtin_colourmap_ids: None,
                 colourmaps_initialized: false,
             },
@@ -2477,6 +2539,8 @@ impl DeviceResources {
             ),
             backdrop_blur: crate::resources::overlay::overlay_shape::BackdropBlurResources::default(
             ),
+            material_gpu_buf,
+            material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: 0,
             resource_free_epoch: 0,

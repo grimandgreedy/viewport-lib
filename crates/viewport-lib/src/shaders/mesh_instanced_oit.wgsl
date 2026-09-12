@@ -66,7 +66,10 @@ struct InstanceData {
     receive_shadows: u32,
     use_flat: u32,
     normal_strength: f32,
-    uv_transform: vec4<f32>,
+    material_id: u32,                     // offset 144 : index into material_gpu_buf
+    _pad_uv0: u32,                        // offset 148
+    _pad_uv1: u32,                        // offset 152
+    _pad_uv2: u32,                        // offset 156
     ao_range: vec2<f32>,                  // (min, max) remap of AO map R sample
     alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
     alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
@@ -77,6 +80,55 @@ struct InstanceData {
     ignore_clip: u32,                     // 1 = exempt from clip planes/volumes
     _pad_lp: u32,
 };
+
+// Per-material UV transform block (group 0, binding 21). Slot order: 0 albedo,
+// 1 normal, 2 AO, 3 metallic-roughness, 4 emissive. material_id 0 is identity.
+struct TexTransform {
+    offset_scale: vec4<f32>,   // (offset.x, offset.y, scale.x, scale.y)
+    rot_tc: vec4<f32>,         // (rotation_radians, f32(uv_set), 0, 0)
+}
+struct MaterialGpu {
+    xf: array<TexTransform, 5>,
+}
+@group(0) @binding(21) var<storage, read> material_gpu_buf: array<MaterialGpu>;
+
+struct SlotUv {
+    uv: vec2<f32>,
+    ddx: vec2<f32>,
+    ddy: vec2<f32>,
+}
+
+// See mesh.wgsl:material_slot_uv. uv' = rotate((uv*scale+offset)-0.5, rot)+0.5,
+// derivatives rotated by the same angle. rot_tc.y picks uv0 (0) or uv1 (1).
+fn material_slot_uv(
+    mid: u32,
+    slot: u32,
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    ddx0: vec2<f32>,
+    ddy0: vec2<f32>,
+    ddx1: vec2<f32>,
+    ddy1: vec2<f32>,
+) -> SlotUv {
+    let xf = material_gpu_buf[mid].xf[slot];
+    let use1 = xf.rot_tc.y > 0.5;
+    let uv = select(uv0, uv1, use1);
+    let duvdx = select(ddx0, ddx1, use1);
+    let duvdy = select(ddy0, ddy1, use1);
+    let s = xf.offset_scale.zw;
+    let o = xf.offset_scale.xy;
+    let rot = xf.rot_tc.x;
+    let c = cos(rot);
+    let sn = sin(rot);
+    let base = uv * s + o - vec2<f32>(0.5, 0.5);
+    let dx = duvdx * s;
+    let dy = duvdy * s;
+    var r: SlotUv;
+    r.uv = vec2<f32>(c * base.x - sn * base.y, sn * base.x + c * base.y) + vec2<f32>(0.5, 0.5);
+    r.ddx = vec2<f32>(c * dx.x - sn * dx.y, sn * dx.x + c * dx.y);
+    r.ddy = vec2<f32>(c * dy.x - sn * dy.y, sn * dy.x + c * dy.y);
+    return r;
+}
 
 struct ClipVolumeEntry {
     volume_type: u32,
@@ -124,6 +176,9 @@ struct ClipVolumeUB {
 @group(1) @binding(3) var                normal_map:         texture_2d<f32>;
 @group(1) @binding(4) var                ao_map:             texture_2d<f32>;
 @group(1) @binding(5) var<storage, read> visibility_indices: array<u32>;
+// Second UV set (glTF TEXCOORD_1) for this batch's vertex-slab chunk. See
+// mesh_instanced.wgsl; `vertex_index` is chunk-global, indexing this directly.
+@group(1) @binding(6) var<storage, read> uv1_buf: array<vec2<f32>>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -142,12 +197,21 @@ struct VertexOut {
     @location(3) uv:             vec2<f32>,
     @location(4) world_tangent:  vec4<f32>,
     @location(5) @interpolate(flat) instance_idx: u32,
+    // Second UV set (glTF TEXCOORD_1); vec2(0.0) for meshes without one.
+    @location(6) uv1: vec2<f32>,
 };
 
 struct OitOut {
     @location(0) accum:  vec4<f32>,
     @location(1) reveal: f32,
 };
+
+// Second UV set for the current vertex (chunk-global index, clamped). See
+// mesh_instanced.wgsl:load_uv1.
+fn load_uv1(vertex_index: u32) -> vec2<f32> {
+    let n = arrayLength(&uv1_buf);
+    return uv1_buf[min(vertex_index, max(n, 1u) - 1u)];
+}
 
 @vertex
 fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
@@ -172,6 +236,7 @@ fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    out.uv1 = load_uv1(in.vertex_index);
     out.instance_idx = idx;
     return out;
 }
@@ -202,6 +267,7 @@ fn vs_main_cull(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
     out.world_normal = dv.normal;
     out.world_tangent = vec4<f32>(normalize(model3 * in.tangent.xyz), in.tangent.w);
     out.uv = in.uv;
+    out.uv1 = load_uv1(in.vertex_index);
     out.instance_idx = actual_idx;
     return out;
 }
@@ -326,6 +392,8 @@ fn compute_surface(in: VertexOut) -> Surface {
     // rejected by strict WGSL validators; these feed explicit-gradient sampling.
     let d_uv_dx = dpdx(in.uv);
     let d_uv_dy = dpdy(in.uv);
+    let d_uv1_dx = dpdx(in.uv1);
+    let d_uv1_dy = dpdy(in.uv1);
     let d_wp_dx = dpdx(in.world_pos);
     let d_wp_dy = dpdy(in.world_pos);
 
@@ -337,10 +405,20 @@ fn compute_surface(in: VertexOut) -> Surface {
         if !clip_volume_test(in.world_pos) { discard; }
     }
 
-    let mat_uv = in.uv * inst.uv_transform.zw + inst.uv_transform.xy;
+    // Per-material UV transform (slot 0 = albedo; also feeds the plugin surf.uv).
+    let s0 = material_slot_uv(
+        inst.material_id, 0u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let mat_uv = s0.uv;
     out.mat_uv = mat_uv;
-    let muv_ddx = d_uv_dx * inst.uv_transform.zw;
-    let muv_ddy = d_uv_dy * inst.uv_transform.zw;
+    let muv_ddx = s0.ddx;
+    let muv_ddy = s0.ddy;
+    let s_normal = material_slot_uv(
+        inst.material_id, 1u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
+    let s_ao = material_slot_uv(
+        inst.material_id, 2u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
+    );
 
     var tex_colour = vec4<f32>(1.0);
     if inst.has_texture == 1u { tex_colour = textureSampleGrad(obj_texture, obj_sampler, mat_uv, muv_ddx, muv_ddy); }
@@ -369,7 +447,7 @@ fn compute_surface(in: VertexOut) -> Surface {
         if dot(Nf, in.world_normal) < 0.0 { Nf = -Nf; }
         N = Nf;
     } else if inst.has_normal_map != 0u {
-        let nm_sample = textureSampleGrad(normal_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).rgb;
+        let nm_sample = textureSampleGrad(normal_map, obj_sampler, s_normal.uv, s_normal.ddx, s_normal.ddy).rgb;
         var ts_unpacked = nm_sample * 2.0 - vec3<f32>(1.0);
         ts_unpacked.x = ts_unpacked.x * inst.normal_strength;
         ts_unpacked.y = ts_unpacked.y * inst.normal_strength;
@@ -386,7 +464,7 @@ fn compute_surface(in: VertexOut) -> Surface {
 
     var ao_factor = 1.0;
     if inst.has_ao_map != 0u {
-        let raw_ao = textureSampleGrad(ao_map, obj_sampler, mat_uv, muv_ddx, muv_ddy).r;
+        let raw_ao = textureSampleGrad(ao_map, obj_sampler, s_ao.uv, s_ao.ddx, s_ao.ddy).r;
         ao_factor = mix(inst.ao_range.x, inst.ao_range.y, raw_ao);
     }
 

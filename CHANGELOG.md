@@ -1,11 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+- **Per-texture UV transforms with rotation** - `Material` gains `uv_rotation` (a shared rotation about the texture centre) and `texture_transforms`, an optional per-map `UvTransform` of offset, scale, rotation, and UV-set index matching glTF `KHR_texture_transform`, set with `Material::with_uv_rotation` or `with_texture_transform(TextureSlot::Normal, ..)`. Rotation `0` and an unset slot reproduce the prior `uv_scale` / `uv_offset` behaviour exactly, so existing materials are unchanged.
+- **Second UV set (`TEXCOORD_1`)** - `MeshData` gains `uvs1: Option<Vec<[f32; 2]>>`, sampled by any texture slot whose `UvTransform::uv_set` is `1`, so a lightmap or detail unwrap rides its own unwrap per texture; a mesh without it pays nothing and is unchanged.
+
 ## [0.22.0]
 
 This release adopts an sRGB colour-input contract (the colour you pass is now rendered faithfully), completes the pipeline-variant rework that closes a run of shading and shadow bugs, gives sprites and ribbons shadows and true order-independent transparency, and adds a wgpu 30 leg. Light colours are the one exception to the contract: `LightSource.colour`, `sky_colour`, and `ground_colour` stay raw linear arrays, since they scale radiance rather than describe a surface.
 
 ### Breaking
-- **Direct-colour fields are now `Colour`** - `viewport_lib::Colour` carries a colour's space and stores it linear, replacing the raw array on `Material.base_colour` / `emissive`, `nan_colour`, every render-item and overlay colour, ground plane, `Layer`, frame background/grid/outline/xray, gizmo widgets, implicit primitives, the `DebugDraw` API, and the path tracer's `RtMaterial`. Build from a picker value with `Colour::rgb` / `hex` / `srgb` / `hsl`, from a linear one with `Colour::linear_rgb` / `linear`, and read back with `to_linear_rgb()` / `to_linear_rgba()`; a bare `[f32; N]` still compiles and is read as linear.
+- **Direct-colour fields are now `Colour`** - `viewport_lib::Colour` carries a colour's space and stores it linear, replacing the raw array on `Material.base_colour` / `emissive`, `nan_colour`.
 - **Colourmaps render correctly** - built-in colourmaps upload as `Rgba8UnormSrgb` and decode on sample, so every colourmapped image is slightly brighter and more perceptually uniform.
 - **`FrameStats::missing_pipeline_variants` removed** - every pass now has a pipeline for every axis it draws, so the counter was always zero.
 
