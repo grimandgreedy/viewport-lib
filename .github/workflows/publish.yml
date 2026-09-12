@@ -69,6 +69,13 @@ jobs:
           publish_if_new viewport-lib          crates/viewport-lib/Cargo.toml
           publish_if_new viewport-lib-testkit  crates/viewport-lib-testkit/Cargo.toml
 
+      # `cargo publish` unpacks each crate into `target/package/<name>-<version>/`
+      # and verifies it there. That is a source tree, not a build profile, so the
+      # cache action's post-job clean walks errors, expecting cargo's layout.
+      - name: Remove publish scratch directory
+        if: always()
+        run: rm -rf target/package
+
       - name: Get changelog entry
         id: changelog
         run: |
