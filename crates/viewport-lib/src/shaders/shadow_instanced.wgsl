@@ -12,34 +12,29 @@ struct Light {
 // and the Rust `InstanceData` in `resources/types.rs`. The shadow vertex
 // stage only reads `model`, but the storage-buffer stride must agree with
 // the CPU upload size so subsequent instances align correctly.
+// Matches the 144-byte InstanceData in mesh_instanced.wgsl. Only model,
+// has_texture, alpha_cutoff, and alpha_flag are read here (alpha-tested shadows);
+// the shading scalars live in material_gpu_buf, which the shadow pass does not
+// bind, so alpha_cutoff / alpha_flag / has_texture stay per-instance.
 struct InstanceData {
-    model: mat4x4<f32>,
-    colour: vec4<f32>,
-    selected: u32,
-    wireframe: u32,
-    ambient: f32,
-    diffuse: f32,
-    specular: f32,
-    shininess: f32,
-    has_texture: u32,
-    use_pbr: u32,
-    metallic: f32,
-    roughness: f32,
-    has_normal_map: u32,
-    has_ao_map: u32,
-    unlit: u32,
-    receive_shadows: u32,
-    use_flat: u32,
-    normal_strength: f32,
-    uv_transform: vec4<f32>,
-    ao_range: vec2<f32>,
-    alpha_cutoff: f32,                    // Mask cutoff (albedo alpha threshold)
-    alpha_flag: u32,                      // 1 = alpha-test enabled, 0 = off
-    emissive: vec3<f32>,                  // unused here; keeps stride matching the mesh instanced buffer
-    _pad_emissive: f32,
-    has_light_probe: u32,                 // unused here; keeps stride matching the mesh instanced buffer
-    light_probe_index: u32,
-    _pad_lp: vec2<u32>,
+    model: mat4x4<f32>,                   // offset 0
+    colour: vec4<f32>,                    // offset 64
+    selected: u32,                        // offset 80
+    wireframe: u32,                       // offset 84
+    has_texture: u32,                     // offset 88
+    has_normal_map: u32,                  // offset 92
+    has_ao_map: u32,                      // offset 96
+    unlit: u32,                           // offset 100
+    receive_shadows: u32,                 // offset 104
+    material_id: u32,                     // offset 108
+    alpha_cutoff: f32,                    // offset 112
+    alpha_flag: u32,                      // offset 116
+    has_light_probe: u32,                 // offset 120
+    light_probe_index: u32,               // offset 124
+    ignore_clip: u32,                     // offset 128
+    _pad0: u32,                           // offset 132
+    _pad1: u32,                           // offset 136
+    _pad2: u32,                           // offset 140
 };
 
 @group(0) @binding(0) var<uniform> light: Light;
@@ -82,7 +77,7 @@ fn vs_cutout(
     let inst = instances[idx];
     var out: CutoutOut;
     out.clip_pos = light.view_proj * inst.model * vec4<f32>(position, 1.0);
-    out.uv = uv * inst.uv_transform.zw + inst.uv_transform.xy;
+    out.uv = uv;  // shadow alpha-test uses raw UV; the material UV transform lives in material_gpu_buf, not bound here
     out.inst_idx = idx;
     return out;
 }
@@ -97,7 +92,7 @@ fn vs_cutout_cull(
     let inst = instances[real_idx];
     var out: CutoutOut;
     out.clip_pos = light.view_proj * inst.model * vec4<f32>(position, 1.0);
-    out.uv = uv * inst.uv_transform.zw + inst.uv_transform.xy;
+    out.uv = uv;  // shadow alpha-test uses raw UV; the material UV transform lives in material_gpu_buf, not bound here
     out.inst_idx = real_idx;
     return out;
 }

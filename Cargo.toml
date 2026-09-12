@@ -5,6 +5,7 @@ members = [
     "crates/viewport-lib-types",
     "crates/viewport-lib-geometry",
     "crates/viewport-lib-input",
+    "crates/viewport-lib-post-effects",
 ]
 # The testkit lives in `crates/` and has its own `[workspace]` table (it is a
 # `publish = false` crate, not a member, so `cargo publish -p viewport-lib` stays

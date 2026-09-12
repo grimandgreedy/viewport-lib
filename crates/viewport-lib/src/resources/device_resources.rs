@@ -23,29 +23,11 @@ pub(crate) struct ViewportHdrState {
     pub hdr_depth_only_view: crate::gpu::TextureView,
     pub hdr_stencil_only_view: crate::gpu::TextureView,
 
-    // --- Bloom ---
-    pub bloom_threshold_texture: crate::gpu::Texture,
-    pub bloom_threshold_view: crate::gpu::TextureView,
-    pub bloom_ping_texture: crate::gpu::Texture,
-    pub bloom_ping_view: crate::gpu::TextureView,
-    pub bloom_pong_texture: crate::gpu::Texture,
-    pub bloom_pong_view: crate::gpu::TextureView,
-
-    // --- SSAO ---
-    pub ssao_texture: crate::gpu::Texture,
-    pub ssao_view: crate::gpu::TextureView,
-    pub ssao_blur_texture: crate::gpu::Texture,
-    pub ssao_blur_view: crate::gpu::TextureView,
-
-    // --- Depth of field ---
-    pub dof_texture: crate::gpu::Texture,
-    pub dof_view: crate::gpu::TextureView,
-    pub dof_bind_group: crate::gpu::BindGroup,
-    pub dof_uniform_buf: crate::gpu::Buffer,
-
-    // --- Contact shadow ---
-    pub contact_shadow_texture: crate::gpu::Texture,
-    pub contact_shadow_view: crate::gpu::TextureView,
+    // --- Composite-input producers (targets, bind groups, uniforms) ---
+    pub bloom: crate::resources::postprocess::producer::BloomViewport,
+    pub ssao: crate::resources::postprocess::producer::SsaoViewport,
+    pub contact_shadow: crate::resources::postprocess::producer::ContactShadowViewport,
+    pub dof: crate::resources::postprocess::producer::DofViewport,
 
     // --- Surface LIC ---
     /// Encodes screen-space flow vector per surface pixel (Rgba8Unorm, viewport-sized).
@@ -63,9 +45,8 @@ pub(crate) struct ViewportHdrState {
     /// Uniform buffer for LicAdvectUniform (steps, step_size, viewport dims).
     pub lic_uniform_buf: crate::gpu::Buffer,
 
-    // --- FXAA ---
-    pub fxaa_texture: crate::gpu::Texture,
-    pub fxaa_view: crate::gpu::TextureView,
+    // --- FXAA (post-composite stage) ---
+    pub fxaa: crate::resources::postprocess::producer::FxaaViewport,
 
     // --- SSAA (allocated when ssaa_factor > 1) ---
     /// Supersampled colour render target. `None` when ssaa_factor == 1.
@@ -122,28 +103,9 @@ pub(crate) struct ViewportHdrState {
 
     // --- Bind groups (rebuilt when viewport dimensions change) ---
     pub tone_map_bind_group: crate::gpu::BindGroup,
-    pub bloom_threshold_bg: crate::gpu::BindGroup,
-    /// H-blur bind group that reads from bloom_threshold (pass 0 only).
-    pub bloom_blur_h_bg: crate::gpu::BindGroup,
-    /// V-blur bind group that reads from bloom_ping.
-    pub bloom_blur_v_bg: crate::gpu::BindGroup,
-    /// H-blur bind group that reads from bloom_pong (passes 1+).
-    pub bloom_blur_h_pong_bg: crate::gpu::BindGroup,
-    pub ssao_bg: crate::gpu::BindGroup,
-    pub ssao_blur_bg: crate::gpu::BindGroup,
-    pub dof_bg: crate::gpu::BindGroup,
-    pub contact_shadow_bg: crate::gpu::BindGroup,
-    pub fxaa_bind_group: crate::gpu::BindGroup,
 
     // --- Per-viewport uniform buffers ---
     pub tone_map_uniform_buf: crate::gpu::Buffer,
-    pub bloom_uniform_buf: crate::gpu::Buffer,
-    /// Constant H-blur uniform buffer (horizontal=1, written once at creation).
-    pub bloom_h_uniform_buf: crate::gpu::Buffer,
-    /// Constant V-blur uniform buffer (horizontal=0, written once at creation).
-    pub bloom_v_uniform_buf: crate::gpu::Buffer,
-    pub ssao_uniform_buf: crate::gpu::Buffer,
-    pub contact_shadow_uniform_buf: crate::gpu::Buffer,
 
     // --- Auto-exposure (per-viewport) ---
     /// 16-byte `ExposureState`: the linear exposure multiplier the tone map
@@ -833,6 +795,17 @@ pub struct DeviceResources {
     /// `material_id` indices into `material_gpu_buf`. Reset at each `prepare()`.
     pub(crate) material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder,
 
+    // --- Per-instance custom-data buffer (group 0, binding 22) ---
+    /// Scene-global buffer of per-instance custom-data blocks
+    /// (`InstanceCustomData`, one per distinct payload this frame). Fixed
+    /// capacity, so its handle is stable and the camera bind group never rebuilds
+    /// for it.
+    pub(crate) instance_custom_data_buf: crate::gpu::Buffer,
+    /// Per-frame interner that deduplicates custom-data payloads and hands out
+    /// `custom_data_id` indices into `instance_custom_data_buf`. Reset at each
+    /// `prepare()`.
+    pub(crate) custom_data_builder: crate::resources::custom_data::CustomDataBuilder,
+
     // --- Runtime performance tracking ---
     /// Cumulative bytes of geometry data uploaded since the last `prepare()` reset.
     ///
@@ -896,11 +869,30 @@ pub(crate) struct ViewportCullState {
     /// Per-texture-key bind groups for the main cull pipelines. These also serve
     /// as the group-1 bind for the indirect draw, so they sample the albedo,
     /// normal, and ao views (bindings 1/3/4). Keyed by
-    /// (albedo_id, normal_map_id, ao_map_id); invalidated when
-    /// `visibility_index_buf` is resized, when the instance buffer is rebuilt, or
-    /// when a texture behind a key is replaced or freed (see `built_free_epoch`).
+    /// (albedo_id, normal_map_id, ao_map_id, mr_id, emissive_id, uv1_chunk);
+    /// invalidated when `visibility_index_buf` is resized, when the instance buffer
+    /// is rebuilt, or when a texture behind a key is replaced or freed (see
+    /// `built_free_epoch`).
     pub(crate) instance_cull_bind_groups:
-        std::collections::HashMap<(u64, u64, u64, u32), crate::gpu::BindGroup>,
+        std::collections::HashMap<(u64, u64, u64, u64, u64, u32), crate::gpu::BindGroup>,
+    /// The bindless cull bind groups for this viewport (instances + texture array +
+    /// sampler + this viewport's visibility buffer + a vertex-slab chunk's uv1
+    /// buffer). Used by the culled colour draws under `Bindless` instead of
+    /// `instance_cull_bind_groups`. Keyed by the uv1 chunk discriminator
+    /// (`uv1_chunk_key`); rebuilt with the same `built_gen` / `built_free_epoch`
+    /// staleness checks as that map.
+    pub(crate) bindless_cull_bind_groups: std::collections::HashMap<u32, crate::gpu::BindGroup>,
+    /// GPU-driven submission (bindless + native multi-draw only): this viewport's
+    /// compacted draw args, holding each pipeline group's visible batches packed to
+    /// the front of its range. Written by the compaction pass from this viewport's
+    /// `indirect_args_buf`; read by `multi_draw_indexed_indirect_count`.
+    pub(crate) compacted_args_buf: Option<crate::gpu::Buffer>,
+    /// Per-group survivor counts for this viewport, read as the count buffer by
+    /// `multi_draw_indexed_indirect_count`. Written by the compaction pass.
+    pub(crate) draw_counts_buf: Option<crate::gpu::Buffer>,
+    /// Capacity (in batches) of `compacted_args_buf` and (in groups) of
+    /// `draw_counts_buf`.
+    pub(crate) compact_capacity: usize,
     /// Generation of the shared instance buffers the main cull bind groups were
     /// built against. When it falls behind `InstancingState::instance_gen` the
     /// shared instance storage buffer was rebuilt, so those bind groups (which
@@ -928,6 +920,10 @@ impl ViewportCullState {
             indirect_args_buf: None,
             batch_output_capacity: 0,
             instance_cull_bind_groups: std::collections::HashMap::new(),
+            bindless_cull_bind_groups: std::collections::HashMap::new(),
+            compacted_args_buf: None,
+            draw_counts_buf: None,
+            compact_capacity: 0,
             built_gen: u64::MAX,
             built_free_epoch: u64::MAX,
             hiz: None,
@@ -961,6 +957,7 @@ impl ViewportCullState {
             self.visibility_index_capacity = new_cap;
             // The cull bind groups bind the vis buffer at binding 5.
             self.instance_cull_bind_groups.clear();
+            self.bindless_cull_bind_groups.clear();
         }
 
         // Counter and indirect-args buffers, sized like the shared batch-meta buffer.
@@ -1189,6 +1186,32 @@ impl DeviceResources {
         self.frame_upload_bytes += bytes;
     }
 
+    /// Upload the current per-instance custom-data blocks to
+    /// `instance_custom_data_buf`. Called after interning finishes, alongside
+    /// [`upload_material_gpu`](Self::upload_material_gpu). Overwriting a superset
+    /// each time is safe: index 0 is always the zero block and ids only grow
+    /// within a frame, so earlier custom_data_ids stay valid.
+    pub(crate) fn upload_custom_data(&mut self, queue: &crate::gpu::Queue) {
+        let entries = self.custom_data_builder.entries();
+        let n = entries
+            .len()
+            .min(crate::resources::custom_data::CUSTOM_DATA_CAPACITY);
+        queue.write_buffer(
+            &self.instance_custom_data_buf,
+            0,
+            bytemuck::cast_slice(&entries[..n]),
+        );
+        let bytes =
+            (n * std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()) as u64;
+        if self.custom_data_builder.overflowed {
+            tracing::warn!(
+                capacity = crate::resources::custom_data::CUSTOM_DATA_CAPACITY,
+                "per-instance custom-data buffer overflowed; excess instances fell back to the zero block"
+            );
+        }
+        self.frame_upload_bytes += bytes;
+    }
+
     pub(crate) fn create_camera_bind_group(
         &self,
         device: &crate::gpu::Device,
@@ -1314,6 +1337,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: self.material_gpu_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 22,
+                    resource: self.instance_custom_data_buf.as_entire_binding(),
                 },
             ],
         })

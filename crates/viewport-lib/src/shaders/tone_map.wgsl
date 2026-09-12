@@ -14,11 +14,15 @@ struct ToneMapUniform {
     near_plane:              f32,
     far_plane:               f32,
     lic_enabled:             u32,
-    lic_strength:            f32,
+    _pad_lic:                f32,
     foreground_enabled:      u32,
+    vignette_amount:         f32,
+    vignette_radius:         f32,
+    vignette_softness:       f32,
+    grade_enabled:           u32,
+    grade_lut_size:          f32,
     _pad0:                   u32,
     _pad1:                   u32,
-    _pad2:                   u32,
 }
 
 @group(0) @binding(0) var hdr_texture:  texture_2d<f32>;
@@ -46,6 +50,49 @@ struct ExposureState {
     adapting:   f32,
 }
 @group(0) @binding(9) var<storage, read> exposure_state: ExposureState;
+
+// Colour-grading strip LUT: n slices of n x n laid out horizontally (width
+// n*n, height n = params.grade_lut_size). Red indexes across a slice, green
+// down it, blue selects the slice. Neutral placeholder when grading is off.
+@group(0) @binding(10) var grade_lut: texture_2d<f32>;
+
+// Sample the strip LUT for a display-space colour, interpolating between the
+// two nearest blue slices.
+fn grade(colour: vec3<f32>) -> vec3<f32> {
+    let n = params.grade_lut_size;
+    let c = clamp(colour, vec3<f32>(0.0), vec3<f32>(1.0));
+    let b = c.b * (n - 1.0);
+    let slice0 = floor(b);
+    let slice1 = min(slice0 + 1.0, n - 1.0);
+    let f = b - slice0;
+    let u0 = (slice0 * n + c.r * (n - 1.0) + 0.5) / (n * n);
+    let u1 = (slice1 * n + c.r * (n - 1.0) + 0.5) / (n * n);
+    let v = (c.g * (n - 1.0) + 0.5) / n;
+    let s0 = textureSampleLevel(grade_lut, hdr_sampler, vec2<f32>(u0, v), 0.0).rgb;
+    let s1 = textureSampleLevel(grade_lut, hdr_sampler, vec2<f32>(u1, v), 0.0).rgb;
+    return mix(s0, s1, f);
+}
+
+// Final display-space treatment shared by every exit: colour grading, then
+// the vignette. Applied on the pure-background fast path too, so grading and
+// corner darkening cover empty regions.
+fn display_finish(colour_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    var colour = colour_in;
+    if params.grade_enabled != 0u {
+        colour = grade(colour);
+    }
+    if params.vignette_amount > 0.0 {
+        // Distance normalised so 1.0 is the centre-to-corner distance.
+        let d = length(uv - vec2<f32>(0.5)) * 1.4142135;
+        let falloff = smoothstep(
+            params.vignette_radius,
+            params.vignette_radius + max(params.vignette_softness, 0.001),
+            d,
+        );
+        colour = colour * (1.0 - params.vignette_amount * falloff);
+    }
+    return colour;
+}
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -130,7 +177,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         bloom = textureSample(bloom_texture, hdr_sampler, in.uv).rgb;
     }
     if is_background && hdr.a < 0.001 && dot(bloom, vec3<f32>(1.0)) < 0.0003 {
-        return params.background_colour;
+        return vec4<f32>(
+            display_finish(params.background_colour.rgb, in.uv),
+            params.background_colour.a,
+        );
     }
 
     // Add bloom additively before tone mapping.
@@ -191,12 +241,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = colour * (1.0 - edl_factor);
     }
 
-    // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no change).
-    // A surface effect, so it only applies where geometry was shaded.
+    // Surface LIC: modulate colour by LIC intensity (0.5 = neutral, no
+    // change). Per-item strength is baked into the advect output, so the
+    // composite applies a fixed 2x mapping. A surface effect, so it only
+    // applies where geometry was shaded.
     if !is_background && !covered && params.lic_enabled != 0u {
         let lic_val = textureSampleLevel(lic_texture, hdr_sampler, in.uv, 0.0).r;
-        let lic_factor = 1.0 + params.lic_strength * (lic_val * 2.0 - 1.0);
-        colour = colour * max(0.0, lic_factor);
+        colour = colour * max(0.0, lic_val * 2.0);
     }
 
     // Pre-tone-mapping exposure (from the exposure state buffer).
@@ -223,5 +274,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = colour + params.background_colour.rgb * (1.0 - clamp(hdr.a, 0.0, 1.0));
     }
 
-    return vec4<f32>(colour, 1.0);
+    return vec4<f32>(display_finish(colour, in.uv), 1.0);
 }

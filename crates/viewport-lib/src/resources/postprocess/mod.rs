@@ -8,9 +8,14 @@
 
 use super::*;
 
+pub(crate) mod composite;
 pub(crate) mod lic;
 pub(crate) mod oit;
+pub(crate) mod producer;
+pub(crate) mod targets;
 pub(crate) mod uniforms;
+
+use self::targets::{TargetSize, ViewportTargetAllocator};
 
 pub(crate) use self::lic::LicResources;
 pub(crate) use self::oit::OitResources;
@@ -22,35 +27,18 @@ pub(crate) use self::oit::OitResources;
 /// intermediate textures and per-frame uniforms live on `ViewportHdrState`.
 #[derive(Default)]
 pub(crate) struct PostProcessResources {
-    // The viewport-sized FXAA texture, view, and bind group now live on
-    // `ViewportHdrState`; these slots are still populated but no longer read.
-    #[allow(dead_code)]
-    pub(crate) fxaa_texture: Option<crate::gpu::Texture>,
-    #[allow(dead_code)]
-    pub(crate) fxaa_view: Option<crate::gpu::TextureView>,
-    pub(crate) fxaa_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) fxaa_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// The post-composite stage chain's shared state.
+    pub(crate) fxaa: producer::FxaaStage,
     pub(crate) ssaa_resolve_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) ssaa_resolve_bgl: Option<crate::gpu::BindGroupLayout>,
-    #[allow(dead_code)]
-    pub(crate) fxaa_bind_group: Option<crate::gpu::BindGroup>,
-    pub(crate) fxaa_sampler: Option<crate::gpu::Sampler>,
-    pub(crate) bloom_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) ssao_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) ssao_blur_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) tone_map_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) tone_map_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) bloom_threshold_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) bloom_blur_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) ssao_noise_texture: Option<crate::gpu::Texture>,
-    pub(crate) ssao_noise_view: Option<crate::gpu::TextureView>,
-    pub(crate) ssao_kernel_buf: Option<crate::gpu::Buffer>,
-    pub(crate) ssao_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) ssao_blur_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) dof_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) dof_bgl: Option<crate::gpu::BindGroupLayout>,
-    pub(crate) contact_shadow_pipeline: Option<crate::gpu::RenderPipeline>,
-    pub(crate) contact_shadow_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// The composite-input producers' shared state (pipelines, layouts,
+    /// static resources). Per-viewport state lives on `ViewportHdrState`.
+    pub(crate) ssao: producer::SsaoProducer,
+    pub(crate) bloom: producer::BloomProducer,
+    pub(crate) contact_shadow: producer::ContactShadowProducer,
+    pub(crate) dof: producer::DofProducer,
     pub(crate) bloom_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) ao_placeholder_view: Option<crate::gpu::TextureView>,
     pub(crate) cs_placeholder_view: Option<crate::gpu::TextureView>,
@@ -70,6 +58,26 @@ pub(crate) struct PostProcessResources {
     pub(crate) dyn_res_upscale_ds_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) dyn_res_linear_sampler: Option<crate::gpu::Sampler>,
+}
+
+impl DeviceResources {
+    /// The composite-input producers, in encode order. Exposure runs last:
+    /// its metering reads the sharp scene HDR and its result feeds the
+    /// composite's exposure slot.
+    pub(crate) fn post_producers(&self) -> [&dyn producer::PostProducer; 5] {
+        [
+            &self.post.ssao,
+            &self.post.contact_shadow,
+            &self.post.bloom,
+            &self.post.dof,
+            &self.exposure,
+        ]
+    }
+
+    /// The post-composite stages, in chain order.
+    pub(crate) fn post_stages(&self) -> [&dyn producer::PostStage; 1] {
+        [&self.post.fxaa]
+    }
 }
 
 impl DeviceResources {
@@ -275,8 +283,8 @@ impl DeviceResources {
     ) {
         // Guard: if all three sentinel fields exist, everything is created.
         if self.post.tone_map_pipeline.is_some()
-            && self.post.bloom_bgl.is_some()
-            && self.post.fxaa_sampler.is_some()
+            && self.post.bloom.bgl.is_some()
+            && self.post.fxaa.sampler.is_some()
         {
             return;
         }
@@ -421,7 +429,7 @@ impl DeviceResources {
         }
 
         // --- SSAO noise (one-time) ---
-        if self.post.ssao_noise_view.is_none() {
+        if self.post.ssao.noise_view.is_none() {
             let noise_data: Vec<u8> = (0..16)
                 .flat_map(|i| {
                     let angle = (i as f32 / 16.0) * std::f32::consts::TAU;
@@ -464,13 +472,13 @@ impl DeviceResources {
                     depth_or_array_layers: 1,
                 },
             );
-            self.post.ssao_noise_view =
+            self.post.ssao.noise_view =
                 Some(noise_tex.create_view(&crate::gpu::TextureViewDescriptor::default()));
-            self.post.ssao_noise_texture = Some(noise_tex);
+            self.post.ssao.noise_texture = Some(noise_tex);
         }
 
         // --- SSAO kernel (one-time) ---
-        if self.post.ssao_kernel_buf.is_none() {
+        if self.post.ssao.kernel_buf.is_none() {
             let kernel_data: Vec<[f32; 4]> = (0..64)
                 .map(|i| {
                     let t = i as f32 / 64.0;
@@ -493,7 +501,7 @@ impl DeviceResources {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buf, 0, kernel_bytes);
-            self.post.ssao_kernel_buf = Some(buf);
+            self.post.ssao.kernel_buf = Some(buf);
         }
 
         // --- Shared samplers ---
@@ -508,117 +516,9 @@ impl DeviceResources {
             crate::resources::builders::clamp_linear_sampler(device, "outline_composite_sampler");
 
         // --- Bind group layouts ---
-        let tone_map_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("tone_map_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Sampler(
-                            crate::gpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Depth,
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 7: LIC intensity texture (R8Unorm). Placeholder when LIC is disabled.
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 8: foreground depth (coverage mask). Placeholder
-                    // when the foreground pass did not run.
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 8,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Depth,
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // binding 9: exposure state buffer (read-only). Holds the
-                    // linear exposure multiplier the tone map applies. Written
-                    // CPU-side (Manual/PhysicalCamera) or by the auto-exposure
-                    // resolve compute pass (Automatic).
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 9,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+        // The tone-map layout is driven by the composite binding table; see
+        // `composite.rs` for the slot set and each binding's role.
+        let tone_map_bgl = composite::create_tone_map_bgl(device);
 
         let bloom_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("bloom_bgl"),
@@ -1181,26 +1081,26 @@ impl DeviceResources {
         // Store everything
         self.post.pp_linear_sampler = Some(linear_sampler);
         self.post.pp_nearest_sampler = Some(nearest_sampler);
-        self.post.fxaa_sampler = Some(fxaa_sampler);
+        self.post.fxaa.sampler = Some(fxaa_sampler);
         self.oit.composite_sampler = Some(oit_sampler);
         self.outline.composite_sampler = Some(outline_sampler);
 
         self.post.tone_map_bgl = Some(tone_map_bgl);
-        self.post.bloom_bgl = Some(bloom_bgl);
-        self.post.ssao_bgl = Some(ssao_bgl);
-        self.post.ssao_blur_bgl = Some(ssao_blur_bgl);
-        self.post.contact_shadow_bgl = Some(cs_bgl);
-        self.post.fxaa_bgl = Some(fxaa_bgl);
+        self.post.bloom.bgl = Some(bloom_bgl);
+        self.post.ssao.bgl = Some(ssao_bgl);
+        self.post.ssao.blur_bgl = Some(ssao_blur_bgl);
+        self.post.contact_shadow.bgl = Some(cs_bgl);
+        self.post.fxaa.bgl = Some(fxaa_bgl);
         self.oit.composite_bgl = Some(oit_composite_bgl);
         self.outline.composite_bgl = Some(outline_composite_bgl);
 
         self.post.tone_map_pipeline = Some(tone_map_pipeline);
-        self.post.bloom_threshold_pipeline = Some(bloom_threshold_pipeline);
-        self.post.bloom_blur_pipeline = Some(bloom_blur_pipeline);
-        self.post.ssao_pipeline = Some(ssao_pipeline);
-        self.post.ssao_blur_pipeline = Some(ssao_blur_pipeline);
-        self.post.contact_shadow_pipeline = Some(cs_pipeline);
-        self.post.fxaa_pipeline = Some(fxaa_pipeline);
+        self.post.bloom.threshold_pipeline = Some(bloom_threshold_pipeline);
+        self.post.bloom.blur_pipeline = Some(bloom_blur_pipeline);
+        self.post.ssao.pipeline = Some(ssao_pipeline);
+        self.post.ssao.blur_pipeline = Some(ssao_blur_pipeline);
+        self.post.contact_shadow.pipeline = Some(cs_pipeline);
+        self.post.fxaa.pipeline = Some(fxaa_pipeline);
 
         // --- SSAA resolve pipeline ---
         let ssaa_resolve_bgl =
@@ -1323,8 +1223,8 @@ impl DeviceResources {
             &dof_bgl,
             crate::gpu::TextureFormat::Rgba16Float,
         );
-        self.post.dof_bgl = Some(dof_bgl);
-        self.post.dof_pipeline = Some(dof_pipeline);
+        self.post.dof.bgl = Some(dof_bgl);
+        self.post.dof.pipeline = Some(dof_pipeline);
 
         self.oit.pipeline = Some(oit_pipeline);
         self.oit.composite_pipeline = Some(oit_composite_pipeline);
@@ -1636,209 +1536,113 @@ impl DeviceResources {
         let h = h.max(1);
         let scene_w = scene_w.max(1);
         let scene_h = scene_h.max(1);
-        // Half-resolution for bloom ping/pong -- based on scene size.
-        let hw = (scene_w / 2).max(1);
-        let hh = (scene_h / 2).max(1);
         let ssaa_factor = ssaa_factor.max(1);
 
-        let make_tex = |label: &str,
-                        fmt: crate::gpu::TextureFormat,
-                        tw: u32,
-                        th: u32,
-                        extra_usage: crate::gpu::TextureUsages| {
-            device.create_texture(&crate::gpu::TextureDescriptor {
-                label: Some(label),
-                size: crate::gpu::Extent3d {
-                    width: tw,
-                    height: th,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: crate::gpu::TextureDimension::D2,
-                format: fmt,
-                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                    | crate::gpu::TextureUsages::TEXTURE_BINDING
-                    | extra_usage,
-                view_formats: &[],
-            })
-        };
+        // All viewport-sized targets go through the allocator, which owns the
+        // resolution classes and the base usage; see `targets.rs`.
+        let alloc = ViewportTargetAllocator::new(device, w, h, scene_w, scene_h, ssaa_factor);
 
         // HDR scene colour and depth -- at scene resolution (render_scale * output).
         // COPY_SRC enables the refractive sprite pass to copy the resolved
         // scene colour into its sample texture before drawing distortion.
-        let hdr_tex = make_tex(
+        let (hdr_tex, hdr_view) = alloc.colour(
             "hdr_texture",
             crate::gpu::TextureFormat::Rgba16Float,
-            scene_w,
-            scene_h,
+            TargetSize::Scene,
             crate::gpu::TextureUsages::COPY_SRC,
         );
-        let hdr_view = hdr_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let hdr_depth_tex = make_tex(
-            "hdr_depth_texture",
-            crate::gpu::TextureFormat::Depth24PlusStencil8,
-            scene_w,
-            scene_h,
-            crate::gpu::TextureUsages::empty(),
-        );
-        let hdr_depth_view =
-            hdr_depth_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let hdr_depth_only_view = hdr_depth_tex.create_view(&crate::gpu::TextureViewDescriptor {
-            aspect: crate::gpu::TextureAspect::DepthOnly,
-            ..Default::default()
-        });
-        let hdr_stencil_only_view = hdr_depth_tex.create_view(&crate::gpu::TextureViewDescriptor {
-            aspect: crate::gpu::TextureAspect::StencilOnly,
-            ..Default::default()
-        });
+        let hdr_depth = alloc.depth("hdr_depth_texture", TargetSize::Scene);
+        let hdr_stencil_only_view =
+            hdr_depth
+                .texture
+                .create_view(&crate::gpu::TextureViewDescriptor {
+                    aspect: crate::gpu::TextureAspect::StencilOnly,
+                    ..Default::default()
+                });
+        let (hdr_depth_tex, hdr_depth_view, hdr_depth_only_view) =
+            (hdr_depth.texture, hdr_depth.view, hdr_depth.depth_only_view);
 
-        // Bloom -- at scene resolution (hw/hh are scene_w/2, scene_h/2).
-        let bloom_threshold_tex = make_tex(
+        // Bloom -- threshold at scene resolution, ping/pong at half.
+        let (bloom_threshold_tex, bloom_threshold_view) = alloc.colour(
             "bloom_threshold_texture",
             crate::gpu::TextureFormat::Rgba16Float,
-            scene_w,
-            scene_h,
+            TargetSize::Scene,
             crate::gpu::TextureUsages::empty(),
         );
-        let bloom_threshold_view =
-            bloom_threshold_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let bloom_ping_tex = make_tex(
+        let (bloom_ping_tex, bloom_ping_view) = alloc.colour(
             "bloom_ping_texture",
             crate::gpu::TextureFormat::Rgba16Float,
-            hw,
-            hh,
+            TargetSize::HalfScene,
             crate::gpu::TextureUsages::empty(),
         );
-        let bloom_ping_view =
-            bloom_ping_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let bloom_pong_tex = make_tex(
+        let (bloom_pong_tex, bloom_pong_view) = alloc.colour(
             "bloom_pong_texture",
             crate::gpu::TextureFormat::Rgba16Float,
-            hw,
-            hh,
+            TargetSize::HalfScene,
             crate::gpu::TextureUsages::empty(),
         );
-        let bloom_pong_view =
-            bloom_pong_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // SSAO -- at scene resolution.
-        let ssao_tex = make_tex(
+        let (ssao_tex, ssao_view) = alloc.colour(
             "ssao_texture",
             crate::gpu::TextureFormat::R8Unorm,
-            scene_w,
-            scene_h,
+            TargetSize::Scene,
             crate::gpu::TextureUsages::empty(),
         );
-        let ssao_view = ssao_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let ssao_blur_tex = make_tex(
+        let (ssao_blur_tex, ssao_blur_view) = alloc.colour(
             "ssao_blur_texture",
             crate::gpu::TextureFormat::R8Unorm,
-            scene_w,
-            scene_h,
+            TargetSize::Scene,
             crate::gpu::TextureUsages::empty(),
         );
-        let ssao_blur_view =
-            ssao_blur_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // Depth of field -- at scene resolution.
-        let dof_tex = make_tex(
+        let (dof_tex, dof_view) = alloc.colour(
             "dof_texture",
             crate::gpu::TextureFormat::Rgba16Float,
-            scene_w,
-            scene_h,
+            TargetSize::Scene,
             crate::gpu::TextureUsages::empty(),
         );
-        let dof_view = dof_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // Contact shadow -- at scene resolution.
-        let cs_tex = make_tex(
+        let (cs_tex, cs_view) = alloc.colour(
             "contact_shadow_texture",
             crate::gpu::TextureFormat::R8Unorm,
-            scene_w,
-            scene_h,
+            TargetSize::Scene,
             crate::gpu::TextureUsages::empty(),
         );
-        let cs_view = cs_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // FXAA -- at scene resolution so the whole post-process chain runs at
         // the scaled size when render_scale < 1.0.
-        let fxaa_tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("fxaa_texture"),
-            size: crate::gpu::Extent3d {
-                width: scene_w,
-                height: scene_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: output_format,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let fxaa_view = fxaa_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let (fxaa_tex, fxaa_view) = alloc.colour(
+            "fxaa_texture",
+            output_format,
+            TargetSize::Scene,
+            crate::gpu::TextureUsages::empty(),
+        );
 
         // Outline offscreen : mask (R8), colour (target_format), and depth -- at scene resolution.
-        let outline_mask_tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("outline_mask_texture"),
-            size: crate::gpu::Extent3d {
-                width: scene_w,
-                height: scene_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::R8Unorm,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let outline_mask_view =
-            outline_mask_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let outline_colour_tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("outline_colour_texture"),
-            size: crate::gpu::Extent3d {
-                width: scene_w,
-                height: scene_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: self.target_format,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let outline_colour_view =
-            outline_colour_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let outline_depth_tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("outline_depth_texture"),
-            size: crate::gpu::Extent3d {
-                width: scene_w,
-                height: scene_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-            // TEXTURE_BINDING so the HiZ occlusion prev-depth copy can sample the
-            // LDR scene depth (the LDR path renders into this target).
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let outline_depth_view =
-            outline_depth_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-        let outline_depth_only_view =
-            outline_depth_tex.create_view(&crate::gpu::TextureViewDescriptor {
-                aspect: crate::gpu::TextureAspect::DepthOnly,
-                ..Default::default()
-            });
+        let (outline_mask_tex, outline_mask_view) = alloc.colour(
+            "outline_mask_texture",
+            crate::gpu::TextureFormat::R8Unorm,
+            TargetSize::Scene,
+            crate::gpu::TextureUsages::empty(),
+        );
+        let (outline_colour_tex, outline_colour_view) = alloc.colour(
+            "outline_colour_texture",
+            self.target_format,
+            TargetSize::Scene,
+            crate::gpu::TextureUsages::empty(),
+        );
+        // The outline depth target is sampleable so the HiZ occlusion
+        // prev-depth copy can read the LDR scene depth (the LDR path renders
+        // into this target).
+        let outline_depth = alloc.depth("outline_depth_texture", TargetSize::Scene);
+        let (outline_depth_tex, outline_depth_view, outline_depth_only_view) = (
+            outline_depth.texture,
+            outline_depth.view,
+            outline_depth.depth_only_view,
+        );
 
         // Uniform buffers
         let tone_map_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
@@ -1926,7 +1730,8 @@ impl DeviceResources {
             .expect("ensure_hdr_shared not called");
         let fxaa_sampler = self
             .post
-            .fxaa_sampler
+            .fxaa
+            .sampler
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let oit_sampler = self
@@ -1956,12 +1761,14 @@ impl DeviceResources {
             .expect("ensure_hdr_shared not called");
         let ssao_noise_view = self
             .post
-            .ssao_noise_view
+            .ssao
+            .noise_view
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_kernel_buf = self
             .post
-            .ssao_kernel_buf
+            .ssao
+            .kernel_buf
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let tone_map_bgl = self
@@ -1971,27 +1778,32 @@ impl DeviceResources {
             .expect("ensure_hdr_shared not called");
         let bloom_bgl = self
             .post
-            .bloom_bgl
+            .bloom
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_bgl = self
             .post
-            .ssao_bgl
+            .ssao
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let ssao_blur_bgl = self
             .post
-            .ssao_blur_bgl
+            .ssao
+            .blur_bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let cs_bgl = self
             .post
-            .contact_shadow_bgl
+            .contact_shadow
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let fxaa_bgl = self
             .post
-            .fxaa_bgl
+            .fxaa
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let oit_composite_bgl = self
@@ -2011,35 +1823,35 @@ impl DeviceResources {
             layout: tone_map_bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
-                    binding: 0,
+                    binding: composite::slot::HDR_COLOUR,
                     resource: crate::gpu::BindingResource::TextureView(&hdr_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 1,
+                    binding: composite::slot::SAMPLER,
                     resource: crate::gpu::BindingResource::Sampler(linear_sampler),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 2,
+                    binding: composite::slot::PARAMS,
                     resource: tone_map_uniform_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 3,
+                    binding: composite::slot::BLOOM,
                     resource: crate::gpu::BindingResource::TextureView(bloom_placeholder_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 4,
+                    binding: composite::slot::AO,
                     resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 5,
+                    binding: composite::slot::CONTACT_SHADOW,
                     resource: crate::gpu::BindingResource::TextureView(cs_placeholder_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 6,
+                    binding: composite::slot::SCENE_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(&hdr_depth_only_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 7,
+                    binding: composite::slot::LIC,
                     resource: crate::gpu::BindingResource::TextureView(
                         self.lic
                             .placeholder_view
@@ -2048,7 +1860,7 @@ impl DeviceResources {
                     ),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 8,
+                    binding: composite::slot::FOREGROUND_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(
                         self.post
                             .foreground_placeholder_view
@@ -2057,8 +1869,13 @@ impl DeviceResources {
                     ),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 9,
+                    binding: composite::slot::EXPOSURE,
                     resource: exposure_state_buf.as_entire_binding(),
+                },
+                // Neutral stand-in; the shader gates on `grade_enabled`.
+                crate::gpu::BindGroupEntry {
+                    binding: composite::slot::GRADE_LUT,
+                    resource: crate::gpu::BindingResource::TextureView(ao_placeholder_view),
                 },
             ],
         });
@@ -2180,7 +1997,8 @@ impl DeviceResources {
         });
         let dof_bgl = self
             .post
-            .dof_bgl
+            .dof
+            .bgl
             .as_ref()
             .expect("ensure_hdr_shared not called");
         let dof_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2214,40 +2032,6 @@ impl DeviceResources {
                 },
             ],
         });
-        // dof_bind_group: same layout as dof_bg but reads dof_view (for tone map input).
-        // This is rebuilt in rebuild_tone_map_bind_group when dof is active.
-        let dof_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("dof_bind_group_placeholder"),
-            layout: dof_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&hdr_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(linear_sampler),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: crate::gpu::BindingResource::TextureView(&hdr_depth_only_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: dof_uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        self.post
-                            .foreground_placeholder_view
-                            .as_ref()
-                            .expect("ensure_hdr_shared not called"),
-                    ),
-                },
-            ],
-        });
-
         let contact_shadow_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("contact_shadow_bg"),
             layout: cs_bgl,
@@ -2358,32 +2142,15 @@ impl DeviceResources {
             ssaa_resolve_bind_group,
             ssaa_uniform_buf,
         ) = if ssaa_factor > 1 {
-            let sw = scene_w * ssaa_factor;
-            let sh = scene_h * ssaa_factor;
-            let ssaa_colour_tex = make_tex(
+            let (ssaa_colour_tex, ssaa_colour_view) = alloc.colour(
                 "ssaa_colour_texture",
                 crate::gpu::TextureFormat::Rgba16Float,
-                sw,
-                sh,
+                TargetSize::SsaaScene,
                 crate::gpu::TextureUsages::empty(),
             );
-            let ssaa_colour_view =
-                ssaa_colour_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-            let ssaa_depth_tex = make_tex(
-                "ssaa_depth_texture",
-                crate::gpu::TextureFormat::Depth24PlusStencil8,
-                sw,
-                sh,
-                crate::gpu::TextureUsages::empty(),
-            );
-            let ssaa_depth_view =
-                ssaa_depth_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-            let ssaa_depth_only_view = Some(ssaa_depth_tex.create_view(
-                &crate::gpu::TextureViewDescriptor {
-                    aspect: crate::gpu::TextureAspect::DepthOnly,
-                    ..Default::default()
-                },
-            ));
+            let ssaa_depth = alloc.depth("ssaa_depth_texture", TargetSize::SsaaScene);
+            let (ssaa_depth_tex, ssaa_depth_view) = (ssaa_depth.texture, ssaa_depth.view);
+            let ssaa_depth_only_view = Some(ssaa_depth.depth_only_view);
 
             // Build the resolve bind group if the pipeline is available.
             let (ssaa_resolve_bg, ssaa_ubuf) = if let (Some(bgl), Some(nearest)) =
@@ -2446,25 +2213,18 @@ impl DeviceResources {
         };
 
         // --- Surface LIC per-viewport textures and bind group -- at scene resolution ---
-        let lic_vector_tex = make_tex(
+        let (lic_vector_tex, lic_vector_view) = alloc.colour(
             "lic_vector",
             crate::gpu::TextureFormat::Rgba8Unorm,
-            scene_w,
-            scene_h,
-            crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            TargetSize::Scene,
+            crate::gpu::TextureUsages::empty(),
         );
-        let lic_vector_view =
-            lic_vector_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
-
-        let lic_output_tex = make_tex(
+        let (lic_output_tex, lic_output_view) = alloc.colour(
             "lic_output",
             crate::gpu::TextureFormat::R8Unorm,
-            scene_w,
-            scene_h,
-            crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            TargetSize::Scene,
+            crate::gpu::TextureUsages::empty(),
         );
-        let lic_output_view =
-            lic_output_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         // Per-pixel white noise at scene resolution.
         let lic_noise_data: Vec<u8> = (0u32..scene_w * scene_h)
@@ -2477,20 +2237,12 @@ impl DeviceResources {
                 v as u8
             })
             .collect();
-        let lic_noise_tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("lic_noise"),
-            size: crate::gpu::Extent3d {
-                width: scene_w,
-                height: scene_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::R8Unorm,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let (lic_noise_tex, lic_noise_view) = alloc.texture(
+            "lic_noise",
+            crate::gpu::TextureFormat::R8Unorm,
+            TargetSize::Scene,
+            crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+        );
         queue.write_texture(
             crate::gpu::TexelCopyTextureInfo {
                 texture: &lic_noise_tex,
@@ -2510,8 +2262,6 @@ impl DeviceResources {
                 depth_or_array_layers: 1,
             },
         );
-        let lic_noise_view =
-            lic_noise_tex.create_view(&crate::gpu::TextureViewDescriptor::default());
 
         let lic_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("lic_advect_uniform"),
@@ -2560,22 +2310,8 @@ impl DeviceResources {
         let (output_depth_texture, output_depth_view, depth_blit_bind_group) = if scene_w != w
             || scene_h != h
         {
-            let tex = device.create_texture(&crate::gpu::TextureDescriptor {
-                label: Some("output_depth_texture"),
-                size: crate::gpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: crate::gpu::TextureDimension::D2,
-                format: crate::gpu::TextureFormat::Depth24PlusStencil8,
-                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                    | crate::gpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+            let output_depth = alloc.depth("output_depth_texture", TargetSize::Output);
+            let (tex, view) = (output_depth.texture, output_depth.view);
             let bg = self.post.depth_blit_bgl.as_ref().map(|bgl| {
                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("depth_blit_bg"),
@@ -2596,22 +2332,12 @@ impl DeviceResources {
         // run at scene resolution and write to this texture. An upscale-blit pass
         // then copies the result to output_view at native resolution.
         let (upscale_texture, upscale_view, upscale_bind_group) = if scene_w != w || scene_h != h {
-            let tex = device.create_texture(&crate::gpu::TextureDescriptor {
-                label: Some("hdr_upscale_texture"),
-                size: crate::gpu::Extent3d {
-                    width: scene_w,
-                    height: scene_h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: crate::gpu::TextureDimension::D2,
-                format: output_format,
-                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                    | crate::gpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = tex.create_view(&crate::gpu::TextureViewDescriptor::default());
+            let (tex, view) = alloc.colour(
+                "hdr_upscale_texture",
+                output_format,
+                TargetSize::Scene,
+                crate::gpu::TextureUsages::empty(),
+            );
             let bgl = self.post.dyn_res_upscale_bgl.as_ref().unwrap();
             let sampler = self.post.dyn_res_linear_sampler.as_ref().unwrap();
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
@@ -2655,24 +2381,47 @@ impl DeviceResources {
             hdr_depth_view,
             hdr_depth_only_view,
             hdr_stencil_only_view,
-            bloom_threshold_texture: bloom_threshold_tex,
-            bloom_threshold_view,
-            bloom_ping_texture: bloom_ping_tex,
-            bloom_ping_view,
-            bloom_pong_texture: bloom_pong_tex,
-            bloom_pong_view,
-            ssao_texture: ssao_tex,
-            ssao_view,
-            ssao_blur_texture: ssao_blur_tex,
-            ssao_blur_view,
-            dof_texture: dof_tex,
-            dof_view,
-            dof_bind_group,
-            dof_uniform_buf,
-            contact_shadow_texture: cs_tex,
-            contact_shadow_view: cs_view,
-            fxaa_texture: fxaa_tex,
-            fxaa_view,
+            bloom: producer::BloomViewport {
+                threshold_texture: bloom_threshold_tex,
+                threshold_view: bloom_threshold_view,
+                ping_texture: bloom_ping_tex,
+                ping_view: bloom_ping_view,
+                pong_texture: bloom_pong_tex,
+                pong_view: bloom_pong_view,
+                threshold_bg: bloom_threshold_bg,
+                blur_h_bg: bloom_blur_h_bg,
+                blur_v_bg: bloom_blur_v_bg,
+                blur_h_pong_bg: bloom_blur_h_pong_bg,
+                uniform_buf: bloom_uniform_buf,
+                h_uniform_buf: bloom_h_uniform_buf,
+                v_uniform_buf: bloom_v_uniform_buf,
+            },
+            ssao: producer::SsaoViewport {
+                texture: ssao_tex,
+                view: ssao_view,
+                blur_texture: ssao_blur_tex,
+                blur_view: ssao_blur_view,
+                bg: ssao_bg,
+                blur_bg: ssao_blur_bg,
+                uniform_buf: ssao_uniform_buf,
+            },
+            contact_shadow: producer::ContactShadowViewport {
+                texture: cs_tex,
+                view: cs_view,
+                bg: contact_shadow_bg,
+                uniform_buf: cs_uniform_buf,
+            },
+            dof: producer::DofViewport {
+                texture: dof_tex,
+                view: dof_view,
+                bg: dof_bg,
+                uniform_buf: dof_uniform_buf,
+            },
+            fxaa: producer::FxaaViewport {
+                texture: fxaa_tex,
+                view: fxaa_view,
+                bind_group: fxaa_bind_group,
+            },
             ssaa_colour_texture,
             ssaa_colour_view,
             ssaa_depth_texture,
@@ -2702,21 +2451,7 @@ impl DeviceResources {
             outline_edge_uniform_buf,
             outline_composite_bind_group,
             tone_map_bind_group,
-            bloom_threshold_bg,
-            bloom_blur_h_bg,
-            bloom_blur_v_bg,
-            bloom_blur_h_pong_bg,
-            ssao_bg,
-            ssao_blur_bg,
-            dof_bg,
-            contact_shadow_bg,
-            fxaa_bind_group,
             tone_map_uniform_buf,
-            bloom_uniform_buf,
-            bloom_h_uniform_buf,
-            bloom_v_uniform_buf,
-            ssao_uniform_buf,
-            contact_shadow_uniform_buf: cs_uniform_buf,
             exposure_state_buf,
             exposure_histogram_buf,
             exposure_params_buf,
@@ -2741,19 +2476,28 @@ impl DeviceResources {
         }
     }
 
-    /// Rebuild the tone-map bind group for a per-viewport HDR state, swapping in
-    /// the active bloom/AO/contact-shadow texture views.
+    /// Rebuild the tone-map bind group for a per-viewport HDR state, binding
+    /// each enabled input's live texture view and each disabled input's
+    /// neutral placeholder, per `inputs`.
+    ///
+    /// `slot_overrides` carries this frame's external producer
+    /// contributions: an entry replaces the slot's built-in (or placeholder)
+    /// view, and the last entry for a slot wins. The caller is responsible
+    /// for forcing the matching enable lanes on in `inputs` and the uniform.
     pub(crate) fn rebuild_tone_map_bind_group(
         &self,
         device: &crate::gpu::Device,
         hdr: &mut ViewportHdrState,
-        use_bloom: bool,
-        use_ssao: bool,
-        use_contact_shadows: bool,
-        use_lic: bool,
-        use_dof: bool,
-        use_foreground: bool,
+        inputs: composite::CompositeInputs,
+        slot_overrides: &[(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)],
     ) {
+        let overridden = |slot: crate::plugin_api::PostEffectSlot| {
+            slot_overrides
+                .iter()
+                .rev()
+                .find(|(s, _)| *s == slot)
+                .map(|(_, v)| v)
+        };
         let bgl = match &self.post.tone_map_bgl {
             Some(b) => b,
             None => return,
@@ -2778,7 +2522,7 @@ impl DeviceResources {
             Some(v) => v,
             None => return,
         };
-        let foreground_view = if use_foreground {
+        let foreground_view = if inputs.foreground {
             hdr.foreground_depth_only_view
                 .as_ref()
                 .unwrap_or(foreground_placeholder)
@@ -2786,24 +2530,35 @@ impl DeviceResources {
             foreground_placeholder
         };
 
-        let bloom_view = if use_bloom {
-            &hdr.bloom_pong_view
-        } else {
-            bloom_placeholder
-        };
-        let ao_view = if use_ssao {
-            &hdr.ssao_blur_view
-        } else {
-            ao_placeholder
-        };
-        let cs_view = if use_contact_shadows {
-            &hdr.contact_shadow_view
-        } else {
-            cs_placeholder
-        };
+        let bloom_view =
+            overridden(crate::plugin_api::PostEffectSlot::Bloom).unwrap_or(if inputs.bloom {
+                &hdr.bloom.pong_view
+            } else {
+                bloom_placeholder
+            });
+        let ao_view = overridden(crate::plugin_api::PostEffectSlot::AmbientOcclusion).unwrap_or(
+            if inputs.ssao {
+                &hdr.ssao.blur_view
+            } else {
+                ao_placeholder
+            },
+        );
+        let cs_view = overridden(crate::plugin_api::PostEffectSlot::ContactShadow).unwrap_or(
+            if inputs.contact_shadows {
+                &hdr.contact_shadow.view
+            } else {
+                cs_placeholder
+            },
+        );
+        let lic_view =
+            overridden(crate::plugin_api::PostEffectSlot::SurfaceLic).unwrap_or(if inputs.lic {
+                &hdr.lic_output_view
+            } else {
+                self.lic.placeholder_view.as_ref().unwrap_or(cs_placeholder)
+            });
 
-        let tone_map_hdr_input: &crate::gpu::TextureView = if use_dof {
-            &hdr.dof_view
+        let tone_map_hdr_input: &crate::gpu::TextureView = if inputs.dof {
+            &hdr.dof.view
         } else {
             &hdr.hdr_view
         };
@@ -2812,57 +2567,63 @@ impl DeviceResources {
             layout: bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
-                    binding: 0,
+                    binding: composite::slot::HDR_COLOUR,
                     resource: crate::gpu::BindingResource::TextureView(tone_map_hdr_input),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 1,
+                    binding: composite::slot::SAMPLER,
                     resource: crate::gpu::BindingResource::Sampler(sampler),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 2,
+                    binding: composite::slot::PARAMS,
                     resource: hdr.tone_map_uniform_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 3,
+                    binding: composite::slot::BLOOM,
                     resource: crate::gpu::BindingResource::TextureView(bloom_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 4,
+                    binding: composite::slot::AO,
                     resource: crate::gpu::BindingResource::TextureView(ao_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 5,
+                    binding: composite::slot::CONTACT_SHADOW,
                     resource: crate::gpu::BindingResource::TextureView(cs_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 6,
+                    binding: composite::slot::SCENE_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(&hdr.hdr_depth_only_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 7,
-                    resource: crate::gpu::BindingResource::TextureView(if use_lic {
-                        &hdr.lic_output_view
-                    } else {
-                        self.lic.placeholder_view.as_ref().unwrap_or(cs_placeholder)
-                    }),
+                    binding: composite::slot::LIC,
+                    resource: crate::gpu::BindingResource::TextureView(lic_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 8,
+                    binding: composite::slot::FOREGROUND_DEPTH,
                     resource: crate::gpu::BindingResource::TextureView(foreground_view),
                 },
                 crate::gpu::BindGroupEntry {
-                    binding: 9,
+                    binding: composite::slot::EXPOSURE,
                     resource: hdr.exposure_state_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: composite::slot::GRADE_LUT,
+                    resource: crate::gpu::BindingResource::TextureView(
+                        inputs
+                            .grade_lut
+                            .and_then(|id| self.content.textures.get(id))
+                            .map(|t| &t.view)
+                            .unwrap_or(ao_placeholder),
+                    ),
                 },
             ],
         });
 
         // The DOF gather pass also reads the foreground coverage mask; rebuild
         // its bind group so the mask view matches this frame.
-        if use_dof {
-            if let Some(dof_bgl) = &self.post.dof_bgl {
-                hdr.dof_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        if inputs.dof {
+            if let Some(dof_bgl) = &self.post.dof.bgl {
+                hdr.dof.bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("dof_bg"),
                     layout: dof_bgl,
                     entries: &[
@@ -2882,7 +2643,7 @@ impl DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 3,
-                            resource: hdr.dof_uniform_buf.as_entire_binding(),
+                            resource: hdr.dof.uniform_buf.as_entire_binding(),
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 4,

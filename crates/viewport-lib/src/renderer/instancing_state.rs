@@ -5,6 +5,30 @@
 use super::indirect;
 use super::types::InstancedBatch;
 
+/// One GPU-driven submission group: a maximal run of contiguous instanced batches
+/// sharing pipeline variant and geometry chunk, drawn with a single
+/// `multi_draw_indexed_indirect_count`. `arg_base` is the group's first batch
+/// index (its base into the compacted args + the per-batch args), `size` the
+/// number of batches (the multi-draw `max_count`); `two_sided` / `no_discard`
+/// pick the pipeline. `vertex_chunk` / `index_chunk` are the shared-slab chunks
+/// the whole run draws from, so the draw loop binds the geometry buffers straight
+/// from the group without looking the run's first batch back up in the mesh store.
+/// `count_index` is the group's slot in the shared `draw_counts` buffer: opaque
+/// and transparent (OIT) groups share one global index space and one compaction
+/// pass, so this is the group's position across both lists, not its index within
+/// one list. Built at prepare only under the bindless + native-multi-draw
+/// GPU-driven path; empty otherwise.
+#[derive(Clone, Copy)]
+pub(crate) struct DrawGroup {
+    pub(crate) arg_base: u32,
+    pub(crate) size: u32,
+    pub(crate) two_sided: bool,
+    pub(crate) no_discard: bool,
+    pub(crate) vertex_chunk: u32,
+    pub(crate) index_chunk: u32,
+    pub(crate) count_index: u32,
+}
+
 pub(crate) struct InstancingState {
     /// Instanced batches prepared for the current frame. Empty when using the
     /// per-object path.
@@ -98,6 +122,29 @@ pub(crate) struct InstancingState {
     /// the primary camera and rendered once, so this is scene-scoped rather than
     /// per-viewport.
     pub(crate) shadow_cull: crate::resources::ShadowCullState,
+    /// GPU-driven submission groups for the opaque instanced pass, rebuilt each
+    /// frame under the bindless + native-multi-draw path (empty otherwise). The
+    /// draw loop iterates these instead of re-forming runs from the batch list.
+    pub(crate) draw_groups: Vec<DrawGroup>,
+    /// GPU-driven submission groups for the transparent (OIT) instanced pass.
+    /// Same mechanism and shared compaction as `draw_groups`; the two share one
+    /// global `count_index` space so a single compaction pass fills both.
+    pub(crate) oit_draw_groups: Vec<DrawGroup>,
+    /// Per-batch group index (`group_id`) for the compaction pass, scene-global.
+    /// `indirect::NO_GROUP` for a batch not in a compacted group (additive /
+    /// premultiplied, or when the GPU-driven path is inactive).
+    pub(crate) group_id_buf: Option<crate::gpu::Buffer>,
+    /// Per-batch compacted-args base (`group_arg_base`) for the compaction pass.
+    pub(crate) group_arg_base_buf: Option<crate::gpu::Buffer>,
+    /// Capacity (in batches) of `group_id_buf` / `group_arg_base_buf`.
+    pub(crate) group_buf_capacity: usize,
+    /// The `(batches_gen, clipping_active, nodiscard)` the current `draw_groups`,
+    /// `oit_draw_groups`, and `group_id_buf` / `group_arg_base_buf` were built for.
+    /// While it holds, the GPU-driven submission is topology-stable: the CPU need
+    /// not re-walk the batch list to re-form the groups or re-upload the per-batch
+    /// group metadata (only the per-viewport compaction runs each frame, on the
+    /// GPU). `None` when the groups are cold or the GPU-driven path is inactive.
+    pub(crate) draw_group_cache_key: Option<(u64, bool, bool)>,
 }
 
 impl InstancingState {
@@ -136,6 +183,12 @@ impl InstancingState {
             instance_gen: 0,
             batches_gen: 0,
             shadow_cull: crate::resources::ShadowCullState::new(),
+            draw_groups: Vec::new(),
+            oit_draw_groups: Vec::new(),
+            group_id_buf: None,
+            group_arg_base_buf: None,
+            group_buf_capacity: 0,
+            draw_group_cache_key: None,
         }
     }
 }

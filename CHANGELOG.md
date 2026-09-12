@@ -2,9 +2,21 @@
 
 ## [Unreleased]
 
+### Breaking
+- **Several enums are now `#[non_exhaustive]`** - a `match` on `ShadingModel`, `AlphaMode`, `BackfacePolicy`, or the animation-clip enums needs a `_ =>` arm.
+- **`gpu_phase::_RESERVED_INTERNAL` removed** - it reserved a plugin band that will never exist; the other phases are unchanged.
+
 ### Features
-- **Per-texture UV transforms with rotation** - `Material` gains `uv_rotation` (a shared rotation about the texture centre) and `texture_transforms`, an optional per-map `UvTransform` of offset, scale, rotation, and UV-set index matching glTF `KHR_texture_transform`, set with `Material::with_uv_rotation` or `with_texture_transform(TextureSlot::Normal, ..)`. Rotation `0` and an unset slot reproduce the prior `uv_scale` / `uv_offset` behaviour exactly, so existing materials are unchanged.
-- **Second UV set (`TEXCOORD_1`)** - `MeshData` gains `uvs1: Option<Vec<[f32; 2]>>`, sampled by any texture slot whose `UvTransform::uv_set` is `1`, so a lightmap or detail unwrap rides its own unwrap per texture; a mesh without it pays nothing and is unchanged.
+- **Post-effect plugin surface** - register your own effects before or after tone mapping, in the same chain as the built-in ones.
+- **Vignette** - darken the image toward the corners. Off by default.
+- **Colour-grading LUT** - apply a lookup texture after tone mapping.
+- **Per-material sampler state** - clamp, mirror, or point-sample a texture instead of the one shared repeat/linear sampler.
+- **Layer masks** - show items to some cameras only, and confine a light to the items it should touch.
+- **Per-instance custom data** - eight floats per instance, so instances sharing a material can look different without breaking batching.
+- **Bindless material textures** - on hardware that supports it, instances of one mesh with different materials collapse into a single draw.
+- **More materials instance** - metallic-roughness and emissive textures, styled back faces, UV parameterisation visualisation, premultiplied blend, and plugin shading no longer force a draw per object.
+- **Per-texture UV transforms** - offset, scale, and rotate each map on its own, matching glTF `KHR_texture_transform`.
+- **Second UV set** - carry a lightmap or detail unwrap on its own UVs.
 
 ## [0.22.0]
 

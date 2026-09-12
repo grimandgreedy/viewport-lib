@@ -16,15 +16,27 @@ pub(crate) struct ToneMapUniform {
     pub(crate) near_plane: f32,
     pub(crate) far_plane: f32,
     pub(crate) lic_enabled: u32,
-    pub(crate) lic_strength: f32,
+    /// Spare: per-item LIC strength is baked into the advect output, so the
+    /// composite no longer carries a global strength.
+    pub(crate) _pad_lic: f32,
     /// Non-zero when the foreground pass ran this frame. Gates the
     /// foreground-coverage test that skips SSAO/contact-shadow/EDL/LIC on
     /// pixels covered by foreground geometry.
     pub(crate) foreground_enabled: u32,
-    pub(crate) _pad: [u32; 3],
+    /// Vignette darkening strength at full falloff (0 = off).
+    pub(crate) vignette_amount: f32,
+    /// Centre-to-corner fraction where the vignette falloff starts.
+    pub(crate) vignette_radius: f32,
+    /// Width of the vignette falloff band past the radius.
+    pub(crate) vignette_softness: f32,
+    /// Non-zero when a grade LUT is bound at the composite's LUT slot.
+    pub(crate) grade_enabled: u32,
+    /// Slice count / height of the strip LUT (its texture height).
+    pub(crate) grade_lut_size: f32,
+    pub(crate) _pad: [u32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 80);
+const _: () = assert!(std::mem::size_of::<ToneMapUniform>() == 96);
 
 /// Bloom pass uniform (16 bytes).
 #[repr(C)]

@@ -1,0 +1,32 @@
+[package]
+name = "viewport-lib-post-effects"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "External post-effect implementations exercising viewport-lib's post-effect plugin surface"
+
+[dependencies]
+viewport-lib = { path = "../viewport-lib", default-features = false }
+glam = { workspace = true }
+bytemuck = { version = "1", features = ["derive"] }
+# The toggle example's UI framework; optional so the library carries no
+# framework dependency. Matches the viewport-lib examples' eframe pin
+# (pairs with the wgpu27 leg).
+eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
+
+[features]
+default = ["wgpu27"]
+# wgpu leg selection, forwarded to viewport-lib. Enable exactly one.
+wgpu27 = ["viewport-lib/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30"]
+# Example-only gate for the toggle example's framework.
+example-egui = ["dep:eframe", "viewport-lib/egui-adapter"]
+
+[dev-dependencies]
+viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }
+
+[[example]]
+name = "toggle"
+required-features = ["wgpu27", "example-egui"]

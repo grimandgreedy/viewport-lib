@@ -321,6 +321,12 @@ impl ViewportRenderer {
                     if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                         continue;
                     }
+                    // Per-camera layer cull, as in the scene pass: drop a
+                    // foreground item whose visibility mask shares no bit with
+                    // this viewport's cull_mask. Default masks (`!0`) keep it.
+                    if (item.settings.visibility_mask & frame.camera.cull_mask) == 0 {
+                        continue;
+                    }
                     if item.settings.opacity < 1.0 || item.material.is_blend() {
                         transparent.push((idx, item));
                     } else {

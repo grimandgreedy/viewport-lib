@@ -50,6 +50,36 @@ pub struct ItemSettings {
     /// Honoured by item types whose shader samples the clip uniform; types that
     /// do not sample it treat this flag as a no-op.
     pub ignore_clip: bool,
+    /// Raw per-instance material inputs, read by the shading path and (through a
+    /// material plugin) by custom material graphs. Default `[0.0; 8]`.
+    ///
+    /// This is the per-instance channel that lets instances sharing a material
+    /// vary their appearance without breaking batching, matching Unity's
+    /// `MaterialPropertyBlock` GPU-instanced properties and Unreal's ISM / HISM
+    /// per-instance custom float data. It is independent of `Material` (which is
+    /// shared across a batch) and of the per-instance `colour` tint.
+    ///
+    /// Built-in mesh shading reads slots `0..3` as an emissive addition in nits
+    /// (zero is a no-op, so unset custom data changes nothing); slots `3..8` are
+    /// a raw channel reserved for material plugins to interpret. Honoured on the
+    /// scene-graph instanced mesh path; item types that do not sample it treat it
+    /// as a no-op.
+    pub custom_data: [f32; 8],
+    /// Layer membership for this item, as a 32-bit mask. Default `!0` (member
+    /// of every layer). Two things read it, both AND-tests against another
+    /// mask, so the default is inert:
+    ///
+    /// - Per-camera cull: an item is skipped on a camera whose
+    ///   `CameraFrame::cull_mask` shares no bit with this mask
+    ///   (`visibility_mask & cull_mask == 0`). This is the quad-view /
+    ///   editor-layer filter: give each camera the layers it should draw.
+    /// - Light channels: a light only lights an item when the light's
+    ///   `LightSource::channel_mask` shares a bit with this mask. Lets a light
+    ///   affect a chosen subset of the scene.
+    ///
+    /// Honoured by mesh-family items (the scene-graph per-object and instanced
+    /// paths); item types that do not carry the mask treat it as `!0`.
+    pub visibility_mask: u32,
 }
 
 impl Default for ItemSettings {
@@ -64,6 +94,8 @@ impl Default for ItemSettings {
             cast_shadows: true,
             receive_shadows: true,
             ignore_clip: false,
+            custom_data: [0.0; 8],
+            visibility_mask: !0,
         }
     }
 }
@@ -79,6 +111,7 @@ impl Default for ItemSettings {
 /// top of `Pbr` as separate fields on `Material` rather than as variants here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum ShadingModel {
     /// Blinn-Phong lit shading using `ambient` / `diffuse` / `specular` / `shininess`.
     Phong,
@@ -213,6 +246,7 @@ impl Default for PatternConfig {
 /// highlighting the interior of open surfaces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum BackfacePolicy {
     /// Back faces are culled (invisible). Default.
     Cull,
@@ -248,6 +282,7 @@ impl Default for BackfacePolicy {
 /// Controls how the fragment alpha value is interpreted by the renderer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum AlphaMode {
     /// Alpha is ignored; the surface is always fully opaque. Default.
     Opaque,
@@ -348,6 +383,97 @@ impl UvTransform {
         UvTransform {
             rotation: radians,
             ..UvTransform::IDENTITY
+        }
+    }
+}
+
+/// Texture address (wrap) mode: how a sampler treats UVs outside `[0, 1]`.
+/// Matches the glTF sampler wrap modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum WrapMode {
+    /// Tile the texture: the fractional part of the UV is used (glTF `REPEAT`).
+    /// This is the default and what makes [`UvTransform`] tiling work.
+    #[default]
+    Repeat,
+    /// Clamp to the nearest edge texel (glTF `CLAMP_TO_EDGE`).
+    ClampToEdge,
+    /// Mirror on each repeat (glTF `MIRRORED_REPEAT`).
+    MirrorRepeat,
+}
+
+/// Texture filtering: how a sampler blends texels for minification,
+/// magnification, and between mip levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TextureFilter {
+    /// Nearest-neighbour: crisp, blocky under magnification (pixel-art, data
+    /// textures that must not blend).
+    Nearest,
+    /// Linear (bi/trilinear): smooth. The default.
+    #[default]
+    Linear,
+}
+
+/// Per-texture sampler state: wrap mode, filtering, anisotropy, and LOD bias.
+///
+/// Set one per texture slot on a [`Material`] with [`Material::with_sampler`],
+/// paralleling [`Material::texture_transforms`]. A slot left `None` uses the
+/// renderer's default sampler (repeat + linear, anisotropy 1). This carries the
+/// glTF sampler state (wrap S/T, min/mag filter) so an importer can honour it.
+///
+/// Note the current renderer binds one sampler per lit draw, so it uses the
+/// first slot that sets a key (see [`Material::selected_sampler`]); distinct
+/// per-slot samplers land with the bindless sampler heap. The field is per-slot
+/// now so that later change is not breaking.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SamplerKey {
+    /// Wrap mode for the U (S) axis. Default [`WrapMode::Repeat`].
+    pub wrap_u: WrapMode,
+    /// Wrap mode for the V (T) axis. Default [`WrapMode::Repeat`].
+    pub wrap_v: WrapMode,
+    /// Min/mag/mip filtering. Default [`TextureFilter::Linear`].
+    pub filter: TextureFilter,
+    /// Max anisotropy, clamped to `1..=16` by the renderer. `1` disables
+    /// anisotropic filtering. Values above `1` force linear filtering.
+    pub anisotropy: u16,
+    /// LOD bias added when selecting the mip level. `0.0` is neutral; negative
+    /// sharpens, positive blurs. Reserved: the renderer does not apply it yet
+    /// (a sampler carries no LOD bias; it needs a shader-side bias), so today
+    /// only `wrap_u`/`wrap_v`/`filter`/`anisotropy` take effect.
+    pub lod_bias: f32,
+}
+
+impl Default for SamplerKey {
+    fn default() -> Self {
+        SamplerKey {
+            wrap_u: WrapMode::Repeat,
+            wrap_v: WrapMode::Repeat,
+            filter: TextureFilter::Linear,
+            anisotropy: 1,
+            lod_bias: 0.0,
+        }
+    }
+}
+
+impl SamplerKey {
+    /// Clamp-to-edge on both axes, linear filtering. For textures that must not
+    /// tile (a decal, a gradient ramp, a UI atlas cell).
+    pub fn clamp() -> Self {
+        SamplerKey {
+            wrap_u: WrapMode::ClampToEdge,
+            wrap_v: WrapMode::ClampToEdge,
+            ..SamplerKey::default()
+        }
+    }
+
+    /// Nearest filtering, repeat wrap. For crisp pixel-art or data textures that
+    /// must sample a single texel without blending.
+    pub fn nearest() -> Self {
+        SamplerKey {
+            filter: TextureFilter::Nearest,
+            ..SamplerKey::default()
         }
     }
 }
@@ -485,6 +611,17 @@ pub struct Material {
     /// This carries glTF `KHR_texture_transform` per texture (offset, scale,
     /// rotation, and `texCoord`) so an importer can honour it faithfully.
     pub texture_transforms: [Option<UvTransform>; MATERIAL_TEXTURE_SLOTS],
+    /// Optional per-texture sampler state (wrap/filter/aniso/LOD bias), indexed
+    /// by [`TextureSlot`]. A slot left `None` uses the renderer's default
+    /// sampler (repeat + linear, anisotropy 1). Default all `None`.
+    ///
+    /// Carries the glTF sampler wrap/filter so an importer can honour it, and
+    /// lets a clamp-wrapped map (a decal, a gradient ramp) coexist with the
+    /// repeat-wrapped default. The current renderer binds one sampler per lit
+    /// draw, so it uses [`selected_sampler`](Self::selected_sampler) (the first
+    /// slot that sets a key); the per-slot form is kept for the bindless sampler
+    /// heap.
+    pub sampler: [Option<SamplerKey>; MATERIAL_TEXTURE_SLOTS],
     /// Min/max range applied to the AO map's R sample. Identity `[0.0, 1.0]`
     /// passes the sample through unchanged. Skipped when `ao_map_id` is None.
     ///
@@ -598,6 +735,7 @@ impl Default for Material {
             uv_scale: [1.0, 1.0],
             uv_rotation: 0.0,
             texture_transforms: [None; MATERIAL_TEXTURE_SLOTS],
+            sampler: [None; MATERIAL_TEXTURE_SLOTS],
             ao_range: [0.0, 1.0],
             metallic_range: [0.0, 1.0],
             roughness_range: [0.0, 1.0],
@@ -624,6 +762,23 @@ impl Material {
     pub fn with_texture_transform(mut self, slot: TextureSlot, transform: UvTransform) -> Self {
         self.texture_transforms[slot as usize] = Some(transform);
         self
+    }
+
+    /// Override one texture slot's sampler state, leaving the others on the
+    /// renderer default. See [`sampler`](Self::sampler).
+    pub fn with_sampler(mut self, slot: TextureSlot, sampler: SamplerKey) -> Self {
+        self.sampler[slot as usize] = Some(sampler);
+        self
+    }
+
+    /// The sampler this material binds for its textures, or `None` for the
+    /// renderer default (repeat + linear). The current renderer binds a single
+    /// sampler per lit draw at group-1 binding 2, so this returns the first slot
+    /// that sets a [`SamplerKey`] (usually albedo). Per-slot samplers land with
+    /// the bindless sampler heap; until then every slot on a material shares this
+    /// one sampler.
+    pub fn selected_sampler(&self) -> Option<SamplerKey> {
+        self.sampler.iter().flatten().next().copied()
     }
 
     /// The effective transform for a texture slot: its override if set, otherwise

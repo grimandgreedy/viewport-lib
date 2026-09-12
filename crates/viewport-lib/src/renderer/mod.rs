@@ -82,7 +82,7 @@ pub use self::types::{
     StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
     TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
     TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
-    VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
     aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
@@ -335,6 +335,28 @@ pub(crate) enum RenderMode {
     Derivative,
 }
 
+/// A registered external post-effect producer plus its lifecycle state.
+struct RegisteredPostEffectProducer {
+    id: crate::plugin_api::PostEffectProducerId,
+    /// `init_gpu` has run against the current device. Registration has no
+    /// device parameter, so GPU init is deferred to the next render.
+    gpu_ready: bool,
+    producer: Box<dyn crate::plugin_api::PostEffectProducer>,
+}
+
+/// A registered external post-effect stage plus its chain key and lifecycle
+/// state.
+struct RegisteredPostEffectStage {
+    id: crate::plugin_api::PostEffectStageId,
+    /// Chain position; the built-in FXAA sits at
+    /// `post_effect::stage_order::ANTI_ALIASING`.
+    order: i32,
+    /// `init_gpu` has run against the current device (deferred, as for
+    /// producers).
+    gpu_ready: bool,
+    stage: Box<dyn crate::plugin_api::PostEffectStage>,
+}
+
 /// Owns the GPU pipelines and per-frame state for rendering a scene. Call
 /// `prepare` once per frame to upload data, then `paint_to` (or `render`) to
 /// issue draw calls.
@@ -348,6 +370,24 @@ pub struct ViewportRenderer {
     /// `paint` fire when a matching collection is on `SceneFrame`.
     item_type_plugins:
         std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::ItemTypePlugin>>,
+    /// Externally registered post-effect producers, in registration order.
+    /// `init_gpu` is deferred to the first render with the device; per-frame
+    /// `prepare` / `encode` run on the HDR path, per viewport.
+    post_effect_producers: Vec<RegisteredPostEffectProducer>,
+    /// Source for [`PostEffectProducerId`](crate::plugin_api::PostEffectProducerId)s.
+    next_post_effect_producer_id: u64,
+    /// Externally registered post-effect stages, in registration order; the
+    /// chain sorts by each stage's order key at encode time.
+    post_effect_stages: Vec<RegisteredPostEffectStage>,
+    /// Source for [`PostEffectStageId`](crate::plugin_api::PostEffectStageId)s.
+    next_post_effect_stage_id: u64,
+    /// This viewport frame's external composite-slot contributions: the
+    /// views returned by producer `encode` calls. Cleared per render call.
+    frame_external_slot_views: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)>,
+    /// Slots that have logged the external-overrides-built-in conflict (one
+    /// bit per `PostEffectSlot` variant), so the debug log fires once per
+    /// slot per renderer.
+    post_effect_slot_warned: u8,
     /// Monotonic frame counter passed to plugin contexts.
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
@@ -740,6 +780,12 @@ impl ViewportRenderer {
     ///   it with trilinear interpolation. Without it the field falls back to an
     ///   `R16Float` texture (trilinear at reduced precision, half the bandwidth);
     ///   either way the reconstruction is smooth, never blocky nearest-neighbour.
+    /// - The bindless texture-array set (texture `binding_array` + non-uniform
+    ///   indexing + partially bound) lets the instanced mesh path bind material
+    ///   textures once per frame and index them per material, so instances of one
+    ///   mesh with different materials batch together. Present on Vulkan, DX12, and
+    ///   Apple Silicon Metal (argument buffers Tier 2); without it (WebGPU, older
+    ///   hardware) the path binds textures per batch (the portable default).
     ///
     /// Everything works without them; rendering falls back to direct draws
     /// (with CPU-side shadow-cascade culling), GPU timings read as `None`,
@@ -757,6 +803,15 @@ impl ViewportRenderer {
             if adapter.features().contains(feature) {
                 features |= feature;
             }
+        }
+        // The bindless material-texture path needs the whole texture-array set at
+        // once; request it only when the adapter offers every piece, so a device
+        // that supports part of it is not asked for a feature it lacks.
+        if adapter
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        {
+            features |= crate::gpu::BINDLESS_TEXTURE_FEATURES;
         }
         features
     }
@@ -832,6 +887,18 @@ impl ViewportRenderer {
         // the deform bind group invalid; the base draw path stays under both.
         limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
         limits.max_buffer_size = adapter_limits.max_buffer_size;
+        // The bindless material path binds one texture array; its element count
+        // (a binding-array limit that defaults to 0) must be requested alongside
+        // the feature or the layout is invalid. Only ask for it when the adapter
+        // offers the bindless features, clamped to what it reports.
+        if adapter
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        {
+            limits.max_binding_array_elements_per_shader_stage =
+                crate::resources::mesh::instanced_bindless::BINDLESS_TEXTURE_CAPACITY
+                    .min(adapter_limits.max_binding_array_elements_per_shader_stage);
+        }
         limits
     }
 
@@ -905,15 +972,45 @@ impl ViewportRenderer {
         let multi_draw_supported = device
             .features()
             .contains(crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT);
+        // Bindless material textures activate only when the device enabled the
+        // whole texture-array feature set AND granted enough binding-array
+        // elements for the texture array (both are needed to build the layout).
+        // Modern Metal (Apple Silicon, argument buffers Tier 2), Vulkan, and DX12
+        // qualify; a device that enabled the feature but not the element limit,
+        // or WebGPU, stays on the per-batch binding rather than crashing.
+        use crate::resources::mesh::instanced_bindless::{
+            BINDLESS_TEXTURE_CAPACITY, MaterialTextureBinding,
+        };
+        let material_texture_binding = if device
+            .features()
+            .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+            && device.limits().max_binding_array_elements_per_shader_stage
+                >= BINDLESS_TEXTURE_CAPACITY
+        {
+            MaterialTextureBinding::Bindless
+        } else {
+            MaterialTextureBinding::PerBatch
+        };
+        let mut resources = DeviceResources::new_with_cache(
+            device,
+            target_format,
+            sample_count,
+            pipeline_cache_data,
+        );
+        resources.instancing.material_texture_binding = material_texture_binding;
+        resources
+            .material_gpu_builder
+            .set_bindless(material_texture_binding == MaterialTextureBinding::Bindless);
         Self {
-            resources: DeviceResources::new_with_cache(
-                device,
-                target_format,
-                sample_count,
-                pipeline_cache_data,
-            ),
+            resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: std::collections::HashMap::new(),
+            post_effect_producers: Vec::new(),
+            next_post_effect_producer_id: 0,
+            post_effect_stages: Vec::new(),
+            next_post_effect_stage_id: 0,
+            frame_external_slot_views: Vec::new(),
+            post_effect_slot_warned: 0,
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
@@ -1553,7 +1650,7 @@ impl ViewportRenderer {
             vis_offset: 0,
             is_transparent: 0,
             base_vertex: draw.base_vertex,
-            _pad: 0,
+            _reserved_flags: 0,
         };
         queue.write_buffer(meta_buf, 0, bytemuck::bytes_of(&meta));
         queue.write_buffer(counter_buf, 0, &[0u8; 4]);
@@ -1609,6 +1706,119 @@ impl ViewportRenderer {
         self.item_type_plugins.contains_key(type_name)
     }
 
+    /// Register a [`PostEffectProducer`](crate::plugin_api::PostEffectProducer).
+    ///
+    /// The producer's `init_gpu` runs on the next render (registration takes
+    /// no device), followed by `on_viewport_resized` for every viewport that
+    /// already has render targets. From then on, each HDR frame runs
+    /// `prepare` and `encode` per viewport while `enabled` returns true.
+    /// Producers run after the built-in effects, in registration order.
+    ///
+    /// Returns an id for [`remove_post_effect_producer`](Self::remove_post_effect_producer).
+    pub fn add_post_effect_producer(
+        &mut self,
+        producer: Box<dyn crate::plugin_api::PostEffectProducer>,
+    ) -> crate::plugin_api::PostEffectProducerId {
+        self.next_post_effect_producer_id += 1;
+        let id = crate::plugin_api::PostEffectProducerId(self.next_post_effect_producer_id);
+        self.post_effect_producers
+            .push(RegisteredPostEffectProducer {
+                id,
+                gpu_ready: false,
+                producer,
+            });
+        id
+    }
+
+    /// Unregister a post-effect producer. Unknown ids are ignored.
+    pub fn remove_post_effect_producer(&mut self, id: crate::plugin_api::PostEffectProducerId) {
+        self.post_effect_producers.retain(|p| p.id != id);
+    }
+
+    /// Register a [`PostEffectStage`](crate::plugin_api::PostEffectStage) at
+    /// `order` in the post-composite chain.
+    ///
+    /// The chain runs in ascending order of the key; the built-in FXAA sits
+    /// at [`stage_order::ANTI_ALIASING`](crate::plugin_api::post_effect::stage_order::ANTI_ALIASING)
+    /// (0), and [`stage_order::EXTERNAL_DEFAULT`](crate::plugin_api::post_effect::stage_order::EXTERNAL_DEFAULT)
+    /// (100) is the conventional post-AA band. Negative keys run before AA.
+    /// Stages sharing a key run in registration order, built-ins first. The
+    /// stage's `init_gpu` runs on the next render, followed by
+    /// `on_viewport_resized` for every viewport that already has render
+    /// targets; each HDR frame then runs `prepare` and `encode` per viewport
+    /// while `enabled` returns true.
+    ///
+    /// Returns an id for [`remove_post_effect_stage`](Self::remove_post_effect_stage).
+    pub fn add_post_effect_stage(
+        &mut self,
+        stage: Box<dyn crate::plugin_api::PostEffectStage>,
+        order: i32,
+    ) -> crate::plugin_api::PostEffectStageId {
+        self.next_post_effect_stage_id += 1;
+        let id = crate::plugin_api::PostEffectStageId(self.next_post_effect_stage_id);
+        self.post_effect_stages.push(RegisteredPostEffectStage {
+            id,
+            order,
+            gpu_ready: false,
+            stage,
+        });
+        id
+    }
+
+    /// Unregister a post-effect stage. Unknown ids are ignored.
+    pub fn remove_post_effect_stage(&mut self, id: crate::plugin_api::PostEffectStageId) {
+        self.post_effect_stages.retain(|s| s.id != id);
+    }
+
+    /// Run deferred GPU init for post-effect producers and stages registered
+    /// since the last render: `init_gpu`, then `on_viewport_resized` for
+    /// each viewport that already has render targets.
+    pub(crate) fn init_pending_post_effect_producers(&mut self, device: &crate::gpu::Device) {
+        if self.post_effect_producers.iter().all(|p| p.gpu_ready)
+            && self.post_effect_stages.iter().all(|s| s.gpu_ready)
+        {
+            return;
+        }
+        let target_format = self.resources.target_format;
+        let live: Vec<crate::plugin_api::PostEffectResizeContext<'_>> = self
+            .viewport_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(vp_idx, slot)| {
+                slot.hdr
+                    .as_ref()
+                    .map(|hdr| crate::plugin_api::PostEffectResizeContext {
+                        viewport_index: vp_idx,
+                        scene_size: hdr.scene_size,
+                        output_size: hdr.output_size,
+                        scene_colour: &hdr.hdr_view,
+                        scene_depth: &hdr.hdr_depth_only_view,
+                        target_format,
+                    })
+            })
+            .collect();
+        for entry in &mut self.post_effect_producers {
+            if entry.gpu_ready {
+                continue;
+            }
+            entry.producer.init_gpu(device);
+            for ctx in &live {
+                entry.producer.on_viewport_resized(device, ctx);
+            }
+            entry.gpu_ready = true;
+        }
+        for entry in &mut self.post_effect_stages {
+            if entry.gpu_ready {
+                continue;
+            }
+            entry.stage.init_gpu(device);
+            for ctx in &live {
+                entry.stage.on_viewport_resized(device, ctx);
+            }
+            entry.gpu_ready = true;
+        }
+    }
+
     /// Notify every registered item-type plugin that the wgpu device has been
     /// recreated (device loss, surface re-init, host-driven reset).
     ///
@@ -1628,6 +1838,39 @@ impl ViewportRenderer {
         for plugin in self.item_type_plugins.values_mut() {
             plugin.on_device_recreated(device, queue);
             plugin.init_gpu(device, &shared);
+        }
+        // Post-effect producers and stages follow the same shape, then
+        // re-receive the per-viewport resize signal so their targets are
+        // rebuilt against the new device.
+        for entry in &mut self.post_effect_producers {
+            entry.producer.on_device_recreated(device, queue);
+            entry.producer.init_gpu(device);
+            entry.gpu_ready = true;
+        }
+        for entry in &mut self.post_effect_stages {
+            entry.stage.on_device_recreated(device, queue);
+            entry.stage.init_gpu(device);
+            entry.gpu_ready = true;
+        }
+        let target_format = self.resources.target_format;
+        for (vp_idx, slot) in self.viewport_slots.iter().enumerate() {
+            let Some(hdr) = slot.hdr.as_ref() else {
+                continue;
+            };
+            let ctx = crate::plugin_api::PostEffectResizeContext {
+                viewport_index: vp_idx,
+                scene_size: hdr.scene_size,
+                output_size: hdr.output_size,
+                scene_colour: &hdr.hdr_view,
+                scene_depth: &hdr.hdr_depth_only_view,
+                target_format,
+            };
+            for entry in &mut self.post_effect_producers {
+                entry.producer.on_viewport_resized(device, &ctx);
+            }
+            for entry in &mut self.post_effect_stages {
+                entry.stage.on_viewport_resized(device, &ctx);
+            }
         }
     }
 
@@ -3066,6 +3309,28 @@ impl ViewportRenderer {
                 scene_h.max(1),
                 ssaa_factor,
             ));
+            // Tell post-effect producers and stages this viewport's targets
+            // changed so they can reallocate their own. Any still awaiting
+            // deferred `init_gpu` get this signal during that init instead.
+            let hdr = slot.hdr.as_ref().unwrap();
+            let ctx = crate::plugin_api::PostEffectResizeContext {
+                viewport_index,
+                scene_size: hdr.scene_size,
+                output_size: hdr.output_size,
+                scene_colour: &hdr.hdr_view,
+                scene_depth: &hdr.hdr_depth_only_view,
+                target_format: format,
+            };
+            for entry in &mut self.post_effect_producers {
+                if entry.gpu_ready {
+                    entry.producer.on_viewport_resized(device, &ctx);
+                }
+            }
+            for entry in &mut self.post_effect_stages {
+                if entry.gpu_ready {
+                    entry.stage.on_viewport_resized(device, &ctx);
+                }
+            }
         }
     }
 }

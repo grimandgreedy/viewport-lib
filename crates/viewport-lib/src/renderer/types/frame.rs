@@ -136,6 +136,16 @@ pub struct CameraFrame {
     pub pixels_per_point: f32,
     /// Multi-viewport slot index. Default: 0 (single-viewport mode).
     pub viewport_index: usize,
+    /// Layers this camera draws, as a 32-bit mask. Default `!0` (draw every
+    /// layer). An item is culled on this camera when its
+    /// `ItemSettings::visibility_mask` shares no bit with this mask
+    /// (`visibility_mask & cull_mask == 0`). This is a CPU-side cull applied at
+    /// scene collect, so it costs nothing at the default and needs no GPU
+    /// carrier; it is the per-viewport layer filter for quad-view and editor
+    /// layouts. Note the GPU-driven instanced cull path does not yet honour the
+    /// mask, so an instanced batch culled only by layer still runs its GPU cull
+    /// (it is skipped CPU-side before reaching that path).
+    pub cull_mask: u32,
 }
 
 impl Default for CameraFrame {
@@ -145,6 +155,7 @@ impl Default for CameraFrame {
             viewport_size: [800.0, 600.0],
             pixels_per_point: 1.0,
             viewport_index: 0,
+            cull_mask: !0,
         }
     }
 }
@@ -157,7 +168,16 @@ impl CameraFrame {
             viewport_size,
             pixels_per_point: 1.0,
             viewport_index: 0,
+            cull_mask: !0,
         }
+    }
+
+    /// Restrict this camera to the layers whose bits are set in `mask`. Items
+    /// whose `ItemSettings::visibility_mask` shares no bit with `mask` are
+    /// culled CPU-side for this camera. Default is `!0` (every layer).
+    pub fn with_cull_mask(mut self, mask: u32) -> Self {
+        self.cull_mask = mask;
+        self
     }
 
     /// Build a camera frame from an app-side camera and viewport size.

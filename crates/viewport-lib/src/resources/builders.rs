@@ -384,6 +384,51 @@ pub(crate) fn repeat_linear_sampler(
     })
 }
 
+/// Build a sampler from a material [`SamplerKey`](crate::scene::material::SamplerKey).
+///
+/// Maps the crate's wrap/filter enums onto the current wgpu version's
+/// `SamplerDescriptor`. Anisotropy is clamped to `1..=16`, and because wgpu
+/// requires linear min/mag/mip filtering whenever `anisotropy_clamp > 1`, a
+/// `Nearest` key pins anisotropy back to `1` rather than silently forcing
+/// linear.
+pub(crate) fn sampler_from_key(
+    device: &crate::gpu::Device,
+    label: &str,
+    key: &crate::scene::material::SamplerKey,
+) -> crate::gpu::Sampler {
+    use crate::scene::material::{TextureFilter, WrapMode};
+    let wrap = |w: WrapMode| match w {
+        WrapMode::Repeat => crate::gpu::AddressMode::Repeat,
+        WrapMode::ClampToEdge => crate::gpu::AddressMode::ClampToEdge,
+        WrapMode::MirrorRepeat => crate::gpu::AddressMode::MirrorRepeat,
+    };
+    let filter = match key.filter {
+        TextureFilter::Nearest => crate::gpu::FilterMode::Nearest,
+        TextureFilter::Linear => crate::gpu::FilterMode::Linear,
+    };
+    // Anisotropy only applies with linear filtering (wgpu constraint); keep it
+    // at 1 for a nearest key so the descriptor stays valid.
+    let anisotropy = match key.filter {
+        TextureFilter::Linear => key.anisotropy.clamp(1, 16),
+        TextureFilter::Nearest => 1,
+    };
+    device.create_sampler(&crate::gpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: wrap(key.wrap_u),
+        address_mode_v: wrap(key.wrap_v),
+        address_mode_w: wrap(key.wrap_u),
+        mag_filter: filter,
+        min_filter: filter,
+        mipmap_filter: dmipmap(filter),
+        anisotropy_clamp: anisotropy,
+        // `key.lod_bias` is intentionally not applied here: wgpu samplers carry
+        // no LOD bias (it is a shader-side `textureSampleBias`), so the field is
+        // reserved until the lit shaders take a bias. Wrap/filter/aniso are the
+        // live parts.
+        ..Default::default()
+    })
+}
+
 /// Wrap a mip filter for the current wgpu version's `SamplerDescriptor`. 27
 /// reuses `FilterMode` for the mip filter; 28 split it into `MipmapFilterMode`,
 /// which 29 and 30 keep.

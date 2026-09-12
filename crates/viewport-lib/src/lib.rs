@@ -192,7 +192,11 @@ pub use scene::traits;
 
 pub use error::{ViewportError, ViewportResult};
 
-pub use plugin_api::{PluginInstallCtx, ViewportPlugin, install_plugin};
+pub use plugin_api::{
+    PluginInstallCtx, PostEffectContext, PostEffectProducer, PostEffectProducerId,
+    PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId, ViewportPlugin,
+    build_post_effect_pipeline, install_plugin,
+};
 
 pub use camera::camera::{Camera, CameraTarget, Projection};
 pub use camera::controllers::TurntableController;
@@ -202,15 +206,16 @@ pub use camera::track::{CameraTrack, interpolate_camera};
 pub use camera::view_preset::ViewPreset;
 
 pub use scene::aabb::Aabb;
-pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
 pub use scene::material::{
     AlphaMode, BackfacePattern, BackfacePolicy, ItemSettings, Material, MaterialPluginId, ParamVis,
-    ParamVisMode, PatternConfig, ShadingModel, TextureSlot, UvTransform,
+    ParamVisMode, PatternConfig, SamplerKey, ShadingModel, TextureFilter, TextureSlot, UvTransform,
+    WrapMode,
 };
 pub use scene::scene::{
     DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,
 };
 pub use scene::traits::{RenderMode, ViewportObject};
+pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::implicit::{
@@ -287,21 +292,20 @@ pub use renderer::{
     Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
     OverlayAnchor, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill, OverlayFrame,
     OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId,
-    OwnedPath,
-    ParticleMeshAlign, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit, PickId,
-    PickMask, PickPoll, PickRectResult, PipelineMode, PointCloudItem, PointCloudRefItem,
+    OwnedPath, ParticleMeshAlign, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit,
+    PickId, PickMask, PickPoll, PickRectResult, PipelineMode, PointCloudItem, PointCloudRefItem,
     PointRenderMode, PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo,
     PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem,
-    RibbonRefItem,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape,
-    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
-    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
-    StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig,
-    SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode,
-    ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
-    ViewportFrame, ViewportId, ViewportRenderer, VolumeItem, VolumeMeshItem, VolumeSelectionInfo,
-    VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame,
+    SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings,
+    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
+    StreamtubeRefItem, StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef,
+    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeItem, VolumeMeshItem,
+    VolumeSelectionInfo, VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 

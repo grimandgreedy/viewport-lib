@@ -366,6 +366,19 @@ impl DeviceResources {
                     },
                     count: None,
                 },
+                // binding 22: per-instance custom-data buffer (FRAGMENT,
+                // read-only). Array of `InstanceCustomData` payloads, indexed by
+                // the per-instance `custom_data_id`. Scene-global, group 0.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 22,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -747,6 +760,17 @@ impl DeviceResources {
             mapped_at_creation: false,
         });
 
+        // Per-instance custom-data buffer (group 0, binding 22). Fixed capacity
+        // so the handle is stable across frames; the camera bind group binds it
+        // once and never rebuilds for custom-data churn.
+        let instance_custom_data_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("instance_custom_data_buf"),
+            size: (std::mem::size_of::<crate::resources::custom_data::InstanceCustomData>()
+                * crate::resources::custom_data::CUSTOM_DATA_CAPACITY) as u64,
+            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Indirect-lighting storage buffer (group 0 binding 18). Holds the
         // per-object light-probe SH blocks in the first region and the
         // environment-selection zones in the second, sharing one binding so the
@@ -1070,6 +1094,10 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 21,
                     resource: material_gpu_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 22,
+                    resource: instance_custom_data_buf.as_entire_binding(),
                 },
             ],
         });
@@ -2412,6 +2440,7 @@ impl DeviceResources {
                 emissive: fallback_emissive_texture,
                 emissive_view: fallback_emissive_texture_view,
                 sampler: material_sampler,
+                sampler_palette: std::sync::Mutex::new(std::collections::HashMap::new()),
                 lut_sampler,
                 depth_read_sampler,
                 depth_read_bgl,
@@ -2541,6 +2570,8 @@ impl DeviceResources {
             ),
             material_gpu_buf,
             material_gpu_builder: crate::resources::material_gpu::MaterialGpuBuilder::default(),
+            instance_custom_data_buf,
+            custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
             frame_pipelines_built: 0,
             resource_free_epoch: 0,

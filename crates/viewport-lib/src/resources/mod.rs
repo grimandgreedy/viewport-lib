@@ -1,6 +1,7 @@
 /// Shared constructors for common wgpu bind-group-layout, sampler, and
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
+pub(crate) mod custom_data;
 /// Screen-space decal pipeline.
 pub(crate) mod decal;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
@@ -101,6 +102,9 @@ pub use self::types::ViewportGpuResources;
 // GlyphBaseMesh and OverlayUniform are re-exported for crate-internal use even
 // though their current consumers reference them through their domain modules.
 #[allow(unused_imports)]
+pub(crate) use self::postprocess::composite::CompositeInputs;
+pub(crate) use self::postprocess::lic::LIC_STRENGTH_ENCODE_MAX;
+pub(crate) use self::postprocess::producer::{PostStage, ProducerFrameInputs, ProducerTiming};
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,

@@ -18,6 +18,34 @@ struct HdrFrameCtx<'a> {
     h: u32,
     ssaa_factor: u32,
     hdr_clear_rgb: [f32; 3],
+    /// The frame's composite inputs and tone-map uniform as computed in the
+    /// preamble, kept so the tone-map stage can re-derive them with external
+    /// slot contributions applied.
+    composite_inputs: crate::resources::CompositeInputs,
+    tm_uniform: crate::resources::ToneMapUniform,
+}
+
+/// Build the per-frame, per-viewport context handed to external post-effect
+/// producers.
+fn post_effect_ctx<'a>(
+    device: &'a crate::gpu::Device,
+    slot_hdr: &'a crate::resources::ViewportHdrState,
+    frame: &'a FrameData,
+    viewport_index: usize,
+) -> crate::plugin_api::PostEffectContext<'a> {
+    crate::plugin_api::PostEffectContext {
+        device,
+        viewport_index,
+        scene_size: slot_hdr.scene_size,
+        output_size: slot_hdr.output_size,
+        proj: frame.camera.render_camera.projection,
+        view: frame.camera.render_camera.view,
+        near: frame.camera.render_camera.near,
+        far: frame.camera.render_camera.far,
+        scene_colour: &slot_hdr.hdr_view,
+        scene_depth: &slot_hdr.hdr_depth_only_view,
+        post: &frame.effects.post_process,
+    }
 }
 
 /// Screen-space scissor for one decal's fullscreen quad.
@@ -315,6 +343,36 @@ impl ViewportRenderer {
         // background for the same scene.
         let hdr_clear_rgb = [bg_colour[0], bg_colour[1], bg_colour[2]];
 
+        // Which effect inputs feed the tone-map composite this frame. Built
+        // once here so the uniform's enable lanes below and the bind group's
+        // view selection share one source and cannot disagree.
+        // The grade LUT is validated against the texture store up front: the
+        // renderer needs an owned texture to read the LUT's height, so ids
+        // registered as external views are ignored.
+        let grade_lut = pp.grade_lut.filter(|id| {
+            self.resources
+                .content
+                .textures
+                .get(*id)
+                .is_some_and(|t| t.texture.is_some())
+        });
+        let grade_lut_size = grade_lut
+            .and_then(|id| self.resources.content.textures.get(id))
+            .and_then(|t| t.texture.as_ref())
+            .map(|t| t.height() as f32)
+            .unwrap_or(0.0);
+        let composite_inputs = crate::resources::CompositeInputs {
+            bloom: pp.bloom.enabled,
+            ssao: pp.ssao,
+            contact_shadows: pp.contact_shadows.enabled,
+            lic: scene_items
+                .iter()
+                .any(|i| i.lic.is_some() && !i.settings.hidden),
+            dof: pp.dof.enabled,
+            foreground: self.foreground_active(frame),
+            grade_lut,
+        };
+
         // Upload tone map uniform into the per-viewport buffer.
         let mode = match frame.effects.display.operator {
             crate::renderer::ToneMapping::Reinhard => 0u32,
@@ -323,33 +381,32 @@ impl ViewportRenderer {
         };
         let tm_uniform = crate::resources::ToneMapUniform {
             // Exposure is applied from the per-viewport exposure state buffer
-            // (binding 9), not this field; kept at 1.0 for layout stability.
+            // (the composite's exposure slot), not this field; kept at 1.0 for
+            // layout stability.
             exposure: 1.0,
             mode,
-            bloom_enabled: if pp.bloom.enabled { 1 } else { 0 },
-            ssao_enabled: if pp.ssao { 1 } else { 0 },
-            contact_shadows_enabled: if pp.contact_shadows.enabled { 1 } else { 0 },
+            bloom_enabled: composite_inputs.bloom as u32,
+            ssao_enabled: composite_inputs.ssao as u32,
+            contact_shadows_enabled: composite_inputs.contact_shadows as u32,
             edl_enabled: if pp.edl.enabled { 1 } else { 0 },
             edl_radius: pp.edl.radius,
             edl_strength: pp.edl.strength,
             background_colour: bg_colour,
             near_plane: frame.camera.render_camera.near,
             far_plane: frame.camera.render_camera.far,
-            lic_enabled: if scene_items
-                .iter()
-                .any(|i| i.lic.is_some() && !i.settings.hidden)
-            {
-                1
+            lic_enabled: composite_inputs.lic as u32,
+            _pad_lic: 0.0,
+            foreground_enabled: composite_inputs.foreground as u32,
+            vignette_amount: if pp.vignette.enabled {
+                pp.vignette.amount.clamp(0.0, 1.0)
             } else {
-                0
+                0.0
             },
-            lic_strength: scene_items
-                .iter()
-                .filter(|i| !i.settings.hidden)
-                .find_map(|i| i.lic.as_ref().map(|l| l.config.strength))
-                .unwrap_or(0.5),
-            foreground_enabled: if self.foreground_active(frame) { 1 } else { 0 },
-            _pad: [0; 3],
+            vignette_radius: pp.vignette.radius,
+            vignette_softness: pp.vignette.softness,
+            grade_enabled: composite_inputs.grade_lut.is_some() as u32,
+            grade_lut_size,
+            _pad: [0; 2],
         };
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -359,105 +416,42 @@ impl ViewportRenderer {
                 bytemuck::cast_slice(&[tm_uniform]),
             );
 
-            // Upload SSAO uniform if needed.
-            if pp.ssao {
-                let proj = frame.camera.render_camera.projection;
-                let inv_proj = proj.inverse();
-                let ssao_uniform = crate::resources::SsaoUniform {
-                    inv_proj: inv_proj.to_cols_array_2d(),
-                    proj: proj.to_cols_array_2d(),
-                    radius: 0.5,
-                    bias: 0.025,
-                    _pad: [0.0; 2],
-                };
-                queue.write_buffer(
-                    &hdr.ssao_uniform_buf,
-                    0,
-                    bytemuck::cast_slice(&[ssao_uniform]),
-                );
-            }
-
-            // Upload contact shadow uniform if needed.
-            if pp.contact_shadows.enabled {
-                let proj = frame.camera.render_camera.projection;
-                let inv_proj = proj.inverse();
-                let light_dir_world: glam::Vec3 =
-                    if let Some(l) = frame.effects.lighting.lights.first() {
-                        match l.kind {
-                            LightKind::Directional { direction } => {
-                                glam::Vec3::from(direction).normalize()
-                            }
-                            LightKind::Spot { direction, .. } => {
-                                // Spot::direction is the shining direction
-                                // (light -> scene); the march needs the
-                                // surface -> light direction, so negate.
-                                -glam::Vec3::from(direction).normalize()
-                            }
-                            _ => glam::Vec3::new(0.0, -1.0, 0.0),
-                        }
-                    } else {
-                        glam::Vec3::new(0.0, -1.0, 0.0)
-                    };
-                let view = frame.camera.render_camera.view;
-                let light_dir_view = view.transform_vector3(light_dir_world).normalize();
-                let world_up_view = view.transform_vector3(glam::Vec3::Z).normalize();
-                let cs_uniform = crate::resources::ContactShadowUniform {
-                    inv_proj: inv_proj.to_cols_array_2d(),
-                    proj: proj.to_cols_array_2d(),
-                    light_dir_view: [light_dir_view.x, light_dir_view.y, light_dir_view.z, 0.0],
-                    world_up_view: [world_up_view.x, world_up_view.y, world_up_view.z, 0.0],
-                    params: [
-                        pp.contact_shadows.max_distance,
-                        pp.contact_shadows.steps as f32,
-                        pp.contact_shadows.thickness,
-                        0.0,
-                    ],
-                };
-                queue.write_buffer(
-                    &hdr.contact_shadow_uniform_buf,
-                    0,
-                    bytemuck::cast_slice(&[cs_uniform]),
-                );
-            }
-
-            // Upload bloom uniform if needed.
-            if pp.bloom.enabled {
-                let bloom_u = crate::resources::BloomUniform {
-                    threshold: pp.bloom.threshold,
-                    intensity: pp.bloom.intensity,
-                    horizontal: 0,
-                    max_brightness: pp.bloom.max_brightness,
-                };
-                queue.write_buffer(&hdr.bloom_uniform_buf, 0, bytemuck::cast_slice(&[bloom_u]));
+            // Producer uniforms: every composite-input producer derives its
+            // per-frame uniform from the same inputs.
+            let inputs = crate::resources::ProducerFrameInputs {
+                post: pp,
+                proj: frame.camera.render_camera.projection,
+                view: frame.camera.render_camera.view,
+                near: frame.camera.render_camera.near,
+                far: frame.camera.render_camera.far,
+                first_light: frame.effects.lighting.lights.first(),
+                foreground_active: composite_inputs.foreground,
+                exposure: frame.effects.display.exposure,
+            };
+            for producer in self.resources.post_producers() {
+                if producer.enabled(&inputs) {
+                    producer.upload(queue, hdr, &inputs);
+                }
             }
         }
 
-        // Upload DoF uniform when enabled.
-        if pp.dof.enabled {
-            let (w, h) = {
-                let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-                (hdr.scene_size[0] as f32, hdr.scene_size[1] as f32)
-            };
-            let dof_uniform = crate::resources::DofUniform {
-                focal_distance: pp.dof.focal_distance,
-                focal_range: pp.dof.focal_range,
-                max_blur_radius: pp.dof.max_blur_radius,
-                near_plane: frame.camera.render_camera.near,
-                far_plane: frame.camera.render_camera.far,
-                viewport_width: w,
-                viewport_height: h,
-                foreground_enabled: if self.foreground_active(frame) {
-                    1.0
-                } else {
-                    0.0
-                },
-            };
+        // External post-effect producers and stages: run any deferred GPU
+        // init, then this frame's uniform writes.
+        self.init_pending_post_effect_producers(device);
+        self.frame_external_slot_views.clear();
+        if !self.post_effect_producers.is_empty() || !self.post_effect_stages.is_empty() {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-            queue.write_buffer(
-                &hdr.dof_uniform_buf,
-                0,
-                bytemuck::cast_slice(&[dof_uniform]),
-            );
+            let ctx = post_effect_ctx(device, hdr, frame, vp_idx);
+            for entry in &mut self.post_effect_producers {
+                if entry.gpu_ready && entry.producer.enabled() {
+                    entry.producer.prepare(queue, &ctx);
+                }
+            }
+            for entry in &mut self.post_effect_stages {
+                if entry.gpu_ready && entry.stage.enabled() {
+                    entry.stage.prepare(queue, &ctx);
+                }
+            }
         }
 
         // Pre-allocate the foreground depth target so the tone-map / DOF bind
@@ -465,7 +459,7 @@ impl ViewportRenderer {
         // draws into hdr_view after the SSAA resolve, so the depth target is
         // scene-sized (matching hdr_view, OIT, and the other post-resolve
         // passes), not SSAA-sized.
-        let use_foreground = self.foreground_active(frame);
+        let use_foreground = composite_inputs.foreground;
         if use_foreground {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
             let [sw, sh] = hdr.scene_size;
@@ -473,21 +467,13 @@ impl ViewportRenderer {
                 .ensure_viewport_foreground_depth(device, hdr, sw, sh);
         }
 
-        // Rebuild tone-map bind group with correct bloom/AO/DoF texture views.
+        // Rebuild the tone-map bind group with this frame's composite inputs.
+        // External producers have not encoded yet; if any contribute a slot
+        // view this frame, the tone-map stage rebuilds again with overrides.
         {
             let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
-            self.resources.rebuild_tone_map_bind_group(
-                device,
-                hdr,
-                pp.bloom.enabled,
-                pp.ssao,
-                pp.contact_shadows.enabled,
-                scene_items
-                    .iter()
-                    .any(|i| i.lic.is_some() && !i.settings.hidden),
-                pp.dof.enabled,
-                use_foreground,
-            );
+            self.resources
+                .rebuild_tone_map_bind_group(device, hdr, composite_inputs, &[]);
         }
 
         // -----------------------------------------------------------------------
@@ -538,6 +524,8 @@ impl ViewportRenderer {
             h,
             ssaa_factor,
             hdr_clear_rgb,
+            composite_inputs,
+            tm_uniform,
         };
 
         self.hdr_scene_pass(&ctx, &mut encoder);
@@ -555,7 +543,6 @@ impl ViewportRenderer {
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
         self.hdr_post_effects(&ctx, &mut encoder);
-        self.hdr_exposure(&ctx, &mut encoder);
         self.hdr_tonemap_resolve(&ctx, &mut encoder);
         self.hdr_scene_overlays(&ctx, &mut encoder);
         self.hdr_final_overlay(&ctx, &mut encoder);
@@ -790,12 +777,93 @@ impl ViewportRenderer {
                                 // transparent batch sits between two opaque ones) so a
                                 // multi-draw never sweeps in an entry the CPU skipped.
                                 let multi_draw = self.instancing.multi_draw_active();
+                                // GPU-driven submission: when the compaction pass
+                                // precomputed draw groups (bindless + native
+                                // multi-draw-count), issue one
+                                // multi_draw_indexed_indirect_count per group and
+                                // skip the CPU run-forming entirely.
+                                let mut did_groups = false;
+                                if !self.instancing.draw_groups.is_empty() {
+                                    if let (Some(compacted), Some(counts)) = (
+                                        cull0.compacted_args_buf.as_ref(),
+                                        cull0.draw_counts_buf.as_ref(),
+                                    ) {
+                                        let mut cur_pipe: Option<(bool, bool)> = None;
+                                        let mut cur_chunks: Option<(u32, u32)> = None;
+                                        for group in self.instancing.draw_groups.iter() {
+                                            // The group carries its pipeline
+                                            // selectors and geometry chunk, so no
+                                            // per-group batch / mesh-store lookup
+                                            // is needed (the count path draws every
+                                            // batch's args from the compacted
+                                            // buffer the GPU wrote).
+                                            let pipe_key = (group.two_sided, group.no_discard);
+                                            if cur_pipe != Some(pipe_key) {
+                                                let key = PipelineKey {
+                                                    two_sided: group.two_sided,
+                                                    no_discard_eligible: group.no_discard,
+                                                    ..PipelineKey::default()
+                                                };
+                                                render_pass.set_pipeline(select_opaque_solid(
+                                                    key,
+                                                    pipeline,
+                                                    pipeline_two_sided,
+                                                    nodiscard_pipes.0,
+                                                    nodiscard_pipes.1,
+                                                ));
+                                                cur_pipe = Some(pipe_key);
+                                            }
+                                            let chunks = (group.vertex_chunk, group.index_chunk);
+                                            if cur_chunks != Some(chunks) {
+                                                // The colour bind group carries this
+                                                // chunk's uv1 buffer, so rebind group 1
+                                                // whenever the slab chunk changes.
+                                                let Some(bg) = cull0
+                                                    .bindless_cull_bind_groups
+                                                    .get(&resources.uv1_chunk_key(chunks.0))
+                                                else {
+                                                    continue;
+                                                };
+                                                render_pass.set_bind_group(1, bg, &[]);
+                                                render_pass.set_vertex_buffer(
+                                                    0,
+                                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                                );
+                                                render_pass.set_index_buffer(
+                                                    resources.geometry.index_chunk_slice(chunks.1),
+                                                    crate::gpu::IndexFormat::Uint32,
+                                                );
+                                                cur_chunks = Some(chunks);
+                                            }
+                                            render_pass.multi_draw_indexed_indirect_count(
+                                                compacted,
+                                                group.arg_base as u64 * 20,
+                                                counts,
+                                                group.count_index as u64 * 4,
+                                                group.size,
+                                            );
+                                            self.frame_main_draw_commands
+                                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        }
+                                        did_groups = true;
+                                    }
+                                }
                                 let mut cur_pipe: Option<(bool, bool)> = None;
                                 let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
                                 let mut cur_chunks: Option<(u32, u32)> = None;
                                 let mut run_start: u64 = 0;
                                 let mut run_len: u32 = 0;
-                                for (batch_global_idx, batch) in &opaque_batches {
+                                for (batch_global_idx, batch) in opaque_batches
+                                    .iter()
+                                    .take(if did_groups { 0 } else { usize::MAX })
+                                {
+                                    // Plugin batches draw in the dedicated plugin
+                                    // sub-loop below; skipping here breaks the
+                                    // current run on the global-index gap, exactly
+                                    // as an interleaved transparent batch does.
+                                    if batch.shading_plugin.is_some() {
+                                        continue;
+                                    }
                                     let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                         continue;
                                     };
@@ -803,10 +871,15 @@ impl ViewportRenderer {
                                         batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                        batch
+                                            .metallic_roughness_id
+                                            .map(|t| t.raw())
+                                            .unwrap_or(u64::MAX),
+                                        batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                         resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                     );
                                     let Some(inst_tex_bg) =
-                                        cull0.instance_cull_bind_groups.get(&mat_key)
+                                        resources.instanced_cull_colour_bind_group(cull0, mat_key)
                                     else {
                                         continue;
                                     };
@@ -904,6 +977,10 @@ impl ViewportRenderer {
                             let mut cur_pipe: Option<(bool, bool)> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             for (_, batch) in &opaque_batches {
+                                // Plugin batches draw in the plugin sub-loop below.
+                                if batch.shading_plugin.is_some() {
+                                    continue;
+                                }
                                 let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
                                     continue;
                                 };
@@ -911,10 +988,15 @@ impl ViewportRenderer {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch
+                                        .metallic_roughness_id
+                                        .map(|t| t.raw())
+                                        .unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
                                 let Some(inst_tex_bg) =
-                                    resources.instancing.bind_groups.get(&mat_key)
+                                    resources.instanced_colour_bind_group(mat_key)
                                 else {
                                     continue;
                                 };
@@ -960,6 +1042,117 @@ impl ViewportRenderer {
                                     batch.instance_offset
                                         ..batch.instance_offset + batch.instance_count,
                                 );
+                                self.frame_main_draw_commands
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+
+                        // Material-plugin opaque batches: one instanced call each,
+                        // through the plugin's composed instanced pipeline plus its
+                        // group-3 params bind. The loops above skip plugin batches
+                        // (they sit outside GPU-cull / count-multi-draw run-forming),
+                        // so this covers them whether or not culling drew the rest.
+                        if opaque_batches
+                            .iter()
+                            .any(|(_, b)| b.shading_plugin.is_some())
+                        {
+                            bind_deform_group!(
+                                render_pass,
+                                resources,
+                                &resources.deform.dummy_bind_group
+                            );
+                            // When GPU culling ran this frame, a plugin batch draws
+                            // its culled instances from the cull-written indirect
+                            // args through the plugin's `vs_main_cull` pipeline; the
+                            // cull kernel wrote args + visibility for every batch,
+                            // including plugin ones (they are only excluded from the
+                            // count-multi-draw compaction, not the cull). Otherwise
+                            // it draws every instance directly.
+                            let plugin_indirect = (self.instancing.gpu_culling_enabled
+                                && resources.cull.hdr_solid_pipeline.is_some())
+                            .then(|| cull0.indirect_args_buf.as_ref())
+                            .flatten();
+                            let mut cur_chunks: Option<(u32, u32)> = None;
+                            for (batch_global_idx, batch) in &opaque_batches {
+                                if batch.shading_plugin.is_none() {
+                                    continue;
+                                }
+                                let Some((plug_pipes, mat_bg)) =
+                                    resources.material_plugin_instanced_draw(batch.shading_plugin)
+                                else {
+                                    continue;
+                                };
+                                let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                    continue;
+                                };
+                                let mat_key = (
+                                    batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch
+                                        .metallic_roughness_id
+                                        .map(|t| t.raw())
+                                        .unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    resources.uv1_chunk_key(mesh.vertex_span.chunk),
+                                );
+                                let no_discard = !clipping_active && !batch.has_alpha_mask;
+                                let key = PipelineKey {
+                                    two_sided: batch.two_sided,
+                                    no_discard_eligible: no_discard,
+                                    ..PipelineKey::default()
+                                };
+                                // Geometry chunk binds once per change; both draw
+                                // paths read the same slab chunk.
+                                let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                                if cur_chunks != Some(chunks) {
+                                    render_pass.set_vertex_buffer(
+                                        0,
+                                        resources.geometry.vertex_chunk_slice(chunks.0),
+                                    );
+                                    render_pass.set_index_buffer(
+                                        resources.geometry.index_chunk_slice(chunks.1),
+                                        crate::gpu::IndexFormat::Uint32,
+                                    );
+                                    self.frame_main_buffer_binds
+                                        .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+                                    cur_chunks = Some(chunks);
+                                }
+                                let culled = plugin_indirect
+                                    .zip(plug_pipes.cull.as_ref())
+                                    .and_then(|(indirect_buf, cull_set)| {
+                                        resources
+                                            .instanced_cull_colour_bind_group(cull0, mat_key)
+                                            .map(|bg| (indirect_buf, cull_set, bg))
+                                    });
+                                if let Some((indirect_buf, cull_set, cull_bg)) = culled {
+                                    render_pass.set_pipeline(cull_set.get(key));
+                                    render_pass.set_bind_group(1, cull_bg, &[]);
+                                    bind_material_group!(render_pass, mat_bg);
+                                    render_pass.draw_indexed_indirect(
+                                        indirect_buf,
+                                        *batch_global_idx as u64 * 20,
+                                    );
+                                } else {
+                                    let Some(inst_tex_bg) =
+                                        resources.instanced_colour_bind_group(mat_key)
+                                    else {
+                                        continue;
+                                    };
+                                    render_pass.set_pipeline(plug_pipes.hdr_opaque.get(key));
+                                    render_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                    bind_material_group!(render_pass, mat_bg);
+                                    let base_vertex =
+                                        resources.geometry.base_vertex(mesh.vertex_span);
+                                    let first_index =
+                                        resources.geometry.first_index(mesh.index_span);
+                                    render_pass.draw_indexed(
+                                        first_index..first_index + mesh.index_count,
+                                        base_vertex,
+                                        batch.instance_offset
+                                            ..batch.instance_offset + batch.instance_count,
+                                    );
+                                }
                                 self.frame_main_draw_commands
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
@@ -2682,20 +2875,93 @@ impl ViewportRenderer {
                                 self.resources,
                                 &self.resources.deform.dummy_bind_group
                             );
+                            // GPU-driven submission: iterate the precomputed
+                            // transparent groups and issue one
+                            // multi_draw_indexed_indirect_count per group over the
+                            // shared compacted args + counts, skipping the CPU
+                            // run-forming below. Active only under the same
+                            // bindless + native-multi-draw gate as the opaque path.
+                            let mut did_oit_groups = false;
+                            if !self.instancing.oit_draw_groups.is_empty() {
+                                if let (Some(compacted), Some(counts)) = (
+                                    cull0.compacted_args_buf.as_ref(),
+                                    cull0.draw_counts_buf.as_ref(),
+                                ) {
+                                    let mut cur_two_sided: Option<bool> = None;
+                                    let mut cur_chunks: Option<(u32, u32)> = None;
+                                    for group in self.instancing.oit_draw_groups.iter() {
+                                        // Pipeline selector and geometry chunk come
+                                        // from the group itself; the per-batch args
+                                        // are drawn from the compacted buffer, so no
+                                        // batch / mesh-store lookup is needed here.
+                                        if cur_two_sided != Some(group.two_sided) {
+                                            oit_pass.set_pipeline(if group.two_sided {
+                                                pipeline_two_sided
+                                            } else {
+                                                pipeline
+                                            });
+                                            cur_two_sided = Some(group.two_sided);
+                                        }
+                                        let chunks = (group.vertex_chunk, group.index_chunk);
+                                        if cur_chunks != Some(chunks) {
+                                            // The colour bind group carries this
+                                            // chunk's uv1 buffer, so rebind group 1
+                                            // whenever the slab chunk changes.
+                                            let Some(bg) = cull0
+                                                .bindless_cull_bind_groups
+                                                .get(&resources.uv1_chunk_key(chunks.0))
+                                            else {
+                                                continue;
+                                            };
+                                            oit_pass.set_bind_group(1, bg, &[]);
+                                            oit_pass.set_vertex_buffer(
+                                                0,
+                                                resources.geometry.vertex_chunk_slice(chunks.0),
+                                            );
+                                            oit_pass.set_index_buffer(
+                                                resources.geometry.index_chunk_slice(chunks.1),
+                                                crate::gpu::IndexFormat::Uint32,
+                                            );
+                                            cur_chunks = Some(chunks);
+                                        }
+                                        oit_pass.multi_draw_indexed_indirect_count(
+                                            compacted,
+                                            group.arg_base as u64 * 20,
+                                            counts,
+                                            group.count_index as u64 * 4,
+                                            group.size,
+                                        );
+                                        self.frame_main_draw_commands
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                    did_oit_groups = true;
+                                }
+                            }
                             // Transparent batches pick the OIT pipeline by their
                             // two-sidedness, so a run collapses when the pipeline,
                             // bind group, and slab chunk hold across consecutive
-                            // global indices (see the opaque path).
+                            // global indices (see the opaque path). Skipped when the
+                            // group path above already submitted the draws.
                             let multi_draw = self.instancing.multi_draw_active();
                             let mut cur_bg: Option<*const crate::gpu::BindGroup> = None;
                             let mut cur_chunks: Option<(u32, u32)> = None;
                             let mut cur_two_sided: Option<bool> = None;
                             let mut run_start: u64 = 0;
                             let mut run_len: u32 = 0;
-                            for (batch_global_idx, batch) in
-                                self.instancing.batches.iter().enumerate()
+                            // `take(0)` when the group path already drew, so the
+                            // CPU run-forming is skipped without duplicating draws.
+                            let cpu_run_limit = if did_oit_groups { 0 } else { usize::MAX };
+                            for (batch_global_idx, batch) in self
+                                .instancing
+                                .batches
+                                .iter()
+                                .enumerate()
+                                .take(cpu_run_limit)
                             {
-                                if !batch.is_transparent {
+                                // Plugin transparent batches draw in the plugin OIT
+                                // sub-loop below; skipping breaks the run on the
+                                // global-index gap like an opaque batch does.
+                                if !batch.is_transparent || batch.shading_plugin.is_some() {
                                     continue;
                                 }
                                 let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id)
@@ -2706,10 +2972,16 @@ impl ViewportRenderer {
                                     batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                    batch
+                                        .metallic_roughness_id
+                                        .map(|t| t.raw())
+                                        .unwrap_or(u64::MAX),
+                                    batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                     self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
                                 );
-                                let Some(inst_tex_bg) =
-                                    cull0.instance_cull_bind_groups.get(&mat_key)
+                                let Some(inst_tex_bg) = self
+                                    .resources
+                                    .instanced_cull_colour_bind_group(cull0, mat_key)
                                 else {
                                     continue;
                                 };
@@ -2793,7 +3065,9 @@ impl ViewportRenderer {
                         let mut cur_chunks: Option<(u32, u32)> = None;
                         let mut cur_two_sided: Option<bool> = None;
                         for batch in &self.instancing.batches {
-                            if !batch.is_transparent {
+                            // Plugin transparent batches draw in the plugin OIT
+                            // sub-loop below.
+                            if !batch.is_transparent || batch.shading_plugin.is_some() {
                                 continue;
                             }
                             let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
@@ -2803,10 +3077,15 @@ impl ViewportRenderer {
                                 batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch
+                                    .metallic_roughness_id
+                                    .map(|t| t.raw())
+                                    .unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
                                 self.resources.uv1_chunk_key(mesh.vertex_span.chunk),
                             );
                             let Some(inst_tex_bg) =
-                                self.resources.instancing.bind_groups.get(&mat_key)
+                                self.resources.instanced_colour_bind_group(mat_key)
                             else {
                                 continue;
                             };
@@ -2840,6 +3119,107 @@ impl ViewportRenderer {
                                 base_vertex,
                                 batch.instance_offset..batch.instance_offset + batch.instance_count,
                             );
+                            self.frame_main_draw_commands
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+
+                    // Material-plugin transparent batches: one instanced OIT call
+                    // each, through the plugin's composed instanced OIT pipeline
+                    // plus its group-3 params bind. The OIT loops above skip plugin
+                    // batches, so this covers them under both the culled and direct
+                    // transparent paths.
+                    if self
+                        .instancing
+                        .batches
+                        .iter()
+                        .any(|b| b.is_transparent && b.shading_plugin.is_some())
+                    {
+                        bind_deform_group!(oit_pass, resources, &resources.deform.dummy_bind_group);
+                        // As on the opaque plugin path: a plugin batch draws its
+                        // culled instances from the cull-written indirect args
+                        // through the plugin's `vs_main_cull` OIT pipeline when
+                        // culling ran, else every instance directly.
+                        let plugin_indirect = (self.instancing.gpu_culling_enabled
+                            && resources.cull.hdr_solid_pipeline.is_some())
+                        .then(|| cull0.indirect_args_buf.as_ref())
+                        .flatten();
+                        let mut cur_chunks: Option<(u32, u32)> = None;
+                        for (batch_global_idx, batch) in self.instancing.batches.iter().enumerate()
+                        {
+                            if !batch.is_transparent || batch.shading_plugin.is_none() {
+                                continue;
+                            }
+                            let Some((plug_pipes, mat_bg)) =
+                                resources.material_plugin_instanced_draw(batch.shading_plugin)
+                            else {
+                                continue;
+                            };
+                            let Some(mesh) = resources.mesh_store.get(batch.mesh_id) else {
+                                continue;
+                            };
+                            let mat_key = (
+                                batch.texture_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.normal_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch.ao_map_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                batch
+                                    .metallic_roughness_id
+                                    .map(|t| t.raw())
+                                    .unwrap_or(u64::MAX),
+                                batch.emissive_id.map(|t| t.raw()).unwrap_or(u64::MAX),
+                                resources.uv1_chunk_key(mesh.vertex_span.chunk),
+                            );
+                            let key = PipelineKey {
+                                two_sided: batch.two_sided,
+                                ..PipelineKey::default()
+                            };
+                            let chunks = (mesh.vertex_span.chunk, mesh.index_span.chunk);
+                            if cur_chunks != Some(chunks) {
+                                oit_pass.set_vertex_buffer(
+                                    0,
+                                    resources.geometry.vertex_chunk_slice(chunks.0),
+                                );
+                                oit_pass.set_index_buffer(
+                                    resources.geometry.index_chunk_slice(chunks.1),
+                                    crate::gpu::IndexFormat::Uint32,
+                                );
+                                self.frame_main_buffer_binds
+                                    .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+                                cur_chunks = Some(chunks);
+                            }
+                            let culled = plugin_indirect
+                                .zip(plug_pipes.oit_cull.as_ref())
+                                .and_then(|(indirect_buf, cull_set)| {
+                                    resources
+                                        .instanced_cull_colour_bind_group(cull0, mat_key)
+                                        .map(|bg| (indirect_buf, cull_set, bg))
+                                });
+                            if let Some((indirect_buf, cull_set, cull_bg)) = culled {
+                                oit_pass.set_pipeline(cull_set.get(key));
+                                oit_pass.set_bind_group(1, cull_bg, &[]);
+                                bind_material_group!(oit_pass, mat_bg);
+                                oit_pass.draw_indexed_indirect(
+                                    indirect_buf,
+                                    batch_global_idx as u64 * 20,
+                                );
+                            } else {
+                                let Some(inst_tex_bg) =
+                                    resources.instanced_colour_bind_group(mat_key)
+                                else {
+                                    continue;
+                                };
+                                oit_pass.set_pipeline(plug_pipes.oit.get(key));
+                                oit_pass.set_bind_group(1, inst_tex_bg, &[]);
+                                bind_material_group!(oit_pass, mat_bg);
+                                let base_vertex = resources.geometry.base_vertex(mesh.vertex_span);
+                                let first_index = resources.geometry.first_index(mesh.index_span);
+                                oit_pass.draw_indexed(
+                                    first_index..first_index + mesh.index_count,
+                                    base_vertex,
+                                    batch.instance_offset
+                                        ..batch.instance_offset + batch.instance_count,
+                                );
+                            }
                             self.frame_main_draw_commands
                                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -3886,6 +4266,12 @@ impl ViewportRenderer {
             if item.settings.hidden || resources.mesh_store.get(item.mesh_id).is_none() {
                 continue;
             }
+            // Per-camera layer cull, as in the scene pass: drop a foreground item
+            // whose visibility mask shares no bit with this viewport's cull_mask.
+            // Default masks (`!0`) keep it.
+            if (item.settings.visibility_mask & frame.camera.cull_mask) == 0 {
+                continue;
+            }
             if item.settings.opacity < 1.0 || item.material.is_blend() {
                 transparent.push((idx, item));
             } else {
@@ -3975,302 +4361,68 @@ impl ViewportRenderer {
         let throttle_effects = self.degradation_effects_throttled;
 
         // -----------------------------------------------------------------------
-        // SSAO pass.
+        // Composite-input producers (SSAO, contact shadows, bloom, DoF,
+        // exposure), in the fixed encode order. The throttle skips the
+        // throttleable producers only; exposure always resolves.
         // -----------------------------------------------------------------------
-        if pp.ssao && !throttle_effects {
-            if let Some(ssao_pipeline) = &self.resources.post.ssao_pipeline {
-                // The SSAO slot begins on the occlusion pass and ends on the
-                // blur pass (or on the occlusion pass when there is no blur).
-                let has_blur = self.resources.post.ssao_blur_pipeline.is_some();
-                {
-                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, true, !has_blur);
-                    let mut ssao_pass =
-                        encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(any(wgpu29, wgpu30))]
-                            multiview_mask: None,
-                            label: Some("ssao_pass"),
-                            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                                view: &slot_hdr.ssao_view,
-                                resolve_target: None,
-                                ops: crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::WHITE),
-                                    store: crate::gpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: ts,
-                            occlusion_query_set: None,
-                        });
-                    ssao_pass.set_pipeline(ssao_pipeline);
-                    ssao_pass.set_bind_group(0, &slot_hdr.ssao_bg, &[]);
-                    ssao_pass.draw(0..3, 0..1);
-                }
-
-                // SSAO blur pass.
-                if let Some(ssao_blur_pipeline) = &self.resources.post.ssao_blur_pipeline {
-                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_SSAO, false, true);
-                    let mut ssao_blur_pass =
-                        encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(any(wgpu29, wgpu30))]
-                            multiview_mask: None,
-                            label: Some("ssao_blur_pass"),
-                            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                                view: &slot_hdr.ssao_blur_view,
-                                resolve_target: None,
-                                ops: crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::WHITE),
-                                    store: crate::gpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: ts,
-                            occlusion_query_set: None,
-                        });
-                    ssao_blur_pass.set_pipeline(ssao_blur_pipeline);
-                    ssao_blur_pass.set_bind_group(0, &slot_hdr.ssao_blur_bg, &[]);
-                    ssao_blur_pass.draw(0..3, 0..1);
-                }
-            }
-        }
-
-        // -----------------------------------------------------------------------
-        // Contact shadow pass.
-        // -----------------------------------------------------------------------
-        if pp.contact_shadows.enabled && !throttle_effects {
-            if let Some(cs_pipeline) = &self.resources.post.contact_shadow_pipeline {
-                let mut cs_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("contact_shadow_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: &slot_hdr.contact_shadow_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::WHITE),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                cs_pass.set_pipeline(cs_pipeline);
-                cs_pass.set_bind_group(0, &slot_hdr.contact_shadow_bg, &[]);
-                cs_pass.draw(0..3, 0..1);
-            }
-        }
-
-        // -----------------------------------------------------------------------
-        // Bloom passes.
-        // -----------------------------------------------------------------------
-        if pp.bloom.enabled && !throttle_effects {
-            // Threshold pass: extract bright pixels into bloom_threshold_texture.
-            if let Some(bloom_threshold_pipeline) = &self.resources.post.bloom_threshold_pipeline {
-                // The bloom slot begins on the threshold pass and ends on the
-                // last blur pass (or here when there is no blur pipeline).
-                let has_blur = self.resources.post.bloom_blur_pipeline.is_some();
-                {
-                    let ts = self.ts_writes_for(crate::renderer::GPU_TS_BLOOM, true, !has_blur);
-                    let mut threshold_pass =
-                        encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                            #[cfg(any(wgpu29, wgpu30))]
-                            multiview_mask: None,
-                            label: Some("bloom_threshold_pass"),
-                            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                                view: &slot_hdr.bloom_threshold_view,
-                                resolve_target: None,
-                                ops: crate::gpu::Operations {
-                                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                                    store: crate::gpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: ts,
-                            occlusion_query_set: None,
-                        });
-                    threshold_pass.set_pipeline(bloom_threshold_pipeline);
-                    threshold_pass.set_bind_group(0, &slot_hdr.bloom_threshold_bg, &[]);
-                    threshold_pass.draw(0..3, 0..1);
-                }
-
-                // 4 ping-pong H+V blur passes for a wide glow.
-                // Pass 1: threshold -> ping -> pong. Passes 2-4: pong -> ping -> pong.
-                if let Some(blur_pipeline) = &self.resources.post.bloom_blur_pipeline {
-                    let blur_h_bg = &slot_hdr.bloom_blur_h_bg;
-                    let blur_h_pong_bg = &slot_hdr.bloom_blur_h_pong_bg;
-                    let blur_v_bg = &slot_hdr.bloom_blur_v_bg;
-                    let bloom_ping_view = &slot_hdr.bloom_ping_view;
-                    let bloom_pong_view = &slot_hdr.bloom_pong_view;
-                    const BLUR_ITERATIONS: usize = 4;
-                    for i in 0..BLUR_ITERATIONS {
-                        // H pass: pass 0 reads threshold, subsequent passes read pong.
-                        let h_bg = if i == 0 { blur_h_bg } else { blur_h_pong_bg };
-                        {
-                            let mut h_pass =
-                                encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                    #[cfg(any(wgpu29, wgpu30))]
-                                    multiview_mask: None,
-                                    label: Some("bloom_blur_h_pass"),
-                                    color_attachments: &[Some(
-                                        crate::gpu::RenderPassColorAttachment {
-                                            view: bloom_ping_view,
-                                            resolve_target: None,
-                                            ops: crate::gpu::Operations {
-                                                load: crate::gpu::LoadOp::Clear(
-                                                    crate::gpu::Color::BLACK,
-                                                ),
-                                                store: crate::gpu::StoreOp::Store,
-                                            },
-                                            depth_slice: None,
-                                        },
-                                    )],
-                                    depth_stencil_attachment: None,
-                                    timestamp_writes: None,
-                                    occlusion_query_set: None,
-                                });
-                            h_pass.set_pipeline(blur_pipeline);
-                            h_pass.set_bind_group(0, h_bg, &[]);
-                            h_pass.draw(0..3, 0..1);
-                        }
-                        // V pass: ping -> pong. The last iteration closes the
-                        // bloom timing slot.
-                        {
-                            let ts = (i == BLUR_ITERATIONS - 1)
-                                .then(|| {
-                                    self.ts_writes_for(crate::renderer::GPU_TS_BLOOM, false, true)
-                                })
-                                .flatten();
-                            let mut v_pass =
-                                encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                                    #[cfg(any(wgpu29, wgpu30))]
-                                    multiview_mask: None,
-                                    label: Some("bloom_blur_v_pass"),
-                                    color_attachments: &[Some(
-                                        crate::gpu::RenderPassColorAttachment {
-                                            view: bloom_pong_view,
-                                            resolve_target: None,
-                                            ops: crate::gpu::Operations {
-                                                load: crate::gpu::LoadOp::Clear(
-                                                    crate::gpu::Color::BLACK,
-                                                ),
-                                                store: crate::gpu::StoreOp::Store,
-                                            },
-                                            depth_slice: None,
-                                        },
-                                    )],
-                                    depth_stencil_attachment: None,
-                                    timestamp_writes: ts,
-                                    occlusion_query_set: None,
-                                });
-                            v_pass.set_pipeline(blur_pipeline);
-                            v_pass.set_bind_group(0, blur_v_bg, &[]);
-                            v_pass.draw(0..3, 0..1);
-                        }
-                    }
-                }
-            }
-        }
-
-        // -----------------------------------------------------------------------
-        // Depth of field pass: HDR + depth -> dof_texture (when enabled).
-        // -----------------------------------------------------------------------
-        if pp.dof.enabled && !throttle_effects {
-            if let Some(dof_pipeline) = &self.resources.post.dof_pipeline {
-                let mut dof_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("dof_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: &slot_hdr.dof_view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                dof_pass.set_pipeline(dof_pipeline);
-                dof_pass.set_bind_group(0, &slot_hdr.dof_bg, &[]);
-                dof_pass.draw(0..3, 0..1);
-            }
-        }
-    }
-
-    /// Resolve the pre-tone-map exposure multiplier into the per-viewport
-    /// exposure state buffer, which the tone map reads (binding 9).
-    ///
-    /// Manual / PhysicalCamera compute the multiplier on the CPU and write the
-    /// buffer directly. Automatic writes the metering params and dispatches the
-    /// clear -> build -> resolve compute passes here, in the same submission,
-    /// before the tone map — so a single dirty render is correctly exposed on
-    /// its own frame (no CPU readback, no cross-frame dependency).
-    fn hdr_exposure(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
-        let frame = ctx.frame;
-        let queue = ctx.queue;
-        let vp_idx = ctx.vp_idx;
-        let exposure = frame.effects.display.exposure;
-        let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-
-        // Manual / PhysicalCamera: write the exposure state buffer directly.
-        if let Some(mult) = exposure.manual_multiplier() {
-            let ev_used = exposure.base_ev100().unwrap_or(0.0) - exposure.compensation;
-            let state = crate::resources::gpu::exposure::ExposureState {
-                exposure: mult,
-                current_ev: ev_used,
-                target_ev: ev_used,
-                adapting: 0.0,
-            };
-            queue.write_buffer(
-                &slot_hdr.exposure_state_buf,
-                0,
-                bytemuck::cast_slice(&[state]),
-            );
-            return;
-        }
-
-        // Automatic: fill the metering params and dispatch the compute passes.
-        let auto = match exposure.mode {
-            crate::renderer::types::ExposureMode::Automatic(a) => a,
-            // `manual_multiplier()` returned `None` only for `Automatic`.
-            _ => return,
+        let inputs = crate::resources::ProducerFrameInputs {
+            post: pp,
+            proj: frame.camera.render_camera.projection,
+            view: frame.camera.render_camera.view,
+            near: frame.camera.render_camera.near,
+            far: frame.camera.render_camera.far,
+            first_light: frame.effects.lighting.lights.first(),
+            foreground_active: self.foreground_active(frame),
+            exposure: frame.effects.display.exposure,
         };
-        let [sw, sh] = slot_hdr.scene_size;
-        let range = crate::resources::gpu::exposure::LOG_LUM_MAX
-            - crate::resources::gpu::exposure::LOG_LUM_MIN;
-        let params = crate::resources::gpu::exposure::ExposureParams {
-            min_log_lum: crate::resources::gpu::exposure::LOG_LUM_MIN,
-            inv_log_lum_range: 1.0 / range,
-            log_lum_range: range,
-            k_factor: crate::renderer::types::METER_CALIBRATION_K,
-            min_ev: auto.min_ev,
-            max_ev: auto.max_ev.max(auto.min_ev),
-            compensation: exposure.compensation,
-            exposure_boost: crate::renderer::types::INTERIM_EXPOSURE_BOOST,
-            speed_up: auto.speed_up.max(0.0),
-            speed_down: auto.speed_down.max(0.0),
-            dt: auto.dt,
-            low_percent: auto.low_percent.clamp(0.0, 0.98),
-            high_percent: auto.high_percent.clamp(0.02, 1.0),
-            tex_width: sw as f32,
-            tex_height: sh as f32,
-            center_weight: auto.center_weight.clamp(0.0, 1.0),
-            adaptation: auto.adaptation.clamp(0.0, 1.0),
-            _pad: [0.0; 3],
+        let timing = crate::resources::ProducerTiming {
+            query_set: self.ts_query_set.as_ref(),
+            written_mask: &self.ts_written_mask,
         };
-        self.resources
-            .exposure
-            .write_params(queue, &slot_hdr.exposure_params_buf, &params);
-        self.resources
-            .exposure
-            .dispatch(encoder, &slot_hdr.exposure_bind_group, sw, sh);
+        for producer in self.resources.post_producers() {
+            if producer.enabled(&inputs) && (!throttle_effects || !producer.throttleable()) {
+                producer.encode(slot_hdr, encoder, &inputs, &timing);
+            }
+        }
+
+        // External post-effect producers run after the built-ins, in
+        // registration order, under the same throttle. Returned views are
+        // collected and bound at their slots when the tone-map stage
+        // rebuilds the composite bind group; the last producer for a slot
+        // wins, and an external view over an enabled built-in logs once.
+        if !self.post_effect_producers.is_empty() && !throttle_effects {
+            let ci = ctx.composite_inputs;
+            let ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx);
+            let mut collected: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)> =
+                std::mem::take(&mut self.frame_external_slot_views);
+            for entry in &mut self.post_effect_producers {
+                if !(entry.gpu_ready && entry.producer.enabled()) {
+                    continue;
+                }
+                let slot = entry.producer.slot();
+                let Some(view) = entry.producer.encode(encoder, &ctx) else {
+                    continue;
+                };
+                let view = view.clone();
+                let (builtin_on, slot_bit) = match slot {
+                    crate::plugin_api::PostEffectSlot::Bloom => (ci.bloom, 1u8),
+                    crate::plugin_api::PostEffectSlot::AmbientOcclusion => (ci.ssao, 2),
+                    crate::plugin_api::PostEffectSlot::ContactShadow => (ci.contact_shadows, 4),
+                    crate::plugin_api::PostEffectSlot::SurfaceLic => (ci.lic, 8),
+                };
+                if builtin_on && self.post_effect_slot_warned & slot_bit == 0 {
+                    self.post_effect_slot_warned |= slot_bit;
+                    tracing::debug!(
+                        "post-effect producer '{}' overrides the enabled built-in {:?} slot; \
+                         switch the built-in off when replacing it",
+                        entry.producer.type_name(),
+                        slot,
+                    );
+                }
+                collected.push((slot, view));
+            }
+            self.frame_external_slot_views = collected;
+        }
     }
 
     fn hdr_tonemap_resolve(&mut self, ctx: &HdrFrameCtx, encoder: &mut crate::gpu::CommandEncoder) {
@@ -4278,6 +4430,47 @@ impl ViewportRenderer {
         let vp_idx = ctx.vp_idx;
         let frame = ctx.frame;
         let pp = &frame.effects.post_process;
+        // Bind this frame's external composite contributions: force the
+        // matching enable lanes on and rebuild the tone-map bind group with
+        // the producer views at their slots. The uniform rewrite is staged
+        // before this encoder's submission, so it wins over the preamble's
+        // write of the same buffer.
+        if !self.frame_external_slot_views.is_empty() {
+            let mut inputs = ctx.composite_inputs;
+            let mut uniform = ctx.tm_uniform;
+            for (slot, _) in &self.frame_external_slot_views {
+                match slot {
+                    crate::plugin_api::PostEffectSlot::Bloom => {
+                        inputs.bloom = true;
+                        uniform.bloom_enabled = 1;
+                    }
+                    crate::plugin_api::PostEffectSlot::AmbientOcclusion => {
+                        inputs.ssao = true;
+                        uniform.ssao_enabled = 1;
+                    }
+                    crate::plugin_api::PostEffectSlot::ContactShadow => {
+                        inputs.contact_shadows = true;
+                        uniform.contact_shadows_enabled = 1;
+                    }
+                    crate::plugin_api::PostEffectSlot::SurfaceLic => {
+                        inputs.lic = true;
+                        uniform.lic_enabled = 1;
+                    }
+                }
+            }
+            let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
+            ctx.queue.write_buffer(
+                &hdr.tone_map_uniform_buf,
+                0,
+                bytemuck::cast_slice(&[uniform]),
+            );
+            self.resources.rebuild_tone_map_bind_group(
+                ctx.device,
+                hdr,
+                inputs,
+                &self.frame_external_slot_views,
+            );
+        }
         let slot = &self.viewport_slots[vp_idx];
         let slot_hdr = slot.hdr.as_ref().unwrap();
         // -----------------------------------------------------------------------
@@ -4287,16 +4480,45 @@ impl ViewportRenderer {
         // resolution. The result lands in upscale_view (scene-res) and is then
         // upscale-blitted to output_view at native resolution.
         // -----------------------------------------------------------------------
-        let use_fxaa = pp.fxaa;
         let use_hdr_upscale = slot_hdr.upscale_bind_group.is_some();
+        // The post-composite stage chain: built-in stages (FXAA) and external
+        // stages merged in ascending order-key order (stable: ties keep
+        // built-ins first, then registration order). The composite renders
+        // into the first stage's input, each stage into the next stage's
+        // input, and the last into the frame's final target.
+        enum ChainEntry<'a> {
+            Builtin(&'a dyn crate::resources::PostStage),
+            External(usize),
+        }
+        let mut chain: Vec<(i32, ChainEntry<'_>)> = Vec::new();
+        for s in self.resources.post_stages() {
+            if s.enabled(pp) {
+                chain.push((
+                    crate::plugin_api::post_effect::stage_order::ANTI_ALIASING,
+                    ChainEntry::Builtin(s),
+                ));
+            }
+        }
+        for (i, entry) in self.post_effect_stages.iter().enumerate() {
+            if entry.gpu_ready && entry.stage.enabled() {
+                chain.push((entry.order, ChainEntry::External(i)));
+            }
+        }
+        chain.sort_by_key(|(order, _)| *order);
+        let final_target: crate::gpu::TextureView = if use_hdr_upscale {
+            slot_hdr.upscale_view.as_ref().unwrap().clone()
+        } else {
+            output_view.clone()
+        };
         if let Some(tone_map_pipeline) = &self.resources.post.tone_map_pipeline {
-            let tone_target: &crate::gpu::TextureView = if use_fxaa {
-                &slot_hdr.fxaa_view
-            } else if use_hdr_upscale {
-                slot_hdr.upscale_view.as_ref().unwrap()
-            } else {
-                output_view
+            let tone_target: crate::gpu::TextureView = match chain.first() {
+                Some((_, ChainEntry::Builtin(s))) => s.input_view(slot_hdr).clone(),
+                Some((_, ChainEntry::External(j))) => {
+                    self.post_effect_stages[*j].stage.input_view(vp_idx).clone()
+                }
+                None => final_target.clone(),
             };
+            let tone_target = &tone_target;
             let tone_ts_writes = self.ts_query_set.as_ref().map(|qs| {
                 self.ts_written_mask.fetch_or(
                     1 << crate::renderer::GPU_TS_POST,
@@ -4331,36 +4553,30 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // FXAA pass: fxaa_texture -> upscale_view (scaled) or output_view (1:1).
+        // Post-composite stages, chained toward the final target.
         // -----------------------------------------------------------------------
-        if use_fxaa {
-            if let Some(fxaa_pipeline) = &self.resources.post.fxaa_pipeline {
-                let fxaa_target: &crate::gpu::TextureView = if use_hdr_upscale {
-                    slot_hdr.upscale_view.as_ref().unwrap()
-                } else {
-                    output_view
+        {
+            let timing = crate::resources::ProducerTiming {
+                query_set: self.ts_query_set.as_ref(),
+                written_mask: &self.ts_written_mask,
+            };
+            for i in 0..chain.len() {
+                let target: crate::gpu::TextureView = match chain.get(i + 1) {
+                    Some((_, ChainEntry::Builtin(s))) => s.input_view(slot_hdr).clone(),
+                    Some((_, ChainEntry::External(j))) => {
+                        self.post_effect_stages[*j].stage.input_view(vp_idx).clone()
+                    }
+                    None => final_target.clone(),
                 };
-                let ts = self.ts_writes_for(crate::renderer::GPU_TS_FXAA, true, true);
-                let mut fxaa_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("fxaa_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: fxaa_target,
-                        resolve_target: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Clear(crate::gpu::Color::BLACK),
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: ts,
-                    occlusion_query_set: None,
-                });
-                fxaa_pass.set_pipeline(fxaa_pipeline);
-                fxaa_pass.set_bind_group(0, &slot_hdr.fxaa_bind_group, &[]);
-                fxaa_pass.draw(0..3, 0..1);
+                match &chain[i].1 {
+                    ChainEntry::Builtin(s) => s.encode(slot_hdr, encoder, &target, &timing),
+                    ChainEntry::External(j) => {
+                        let stage_ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx);
+                        self.post_effect_stages[*j]
+                            .stage
+                            .encode(encoder, &target, &stage_ctx);
+                    }
+                }
             }
         }
 

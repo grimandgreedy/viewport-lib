@@ -22,8 +22,7 @@ mod wireframe;
 use math::*;
 use mesh_material::*;
 pub(crate) use mesh_material::{
-    active_submesh_materials, backface_needs_per_object, has_opaque_draws, has_transparent_draws,
-    is_instanceable,
+    active_submesh_materials, has_opaque_draws, has_transparent_draws, is_instanceable,
 };
 use overlay_geometry::*;
 use projection::*;
@@ -174,6 +173,7 @@ impl ViewportRenderer {
         // buffer is uploaded at the end of this function (and again after
         // per-viewport foreground objects intern).
         self.resources.material_gpu_builder.reset();
+        self.resources.custom_data_builder.reset();
 
         // Drain the upload-job runner. Worker results received since the last
         // frame are observed, GPU submissions are polled for completion, and
@@ -238,6 +238,18 @@ impl ViewportRenderer {
                 .map(|item| item.to_render_item());
             surfaces.iter().cloned().chain(extra).collect()
         };
+
+        // Per-camera layer cull. Drop any mesh-family item whose
+        // `visibility_mask` shares no bit with this camera's `cull_mask`
+        // (the AND is zero). Runs before LOD, instancing, shadow, and picking
+        // read the list, so a layer-culled item is absent from every pass.
+        // This is the CPU half of the shared layer mask: it costs one AND per
+        // item, is inert at the default (`!0 & anything != 0`), and needs no
+        // GPU carrier. The GPU-driven instanced cull does not yet honour the
+        // mask; items dropped here never reach it, but a batch visible to the
+        // camera still runs its full GPU cull regardless of per-light channels.
+        let cull_mask = frame.camera.cull_mask;
+        scene_items_owned.retain(|item| (item.settings.visibility_mask & cull_mask) != 0);
 
         // Resolve LOD groups to concrete meshes before anything reads the draw
         // list. Items with a `lod_group` get their `mesh_id` overwritten with the
@@ -305,13 +317,23 @@ impl ViewportRenderer {
         let mut plugin_builds = 0usize;
         let mut plugin_builds_deferred = 0usize;
         let mut cold_seen: Vec<u32> = Vec::new();
+        // The instanced plugin set is built for the active texture-binding mode
+        // (per-batch five textures, or one bindless array) and drawn by both the
+        // LDR (`emit_draw_calls`) and HDR scene / OIT passes, so it is built on any
+        // frame type and either binding mode.
         for item in scene_items.iter() {
             let Some(pid) = item.material.shading_plugin else {
                 continue;
             };
-            if !resources.material_plugin_needs_build(pid)
-                || cold_seen.contains(&pid.plugin_index())
-            {
+            if cold_seen.contains(&pid.plugin_index()) {
+                continue;
+            }
+            // The per-object set is the built-in-shading fallback; the instanced
+            // set lets plugin items join instanced batches (see `is_instanceable`).
+            // Build both so a plugin material reaches full parity.
+            let need_object = resources.material_plugin_needs_build(pid);
+            let need_instanced = !resources.material_plugin_instanced_ready(pid);
+            if !need_object && !need_instanced {
                 continue;
             }
             cold_seen.push(pid.plugin_index());
@@ -319,7 +341,20 @@ impl ViewportRenderer {
                 plugin_builds_deferred += 1;
                 continue;
             }
-            resources.ensure_material_plugin_pipelines(device, pid);
+            if need_object {
+                resources.ensure_material_plugin_pipelines(device, pid);
+            }
+            if need_instanced {
+                // The instanced set reuses the built-in instanced group-1 layout;
+                // ensure it exists (idempotent) before composing on top of it. Also
+                // ensure the cull layout so the plugin set can build its
+                // `vs_main_cull` twins and plugin batches ride GPU culling; the cull
+                // pipelines are valid on any device and are only drawn when culling
+                // actually runs. Both calls are idempotent.
+                resources.ensure_instanced_pipelines(device);
+                resources.ensure_cull_instance_pipelines(device);
+                resources.ensure_material_plugin_instanced_pipelines(device, pid);
+            }
             plugin_builds += 1;
         }
         if plugin_builds_deferred > 0 {
@@ -481,7 +516,16 @@ impl ViewportRenderer {
                             if let Some(bgl) = &resources.lic.surface_bgl {
                                 use crate::resources::LicObjectUniform;
                                 let model = item.model;
-                                let obj_data = LicObjectUniform { model };
+                                let obj_data = LicObjectUniform {
+                                    model,
+                                    // Pre-normalised for the vector texture's
+                                    // 8-bit blue channel; the advect pass
+                                    // decodes by the same constant.
+                                    strength: (lic.config.strength.max(0.0)
+                                        / crate::resources::LIC_STRENGTH_ENCODE_MAX)
+                                        .min(1.0),
+                                    _pad: [0.0; 3],
+                                };
                                 let obj_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                                     label: Some("lic_object_uniform"),
                                     size: std::mem::size_of::<LicObjectUniform>() as u64,
@@ -511,10 +555,14 @@ impl ViewportRenderer {
                         }
                     }
                 }
-                // Write LicAdvectUniform to the per-viewport buffer.
-                if let Some(hdr) = self.viewport_slots[frame.camera.viewport_index]
-                    .hdr
-                    .as_ref()
+                // Write LicAdvectUniform to the per-viewport buffer. The slot
+                // may not exist yet on the very first frame (it is created at
+                // render time); the advect uniform is then written next frame
+                // and the advect output stays neutral meanwhile.
+                if let Some(hdr) = self
+                    .viewport_slots
+                    .get(frame.camera.viewport_index)
+                    .and_then(|s| s.hdr.as_ref())
                 {
                     if let Some((_, first_lic)) = lic_scene_items.first() {
                         let [vw, vh] = hdr.scene_size;
@@ -890,6 +938,7 @@ impl ViewportRenderer {
         // block buffer so the scene pass can index it. Foreground objects
         // re-upload after they intern in `prepare_viewport_internal`.
         self.resources.upload_material_gpu(queue);
+        self.resources.upload_custom_data(queue);
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -934,6 +983,7 @@ impl ViewportRenderer {
         // Foreground objects just interned their materials; re-upload the block
         // buffer so any new entries past the scene set are resident.
         self.resources.upload_material_gpu(queue);
+        self.resources.upload_custom_data(queue);
         self.prepare_outline_pass(device, queue, frame, sink);
         self.prepare_sub_highlight(device, queue, frame);
 

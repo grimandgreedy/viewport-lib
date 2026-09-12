@@ -953,7 +953,9 @@ impl DeviceResources {
             .retain(|&(a, n, ao), _| a != raw && n != raw && ao != raw);
         self.instancing
             .bind_groups
-            .retain(|&(a, n, ao, _uv1), _| a != raw && n != raw && ao != raw);
+            .retain(|&(a, n, ao, mr, em, _uv1), _| {
+                a != raw && n != raw && ao != raw && mr != raw && em != raw
+            });
 
         // Invalidate per-mesh object bind groups that sampled the texture so
         // `update_mesh_texture_bind_group` rebuilds them. `last_tex_key`
@@ -1717,6 +1719,7 @@ impl DeviceResources {
         warp_attr: Option<&str>,
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
+        sampler: Option<crate::scene::material::SamplerKey>,
     ) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         let hash_str = |name: &str| -> u64 {
@@ -1760,6 +1763,25 @@ impl DeviceResources {
         mesh.normal_override_gen.hash(&mut h);
         mesh.extension_attr_buffer.is_some().hash(&mut h);
         mesh.lightmap_gen.hash(&mut h);
+        // Per-material sampler: two items sharing every texture but differing in
+        // wrap/filter/aniso must get distinct bind groups. Hash the parts that
+        // change the sampler (not `lod_bias`, which is not applied), matching
+        // `MaterialFallbacks::resolve_sampler`'s dedup key.
+        match sampler {
+            Some(k) => {
+                use crate::scene::material::TextureFilter;
+                1u8.hash(&mut h);
+                k.wrap_u.hash(&mut h);
+                k.wrap_v.hash(&mut h);
+                k.filter.hash(&mut h);
+                let aniso = match k.filter {
+                    TextureFilter::Linear => k.anisotropy.clamp(1, 16),
+                    TextureFilter::Nearest => 1,
+                };
+                aniso.hash(&mut h);
+            }
+            None => 0u8.hash(&mut h),
+        }
         Some(h.finish())
     }
 
@@ -1785,6 +1807,7 @@ impl DeviceResources {
         warp_attr: Option<&str>,
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
+        sampler: Option<crate::scene::material::SamplerKey>,
         prev_key: Option<u64>,
     ) -> Option<(crate::gpu::BindGroup, u64)> {
         let cache_key = self.per_item_object_bg_key(
@@ -1798,8 +1821,15 @@ impl DeviceResources {
             warp_attr,
             metallic_roughness_id,
             emissive_texture_id,
+            sampler,
         )?;
         let mesh = self.mesh_store.get(mesh_id)?;
+
+        // The material's sampler (wrap/filter/aniso), deduped through the
+        // palette, or the shared repeat/linear default when the material set no
+        // `SamplerKey`. Bound at binding 2 below.
+        let keyed_sampler = sampler.map(|k| self.material.resolve_sampler(device, k));
+        let bound_sampler = keyed_sampler.as_ref().unwrap_or(&self.material.sampler);
 
         // Cache hit: the previously built bind group is still valid, so skip the
         // create_bind_group below. The caller keeps its existing bind group. The
@@ -1960,7 +1990,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(bound_sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,

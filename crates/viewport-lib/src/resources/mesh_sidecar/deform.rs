@@ -1643,6 +1643,7 @@ impl DeviceResources {
         // plugin id rebuilds its set from the fresh composition.
         for plugin in self.material_plugins.values_mut() {
             plugin.pipelines = None;
+            plugin.instanced_pipelines = None;
         }
         let registrations = self.deform.registrations.clone();
 
@@ -1819,203 +1820,30 @@ impl DeviceResources {
             self.outline.mask_two_sided_pipeline = masks.mask_two_sided;
         }
 
-        // mesh_instanced.wgsl: LDR (solid + transparent), HDR (solid +
-        // transparent + additive + premultiplied), and HDR cull. Only
-        // present after `ensure_instanced_pipelines` / its HDR sibling /
-        // `ensure_cull_instance_pipelines` have run.
-        if let Some(base) = lookup_source("mesh_instanced.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let src = crate::resources::builders::strip_mesh_discards(
-                crate::resources::builders::builtin_hook_env(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            );
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_shader_composed",
-                src.as_ref(),
-            );
-            let shader_nodiscard = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_shader_composed_nodiscard",
-                crate::resources::builders::strip_discards(&src),
-            );
-
-            if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
-                if self.instancing.solid_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "instanced_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        instance_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let ldr =
-                        crate::resources::mesh::mesh_pipelines::build_ldr_instanced_mesh_pipelines(
-                            device,
-                            &layout,
-                            &shader,
-                            self.target_format,
-                            self.sample_count,
-                        );
-                    self.instancing.solid_pipeline = Some(ldr.solid);
-                    self.instancing.solid_two_sided_pipeline = Some(ldr.solid_two_sided);
-                    self.instancing.transparent_pipeline = Some(ldr.transparent);
-                    let (nd, nd_two_sided) =
-                        crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            self.target_format,
-                            self.sample_count,
-                            "solid_instanced_nodiscard_pipeline",
-                            "solid_two_sided_instanced_nodiscard_pipeline",
-                        );
-                    self.instancing.solid_nodiscard_pipeline = Some(nd);
-                    self.instancing.solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
-                }
-                if self.instancing.hdr_solid_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "hdr_instanced_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        instance_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let hdr =
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_mesh_pipelines(
-                            device, &layout, &shader,
-                        );
-                    self.instancing.hdr_solid_pipeline = Some(hdr.solid);
-                    self.instancing.hdr_solid_two_sided_pipeline = Some(hdr.solid_two_sided);
-                    self.instancing.hdr_transparent_pipeline = Some(hdr.transparent);
-                    self.instancing.hdr_additive_pipeline = Some(hdr.additive);
-                    self.instancing.hdr_premultiplied_pipeline = Some(hdr.premultiplied);
-                    let (nd, nd_two_sided) =
-                        crate::resources::mesh::mesh_pipelines::build_instanced_solid_pipelines(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            crate::gpu::TextureFormat::Rgba16Float,
-                            1,
-                            "hdr_instanced_solid_nodiscard_pipeline",
-                            "hdr_instanced_solid_two_sided_nodiscard_pipeline",
-                        );
-                    self.instancing.hdr_solid_nodiscard_pipeline = Some(nd);
-                    self.instancing.hdr_solid_two_sided_nodiscard_pipeline = Some(nd_two_sided);
-                }
-            }
-            if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
-                if self.cull.hdr_solid_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "hdr_instanced_cull_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        cull_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let pl =
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline(
-                            device, &layout, &shader,
-                        );
-                    self.cull.hdr_solid_pipeline = Some(pl);
-                    let pl_two_sided =
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_two_sided_pipeline(
-                            device, &layout, &shader,
-                        );
-                    self.cull.hdr_solid_two_sided_pipeline = Some(pl_two_sided);
-                    self.cull.hdr_solid_nodiscard_pipeline = Some(
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            "hdr_solid_instanced_cull_nodiscard_pipeline",
-                            Some(crate::gpu::Face::Back),
-                        ),
-                    );
-                    self.cull.hdr_solid_two_sided_nodiscard_pipeline = Some(
-                        crate::resources::mesh::mesh_pipelines::build_hdr_instanced_cull_pipeline_with(
-                            device,
-                            &layout,
-                            &shader_nodiscard,
-                            "hdr_solid_instanced_cull_two_sided_nodiscard_pipeline",
-                            None,
-                        ),
-                    );
-                }
-            }
+        // Instanced families (LDR / HDR / OIT / cull) rebuild through the
+        // bindless-aware `ensure_*` functions instead of a second copy of their
+        // build logic. The per-batch/bindless layout choice, the shader
+        // transform, and the explicit-`MeshInstanceItem` split all live in one
+        // place that way, so a bindless bind group can never meet a per-batch
+        // pipeline (a validation error). Clear the cached pipelines so the guarded
+        // `ensure_*` calls rebuild them from the fresh deform composition; nothing
+        // rebuilds unless it was already built. Recreated bind group layouts stay
+        // structurally identical, so the cached instance bind groups remain valid.
+        if self.instancing.bind_group_layout.is_some() {
+            self.instancing.bind_group_layout = None;
+            self.ensure_instanced_pipelines(device);
         }
-
-        // mesh_instanced_oit.wgsl: non-cull and cull OIT pipelines.
-        if let Some(base) = lookup_source("mesh_instanced_oit.wgsl") {
-            let composed = compose_shader(base, &registrations);
-            let shader = crate::resources::builders::wgsl_module(
-                device,
-                "mesh_instanced_oit_shader_composed",
-                crate::resources::builders::builtin_hook_env(
-                    crate::resources::builders::strip_debug_vis(composed, self.debug_vis_shaders),
-                ),
-            );
-            if let Some(instance_bgl) = self.instancing.bind_group_layout.as_ref() {
-                if self.oit.instanced_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "oit_instanced_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        instance_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let pl = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                        device,
-                        &layout,
-                        &shader,
-                        "oit_instanced_pipeline",
-                        "vs_main",
-                        false,
-                    );
-                    let pl_two_sided =
-                        crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                            device,
-                            &layout,
-                            &shader,
-                            "oit_instanced_pipeline_two_sided",
-                            "vs_main",
-                            true,
-                        );
-                    self.oit.instanced_pipeline = Some(pl);
-                    self.oit.instanced_pipeline_two_sided = Some(pl_two_sided);
-                }
-            }
-            if let Some(cull_bgl) = self.cull.bind_group_layout.as_ref() {
-                if self.cull.oit_pipeline.is_some() {
-                    let layout = crate::resources::mesh::mesh_pipelines::instanced_pipeline_layout(
-                        device,
-                        "oit_instanced_cull_pipeline_layout",
-                        &self.binds.camera_bgl,
-                        cull_bgl,
-                        Some(&self.deform.bind_group_layout),
-                    );
-                    let pl = crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                        device,
-                        &layout,
-                        &shader,
-                        "oit_instanced_cull_pipeline",
-                        "vs_main_cull",
-                        false,
-                    );
-                    let pl_two_sided =
-                        crate::resources::mesh::mesh_pipelines::build_oit_instanced_pipeline(
-                            device,
-                            &layout,
-                            &shader,
-                            "oit_instanced_cull_pipeline_two_sided",
-                            "vs_main_cull",
-                            true,
-                        );
-                    self.cull.oit_pipeline = Some(pl);
-                    self.cull.oit_two_sided_pipeline = Some(pl_two_sided);
-                }
-            }
+        if self.instancing.hdr_solid_pipeline.is_some() {
+            self.instancing.hdr_solid_pipeline = None;
+            self.ensure_hdr_instanced_pipelines(device);
+        }
+        if self.oit.instanced_pipeline.is_some() {
+            self.oit.instanced_pipeline = None;
+            self.ensure_oit_instanced_pipeline(device);
+        }
+        if self.cull.bind_group_layout.is_some() {
+            self.cull.bind_group_layout = None;
+            self.ensure_cull_instance_pipelines(device);
         }
     }
 }

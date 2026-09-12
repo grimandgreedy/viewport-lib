@@ -23,11 +23,10 @@ use viewport_lib as vpl;
 use vpl::{
     Action, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode,
     GizmoSpace, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
-    Material, Modifiers, MouseButton, NodeId, OrbitCameraController, Projection, SceneFrame,
-    ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportRenderer,
+    Material, Modifiers, MouseButton, NodeId, OrbitCameraController, PickBackend, PickMask,
+    Projection, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent,
+    ViewportRenderer,
     gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
-    picking::pick_scene_nodes_cpu,
-    picking::screen_to_ray,
 };
 
 // ---------------------------------------------------------------------------
@@ -44,6 +43,9 @@ pub(crate) struct MvState {
     pub gizmo: Gizmo,
     pub hovered_quad: usize,
     pub cursor_local: glam::Vec2,
+    /// Deferred pick request `(quad, cursor_local)`, set on a click and consumed
+    /// at the render site with that quad's frame via the unified GPU picker.
+    pub pending_pick: Option<(usize, glam::Vec2)>,
     pub gizmo_center: Option<glam::Vec3>,
     pub gizmo_scales: [f32; 4],
     pub manip: ManipulationController,
@@ -98,6 +100,7 @@ impl Default for MvState {
             gizmo: Gizmo::new(),
             hovered_quad: 0,
             cursor_local: glam::Vec2::ZERO,
+            pending_pick: None,
             gizmo_center: None,
             gizmo_scales: [1.0; 4],
             manip: ManipulationController::new(),
@@ -427,9 +430,10 @@ impl App {
                     .set_aspect_ratio(quad_rects[i].width(), quad_rects[i].height());
             }
 
-            // Click-to-select only when no session is active.
+            // Click-to-select only when no session is active. Resolved at the
+            // render site against the clicked quad's frame (unified GPU picker).
             if response.clicked() && !self.mv_state.manip.is_active() {
-                self.handle_mv_click(hq, w, h);
+                self.mv_state.pending_pick = Some((hq, self.mv_state.cursor_local));
             }
         }
 
@@ -618,6 +622,21 @@ impl App {
                 );
                 self.queue.submit(std::iter::once(cmd));
             }
+            // Resolve a deferred click pick against the clicked quad's frame.
+            if let Some((quad, cursor)) = self.mv_state.pending_pick.take() {
+                let hit = renderer.pick_object(
+                    PickBackend::Gpu,
+                    cursor,
+                    &frames[quad],
+                    &self.device,
+                    &self.queue,
+                    PickMask::OBJECT,
+                );
+                match hit {
+                    Some(h) => self.mv_state.selection.select_one(h.id),
+                    None => self.mv_state.selection.clear(),
+                }
+            }
         }
         let ids: [egui::TextureId; 4] = std::array::from_fn(|i| self.mv_targets[i].id);
         drop(guard);
@@ -708,34 +727,6 @@ pub(crate) fn controls_mv(app: &mut App, ui: &mut egui::Ui) {
 // ---------------------------------------------------------------------------
 // Picking
 // ---------------------------------------------------------------------------
-
-impl App {
-    fn handle_mv_click(&mut self, quad: usize, w: f32, h: f32) {
-        let cam = &self.mv_state.cameras[quad];
-        let vp_inv = cam.view_proj_matrix().inverse();
-        let (ray_origin, ray_dir) =
-            screen_to_ray(self.mv_state.cursor_local, glam::Vec2::new(w, h), vp_inv);
-
-        let mut mesh_lookup = std::collections::HashMap::new();
-        for node in self.mv_state.scene.nodes() {
-            if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
-                mesh_lookup.entry(mid).or_insert_with(|| {
-                    (
-                        self.box_mesh_data.positions.clone(),
-                        self.box_mesh_data.indices.clone(),
-                    )
-                });
-            }
-        }
-
-        let hit = pick_scene_nodes_cpu(ray_origin, ray_dir, &self.mv_state.scene, &mesh_lookup);
-        if let Some(hit) = hit {
-            self.mv_state.selection.select_one(hit.id);
-        } else {
-            self.mv_state.selection.clear();
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Manipulation helpers

@@ -183,8 +183,8 @@ fn region_checksum(bytes: &[u8], width: usize, x0: usize, x1: usize, y0: usize, 
 /// Only the receiver region that the shadow falls on is checksummed, and the
 /// caster never paints there, so the measured change comes from the shadow
 /// silhouette rather than the caster's own surface. The CPU-cull shadow path
-/// (devices without `INDIRECT_FIRST_INSTANCE`, e.g. Metal) is exercised here
-/// too, so this is not gated on GPU culling.
+/// (devices without `INDIRECT_FIRST_INSTANCE`, e.g. WebGPU or older hardware) is
+/// exercised here too, so this is not gated on GPU culling.
 #[test]
 fn instanced_cutout_shadow_reflects_replace_texture() {
     let Some((device, queue)) = headless_device() else {
@@ -330,7 +330,8 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
 }
 
 /// The direct instanced draw path (no GPU culling) reflects a `replace_texture`.
-/// Runs on every backend; on Metal this is the only instanced path available.
+/// Runs on every backend; where GPU culling is unavailable (WebGPU, older
+/// hardware) it is the only instanced path.
 #[test]
 fn instanced_path_reflects_replace_texture() {
     let Some((device, queue)) = headless_device() else {
@@ -442,10 +443,10 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
 /// binding 1) as the draw's group 1. Those bind groups are keyed by texture id and
 /// cached per viewport; `replace_texture` swaps the view under a stable id, so the
 /// key does not change and the cache used to keep drawing the old view. The tests
-/// above cannot catch this: GPU culling needs `INDIRECT_FIRST_INSTANCE`, which
-/// Metal lacks, so on macOS they exercise the direct instanced draw (which was
-/// already correct). This test enables culling and skips where it is unsupported,
-/// so it is the Vulkan/DX12 leg that covers the indirect path.
+/// above exercise the direct instanced draw (which was already correct); this one
+/// enables GPU culling to cover the indirect path, and skips where
+/// `INDIRECT_FIRST_INSTANCE` is unsupported (WebGPU, older hardware). It runs on
+/// Vulkan, DX12, and modern Apple Silicon Metal, which all report the feature.
 #[test]
 fn gpu_culling_indirect_path_reflects_replace_texture() {
     let Some((device, queue)) = headless_device() else {
@@ -456,7 +457,7 @@ fn gpu_culling_indirect_path_reflects_replace_texture() {
     if !renderer.is_gpu_culling_supported() {
         eprintln!(
             "skipping gpu_culling_indirect_path_reflects_replace_texture: \
-             device has no INDIRECT_FIRST_INSTANCE (e.g. Metal)"
+             device has no INDIRECT_FIRST_INSTANCE (e.g. WebGPU or older hardware)"
         );
         return;
     }
@@ -495,5 +496,355 @@ fn gpu_culling_indirect_path_reflects_replace_texture() {
         sum1, sum2,
         "replace_texture must update the texture on the GPU-culling indirect path \
          (sum1={sum1} sum2={sum2})"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bindless material-texture path (Apple Silicon Metal / Vulkan / DX12).
+// ---------------------------------------------------------------------------
+
+/// A headless device that requests the bindless texture-array feature set, plus
+/// the recommended limits. Returns `None` when no adapter is available or the
+/// adapter does not offer the feature set (Metal pre-Tier-2, WebGPU, older HW),
+/// so the test skips instead of failing there.
+fn headless_bindless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
+    let instance = crate::gpu::default_instance();
+    let adapter = pollster::block_on(instance.request_adapter(
+        &crate::gpu::RequestAdapterOptions {
+            power_preference: crate::gpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            #[cfg(wgpu30)]
+            apply_limit_buckets: false,
+        },
+    ))
+    .ok()?;
+    if !adapter
+        .features()
+        .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+    {
+        return None;
+    }
+    // Request the full recommended feature set (as a real consumer does), so the
+    // GPU-culled bindless path is exercised where the adapter also supports
+    // indirect draws, not just the direct path.
+    pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+        label: Some("bindless_tests"),
+        required_features: crate::renderer::ViewportRenderer::recommended_device_features(&adapter),
+        required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(&adapter),
+        ..Default::default()
+    }))
+    .ok()
+}
+
+// Four distinct solid colours, each far apart on every channel so the checksum
+// registers every one.
+const BINDLESS_COLOURS: [[u8; 4]; 4] = [
+    [220, 40, 40, 255],
+    [40, 200, 60, 255],
+    [50, 70, 230, 255],
+    [230, 210, 40, 255],
+];
+
+/// Build a scene of four unlit textured planes sharing one mesh, each with its
+/// own solid-colour texture, laid out in a row and visible top-down. Returns the
+/// frame plus the item list. `renderer` uploads the mesh and textures.
+fn bindless_scene(
+    renderer: &mut ViewportRenderer,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+) -> FrameData {
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(device, &crate::primitives::plane(0.8, 0.8))
+        .unwrap();
+    let xs = [-1.5f32, -0.5, 0.5, 1.5];
+    let items = BINDLESS_COLOURS
+        .iter()
+        .zip(xs)
+        .map(|(colour, x)| {
+            let tex = renderer
+                .resources_mut()
+                .upload_texture(device, queue, 2, 2, &solid_rgba(2, 2, *colour))
+                .unwrap();
+            textured_plane(mesh, tex, x)
+        })
+        .collect::<Vec<_>>();
+    frame_for(items)
+}
+
+/// The bindless colour path renders pixel-identically to the per-batch path, and
+/// collapses the four distinct-texture instances of one mesh into a single batch.
+///
+/// Both renderers draw the same scene; the only difference is that the bindless
+/// device enabled the texture-array feature set, so it binds one array and drops
+/// the texture ids from the batch key. Unlit albedo output makes the comparison
+/// exact. The bindless device requests the full recommended feature set, so where
+/// the adapter also reports `INDIRECT_FIRST_INSTANCE` (Vulkan, DX12, modern Apple
+/// Silicon Metal) this exercises the GPU-culled bindless path, not just the direct one.
+#[test]
+fn bindless_matches_per_batch_and_collapses_batches() {
+    let Some((bd, bq)) = headless_bindless_device() else {
+        eprintln!("skipping: no adapter with the bindless texture feature set");
+        return;
+    };
+    let Some((pd, pq)) = headless_device() else {
+        eprintln!("skipping: no adapter available");
+        return;
+    };
+
+    // Per-batch reference (default features, no bindless).
+    let mut per_batch = ViewportRenderer::new(&pd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let per_frame = bindless_scene(&mut per_batch, &pd, &pq);
+    let per_img = per_batch.render_offscreen(&pd, &pq, &per_frame, W, H);
+    let per_batches = per_batch.last_frame_stats().instanced_batches;
+
+    // Bindless device.
+    let mut bindless = ViewportRenderer::new(&bd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let bindless_frame = bindless_scene(&mut bindless, &bd, &bq);
+    let bindless_img = bindless.render_offscreen(&bd, &bq, &bindless_frame, W, H);
+    let bindless_batches = bindless.last_frame_stats().instanced_batches;
+
+    // Both paths drew through the instanced path.
+    assert!(
+        per_batches >= 4,
+        "per-batch path should keep one batch per distinct texture (got {per_batches})",
+    );
+    // Bindless drops the texture ids from the key: four distinct-texture planes on
+    // one mesh collapse to a single batch.
+    assert_eq!(
+        bindless_batches, 1,
+        "bindless should collapse the four instances into one batch (got {bindless_batches})",
+    );
+    assert!(
+        bindless_batches < per_batches,
+        "bindless batch count ({bindless_batches}) must be below per-batch ({per_batches})",
+    );
+
+    // Pixel parity: the two paths render the same image.
+    assert_eq!(
+        checksum(&bindless_img),
+        checksum(&per_img),
+        "bindless and per-batch must render the same image",
+    );
+}
+
+/// Registering a deformer rebuilds the instanced pipelines through a second build
+/// path (`rebuild_mesh_pipelines`), which must pick the same bindless group-1
+/// layout that `ensure_*` did. If it falls back to the per-batch layout, the
+/// bindless bind group set at draw is incompatible with the rebuilt pipeline and
+/// the GPU-culled draw fails validation. This renders once (building the
+/// pipelines), registers a deformer (forcing the rebuild), and renders again on a
+/// bindless device with GPU culling, which used to panic.
+#[test]
+fn bindless_survives_deformer_pipeline_rebuild() {
+    use crate::resources::mesh_sidecar::registry::DeformerDesc;
+    let Some((device, queue)) = headless_bindless_device() else {
+        eprintln!("skipping: no adapter with the bindless texture feature set");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let frame = bindless_scene(&mut renderer, &device, &queue);
+
+    // First render builds the instanced (and, with GPU culling, cull) pipelines.
+    let _ = renderer.render_offscreen(&device, &queue, &frame, W, H);
+
+    // Registering a deformer marks the mesh pipelines dirty; flushing rebuilds
+    // them through the second build path.
+    let body =
+        "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    return v;\n}\n";
+    renderer
+        .resources_mut()
+        .register_deformer(
+            &device,
+            DeformerDesc {
+                name: "bindless_noop",
+                stage: crate::resources::mesh_sidecar::registry::DeformStage::ObjectSpace,
+                priority: 0,
+                wgsl_body: body.to_string(),
+                per_vertex_stride: 4,
+            },
+        )
+        .expect("register deformer");
+    renderer
+        .resources_mut()
+        .flush_mesh_pipeline_rebuild(&device);
+
+    // Rendering again drives the rebuilt bindless pipelines; a layout mismatch
+    // here is a validation panic.
+    let img = renderer.render_offscreen(&device, &queue, &frame, W, H);
+    let batches = renderer.last_frame_stats().instanced_batches;
+    assert_eq!(
+        batches, 1,
+        "bindless still collapses to one batch after the deformer rebuild (got {batches})",
+    );
+    assert!(
+        checksum(&img) > 0,
+        "the rebuilt bindless pipelines must still render the scene",
+    );
+}
+
+/// The explicit `MeshInstanceItem` draw path binds its own per-batch group 1 and
+/// pins material_id 0, so it must keep using the per-batch instanced pipelines
+/// even under bindless (its `hdr_transparent` / `additive` / `premultiplied`
+/// pipelines). If those went bindless, its per-batch bind group would meet a
+/// bindless pipeline (a validation error), and its texture would index the array
+/// out of bounds. This submits a textured mesh-instance batch and renders it in
+/// HDR on a bindless device, which used to panic.
+#[test]
+fn bindless_keeps_mesh_instance_path_per_batch() {
+    use crate::renderer::{MeshInstanceItem, SpriteBlend};
+    let Some((device, queue)) = headless_bindless_device() else {
+        eprintln!("skipping: no adapter with the bindless texture feature set");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::plane(0.8, 0.8))
+        .unwrap();
+    let tex = renderer
+        .resources_mut()
+        .upload_texture(&device, &queue, 2, 2, &solid_rgba(2, 2, [220, 40, 40, 255]))
+        .unwrap();
+
+    let mut item = MeshInstanceItem::default();
+    item.mesh_id = mesh;
+    item.texture_id = Some(tex); // has_texture = 1: the crash needs a bound texture
+    item.blend = SpriteBlend::AlphaBlend; // -> hdr_transparent pipeline
+    item.transforms = [-0.5f32, 0.5]
+        .iter()
+        .map(|x| glam::Mat4::from_translation(glam::Vec3::new(*x, 0.0, 0.0)).to_cols_array_2d())
+        .collect();
+    item.colours = vec![crate::Colour::linear_rgb(1.0, 1.0, 1.0); 2];
+
+    let mut frame = frame_for(vec![]);
+    frame.scene.mesh_instances = vec![item];
+    frame.effects.display.mode = crate::PipelineMode::Hdr;
+
+    // A layout mismatch here is a validation panic.
+    let img = renderer.render_offscreen(&device, &queue, &frame, W, H);
+    assert!(
+        checksum(&img) > 0,
+        "the mesh-instance batch must render under bindless",
+    );
+}
+
+/// A material plugin whose final colour is exactly `surf.base_colour` (albedo x
+/// tint), so its output is deterministic and driven entirely by the sampled
+/// albedo. Under bindless the albedo is fetched from the texture array by the
+/// material's per-slot index, so this doubles as a check that the bindlessified
+/// plugin shader indexes the array correctly.
+#[cfg(test)]
+struct AlbedoPlugin;
+#[cfg(test)]
+impl crate::MaterialPlugin for AlbedoPlugin {
+    fn name(&self) -> &'static str {
+        "bindless_albedo_test"
+    }
+    fn wgsl_body(&self) -> String {
+        "\
+fn shade_light(surf: ShadingSurface, light: LightSample) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
+    return surf.base_colour;
+}
+"
+        .to_string()
+    }
+}
+
+/// The four distinct-albedo planes of `bindless_scene`, each drawing through the
+/// `AlbedoPlugin` material plugin. Returns the frame plus the plugin id.
+#[cfg(test)]
+fn bindless_plugin_scene(
+    renderer: &mut ViewportRenderer,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+) -> FrameData {
+    let plugin = renderer
+        .resources_mut()
+        .register_material_plugin(device, &AlbedoPlugin)
+        .expect("register plugin");
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(device, &crate::primitives::plane(0.8, 0.8))
+        .unwrap();
+    let xs = [-1.5f32, -0.5, 0.5, 1.5];
+    let items = BINDLESS_COLOURS
+        .iter()
+        .zip(xs)
+        .map(|(colour, x)| {
+            let tex = renderer
+                .resources_mut()
+                .upload_texture(device, queue, 2, 2, &solid_rgba(2, 2, *colour))
+                .unwrap();
+            let mut it = textured_plane(mesh, tex, x);
+            it.material.shading_plugin = Some(plugin);
+            it
+        })
+        .collect::<Vec<_>>();
+    frame_for(items)
+}
+
+/// A material plugin instances under bindless (its group-1 shape rewritten to the
+/// texture array) and renders pixel-identically to the per-batch plugin path.
+///
+/// Both renderers draw the same four distinct-albedo plugin planes. The per-batch
+/// device keeps one batch per texture; the bindless device drops the texture ids
+/// and collapses them to a single batch, indexing the albedo array by material.
+/// The plugin's output is the sampled albedo, so a wrong index would change the
+/// image. Neither path may drop a plugin item to the per-object path.
+#[test]
+fn bindless_plugin_instances_and_matches_per_batch() {
+    let Some((bd, bq)) = headless_bindless_device() else {
+        eprintln!("skipping: no adapter with the bindless texture feature set");
+        return;
+    };
+    let Some((pd, pq)) = headless_device() else {
+        eprintln!("skipping: no adapter available");
+        return;
+    };
+
+    let mut per_batch = ViewportRenderer::new(&pd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let per_frame = bindless_plugin_scene(&mut per_batch, &pd, &pq);
+    let per_img = per_batch.render_offscreen(&pd, &pq, &per_frame, W, H);
+    let per_stats = per_batch.last_frame_stats();
+
+    let mut bindless = ViewportRenderer::new(&bd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let bindless_frame = bindless_plugin_scene(&mut bindless, &bd, &bq);
+    let bindless_img = bindless.render_offscreen(&bd, &bq, &bindless_frame, W, H);
+    let bindless_stats = bindless.last_frame_stats();
+
+    // Both paths instanced every plugin item.
+    assert_eq!(
+        per_stats.per_object_items, 0,
+        "per-batch plugin items should instance, not fall per-object",
+    );
+    assert_eq!(
+        bindless_stats.per_object_items, 0,
+        "bindless plugin items should instance, not fall per-object",
+    );
+
+    // Bindless drops the texture ids: four distinct-albedo plugin planes on one
+    // mesh collapse to a single batch, where per-batch keeps four.
+    assert!(
+        per_stats.instanced_batches >= 4,
+        "per-batch keeps one plugin batch per texture (got {})",
+        per_stats.instanced_batches,
+    );
+    assert_eq!(
+        bindless_stats.instanced_batches, 1,
+        "bindless collapses the plugin instances into one batch (got {})",
+        bindless_stats.instanced_batches,
+    );
+
+    // Pixel parity: the bindlessified plugin shader indexed the albedo array
+    // correctly and matches the per-batch plugin shading exactly.
+    assert_eq!(
+        checksum(&bindless_img),
+        checksum(&per_img),
+        "bindless and per-batch plugin shading must render the same image",
     );
 }

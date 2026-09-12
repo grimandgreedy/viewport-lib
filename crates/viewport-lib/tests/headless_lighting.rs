@@ -1199,3 +1199,109 @@ fn environment_zones_select_the_second_zone() {
          garbage a stride mismatch produces (r {r})"
     );
 }
+
+/// Render a lit white box and return its brightest captured channel. Shared by
+/// the two mask tests so they differ only in how they set the masks.
+#[cfg(not(feature = "wgpu29"))]
+fn capture_lit_box_max(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    visibility_mask: u32,
+    channel_mask: u32,
+    cull_mask: u32,
+) -> f32 {
+    let mesh_idx = renderer
+        .resources_mut()
+        .upload_mesh_data(device, &box_mesh())
+        .unwrap();
+
+    let mut frame = FrameData::default();
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.camera.cull_mask = cull_mask;
+
+    // Bright camera-facing directional light so direct lighting dominates the
+    // hemisphere ambient: excluding it by channel leaves a clearly dimmer box.
+    let mut light = LightSource::default();
+    light.kind = LightKind::Directional {
+        direction: [0.0, 0.0, 1.0],
+    };
+    light.intensity = 20.0;
+    light.channel_mask = channel_mask;
+    frame.effects.lighting.lights = vec![light];
+
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_idx;
+    item.model = glam::Mat4::IDENTITY.to_cols_array_2d();
+    item.material.base_colour = [1.0, 1.0, 1.0].into();
+    item.settings.visibility_mask = visibility_mask;
+    frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
+
+    let mut face_cam = RenderCamera::from_camera(&Camera::default());
+    face_cam.aspect = 1.0;
+    let captured = renderer.capture_hdr(device, queue, &mut frame, face_cam, 64);
+    captured
+        .rgba
+        .iter()
+        .copied()
+        .fold(0.0f32, |acc, v| acc.max(v))
+}
+
+/// The per-camera `cull_mask` skips an item whose `visibility_mask` shares no
+/// bit with it (CPU-side, at scene collect). The default (`!0`) draws the box
+/// bright; a disjoint camera mask drops it entirely, so the capture is dark.
+#[cfg(not(feature = "wgpu29"))]
+#[test]
+fn camera_cull_mask_filters_items() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Default masks (everything in every layer): the box draws and is lit.
+    let visible_max = capture_lit_box_max(&mut renderer, &device, &queue, !0, !0, !0);
+    assert!(
+        visible_max > 1.5,
+        "default masks should draw the lit box (max {visible_max}, expected > 1.5)"
+    );
+
+    // Item in layer 0b0010, camera drawing only layer 0b0001: no overlap, so the
+    // box is culled and the frame is empty (near-zero radiance).
+    let culled_max = capture_lit_box_max(&mut renderer, &device, &queue, 0b0010, !0, 0b0001);
+    assert!(
+        culled_max < visible_max * 0.1,
+        "a layer-disjoint camera must cull the box (culled max {culled_max} should be \
+         far below the drawn max {visible_max}; only background/ambient remains)"
+    );
+}
+
+/// A light's `channel_mask` only lights items sharing a bit with it. The box
+/// stays in the scene either way (it is not culled); excluding the one bright
+/// light by channel leaves just hemisphere ambient, so it reads much dimmer.
+#[cfg(not(feature = "wgpu29"))]
+#[test]
+fn light_channel_mask_excludes_object() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Default masks: the bright light reaches the box.
+    let lit_max = capture_lit_box_max(&mut renderer, &device, &queue, !0, !0, !0);
+    assert!(
+        lit_max > 1.5,
+        "default channel should light the box (max {lit_max}, expected > 1.5)"
+    );
+
+    // Light confined to layer 0b10, box in layer 0b01: the light is skipped for
+    // this object, leaving only ambient, so the box is clearly dimmer.
+    let ambient_only_max = capture_lit_box_max(&mut renderer, &device, &queue, 0b01, 0b10, !0);
+    assert!(
+        ambient_only_max < lit_max * 0.5,
+        "a channel-disjoint light must not light the box (ambient-only max \
+         {ambient_only_max} should be well under half the lit max {lit_max})"
+    );
+}

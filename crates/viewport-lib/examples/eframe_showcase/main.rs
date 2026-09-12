@@ -6,9 +6,10 @@ use vpl::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera, CameraAnimator,
     CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo, GizmoMode, GroundPlane,
     GroundPlaneMode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
-    MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController, PickId, PointCloudItem,
-    PostProcessSettings, RenderCamera, RuntimeMode, SceneFrame, SceneRenderItem, ScrollUnits,
-    Selection, ShadowFilter, ViewportContext, ViewportEvent, ViewportRenderer,
+    MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController, PickBackend, PickId,
+    PickMask, PointCloudItem, PostProcessSettings, RenderCamera, RuntimeMode, SceneFrame,
+    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, ViewportContext, ViewportEvent,
+    ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
     scene::Scene,
 };
@@ -134,9 +135,6 @@ fn main() -> eframe::Result {
             // targets hand egui non-sRGB views so the encode survives the sample.
             let mut renderer =
                 ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
-            // Several showcases (Picking Levels, Tensor Glyphs) use the CPU
-            // renderer.pick()/pick_rect() path, which needs the pick cache.
-            renderer.set_cpu_pick_cache(true);
             // Compile the custom-shading plugin pipelines now, at startup,
             // rather than on the frame that showcase opens: the ~45 pipeline
             // builds would otherwise stall that frame. See
@@ -166,6 +164,7 @@ fn main() -> eframe::Result {
                 mode: ShowcaseMode::Basic,
                 mode_gen: 0,
                 show_keybinds: false,
+                pending_pick: None,
                 basic_state: showcase_01_basic::BasicState::default(),
                 sg_state: showcase_02_scene_graph::SgState::default(),
                 box_mesh_data: box_mesh,
@@ -423,6 +422,12 @@ pub(crate) struct App {
     /// cache is always invalidated when changing showcases.
     mode_gen: u64,
     show_keybinds: bool,
+
+    /// Deferred object/instance pick request from the input handler. Set on a
+    /// click; consumed at the render site, where the renderer, device, queue,
+    /// and the on-screen `FrameData` are all in scope, by `pick_object`. Cursor
+    /// in viewport pixels.
+    pending_pick: Option<glam::Vec2>,
 
     // --- Showcase 1 ---
     pub(crate) basic_state: showcase_01_basic::BasicState,
@@ -716,9 +721,8 @@ impl eframe::App for App {
             .build_rx
             .as_ref()
             .and_then(|rx: &std::sync::mpsc::Receiver<_>| rx.try_recv().ok());
-        if let Some((scene, pick_acc)) = completed {
+        if let Some(scene) = completed {
             self.perf_state.scene = scene;
-            self.perf_state.pick_accelerator = Some(pick_acc);
             // Pre-warm items cache so the first rendered frame has no stall.
             self.perf_state.scene_items_cache = std::sync::Arc::from(
                 self.perf_state
@@ -1317,19 +1321,11 @@ impl eframe::App for App {
                                 &pick_frame,
                             );
                         }
-                    } else if self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built {
-                        let vp_size = glam::Vec2::new(rect.width(), rect.height());
-                        let view_proj = self.camera.view_proj_matrix();
-                        let rs = frame.wgpu_render_state().expect("wgpu required");
-                        let guard = rs.renderer.read();
-                        if let Some(renderer) = guard.callback_resources.get::<ViewportRenderer>() {
-                            showcase_39_tensor_glyphs::tg_handle_click(
-                                self, pick_pos, vp_size, view_proj, renderer,
-                            );
-                        }
-                    } else if self.mode == ShowcaseMode::Decals {
-                        let vp_size = glam::Vec2::new(rect.width(), rect.height());
-                        showcase_46_decals::decal46_place(self, pick_pos, vp_size);
+                    } else if (self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built)
+                        || self.mode == ShowcaseMode::Decals
+                    {
+                        // Resolved by the unified GPU picker at the render site.
+                        self.pending_pick = Some(pick_pos);
                     } else {
                         self.handle_click_select(pick_pos, rect.width(), rect.height());
                     }
@@ -1415,17 +1411,19 @@ impl eframe::App for App {
                         );
                         self.viewport_target = Some(Target { inner, id });
                     }
-                    let target = self.viewport_target.as_ref().unwrap();
+                    let tex_id = self.viewport_target.as_ref().unwrap().id;
                     if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
                         let cmd = renderer.owned().render(
                             &self.device,
                             &self.queue,
-                            target.inner.render_view(),
+                            self.viewport_target.as_ref().unwrap().inner.render_view(),
                             &frame_data,
                         );
                         self.queue.submit(std::iter::once(cmd));
+                        // Resolve any deferred click pick against the frame just
+                        // drawn, using the unified GPU picker.
+                        self.apply_pending_pick(renderer, &frame_data);
                     }
-                    let tex_id = target.id;
                     drop(guard);
                     ui.painter().image(
                         tex_id,
@@ -1942,7 +1940,6 @@ impl App {
                 // one shape, so the grid still shares a handful of meshes.
                 let shapes = showcase_23_performance::shape_meshes();
                 let mut meshes: Vec<(MeshId, Option<vpl::Aabb>)> = Vec::with_capacity(shapes.len());
-                let mut pick_geometry = Vec::with_capacity(shapes.len());
                 for data in &shapes {
                     let id = renderer
                         .resources_mut()
@@ -1950,13 +1947,7 @@ impl App {
                         .expect("shape mesh upload");
                     let aabb = renderer.resources().mesh(id).map(|m| m.aabb);
                     meshes.push((id, aabb));
-                    pick_geometry.push((
-                        id.index() as u64,
-                        data.positions.clone(),
-                        data.indices.clone(),
-                    ));
                 }
-                self.perf_state.pick_geometry = pick_geometry;
                 self.perf_state.scene = Scene::new();
                 self.perf_state.selection.clear();
                 self.camera.distance = 80.0;
@@ -4025,149 +4016,102 @@ impl App {
 
 impl App {
     fn handle_click_select(&mut self, pos: glam::Vec2, w: f32, h: f32) {
-        let vp_inv = self.camera.view_proj_matrix().inverse();
-        let (ray_origin, ray_dir) = vpl::picking::screen_to_ray(pos, glam::Vec2::new(w, h), vp_inv);
-
         match self.mode {
-            ShowcaseMode::SceneGraph => {
-                let mut mesh_lookup = std::collections::HashMap::new();
-                for node in self.sg_state.scene.nodes() {
-                    if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
-                        mesh_lookup.entry(mid).or_insert_with(|| {
-                            (
-                                self.box_mesh_data.positions.clone(),
-                                self.box_mesh_data.indices.clone(),
-                            )
-                        });
-                    }
-                }
-                let hit = vpl::picking::pick_scene_nodes_cpu(
-                    ray_origin,
-                    ray_dir,
-                    &self.sg_state.scene,
-                    &mesh_lookup,
-                );
-                if let Some(hit) = hit {
-                    self.sg_state.selection.select_one(hit.id);
-                } else {
-                    self.sg_state.selection.clear();
-                }
+            // Object-level selection modes: defer the pick to the render site,
+            // where the renderer and the on-screen `FrameData` are in scope, and
+            // resolve it with the unified GPU picker (`pick_object`). See
+            // `apply_pending_pick`.
+            ShowcaseMode::SceneGraph
+            | ShowcaseMode::Performance
+            | ShowcaseMode::Interaction
+            | ShowcaseMode::MaterialsVisibility
+            | ShowcaseMode::ScalarFields => {
+                self.pending_pick = Some(pos);
             }
 
-            ShowcaseMode::Performance => {
-                let mut mesh_lookup = std::collections::HashMap::new();
-                for (mid, positions, indices) in &self.perf_state.pick_geometry {
-                    mesh_lookup.insert(*mid, (positions.clone(), indices.clone()));
-                }
-                let hit = if let Some(ref mut accel) = self.perf_state.pick_accelerator {
-                    vpl::bvh::pick_scene_accelerated_cpu(ray_origin, ray_dir, accel, &mesh_lookup)
-                } else {
-                    None
-                };
-                if let Some(hit) = hit {
-                    self.perf_state.selection.select_one(hit.id);
-                } else {
-                    self.perf_state.selection.clear();
-                }
-            }
-
-            ShowcaseMode::Interaction => {
-                let mut mesh_lookup = std::collections::HashMap::new();
-                for node in self.interact_state.scene.nodes() {
-                    if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
-                        mesh_lookup.entry(mid).or_insert_with(|| {
-                            (
-                                self.box_mesh_data.positions.clone(),
-                                self.box_mesh_data.indices.clone(),
-                            )
-                        });
-                    }
-                }
-                let hit = vpl::picking::pick_scene_nodes_cpu(
-                    ray_origin,
-                    ray_dir,
-                    &self.interact_state.scene,
-                    &mesh_lookup,
-                );
-                if let Some(hit) = hit {
-                    self.interact_state.selection.select_one(hit.id);
-                } else {
-                    self.interact_state.selection.clear();
-                }
-            }
-
-            ShowcaseMode::MaterialsVisibility => {
-                let mut mesh_lookup = std::collections::HashMap::new();
-                for node in self.materials_visibility_state.scene.nodes() {
-                    if let Some(mid) = vpl::traits::ViewportObject::mesh_id(node) {
-                        mesh_lookup.entry(mid).or_insert_with(|| {
-                            (
-                                self.box_mesh_data.positions.clone(),
-                                self.box_mesh_data.indices.clone(),
-                            )
-                        });
-                    }
-                }
-                let hit = vpl::picking::pick_scene_nodes_cpu(
-                    ray_origin,
-                    ray_dir,
-                    &self.materials_visibility_state.scene,
-                    &mesh_lookup,
-                );
-                if let Some(hit) = hit {
-                    self.materials_visibility_state.selection.select_one(hit.id);
-                } else {
-                    self.materials_visibility_state.selection.clear();
-                }
-            }
-
-            ShowcaseMode::ScalarFields => {
-                let mut mesh_lookup = std::collections::HashMap::new();
-                for i in 0..self.scalar_state.mesh_indices.len() {
-                    mesh_lookup.insert(
-                        self.scalar_state.mesh_indices[i].index() as u64,
-                        (
-                            self.scalar_state.pick_positions[i].clone(),
-                            self.scalar_state.pick_indices[i].clone(),
-                        ),
-                    );
-                }
-                let hit = vpl::picking::pick_scene_nodes_cpu(
-                    ray_origin,
-                    ray_dir,
-                    &self.scalar_state.scene,
-                    &mesh_lookup,
-                );
-                if let Some(hit) = hit {
-                    if let Some(index) = self
-                        .scalar_state
-                        .node_ids
-                        .iter()
-                        .position(|&node_id| node_id == hit.id)
-                    {
-                        self.scalar_state.set_active_object(index);
-                    } else {
-                        self.scalar_state.selection.select_one(hit.id);
-                    }
-                } else {
-                    self.scalar_state.selection.clear();
-                }
-            }
-
-            ShowcaseMode::PickLevels => {
-                let shift = self.pl_state.shift_held;
-                if self.pl_state.unified_mode {
-                    // Unified path: renderer.pick() requires renderer access.
-                    // Handled separately in the viewport event section.
-                } else {
-                    self.handle_pl_click(pos, w, h, shift);
-                }
-            }
-
+            // Sparse volume grid uses the click to paint a voxel, not to select.
             ShowcaseMode::SparseVolumeGrid => {
                 self.handle_svg_paint_click(pos, w, h);
             }
 
+            // PickLevels per-type reference path; the unified path is handled in
+            // the viewport event section against a dedicated pick frame.
+            ShowcaseMode::PickLevels => {
+                if !self.pl_state.unified_mode {
+                    let shift = self.pl_state.shift_held;
+                    self.handle_pl_click(pos, w, h, shift);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    /// Resolve a deferred click pick against the on-screen frame using the
+    /// unified GPU picker, and route the hit to the active mode's selection.
+    ///
+    /// Called from the render site so the renderer, device, queue, and the
+    /// `FrameData` that was just drawn are all available. `pick_object` reads the
+    /// scene straight from `frame_data`, so the pick matches exactly what is on
+    /// screen.
+    fn apply_pending_pick(&mut self, renderer: &mut ViewportRenderer, frame_data: &FrameData) {
+        let Some(pos) = self.pending_pick.take() else {
+            return;
+        };
+        let mask = match self.mode {
+            // Tensor glyph instances and beam-mesh cells are both point-like.
+            ShowcaseMode::TensorGlyphs => PickMask::POINT_LIKE,
+            _ => PickMask::OBJECT,
+        };
+        let hit = renderer.pick_object(
+            PickBackend::Gpu,
+            pos,
+            frame_data,
+            &self.device,
+            &self.queue,
+            mask,
+        );
+
+        match self.mode {
+            ShowcaseMode::SceneGraph => match hit {
+                Some(h) => self.sg_state.selection.select_one(h.id),
+                None => self.sg_state.selection.clear(),
+            },
+            ShowcaseMode::Performance => match hit {
+                Some(h) => self.perf_state.selection.select_one(h.id),
+                None => self.perf_state.selection.clear(),
+            },
+            ShowcaseMode::Interaction => match hit {
+                Some(h) => self.interact_state.selection.select_one(h.id),
+                None => self.interact_state.selection.clear(),
+            },
+            ShowcaseMode::MaterialsVisibility => match hit {
+                Some(h) => self.materials_visibility_state.selection.select_one(h.id),
+                None => self.materials_visibility_state.selection.clear(),
+            },
+            ShowcaseMode::ScalarFields => match hit {
+                Some(h) => {
+                    // The scalar-field objects are cycled by index; a hit on one
+                    // makes it the active object, otherwise it is a plain select.
+                    if let Some(index) =
+                        self.scalar_state.node_ids.iter().position(|&id| id == h.id)
+                    {
+                        self.scalar_state.set_active_object(index);
+                    } else {
+                        self.scalar_state.selection.select_one(h.id);
+                    }
+                }
+                None => self.scalar_state.selection.clear(),
+            },
+            ShowcaseMode::TensorGlyphs => {
+                showcase_39_tensor_glyphs::tg_apply_pick(self, hit);
+            }
+            ShowcaseMode::Decals => {
+                // Decal placement uses the hit's surface position and normal.
+                if let Some(h) = hit {
+                    showcase_46_decals::decal46_place(self, &h);
+                }
+            }
             _ => {}
         }
     }

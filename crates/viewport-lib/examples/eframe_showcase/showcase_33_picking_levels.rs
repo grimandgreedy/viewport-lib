@@ -322,9 +322,6 @@ pub(crate) struct PlState {
     pub unified_mode: bool,
     /// Active mask for the unified section.
     pub unified_mask: PlUnifiedMask,
-    /// Backend for the unified API section: `renderer.pick_object()` /
-    /// `pick_rect_objects()`. Defaults to GPU, the fast path for large scenes.
-    pub pick_backend: PickBackend,
     pub level: PlPickLevel,
     pub cube_mesh_id: MeshId,
     pub hemi_mesh_id: MeshId,
@@ -416,7 +413,6 @@ impl Default for PlState {
             built: false,
             unified_mode: true,
             unified_mask: PlUnifiedMask::default(),
-            pick_backend: PickBackend::Gpu,
             level: PlPickLevel::default(),
             cube_mesh_id: MeshId::INVALID,
             hemi_mesh_id: MeshId::INVALID,
@@ -1372,8 +1368,8 @@ impl App {
         frame: &FrameData,
     ) {
         let mask = self.pl_state.unified_mask.to_pick_mask();
-        let backend = self.pl_state.pick_backend;
-        let Some(hit) = renderer.pick_object(backend, pos, frame, device, queue, mask) else {
+        let Some(hit) = renderer.pick_object(PickBackend::Gpu, pos, frame, device, queue, mask)
+        else {
             if !shift {
                 self.pl_state.clear_selection();
             }
@@ -1452,9 +1448,8 @@ impl App {
         }
 
         let mask = self.pl_state.unified_mask.to_pick_mask();
-        let backend = self.pl_state.pick_backend;
         let result: PickRectResult =
-            renderer.pick_rect_objects(backend, r_min, r_max, frame, device, queue, mask);
+            renderer.pick_rect_objects(PickBackend::Gpu, r_min, r_max, frame, device, queue, mask);
 
         for id in &result.objects {
             self.pl_state.selection.add(*id);
@@ -1581,11 +1576,6 @@ pub(crate) fn controls_pick_levels(app: &mut App, ui: &mut egui::Ui) {
         // Unified API section
         // -------------------------------------------------------------------
         ui.label(egui::RichText::new("renderer.pick_object() / pick_rect_objects()").strong());
-        ui.label("Backend:");
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut app.pl_state.pick_backend, PickBackend::Gpu, "GPU");
-            ui.radio_value(&mut app.pl_state.pick_backend, PickBackend::Cpu, "CPU");
-        });
         ui.label("Mask:");
         ui.horizontal_wrapped(|ui| {
             for mask in [

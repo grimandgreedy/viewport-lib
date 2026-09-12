@@ -586,6 +586,32 @@ impl DeviceResources {
             },
         )
     }
+
+    /// Build a fullscreen post-effect pipeline. Convenience alias for
+    /// [`plugin_api::post_effect::build_post_effect_pipeline`]
+    /// (a free function taking only the device, so it is also callable
+    /// from a post effect's `init_gpu` / `on_viewport_resized`, where no
+    /// `DeviceResources` is available).
+    ///
+    /// [`plugin_api::post_effect::build_post_effect_pipeline`]: crate::plugin_api::post_effect::build_post_effect_pipeline
+    pub fn build_post_effect_pipeline(
+        &self,
+        device: &crate::gpu::Device,
+        label: &str,
+        shader: &crate::gpu::ShaderModule,
+        bind_group_layout: &crate::gpu::BindGroupLayout,
+        target_format: crate::gpu::TextureFormat,
+        blend: Option<crate::gpu::BlendState>,
+    ) -> crate::gpu::RenderPipeline {
+        crate::plugin_api::post_effect::build_post_effect_pipeline(
+            device,
+            label,
+            shader,
+            bind_group_layout,
+            target_format,
+            blend,
+        )
+    }
 }
 
 /// Inputs to a plugin pipeline builder. All builders take this struct; the

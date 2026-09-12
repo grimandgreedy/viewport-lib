@@ -102,6 +102,8 @@ pub(super) fn build_object_uniform(
             crate::scene::material::BackfacePolicy::DifferentColour(_) => 2,
             crate::scene::material::BackfacePolicy::Tint(_) => 3,
             crate::scene::material::BackfacePolicy::Pattern(cfg) => 4 + cfg.pattern as u32,
+            // Forward-compat: an unknown future policy renders as Cull (the default).
+            _ => 0,
         },
         backface_colour: match m.backface_policy {
             crate::scene::material::BackfacePolicy::DifferentColour(c) => {
@@ -153,6 +155,8 @@ pub(super) fn build_object_uniform(
             // The OIT fragment shader reads 3 as "RGB is already premultiplied":
             // it skips the `* alpha` it applies to straight-blend colour.
             crate::scene::material::AlphaMode::BlendPremultiplied => 3,
+            // Forward-compat: an unknown future mode renders as Opaque (the default).
+            _ => 0,
         },
         alpha_cutoff: match m.alpha_mode {
             crate::scene::material::AlphaMode::Mask(c) => c,
@@ -241,7 +245,7 @@ pub(super) fn build_object_uniform(
             .and_then(|mesh| mesh.lightmap.as_ref())
             .map_or(0, |lm| lm.is_shadowmask as u32),
         ignore_clip: item.settings.ignore_clip as u32,
-        _pad_ls: 0,
+        object_mask: item.settings.visibility_mask,
     }
 }
 
@@ -496,7 +500,7 @@ impl ViewportRenderer {
                         lightmap_index: 0,
                         has_shadowmask: 0,
                         ignore_clip: item.settings.ignore_clip as u32,
-                        _pad_ls: 0,
+                        object_mask: item.settings.visibility_mask,
                     };
                     if let Some(mesh) = resources.mesh_store.get(item.mesh_id) {
                         queue.write_buffer(
@@ -614,6 +618,7 @@ impl ViewportRenderer {
                         item.warp_attribute.as_deref(),
                         mat.metallic_roughness_texture_id,
                         mat.emissive_texture_id,
+                        mat.selected_sampler(),
                     ) else {
                         continue;
                     };
@@ -635,6 +640,7 @@ impl ViewportRenderer {
                             item.warp_attribute.as_deref(),
                             mat.metallic_roughness_texture_id,
                             mat.emissive_texture_id,
+                            mat.selected_sampler(),
                             None,
                         ) {
                             bind_groups_built += 1;
@@ -929,6 +935,7 @@ impl ViewportRenderer {
                 item.warp_attribute.as_deref(),
                 item.material.metallic_roughness_texture_id,
                 item.material.emissive_texture_id,
+                item.material.selected_sampler(),
                 prev_key,
             );
             if let Some((bg, key)) = built {

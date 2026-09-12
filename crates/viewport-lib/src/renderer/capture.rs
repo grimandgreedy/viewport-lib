@@ -1221,6 +1221,202 @@ mod tests {
         );
     }
 
+    // Phase 8 of the HiZ plan: the GPU cull kernel honours the per-camera layer
+    // mask. The shared scene prepare runs with `cull_mask = !0` (so the CPU
+    // collect cull keeps every instance), then each viewport's GPU cull applies
+    // its own `cull_mask`. A viewport whose mask is disjoint from the instances'
+    // `visibility_mask` must draw none of them; a matching viewport draws all.
+    // Asserted through the cull breakdown (`gpu_visible_instances`), so it reads
+    // the kernel's decision directly rather than inferring it from pixels.
+    #[test]
+    fn gpu_cull_honours_layer_mask_per_viewport() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping gpu_cull_honours_layer_mask_per_viewport: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        if !renderer.is_gpu_culling_supported() {
+            eprintln!("skipping gpu_cull_honours_layer_mask_per_viewport: no GPU-driven cull");
+            return;
+        }
+        let vp = renderer.create_viewport(&device);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::primitives::cube(0.5))
+            .unwrap();
+
+        // Eight boxes spread across the view, all in layer 0b01. More than the
+        // instancing threshold, so they batch and the GPU cull runs. Occlusion
+        // stays off (default) so only frustum + the layer mask can reject them.
+        let mut items = Vec::new();
+        for i in 0..8 {
+            let x = (i as f32 - 3.5) * 1.2;
+            let mut item = crate::SceneRenderItem {
+                mesh_id: mesh,
+                ..Default::default()
+            };
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+            item.settings.visibility_mask = 0b01;
+            items.push(item);
+        }
+
+        let cam = Camera {
+            center: glam::Vec3::ZERO,
+            distance: 18.0,
+            ..Camera::default()
+        };
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = {
+            let mut rc = RenderCamera::from_camera(&cam);
+            rc.aspect = 1.0;
+            rc
+        };
+        frame.camera.viewport_size = [64.0, 64.0];
+        frame.camera.viewport_index = vp.0;
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame.effects.display.mode = crate::PipelineMode::Hdr;
+        frame.scene.surfaces = SurfaceSubmission::Flat(items.into());
+
+        let offscreen = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("mask_cull_target"),
+            size: crate::gpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Bgra8UnormSrgb,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = offscreen.create_view(&crate::gpu::TextureViewDescriptor::default());
+
+        // Run a few frames so the cull-stats readback lands, then report the
+        // drawn count for a given per-viewport cull_mask. The shared prepare
+        // always uses !0 so the CPU collect cull keeps all eight.
+        let mut drawn_for = |renderer: &mut ViewportRenderer, cull_mask: u32| -> Option<u32> {
+            let mut last = None;
+            for _ in 0..4 {
+                frame.camera.cull_mask = !0;
+                {
+                    let (scene_fx, _) = frame.effects.split();
+                    renderer.prepare_scene(&device, &queue, &frame, &scene_fx);
+                }
+                frame.camera.cull_mask = cull_mask;
+                renderer.prepare_viewport(&device, &queue, vp, &frame);
+                let cmd = renderer.render_viewport(&device, &queue, &view, vp, &frame);
+                queue.submit(std::iter::once(cmd));
+                device
+                    .poll(crate::gpu::PollType::Wait {
+                        submission_index: None,
+                        timeout: Some(std::time::Duration::from_secs(5)),
+                    })
+                    .unwrap();
+                let stats = renderer.last_frame_stats();
+                if stats.gpu_culling_active {
+                    last = stats.gpu_visible_instances;
+                }
+            }
+            last
+        };
+
+        // Matching layer: every instance survives the mask test and is drawn.
+        if let Some(drawn) = drawn_for(&mut renderer, 0b01) {
+            assert_eq!(drawn, 8, "a matching cull_mask must draw all 8 instances");
+        } else {
+            eprintln!("skipping assertions: cull stats never read back");
+            return;
+        }
+
+        // Disjoint layer: the GPU kernel rejects every instance.
+        let drawn = drawn_for(&mut renderer, 0b10)
+            .expect("cull stats read back for the matching case, so they must here too");
+        assert_eq!(
+            drawn, 0,
+            "a disjoint cull_mask must cull all instances in the GPU kernel (drawn={drawn})",
+        );
+    }
+
+    // The per-camera layer cull also reaches the foreground object pass: a
+    // foreground item whose visibility_mask is disjoint from the viewport's
+    // cull_mask is dropped, matching the scene pass. (Foreground items bypass the
+    // shared scene collect, so this is enforced in prepare_foreground_objects.)
+    #[test]
+    fn foreground_objects_honour_the_cull_mask() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping foreground_objects_honour_the_cull_mask: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&device, &crate::primitives::cube(1.0))
+            .unwrap();
+
+        let build_frame = |cull_mask: u32, mode: crate::PipelineMode| {
+            let cam = Camera {
+                center: glam::Vec3::ZERO,
+                distance: 5.0,
+                ..Camera::default()
+            };
+            let mut frame = FrameData::default();
+            frame.camera.render_camera = {
+                let mut rc = RenderCamera::from_camera(&cam);
+                rc.aspect = 1.0;
+                rc
+            };
+            frame.camera.viewport_size = [64.0, 64.0];
+            frame.camera.cull_mask = cull_mask;
+            frame.viewport.show_grid = false;
+            frame.viewport.show_axes_indicator = false;
+            frame.viewport.background_colour = Some([0.0, 0.0, 0.0, 1.0].into());
+            frame.effects.display.mode = mode;
+
+            // A bright unlit box, submitted only as a foreground item (not a
+            // scene surface), in layer 0b01.
+            let mut item = crate::SceneRenderItem {
+                mesh_id: mesh,
+                ..Default::default()
+            };
+            item.material.base_colour = [1.0, 1.0, 1.0].into();
+            item.settings.unlit = true;
+            item.settings.visibility_mask = 0b01;
+            frame.scene.foreground_items = vec![item];
+            frame
+        };
+
+        let coverage = |px: &[u8]| px.chunks_exact(4).filter(|p| p[0] > 20).count();
+
+        // Both render paths draw the foreground pass from their own item list, so
+        // check each.
+        for mode in [crate::PipelineMode::Direct, crate::PipelineMode::Hdr] {
+            // Matching layer: the foreground box draws.
+            let frame = build_frame(0b01, mode);
+            let lit = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let lit_cov = coverage(&lit);
+            assert!(
+                lit_cov > 50,
+                "a matching cull_mask must draw the foreground box ({mode:?}, coverage {lit_cov})"
+            );
+
+            // Disjoint layer: the foreground box is culled, leaving the black clear.
+            let frame = build_frame(0b10, mode);
+            let culled = renderer.render_offscreen(&device, &queue, &frame, 64, 64);
+            let culled_cov = coverage(&culled);
+            assert_eq!(
+                culled_cov, 0,
+                "a disjoint cull_mask must drop the foreground box ({mode:?}, coverage \
+                 {culled_cov})"
+            );
+        }
+    }
+
     // Records how often each dispatched item-type plugin hook was called.
     #[derive(Default)]
     struct PluginCalls {
