@@ -320,23 +320,60 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Workgroup scratch shared by the counting and scattering phases.
+// Workgroup scratch shared by the planning, counting and scattering phases.
 var<workgroup> scan: array<u32, CHUNK>;
 
 // Step 1 of the compaction: lay out the chunk space.
 //
 // Chunks are batch-aligned (a chunk never spans two batches), so a chunk's
-// survivor count belongs to exactly one batch's scan. Serial in one invocation,
-// but one iteration per batch: a scene drawing one instanced mesh runs this
-// loop once regardless of how many instances it has.
-@compute @workgroup_size(1)
-fn plan_chunks() {
-    var next = 0u;
-    for (var b = 0u; b < frustum.batch_count; b++) {
-        compact_scratch[PLAN_BASE + b] = next;
-        next = next + (batch_metas[b].instance_count + CHUNK - 1u) / CHUNK;
+// survivor count belongs to exactly one batch's scan. Each batch's first chunk
+// is therefore the running sum of the chunk counts before it: an exclusive
+// prefix sum over batches.
+//
+// Run as a workgroup-wide scan over tiles of CHUNK batches, carrying the total
+// from one tile to the next. A single invocation walking batches would be one
+// dependent storage read per batch, serialised on memory latency, and a scene
+// made of many separate objects is exactly the case where that hurts: one
+// object per batch means one iteration per object. Tiles read in parallel
+// instead, so the batch count divided by CHUNK is what is serial.
+@compute @workgroup_size(CHUNK)
+fn plan_chunks(@builtin(local_invocation_id) lid: vec3<u32>) {
+    let n = frustum.batch_count;
+    var carry = 0u;
+    var base = 0u;
+    // `base` and `n` are uniform, so every invocation runs the same number of
+    // iterations and the barriers below are reached by the whole workgroup.
+    while base < n {
+        let b = base + lid.x;
+        var chunks = 0u;
+        if b < n {
+            chunks = (batch_metas[b].instance_count + CHUNK - 1u) / CHUNK;
+        }
+        scan[lid.x] = chunks;
+        workgroupBarrier();
+        for (var offset = 1u; offset < CHUNK; offset = offset << 1u) {
+            var add = 0u;
+            if lid.x >= offset {
+                add = scan[lid.x - offset];
+            }
+            workgroupBarrier();
+            scan[lid.x] = scan[lid.x] + add;
+            workgroupBarrier();
+        }
+        // Inclusive scan minus this batch's own count is where it starts.
+        if b < n {
+            compact_scratch[PLAN_BASE + b] = carry + scan[lid.x] - chunks;
+        }
+        let tile_total = scan[CHUNK - 1u];
+        // Every invocation has read the tile total, so the next iteration may
+        // overwrite the scratch.
+        workgroupBarrier();
+        carry = carry + tile_total;
+        base = base + CHUNK;
     }
-    compact_scratch[PLAN_BASE + frustum.batch_count] = next;
+    if lid.x == 0u {
+        compact_scratch[PLAN_BASE + n] = carry;
+    }
 }
 
 // The batch owning chunk `ch`: the last batch whose first chunk is at or before

@@ -315,3 +315,46 @@ fn fixture_cull_resolves_chunk_owner_across_mixed_and_empty_batches() {
     }
     assert_eq!(first, total);
 }
+
+#[test]
+fn fixture_cull_plans_chunks_across_workgroup_tiles() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    if !h
+        .device
+        .features()
+        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+    {
+        eprintln!("skipping: no INDIRECT_FIRST_INSTANCE");
+        return;
+    }
+
+    // The chunk plan is a prefix sum over batches, run as a workgroup scan over
+    // tiles of 256 batches with a carry between them. This spans three tiles
+    // and does not end on a tile boundary, and the batches alternate between
+    // one chunk and two so the carry is different at every tile: a scan that
+    // dropped or mis-ordered the carry would put later batches' survivors at
+    // the wrong offsets rather than losing them, which the per-batch assertions
+    // below catch.
+    let sizes: Vec<u32> = (0..520).map(|b| if b % 2 == 0 { 1 } else { 257 }).collect();
+    let keep = |i: u32| i % 4 != 0;
+    let (vis, counts) = run_cull(&mut h, &sizes, keep);
+
+    let mut first = 0u32;
+    for (b, &size) in sizes.iter().enumerate() {
+        let expected: Vec<u32> = (first..first + size).filter(|&i| keep(i)).collect();
+        assert_eq!(
+            counts[b],
+            expected.len() as u32,
+            "batch {b} (size {size}) reported the wrong visible count"
+        );
+        assert_eq!(
+            &vis[first as usize..first as usize + expected.len()],
+            &expected[..],
+            "batch {b} (size {size}) landed at the wrong offset"
+        );
+        first += size;
+    }
+}
