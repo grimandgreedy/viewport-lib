@@ -725,12 +725,8 @@ fn render_swarm(
         CameraFrame::from_camera(&data.camera, [w, h]),
         SceneFrame::from_surface_items(items).with_generation(data.generation),
     );
-    frame.viewport.background_colour = Some([
-        srgb_to_linear(BG_SRGB[0]),
-        srgb_to_linear(BG_SRGB[1]),
-        srgb_to_linear(BG_SRGB[2]),
-        1.0,
-    ]);
+    frame.viewport.background_colour =
+        Some(vpl::Colour::srgb(BG_SRGB[0], BG_SRGB[1], BG_SRGB[2], 1.0));
     frame.effects.lighting = LightingSettings::default();
     let mut post = PostProcessSettings::default();
     post.bloom.enabled = true;
@@ -749,16 +745,6 @@ fn render_swarm(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Convert one sRGB channel to linear, matching the encode wgpu applies when
-/// writing to an sRGB target.
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
 
 /// Cheap integer hash to a float in [0, 1); avoids pulling in an RNG crate.
 fn hash01(mut x: u32) -> f32 {
