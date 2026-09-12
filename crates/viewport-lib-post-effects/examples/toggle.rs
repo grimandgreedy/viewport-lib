@@ -91,6 +91,14 @@ fn main() -> eframe::Result {
             };
             session.effects_mut().lighting.lights = vec![light];
 
+            // The default bloom parameters (threshold 1.0, intensity 0.1)
+            // are too subtle to read on a small emissive sphere; use the
+            // demo values. The per-frame sync below mirrors these into the
+            // external copy, so both implementations run identically.
+            let pp = &mut session.effects_mut().post_process;
+            pp.bloom.threshold = 0.7;
+            pp.bloom.intensity = 2.0;
+
             // Register the external copies (self-gated off until toggled)
             // and the vfx stage stack.
             let (bloom, bloom_handle) = BloomEffect::new(BloomEffectSettings {
