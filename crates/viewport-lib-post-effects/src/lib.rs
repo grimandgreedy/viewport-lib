@@ -4,12 +4,14 @@
 //! (`viewport_lib::plugin_api::post_effect`) from outside the library, the
 //! way a consumer crate would:
 //!
-//! - [`ContactShadowEffect`] and [`BloomEffect`] are faithful copies of the
-//!   built-in contact shadows and bloom, implemented as
-//!   [`PostEffectProducer`]s. With the matching built-in switched off in
-//!   `PostProcessSettings` they render pixel-identically to it (the parity
-//!   tests in `tests/parity.rs` hold them to that), which makes them a
-//!   worked example of replacing a built-in effect's implementation.
+//! - [`ContactShadowEffect`] is a faithful copy of the built-in contact
+//!   shadows, implemented as a [`PostEffectProducer`]. With the built-in
+//!   switched off in `PostProcessSettings` it renders pixel-identically to
+//!   it (the parity test in `tests/parity.rs` holds it to that), which
+//!   makes it a worked example of replacing a built-in effect's
+//!   implementation. (A bloom copy validated the surface the same way and
+//!   was then deleted rather than kept as a drifting mirror of the
+//!   built-in.)
 //! - [`vfx`] is a three-stage [`PostEffectStage`] stack (colour grade,
 //!   depth fog, edge detect) ported from the `viewport-lib-vfx` kit, driven
 //!   through one shared settings handle.
@@ -26,11 +28,9 @@
 
 use viewport_lib::wgpu;
 
-pub mod bloom;
 pub mod contact_shadow;
 pub mod vfx;
 
-pub use bloom::{BloomEffect, BloomEffectSettings};
 pub use contact_shadow::{ContactShadowEffect, ContactShadowEffectSettings};
 pub use vfx::{ColourGrade, DepthFog, EdgeDetect, VfxSettings, vfx_stack};
 

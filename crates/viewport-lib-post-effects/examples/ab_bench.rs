@@ -1,5 +1,6 @@
-//! Headless frame-time A/B: built-in bloom + contact shadows vs this
-//! crate's external copies, plus an effects-off baseline.
+//! Headless frame-time A/B: the built-in contact shadows vs this crate's
+//! external copy, plus an effects-off baseline. (A bloom copy was part of
+//! the original A/B and was retired after validation.)
 //!
 //! Renders the same scene through three configurations on one device and
 //! prints end-to-end frame percentiles (each frame is submitted and waited
@@ -20,18 +21,10 @@ use viewport_lib::{
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
 };
-use viewport_lib_post_effects::{
-    BloomEffect, BloomEffectSettings, ContactShadowEffect, ContactShadowEffectSettings,
-};
+use viewport_lib_post_effects::{ContactShadowEffect, ContactShadowEffectSettings};
 use viewport_lib_testkit::{DeviceProfile, headless_device_with};
 
 const LIGHT_DIRECTION: [f32; 3] = [0.5, 0.3, 0.8];
-const BLOOM: BloomEffectSettings = BloomEffectSettings {
-    enabled: true,
-    threshold: 0.7,
-    intensity: 2.0,
-    max_brightness: 8.0,
-};
 const CS: ContactShadowEffectSettings = ContactShadowEffectSettings {
     enabled: true,
     max_distance: 0.6,
@@ -113,7 +106,9 @@ fn main() {
 
     let mut out_lines = Vec::new();
     for variant in [Variant::Off, Variant::Builtin, Variant::External] {
-        let ms = run_variant(&device, &queue, variant, width, height, grid, frames, warmup);
+        let ms = run_variant(
+            &device, &queue, variant, width, height, grid, frames, warmup,
+        );
         let pct = |p: f64| ms[((ms.len() - 1) as f64 * p) as usize];
         println!(
             "{:<10} p50 {:7.3} ms   p90 {:7.3} ms   p99 {:7.3} ms",
@@ -155,23 +150,19 @@ fn run_variant(
         .unwrap();
 
     if variant == Variant::External {
-        let (bloom, _h) = BloomEffect::new(BLOOM);
         let (cs, _h) = ContactShadowEffect::new(CS);
-        renderer.add_post_effect_producer(Box::new(bloom));
         renderer.add_post_effect_producer(Box::new(cs));
     }
 
     // Ground slab plus a GRID x GRID field of cubes, every eighth emissive
-    // so the bloom has sources spread across the frame.
+    // so bright sources are spread across the frame.
     let mut items = Vec::new();
     let mut ground = SceneRenderItem::default();
     ground.mesh_id = mesh;
-    ground.model = (glam::Mat4::from_scale(glam::Vec3::new(
-        grid as f32 * 1.6,
-        grid as f32 * 1.6,
-        0.1,
-    )) * glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.5)))
-    .to_cols_array_2d();
+    ground.model =
+        (glam::Mat4::from_scale(glam::Vec3::new(grid as f32 * 1.6, grid as f32 * 1.6, 0.1))
+            * glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.5)))
+        .to_cols_array_2d();
     ground.material = Material::from_colour([0.6, 0.6, 0.6]);
     items.push(ground);
     for x in 0..grid {
@@ -215,10 +206,6 @@ fn run_variant(
     };
     frame.effects.lighting.lights = vec![light];
     let pp = &mut frame.effects.post_process;
-    pp.bloom.enabled = variant == Variant::Builtin;
-    pp.bloom.threshold = BLOOM.threshold;
-    pp.bloom.intensity = BLOOM.intensity;
-    pp.bloom.max_brightness = BLOOM.max_brightness;
     pp.contact_shadows.enabled = variant == Variant::Builtin;
     pp.contact_shadows.max_distance = CS.max_distance;
     pp.contact_shadows.steps = CS.steps;

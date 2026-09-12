@@ -1,11 +1,11 @@
 //! Built-in vs external post effects, same scene, live toggles.
 //!
-//! Bloom and contact shadows can each run Off, through the built-in
-//! implementation, or through this crate's external producer copy; because
-//! the copies are pixel-identical, flipping Built-in <-> External should
-//! produce no visible change (that is the point). The vfx stage stack
-//! (colour grade, depth fog, edge detect) layers on top through the stage
-//! chain.
+//! Contact shadows can run Off, through the built-in implementation, or
+//! through this crate's external producer copy; because the copy is
+//! pixel-identical, flipping Built-in <-> External should produce no
+//! visible change (that is the point). Bloom is the built-in (its copy was
+//! retired after validation). The vfx stage stack (colour grade, depth
+//! fog, edge detect) layers on top through the stage chain.
 //!
 //! Run with `cargo run --release -p viewport-lib-post-effects --example toggle`.
 //! The frame-time readout makes this the A/B vehicle for pricing the
@@ -14,8 +14,7 @@
 use eframe::{egui, wgpu};
 use viewport_lib as vpl;
 use viewport_lib_post_effects::{
-    BloomEffect, BloomEffectSettings, ContactShadowEffect, ContactShadowEffectSettings,
-    SettingsHandle, VfxSettings, vfx_stack,
+    ContactShadowEffect, ContactShadowEffectSettings, SettingsHandle, VfxSettings, vfx_stack,
 };
 use vpl::input::adapters::from_egui;
 use vpl::{
@@ -99,20 +98,16 @@ fn main() -> eframe::Result {
             pp.bloom.threshold = 0.7;
             pp.bloom.intensity = 2.0;
 
-            // Register the external copies (self-gated off until toggled)
-            // and the vfx stage stack.
-            let (bloom, bloom_handle) = BloomEffect::new(BloomEffectSettings {
-                enabled: false,
-                ..Default::default()
-            });
+            // Register the external contact-shadow copy (self-gated off
+            // until toggled) and the vfx stage stack.
             let (cs, cs_handle) = ContactShadowEffect::new(ContactShadowEffectSettings {
                 enabled: false,
                 light_direction: LIGHT_DIRECTION,
                 ..Default::default()
             });
-            let renderer = session.renderer_mut();
-            renderer.add_post_effect_producer(Box::new(bloom));
-            renderer.add_post_effect_producer(Box::new(cs));
+            session
+                .renderer_mut()
+                .add_post_effect_producer(Box::new(cs));
             let (stages, vfx_handle) = vfx_stack();
             for (stage, order) in stages {
                 session.renderer_mut().add_post_effect_stage(stage, order);
@@ -128,9 +123,8 @@ fn main() -> eframe::Result {
                 session,
                 orbit: OrbitCameraController::viewport_all(),
                 target: None,
-                bloom_impl: Impl::Builtin,
+                bloom: true,
                 cs_impl: Impl::Builtin,
-                bloom_handle,
                 cs_handle,
                 vfx_handle,
                 frame_ms: 0.0,
@@ -148,9 +142,8 @@ struct App {
     session: ViewportInstance,
     orbit: OrbitCameraController,
     target: Option<Target>,
-    bloom_impl: Impl,
+    bloom: bool,
     cs_impl: Impl,
-    bloom_handle: SettingsHandle<BloomEffectSettings>,
     cs_handle: SettingsHandle<ContactShadowEffectSettings>,
     vfx_handle: SettingsHandle<VfxSettings>,
     frame_ms: f32,
@@ -173,7 +166,7 @@ impl eframe::App for App {
 
         egui::SidePanel::right("controls").show(ctx, |ui| {
             ui.heading("Post effects");
-            impl_picker(ui, "Bloom", &mut self.bloom_impl);
+            ui.checkbox(&mut self.bloom, "Bloom (built-in)");
             impl_picker(ui, "Contact shadows", &mut self.cs_impl);
             ui.separator();
             ui.heading("Stage stack");
@@ -187,18 +180,13 @@ impl eframe::App for App {
             ui.label(format!("frame: {:.2} ms", self.frame_ms));
         });
 
-        // Route each effect to its implementation. The built-in switches
-        // live on PostProcessSettings; the external copies are self-gated
-        // through their handles, mirroring the built-in parameters.
+        // Route contact shadows to their implementation. The built-in
+        // switches live on PostProcessSettings; the external copy is
+        // self-gated through its handle, mirroring the built-in parameters.
         {
             let pp = &mut self.session.effects_mut().post_process;
-            pp.bloom.enabled = self.bloom_impl == Impl::Builtin;
+            pp.bloom.enabled = self.bloom;
             pp.contact_shadows.enabled = self.cs_impl == Impl::Builtin;
-            let mut bloom = self.bloom_handle.lock().unwrap();
-            bloom.enabled = self.bloom_impl == Impl::External;
-            bloom.threshold = pp.bloom.threshold;
-            bloom.intensity = pp.bloom.intensity;
-            bloom.max_brightness = pp.bloom.max_brightness;
             let mut cs = self.cs_handle.lock().unwrap();
             cs.enabled = self.cs_impl == Impl::External;
             cs.max_distance = pp.contact_shadows.max_distance;

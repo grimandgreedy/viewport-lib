@@ -13,9 +13,7 @@ use viewport_lib::{
     renderer::{FrameData, RenderCamera, SceneRenderItem, SurfaceSubmission, ViewportRenderer},
     resources::MeshData,
 };
-use viewport_lib_post_effects::{
-    BloomEffect, BloomEffectSettings, ContactShadowEffect, ContactShadowEffectSettings, vfx_stack,
-};
+use viewport_lib_post_effects::{ContactShadowEffect, ContactShadowEffectSettings, vfx_stack};
 use viewport_lib_testkit::{DeviceProfile, headless_device_with};
 
 const SIZE: u32 = 96;
@@ -174,66 +172,6 @@ fn contact_shadow_parity() {
     assert_eq!(
         builtin, external,
         "external contact-shadow copy diverged from the built-in"
-    );
-}
-
-/// The external bloom copy renders pixel-identically to the built-in.
-#[test]
-fn bloom_parity() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-
-    let settings = BloomEffectSettings {
-        enabled: true,
-        threshold: 0.7,
-        intensity: 2.0,
-        max_brightness: 8.0,
-    };
-
-    #[derive(Clone, Copy, PartialEq)]
-    enum Variant {
-        Builtin,
-        External,
-        Off,
-    }
-    let render = |variant: Variant| -> Vec<u8> {
-        let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-        let mesh = renderer
-            .resources_mut()
-            .upload_mesh_data(&device, &quad_mesh())
-            .unwrap();
-        if variant == Variant::External {
-            let (effect, _handle) = BloomEffect::new(settings);
-            renderer.add_post_effect_producer(Box::new(effect));
-        }
-        let mut frame = base_frame([0.15, 0.15, 0.15, 1.0]);
-        let mut item = SceneRenderItem::default();
-        item.mesh_id = mesh;
-        item.model = glam::Mat4::from_scale(glam::Vec3::splat(0.6)).to_cols_array_2d();
-        item.material = Material::from_colour([0.02, 0.02, 0.02]);
-        item.material.emissive = [6.0, 6.0, 6.0].into();
-        frame.scene.surfaces = SurfaceSubmission::Flat(vec![item].into());
-        let bloom = &mut frame.effects.post_process.bloom;
-        bloom.enabled = variant == Variant::Builtin;
-        bloom.threshold = settings.threshold;
-        bloom.intensity = settings.intensity;
-        bloom.max_brightness = settings.max_brightness;
-        renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
-    };
-
-    let builtin = render(Variant::Builtin);
-    let external = render(Variant::External);
-    let off = render(Variant::Off);
-
-    assert_ne!(
-        builtin, off,
-        "bloom changed nothing in this scene; the parity check proves nothing"
-    );
-    assert_eq!(
-        builtin, external,
-        "external bloom copy diverged from the built-in"
     );
 }
 
