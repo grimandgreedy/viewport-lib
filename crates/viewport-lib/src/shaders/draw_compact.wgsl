@@ -67,6 +67,24 @@ fn compact_draws(@builtin(global_invocation_id) id: vec3<u32>) {
     if args.instance_count == 0u {
         return;
     }
-    let slot = atomicAdd(&draw_counts[g], 1u);
-    dst_args[group_arg_base[b] + slot] = args;
+    // The slot is this batch's rank among its group's survivors, counted in
+    // batch order, not the order threads arrive. Claiming slots with an
+    // atomic counter would be cheaper, but it makes submission order vary
+    // frame to frame for an unchanged scene, which costs bit-reproducible
+    // frames (golden images, regression capture, replay). Groups are
+    // contiguous runs of batches, so the scan is over `[base, b)`: short,
+    // and one pass over a group costs the same work no matter how the
+    // threads interleave.
+    let base = group_arg_base[b];
+    var slot = 0u;
+    for (var j = base; j < b; j++) {
+        if group_id[j] == g && src_args[j].instance_count > 0u {
+            slot++;
+        }
+    }
+    // The survivor count still comes from the atomic: it feeds
+    // `multi_draw_indexed_indirect_count`, and a count does not care in which
+    // order it was accumulated.
+    atomicAdd(&draw_counts[g], 1u);
+    dst_args[base + slot] = args;
 }

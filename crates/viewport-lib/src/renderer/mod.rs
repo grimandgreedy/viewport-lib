@@ -757,6 +757,21 @@ pub struct ViewportRenderer {
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
 }
 
+/// Warn once when a cull submission outgrows the deterministic compaction's
+/// fixed chunk plan, so the drop to arrival-order submission is visible rather
+/// than silent.
+pub(crate) fn warn_once_cull_plan_capacity(batches: u32, instances: u32) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            batches,
+            instances,
+            "cull submission exceeds the deterministic compaction's chunk plan; \
+             draws submit in cull-arrival order, so frames are not bit-reproducible"
+        );
+    });
+}
+
 impl ViewportRenderer {
     /// The optional device features the renderer can take advantage of,
     /// filtered to what `adapter` supports. Pass the result as

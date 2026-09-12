@@ -21,6 +21,7 @@
 - **Second UV set** - carry a lightmap or detail unwrap on its own UVs.
 
 ### Fixes
+- **Frames are reproducible again with GPU-driven culling on** - the cull packed visible instances and draw lists in whichever order threads finished, so rendering the same scene twice gave images differing by 1 LSB on a few pixels. Both compactions now pack in instance order, at about 8% frame cost on a single-batch 8192-instance scene (measured on Metal; the 3080 number is owed).
 - **`DeformerDesc` documents the right hook name** - the doc said a body defines `fn <name>_deform`, but the composer dispatches `<name>__deform` from a body that defines plain `fn deform`; a body written to the old wording failed shader validation at registration.
 
 ## [0.22.0]

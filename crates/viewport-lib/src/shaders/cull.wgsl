@@ -115,6 +115,45 @@ struct DrawIndirect {
 // layer-mask reject. Bound with a 1-element fallback when do_mask_cull is off
 // (shadow / single-mesh / plugin dispatches) so the layout is always satisfied.
 @group(0) @binding(8) var<storage, read>       instance_data:      array<InstanceData>;
+// --- Deterministic compaction -------------------------------------------
+//
+// The visible list has to be packed in instance order, not in the order
+// threads happen to finish, or an unchanged scene submits its draws in a
+// different order every frame and the rendered image is not reproducible.
+//
+// The pack runs as a standard three-phase scan over fixed-size chunks of each
+// batch's instance range: count survivors per chunk, exclusive-scan those
+// counts within the batch, then scatter each survivor to `chunk base + its
+// rank inside the chunk`. Every step is a pure function of instance index, so
+// the result does not depend on scheduling.
+//
+// All of the compaction's scratch lives in one buffer, in four regions. It is
+// one binding because the cull layout sits exactly at wgpu's default limit of 8
+// storage buffers per stage with it: a second binding here would stop the
+// renderer working on a device created with default limits.
+//
+//   PLAN  [b]        = index of batch b's first chunk, [batch_count] = total
+//   OWNER [chunk]    = the batch that chunk belongs to
+//   TOTAL [chunk]    = survivors in that chunk, rewritten by the scan as its base
+//   FLAGS [instance] = the cull's verdict: the instance's own index, or
+//                      CULLED_SLOT
+//
+// FLAGS is separate from `visibility_indices` on purpose: chunks scatter in
+// parallel, and packing in place would let one chunk's writes land in another
+// chunk's not-yet-read range.
+@group(0) @binding(9) var<storage, read_write> compact_scratch: array<u32>;
+
+// Instances per compaction chunk, and the workgroup width that walks one.
+const CHUNK: u32 = 256u;
+// Region bases inside `compact_scratch`. Must match MAX_PLAN_* in indirect.rs.
+const PLAN_BASE: u32 = 0u;
+const PLAN_CAP: u32 = 8193u;
+const OWNER_BASE: u32 = PLAN_BASE + PLAN_CAP;
+const CHUNK_CAP: u32 = 16384u;
+const TOTAL_BASE: u32 = OWNER_BASE + CHUNK_CAP;
+const FLAGS_BASE: u32 = TOTAL_BASE + CHUNK_CAP;
+// Marker left in a scratch slot whose instance the cull rejected.
+const CULLED_SLOT: u32 = 0xffffffffu;
 
 // Returns true if the AABB is entirely on the outer (negative) side of the plane.
 // Uses the positive-vertex method: take the corner most aligned with the plane
@@ -198,6 +237,16 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let aabb = instance_aabbs[i];
 
+    // Claim this instance's own scratch slot and mark it culled before any of
+    // the early-outs below, so every slot carries a definite verdict each frame
+    // and the compaction never reads a stale one. A survivor overwrites it with
+    // its index at the end of this function.
+    let slot_meta = batch_metas[aabb.batch_index];
+    let slot_local = i - slot_meta.instance_offset;
+    if slot_local < slot_meta.instance_count {
+        compact_scratch[FLAGS_BASE + slot_meta.vis_offset + slot_local] = CULLED_SLOT;
+    }
+
     // Per-receiver shadow opt-out: shadow cull dispatches skip instances that
     // are marked as non-shadow casters via `ItemSettings.cast_shadows = false`.
     if frustum.shadow_pass == 1u && aabb.cast_shadows == 0u {
@@ -233,13 +282,132 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    // Visible: atomically claim a slot in the visibility buffer for this batch.
+    // Visible. The counter still accumulates atomically (a count does not care
+    // about order, and `write_indirect_args` reads it), but the instance's
+    // position in the drawn list comes from the compaction below, not from the
+    // order threads arrived here.
     let b    = aabb.batch_index;
     let slot = atomicAdd(&batch_counters[b], 1u);
-    let bmeta = batch_metas[b];
-    // Guard against counter overflow if instance_count drifts from buffer size.
-    if slot < bmeta.instance_count {
-        visibility_indices[bmeta.vis_offset + slot] = i;
+    if slot_local < slot_meta.instance_count {
+        compact_scratch[FLAGS_BASE + slot_meta.vis_offset + slot_local] = i;
+        // Arrival-order list as well, so a submission too large for the chunk
+        // plan (see MAX_PLAN_* in indirect.rs) still has a correct list to draw
+        // when the compaction is skipped. When it runs, it overwrites this with
+        // the instance-ordered one.
+        if slot < slot_meta.instance_count {
+            visibility_indices[slot_meta.vis_offset + slot] = i;
+        }
+    }
+}
+
+// Workgroup scratch shared by the counting and scattering phases.
+var<workgroup> scan: array<u32, CHUNK>;
+
+// Phase 1 of the compaction: lay out the chunk space.
+//
+// Chunks are batch-aligned (a chunk never spans two batches), so a chunk's
+// survivor count belongs to exactly one batch's scan. Serial in one invocation:
+// it walks batches, not instances, and writes one entry per chunk.
+@compute @workgroup_size(1)
+fn plan_chunks() {
+    var next = 0u;
+    for (var b = 0u; b < frustum.batch_count; b++) {
+        compact_scratch[PLAN_BASE + b] = next;
+        let chunks = (batch_metas[b].instance_count + CHUNK - 1u) / CHUNK;
+        for (var c = 0u; c < chunks; c++) {
+            compact_scratch[OWNER_BASE + next + c] = b;
+        }
+        next = next + chunks;
+    }
+    compact_scratch[PLAN_BASE + frustum.batch_count] = next;
+}
+
+// Phase 2: survivors per chunk, one workgroup per chunk.
+@compute @workgroup_size(CHUNK)
+fn chunk_counts(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let ch = wg.x;
+    if ch >= compact_scratch[PLAN_BASE + frustum.batch_count] {
+        return;
+    }
+    let owner = compact_scratch[OWNER_BASE + ch];
+    let bmeta = batch_metas[owner];
+    let idx = (ch - compact_scratch[PLAN_BASE + owner]) * CHUNK + lid.x;
+
+    var survives = 0u;
+    if idx < bmeta.instance_count && compact_scratch[FLAGS_BASE + bmeta.vis_offset + idx] != CULLED_SLOT {
+        survives = 1u;
+    }
+    scan[lid.x] = survives;
+    workgroupBarrier();
+
+    // Tree reduction to scan[0].
+    for (var stride = CHUNK / 2u; stride > 0u; stride = stride >> 1u) {
+        if lid.x < stride {
+            scan[lid.x] = scan[lid.x] + scan[lid.x + stride];
+        }
+        workgroupBarrier();
+    }
+    if lid.x == 0u {
+        compact_scratch[TOTAL_BASE + ch] = scan[0];
+    }
+}
+
+// Phase 3: exclusive scan of the chunk counts within each batch, so each chunk
+// learns where its survivors start. Serial over chunks in one invocation: the
+// work is one add per chunk, and chunks are instances/256.
+@compute @workgroup_size(1)
+fn scan_chunks() {
+    for (var b = 0u; b < frustum.batch_count; b++) {
+        let first = compact_scratch[PLAN_BASE + b];
+        let last = compact_scratch[PLAN_BASE + b + 1u];
+        var base = 0u;
+        for (var c = first; c < last; c++) {
+            let count = compact_scratch[TOTAL_BASE + c];
+            compact_scratch[TOTAL_BASE + c] = base;
+            base = base + count;
+        }
+    }
+}
+
+// Phase 4: scatter survivors into the visible list at `chunk base + rank`.
+@compute @workgroup_size(CHUNK)
+fn scatter_visible(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let ch = wg.x;
+    if ch >= compact_scratch[PLAN_BASE + frustum.batch_count] {
+        return;
+    }
+    let owner = compact_scratch[OWNER_BASE + ch];
+    let bmeta = batch_metas[owner];
+    let idx = (ch - compact_scratch[PLAN_BASE + owner]) * CHUNK + lid.x;
+
+    var entry = CULLED_SLOT;
+    if idx < bmeta.instance_count {
+        entry = compact_scratch[FLAGS_BASE + bmeta.vis_offset + idx];
+    }
+    let survives = select(0u, 1u, entry != CULLED_SLOT);
+
+    // Inclusive scan of the survivor flags, so each lane learns its rank.
+    scan[lid.x] = survives;
+    workgroupBarrier();
+    for (var offset = 1u; offset < CHUNK; offset = offset << 1u) {
+        var add = 0u;
+        if lid.x >= offset {
+            add = scan[lid.x - offset];
+        }
+        workgroupBarrier();
+        scan[lid.x] = scan[lid.x] + add;
+        workgroupBarrier();
+    }
+
+    if survives == 1u {
+        let rank = scan[lid.x] - 1u;
+        visibility_indices[bmeta.vis_offset + compact_scratch[TOTAL_BASE + ch] + rank] = entry;
     }
 }
 
