@@ -19,42 +19,40 @@ const MAX_PLAN_BATCHES: u32 = 8192;
 /// Runs one cull submission and reads back the visible list and the per-batch
 /// instance counts from the indirect entries.
 ///
-/// `batch_count` batches of `per_batch` instances each. An instance is placed
-/// inside the frustum when `keep` returns true for its index and far outside
-/// it otherwise, so the caller controls exactly who survives.
-fn run_cull(
-    h: &mut Harness,
-    batch_count: u32,
-    per_batch: u32,
-    keep: impl Fn(u32) -> bool,
-) -> (Vec<u32>, Vec<u32>) {
-    let n = batch_count as usize;
-    let instance_count = batch_count * per_batch;
+/// `sizes` gives each batch's instance count, so a caller can mix batch sizes
+/// and include empty batches. An instance is placed inside the frustum when
+/// `keep` returns true for its index and far outside it otherwise, so the
+/// caller controls exactly who survives.
+fn run_cull(h: &mut Harness, sizes: &[u32], keep: impl Fn(u32) -> bool) -> (Vec<u32>, Vec<u32>) {
+    let n = sizes.len();
+    let batch_count = n as u32;
+    let instance_count: u32 = sizes.iter().sum();
 
     // `InstanceAabb` and `BatchMeta` are both 32 bytes; written out by hand so
     // the test does not need a bytemuck dependency of its own.
     let mut aabb_bytes: Vec<u8> = Vec::with_capacity(instance_count as usize * 32);
-    for i in 0..instance_count {
-        // Culled instances sit well outside the orthographic box below.
-        let centre = if keep(i) { 0.0f32 } else { 1.0e6 };
-        for _ in 0..3 {
-            aabb_bytes.extend_from_slice(&(centre - 0.5).to_le_bytes());
-        }
-        aabb_bytes.extend_from_slice(&(i / per_batch).to_le_bytes()); // batch_index
-        for _ in 0..3 {
-            aabb_bytes.extend_from_slice(&(centre + 0.5).to_le_bytes());
-        }
-        aabb_bytes.extend_from_slice(&1u32.to_le_bytes()); // cast_shadows
-    }
-
     let mut meta_bytes: Vec<u8> = Vec::with_capacity(n * 32);
-    for b in 0..batch_count {
+    let mut first = 0u32;
+    for (b, &size) in sizes.iter().enumerate() {
+        for k in 0..size {
+            let i = first + k;
+            // Culled instances sit well outside the orthographic box below.
+            let centre = if keep(i) { 0.0f32 } else { 1.0e6 };
+            for _ in 0..3 {
+                aabb_bytes.extend_from_slice(&(centre - 0.5).to_le_bytes());
+            }
+            aabb_bytes.extend_from_slice(&(b as u32).to_le_bytes()); // batch_index
+            for _ in 0..3 {
+                aabb_bytes.extend_from_slice(&(centre + 0.5).to_le_bytes());
+            }
+            aabb_bytes.extend_from_slice(&1u32.to_le_bytes()); // cast_shadows
+        }
         // index_count, first_index, instance_offset, instance_count,
         // vis_offset, is_transparent, base_vertex, _reserved_flags.
-        let first = b * per_batch;
-        for w in [36u32, 0, first, per_batch, first, 0, 0, 0] {
+        for w in [36u32, 0, first, size, first, 0, 0, 0] {
             meta_bytes.extend_from_slice(&w.to_le_bytes());
         }
+        first += size;
     }
 
     let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
@@ -195,7 +193,7 @@ fn fixture_cull_packs_survivors_in_instance_order() {
     // which leaves a different count in each chunk.
     let per_batch = 2048;
     let keep = |i: u32| i % 3 == 0;
-    let (vis, counts) = run_cull(&mut h, 1, per_batch, keep);
+    let (vis, counts) = run_cull(&mut h, &[per_batch], keep);
 
     let expected: Vec<u32> = (0..per_batch).filter(|&i| keep(i)).collect();
     assert_eq!(
@@ -226,7 +224,7 @@ fn fixture_cull_within_plan_capacity_draws_every_batch() {
     }
 
     let batches = MAX_PLAN_BATCHES;
-    let (vis, counts) = run_cull(&mut h, batches, 1, |_| true);
+    let (vis, counts) = run_cull(&mut h, &vec![1; batches as usize], |_| true);
 
     let expected: Vec<u32> = (0..batches).collect();
     assert_eq!(
@@ -258,7 +256,7 @@ fn fixture_cull_over_plan_capacity_still_draws_every_instance() {
     // One batch past the plan, so the compaction is skipped and the cull
     // kernel's own arrival-order list is what gets drawn.
     let batches = MAX_PLAN_BATCHES + 1;
-    let (mut vis, counts) = run_cull(&mut h, batches, 1, |_| true);
+    let (mut vis, counts) = run_cull(&mut h, &vec![1; batches as usize], |_| true);
 
     assert!(
         counts.iter().all(|&c| c == 1),
@@ -273,4 +271,47 @@ fn fixture_cull_over_plan_capacity_still_draws_every_instance() {
         vis, expected,
         "fallback path left the visible list incomplete"
     );
+}
+
+#[test]
+fn fixture_cull_resolves_chunk_owner_across_mixed_and_empty_batches() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    if !h
+        .device
+        .features()
+        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+    {
+        eprintln!("skipping: no INDIRECT_FIRST_INSTANCE");
+        return;
+    }
+
+    // A chunk finds its batch by bisecting the chunk plan. Empty batches share
+    // a plan entry with whatever follows them, and batches whose instance count
+    // is not a multiple of the chunk size leave a partly filled last chunk, so
+    // both go in here along with runs of consecutive empties and an empty tail.
+    let sizes: Vec<u32> = vec![300, 0, 0, 512, 1, 0, 700, 256, 0, 0];
+    let total: u32 = sizes.iter().sum();
+    let keep = |i: u32| i % 5 != 0;
+    let (vis, counts) = run_cull(&mut h, &sizes, keep);
+
+    let mut first = 0u32;
+    for (b, &size) in sizes.iter().enumerate() {
+        let expected: Vec<u32> = (first..first + size).filter(|&i| keep(i)).collect();
+        assert_eq!(
+            counts[b],
+            expected.len() as u32,
+            "batch {b} (size {size}) reported the wrong visible count"
+        );
+        let got = &vis[first as usize..first as usize + expected.len()];
+        assert_eq!(
+            got,
+            &expected[..],
+            "batch {b} (size {size}) was not packed in instance order"
+        );
+        first += size;
+    }
+    assert_eq!(first, total);
 }

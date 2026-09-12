@@ -28,9 +28,10 @@ const MAX_PLAN_BATCHES: u32 = 8192;
 /// Chunk capacity: one chunk per `COMPACT_CHUNK` instances, so this covers
 /// roughly 16M instances before the same fallback applies.
 const MAX_PLAN_CHUNKS: u32 = 16384;
-/// Fixed prefix of the compaction scratch (plan + owners + counts), ahead of
-/// the per-instance verdict region. Matches the regions in `cull.wgsl`.
-const COMPACT_FIXED_U32S: u32 = (MAX_PLAN_BATCHES + 1) + MAX_PLAN_CHUNKS + MAX_PLAN_CHUNKS;
+/// Fixed prefix of the compaction scratch (chunk plan + per-chunk counts),
+/// ahead of the per-instance verdict region. Matches the regions in
+/// `cull.wgsl`.
+const COMPACT_FIXED_U32S: u32 = (MAX_PLAN_BATCHES + 1) + MAX_PLAN_CHUNKS;
 
 /// Per-frame inputs for the HiZ occlusion test, supplied only by the
 /// main-camera cull. Shadow and single-mesh dispatches pass `None`, which
@@ -70,15 +71,15 @@ pub(super) struct CullResources {
     cull_instances_pipeline: crate::gpu::ComputePipeline,
     /// Compute pipeline for `write_indirect_args` (workgroup 64).
     write_indirect_args_pipeline: crate::gpu::ComputePipeline,
-    /// The order-free compaction's three steps: lay out the chunk space, count
-    /// survivors per chunk, then scatter survivors into the visible list at
-    /// `chunk base + rank`, where the scatter derives each chunk's base by
-    /// summing its predecessors' counts.
+    /// The order-free compaction's three steps: lay out the chunk space (one
+    /// entry per batch), count survivors per chunk, then scatter survivors into
+    /// the visible list at `chunk base + rank`, where the scatter derives each
+    /// chunk's base by summing its predecessors' counts.
     plan_chunks_pipeline: crate::gpu::ComputePipeline,
     chunk_counts_pipeline: crate::gpu::ComputePipeline,
     scatter_visible_pipeline: crate::gpu::ComputePipeline,
 
-    /// The compaction's scratch: chunk plan, chunk owners, chunk counts, and
+    /// The compaction's scratch: chunk plan, per-chunk survivor counts, and
     /// per-instance cull verdicts, in fixed regions of one buffer (see the
     /// region constants in `cull.wgsl`). One buffer because this entry takes the
     /// cull layout to wgpu's default limit of 8 storage buffers per stage.

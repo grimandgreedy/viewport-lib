@@ -141,16 +141,20 @@ struct DrawIndirect {
 // a pure function of instance index, so the result does not depend on
 // scheduling.
 //
-// All of the compaction's scratch lives in one buffer, in four regions. It is
+// All of the compaction's scratch lives in one buffer, in three regions. It is
 // one binding because the cull layout sits exactly at wgpu's default limit of 8
 // storage buffers per stage with it: a second binding here would stop the
 // renderer working on a device created with default limits.
 //
 //   PLAN  [b]        = index of batch b's first chunk, [batch_count] = total
-//   OWNER [chunk]    = the batch that chunk belongs to
 //   TOTAL [chunk]    = survivors in that chunk
 //   FLAGS [instance] = the cull's verdict: the instance's own index, or
 //                      CULLED_SLOT
+//
+// There is no chunk-to-batch table. PLAN is non-decreasing, so a chunk finds
+// its batch by bisecting PLAN once per workgroup, which is about 13 steps at
+// the batch ceiling. Materialising the table instead cost a serial store per
+// chunk in a single invocation, and that was the compaction's largest cost.
 //
 // FLAGS is separate from `visibility_indices` on purpose: chunks scatter in
 // parallel, and packing in place would let one chunk's writes land in another
@@ -162,9 +166,8 @@ const CHUNK: u32 = 256u;
 // Region bases inside `compact_scratch`. Must match MAX_PLAN_* in indirect.rs.
 const PLAN_BASE: u32 = 0u;
 const PLAN_CAP: u32 = 8193u;
-const OWNER_BASE: u32 = PLAN_BASE + PLAN_CAP;
 const CHUNK_CAP: u32 = 16384u;
-const TOTAL_BASE: u32 = OWNER_BASE + CHUNK_CAP;
+const TOTAL_BASE: u32 = PLAN_BASE + PLAN_CAP;
 const FLAGS_BASE: u32 = TOTAL_BASE + CHUNK_CAP;
 // Marker left in a scratch slot whose instance the cull rejected.
 const CULLED_SLOT: u32 = 0xffffffffu;
@@ -323,20 +326,35 @@ var<workgroup> scan: array<u32, CHUNK>;
 // Step 1 of the compaction: lay out the chunk space.
 //
 // Chunks are batch-aligned (a chunk never spans two batches), so a chunk's
-// survivor count belongs to exactly one batch's scan. Serial in one invocation:
-// it walks batches, not instances, and writes one entry per chunk.
+// survivor count belongs to exactly one batch's scan. Serial in one invocation,
+// but one iteration per batch: a scene drawing one instanced mesh runs this
+// loop once regardless of how many instances it has.
 @compute @workgroup_size(1)
 fn plan_chunks() {
     var next = 0u;
     for (var b = 0u; b < frustum.batch_count; b++) {
         compact_scratch[PLAN_BASE + b] = next;
-        let chunks = (batch_metas[b].instance_count + CHUNK - 1u) / CHUNK;
-        for (var c = 0u; c < chunks; c++) {
-            compact_scratch[OWNER_BASE + next + c] = b;
-        }
-        next = next + chunks;
+        next = next + (batch_metas[b].instance_count + CHUNK - 1u) / CHUNK;
     }
     compact_scratch[PLAN_BASE + frustum.batch_count] = next;
+}
+
+// The batch owning chunk `ch`: the last batch whose first chunk is at or before
+// it. PLAN is non-decreasing, so this bisects. Empty batches share a PLAN entry
+// with their successor, and the upper bisect keeps the non-empty one, which is
+// the batch the chunk actually belongs to.
+fn chunk_owner(ch: u32) -> u32 {
+    var lo = 0u;
+    var hi = frustum.batch_count;
+    while lo + 1u < hi {
+        let mid = lo + (hi - lo) / 2u;
+        if compact_scratch[PLAN_BASE + mid] <= ch {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
 }
 
 // Step 2: survivors per chunk, one workgroup per chunk.
@@ -349,7 +367,7 @@ fn chunk_counts(
     if ch >= compact_scratch[PLAN_BASE + frustum.batch_count] {
         return;
     }
-    let owner = compact_scratch[OWNER_BASE + ch];
+    let owner = chunk_owner(ch);
     let bmeta = batch_metas[owner];
     let idx = (ch - compact_scratch[PLAN_BASE + owner]) * CHUNK + lid.x;
 
@@ -394,7 +412,7 @@ fn scatter_visible(
     if ch >= compact_scratch[PLAN_BASE + frustum.batch_count] {
         return;
     }
-    let owner = compact_scratch[OWNER_BASE + ch];
+    let owner = chunk_owner(ch);
     let bmeta = batch_metas[owner];
     let first = compact_scratch[PLAN_BASE + owner];
     let idx = (ch - first) * CHUNK + lid.x;
