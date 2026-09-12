@@ -60,16 +60,23 @@ is what makes them worth having: a fixture can only reach `viewport_lib`'s
 public paths, so one that compiles proves the seam is usable from outside the
 library.
 
-| Folder | Seam | Fixture |
+| Folder | Seam | Fixtures |
 |---|---|---|
 | `runtime_plugin` | `RuntimePlugin` | `LoggingRuntimePlugin` |
 | `gpu_plugin` | `GpuPlugin` | `LoggingGpuPlugin` |
-| `item_type_plugin` | `ItemTypePlugin` | `LoggingItemTypePlugin`, `CountedItemCollection` |
+| `item_type_plugin` | `ItemTypePlugin` | `LoggingItemTypePlugin` (dispatch only), `TriangleItemTypePlugin` (draws, through the plugin pipeline builders), `CountedItemCollection` |
 | `post_effect_producer` | `PostEffectProducer` | `LoggingPostEffectProducer` |
 | `post_effect_stage` | `PostEffectStage` | `PassthroughPostEffectStage` |
-| `deformer` | `DeformerDesc` | `constant_offset_deformer`, `ConstantOffsetDeformer` |
-| `material_plugin` | `MaterialPlugin` | `FlatColourMaterialPlugin` |
+| `deformer` | `DeformerDesc` | `constant_offset_deformer` (params only), `per_vertex_offset_deformer` (reads per-vertex slot data) |
+| `material_plugin` | `MaterialPlugin` | `FlatColourMaterialPlugin` (lighting hooks), `TexturedMaterialPlugin` (`shade_surface` with a texture) |
 | `installer` | `PluginInstaller` | `DeformAndStepInstaller` |
+
+The `Logging*` fixtures are cheap contract checks: they assert the renderer and
+runtime still call a plugin, in the right order, with the right context. The
+others put pixels on screen, so they also assert the seam still *works*: that a
+plugin outside the library can build pipelines from `SharedBindings` and the
+published target descriptors, that a deformer body can address its own
+per-vertex data, and that a shading hook can sample its own textures.
 
 Fixtures are named `<Variety><Trait>`: the trait name says which seam it sits
 in, and the prefix says what that one does. A second variety of the same seam is
@@ -83,9 +90,8 @@ Two things to know when editing them:
   plugin API, and owes a CHANGELOG entry (and a migration note when the change
   is breaking). The fixtures cannot fail the build on their own account, so this
   is how they earn their keep.
-- Keep them minimal. Realistic implementations belong in the shipped plugins and
-  `viewport-lib-post-effects`; a fixture that grows features has stopped being
-  one.
+- Keep them minimal. Realistic implementations belong in the plugins that ship
+  for real use; a fixture that grows features has stopped being one.
 
 The deformer and material-plugin seams need the renderer's recommended device
 limits (three and four bind groups respectively, plus the storage-buffer

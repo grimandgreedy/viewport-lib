@@ -8,7 +8,11 @@
 //!
 //! - [`constant_offset_deformer`] / [`ConstantOffsetDeformer`]: moves every
 //!   vertex by a constant read from the deformer's slot params.
+//! - [`per_vertex_offset_deformer`] / [`PerVertexOffsetDeformer`]: moves each
+//!   vertex by its own value, read from the slot's per-vertex data.
 
 mod constant_offset;
+mod per_vertex_offset;
 
 pub use constant_offset::{ConstantOffsetDeformer, constant_offset_deformer};
+pub use per_vertex_offset::{PerVertexOffsetDeformer, per_vertex_offset_deformer};

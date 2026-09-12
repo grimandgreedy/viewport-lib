@@ -15,9 +15,8 @@
 //!
 //! - **Minimal, not realistic.** A fixture exercises the seam's core contract
 //!   plus its assertion hooks. No believable effects, no tuning knobs. A
-//!   fixture that grows features has stopped being a fixture; the shipped
-//!   plugins and the post-effects crate are where realistic implementations
-//!   belong.
+//!   fixture that grows features has stopped being a fixture; realistic
+//!   implementations belong in the plugins that ship for real use.
 //! - **Public surface only.** Fixtures import through `viewport_lib::` public
 //!   paths and nothing else. A fixture that cannot be written without a
 //!   private item has found a gap in the seam: that is a finding to record,
@@ -67,11 +66,14 @@ pub mod runtime_plugin;
 pub use call_log::CallLog;
 pub use frame::{probe_frame, probe_quad, probe_targets};
 
-pub use deformer::{ConstantOffsetDeformer, constant_offset_deformer};
+pub use deformer::{
+    ConstantOffsetDeformer, PerVertexOffsetDeformer, constant_offset_deformer,
+    per_vertex_offset_deformer,
+};
 pub use gpu_plugin::LoggingGpuPlugin;
 pub use installer::{DeformAndStepInstaller, DeformAndStepInstallerHandle};
-pub use item_type_plugin::{CountedItemCollection, LoggingItemTypePlugin};
-pub use material_plugin::FlatColourMaterialPlugin;
+pub use item_type_plugin::{CountedItemCollection, LoggingItemTypePlugin, TriangleItemTypePlugin};
+pub use material_plugin::{FlatColourMaterialPlugin, TexturedMaterialPlugin};
 pub use post_effect_producer::LoggingPostEffectProducer;
 pub use post_effect_stage::PassthroughPostEffectStage;
 pub use runtime_plugin::{LoggingRuntimePlugin, ProbeEvent};
