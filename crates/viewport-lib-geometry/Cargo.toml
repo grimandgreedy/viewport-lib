@@ -1,6 +1,6 @@
 [package]
 name = "viewport-lib-geometry"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "CPU geometry algorithms for viewport-lib: marching cubes isosurfacing and unstructured volume-mesh boundary extraction, built on viewport-lib-types."
 readme = "README.md"
@@ -14,6 +14,6 @@ rust-version = "1.85"
 publish = true
 
 [dependencies]
-viewport-lib-types = { path = "../viewport-lib-types", version = "0.1.0" }
+viewport-lib-types = { path = "../viewport-lib-types", version = "0.2.0" }
 glam = { workspace = true }
 rayon = "1"

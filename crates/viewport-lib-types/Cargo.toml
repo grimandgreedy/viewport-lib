@@ -1,6 +1,6 @@
 [package]
 name = "viewport-lib-types"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Pure-data types for viewport-lib: submission payloads, handles, and frame config, free of any GPU dependency."
 readme = "README.md"

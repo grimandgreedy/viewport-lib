@@ -4151,7 +4151,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viewport-lib"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "ash",
  "bitflags 2.13.1",
@@ -4181,7 +4181,7 @@ dependencies = [
 
 [[package]]
 name = "viewport-lib-geometry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "glam",
  "rayon",
@@ -4190,7 +4190,7 @@ dependencies = [
 
 [[package]]
 name = "viewport-lib-input"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "glam",
  "viewport-lib-types",
@@ -4223,7 +4223,7 @@ dependencies = [
 
 [[package]]
 name = "viewport-lib-testkit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "eframe",
@@ -4236,7 +4236,7 @@ dependencies = [
 
 [[package]]
 name = "viewport-lib-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "glam",

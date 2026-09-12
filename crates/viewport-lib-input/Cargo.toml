@@ -1,6 +1,6 @@
 [package]
 name = "viewport-lib-input"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Input handling for viewport-lib: the event resolver, the camera controllers, and the optional winit/egui adapters. A replaceable layer on viewport-lib-types - resolve events into an ActionFrame, then apply it to a Camera however you like."
 readme = "README.md"
@@ -21,7 +21,7 @@ winit-adapter = ["dep:winit"]
 egui-adapter = ["dep:egui"]
 
 [dependencies]
-viewport-lib-types = { path = "../viewport-lib-types", version = "0.1.0" }
+viewport-lib-types = { path = "../viewport-lib-types", version = "0.2.0" }
 glam = { workspace = true }
 winit = { version = "0.30", optional = true }
 egui = { version = "0.33", optional = true }

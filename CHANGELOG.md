@@ -1,183 +1,42 @@
 # Changelog
 
-## [Unreleased]
+## [0.22.0]
 
-This release adopts an sRGB colour-input contract: the colour you pass is now
-rendered faithfully. Breaking, and on-screen colour changes on upgrade (the
-repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
+This release adopts an sRGB colour-input contract (the colour you pass is now rendered faithfully), completes the pipeline-variant rework that closes a run of shading and shadow bugs, gives sprites and ribbons shadows and true order-independent transparency, and adds a wgpu 30 leg. Light colours are the one exception to the contract: `LightSource.colour`, `sky_colour`, and `ground_colour` stay raw linear arrays, since they scale radiance rather than describe a surface.
 
 ### Breaking
-- **`Colour` type.** `viewport_lib::Colour` carries a colour's space and stores
-  it linear. Build from a hex/picker value with `Colour::rgb` / `hex` / `srgb` /
-  `hsl` (decoded to linear), or from an already-linear value with
-  `Colour::linear_rgb` / `linear`. It is `Copy`, `repr(transparent)` over
-  `[f32; 4]`, and `bytemuck::Pod`.
-- **Direct-colour fields are now `Colour`.** `Material.base_colour` / `emissive`,
-  `nan_colour`, every render-item and overlay colour (singular and per-element
-  `Vec<Colour>`), ground plane, `Layer`, frame background/grid/outline/xray,
-  gizmo widgets, implicit primitives, the `DebugDraw` API, and the path tracer's
-  `RtMaterial` (`base_colour` / `emissive`). Constructors and setters take
-  `impl Into<Colour>`, so a bare `[f32; N]` still compiles and is read as linear;
-  pass `Colour::rgb`/`hex` for a faithful sRGB colour. Read a field with
-  `to_linear_rgb()` / `to_linear_rgba()`.
-- **Colourmaps render correctly.** Built-in colourmaps are sRGB and now upload as
-  `Rgba8UnormSrgb` (decoded on sample), so every colourmapped image is slightly
-  brighter and more perceptually uniform. `upload_colourmap` interprets its bytes
-  as sRGB.
-- **Light colours stay linear.** `LightSource.colour`, `sky_colour`,
-  `ground_colour` are unchanged (physical radiance).
-- **`FrameStats::missing_pipeline_variants` removed.** It tracked draws that fell
-  back to a less-specialized pipeline (an alpha-mask shadow caster with no cutout
-  variant, a material-plugin item with no discard-free early-Z twin); both gaps
-  are closed, so every pass now has a pipeline for every axis it draws and the
-  counter was always zero.
+- **Direct-colour fields are now `Colour`** - `viewport_lib::Colour` carries a colour's space and stores it linear, replacing the raw array on `Material.base_colour` / `emissive`, `nan_colour`, every render-item and overlay colour, ground plane, `Layer`, frame background/grid/outline/xray, gizmo widgets, implicit primitives, the `DebugDraw` API, and the path tracer's `RtMaterial`. Build from a picker value with `Colour::rgb` / `hex` / `srgb` / `hsl`, from a linear one with `Colour::linear_rgb` / `linear`, and read back with `to_linear_rgb()` / `to_linear_rgba()`; a bare `[f32; N]` still compiles and is read as linear.
+- **Colourmaps render correctly** - built-in colourmaps upload as `Rgba8UnormSrgb` and decode on sample, so every colourmapped image is slightly brighter and more perceptually uniform.
+- **`FrameStats::missing_pipeline_variants` removed** - every pass now has a pipeline for every axis it draws, so the counter was always zero.
 
 ### Features
-- **Sprite and Ribbon items get true order-independent transparency (OIT)
-  on the HDR path.** Alpha-blend and premultiplied sprites/ribbons
-  previously composited by ordinary draw-order blending, which visibly
-  breaks when several overlap at different depths (particle clouds, trail
-  bundles). They now draw through the same weighted-blended accumulate/reveal
-  pass mesh transparency already uses, so overlap order no longer matters.
-  Additive sprites/ribbons are unaffected (already order-independent).
-  Soft-particle and refractive sprites, and any sprite with `depth_write:
-  true`, keep drawing through the existing ordinary-blend pipeline for now.
-  LDR (`PipelineMode::Direct`) is unaffected; OIT only exists on the HDR path.
-- **Ribbon and GPU marching cubes items now cast and receive shadows.**
-  Previously only mesh-family items participated in the shadow pass at all;
-  `ItemSettings.cast_shadows`/`receive_shadows` were silent no-ops on these
-  two types. Both now cast into the cascade shadow atlas (depth-only, via
-  their own small pipelines) and receive shadows from the primary
-  directional light using the same `sample_shadow_csm` helper the mesh
-  shaders use, so shadow filter mode, bias, and cascade selection match
-  exactly. Ribbon geometry always casts two-sided; a wireframe-displayed
-  GPU marching cubes surface still casts its solid shadow.
-- **`ViewportGpuResources::register_texture_view`.** Point a `Material` texture slot
-  at an external, caller-owned GPU `TextureView` (a dma-buf import, a video-decode
-  surface, a compute-pass output, another renderer's target) as a `TextureId`, with
-  no CPU copy. Draw it on a mesh like any texture; re-point on source recreate with
-  `update_texture_view`, free with `free_texture`. The store borrows the view
-  (`replace_texture` refuses the id). Pass the sRGB view and draw unlit for a
-  faithful 1:1. The material-side twin of `register_overlay_texture_view`.
-- **`ViewportRenderer::register_overlay_texture_view`.** Register an external,
-  caller-owned colour `TextureView` (an `OffscreenViewportTarget::render_view()`)
-  as an `OverlayTextureId`, so an offscreen viewport composites as an overlay image
-  in the overlay z-order with no CPU round-trip. Draw it with the existing
-  `OverlayShapeItem::with_texture`; re-point it in place on source resize with
-  `update_overlay_texture_view`. The registry borrows the view (no write / resize;
-  `update_overlay_texture` refuses it). Pass the sRGB `render_view()`: the overlay
-  path samples with an sRGB decode, so it round-trips faithfully.
-- **`ViewportRenderer::create_blit` / `blit` / `blit_with_depth`.** Draw a colour
-  texture into the current scissor rect of a render pass you own. Completes the
-  `OffscreenViewportTarget` story for hosts without a UI framework's texture
-  registration: render a viewport into an offscreen target, then blit its
-  `render_view()` into a pane. `create_blit` returns a reusable `BlitTexture`
-  (rebuild it when the source view is recreated); `blit` targets a pass with no
-  depth attachment, `blit_with_depth` a pass carrying `Depth24PlusStencil8`. The
-  source is sampled as linear, so an sRGB source view round-trips exactly through
-  an sRGB target. The pass colour format must match the renderer's build format.
-- **`upload_data_texture`.** A linear (`Rgba8Unorm`) 8-bit upload path for data
-  textures (metallic-roughness / ORM, occlusion, roughness, metallic), so they
-  are not sRGB-decoded like a colour image. Keep `upload_texture` for base-colour
-  and emissive.
-- **viewport-lib-io texture routing.** `MaterialData::textures()` pairs each
-  present texture with its `MaterialTextureSlot`; `slot.colour_space()`
-  (`ColourSpace::Srgb` / `Linear`) says whether to upload via `upload_texture` or
-  `upload_data_texture`. Imported `base_color` / `emissive` factors are linear.
-- **`AlphaMode::BlendPremultiplied`.** A transparent blend mode for content whose
-  RGB is already premultiplied by alpha: authored premultiplied images, hardware
-  video-decode surfaces, and external GPU textures brought in through
-  `register_texture_view` (a Wayland client buffer, for one). It routes through the
-  same OIT pass as `Blend` but skips the pass's own alpha premultiply, so
-  antialiased edges no longer pick up the dark halo the straight equation gives
-  premultiplied input. Existing consumers are unaffected: it is a new opt-in variant
-  and straight `Blend` is unchanged. Premultiplied items draw on the per-object path
-  (the instanced OIT shader carries only an alpha-test flag, not the full mode).
+- **Sprite and Ribbon items get true order-independent transparency on the HDR path** - alpha-blend and premultiplied sprites and ribbons draw through the same weighted-blended pass mesh transparency uses, so overlap order no longer matters for particle clouds and trail bundles.
+- **Ribbon and GPU marching cubes items cast and receive shadows** - `ItemSettings.cast_shadows` / `receive_shadows` were silent no-ops on these two types; both now use the cascade shadow atlas and the same sampling helper as the mesh shaders.
+- **`AlphaMode::BlendPremultiplied`** - a blend mode for content whose RGB is already premultiplied by alpha (authored images, video-decode surfaces, external GPU textures), so antialiased edges lose the dark halo the straight equation gives premultiplied input.
+- **`ViewportGpuResources::register_texture_view`** - point a `Material` texture slot at an external, caller-owned GPU `TextureView` as a `TextureId`, with no CPU copy.
+- **`ViewportRenderer::register_overlay_texture_view`** - register an external colour `TextureView` as an `OverlayTextureId`, so an offscreen viewport composites as an overlay image with no CPU round-trip.
+- **`ViewportRenderer::create_blit` / `blit` / `blit_with_depth`** - draw a colour texture into the current scissor rect of a render pass you own, for hosts compositing an offscreen viewport into a pane without a UI framework's texture registration.
+- **`upload_data_texture`** - a linear 8-bit upload path for data textures (metallic-roughness, occlusion, roughness, metallic) so they are not sRGB-decoded like a colour image.
+- **A wgpu 30 leg** - `wgpu30` joins `wgpu27` (the default) and `wgpu29`, with eframe pairing by version: 0.33 with wgpu 27, 0.35 with 29, 0.36 with 30.
+- **`ViewportAppV2`, an experimental multi-window runner** - owns several windows, opened and closed at runtime, each with its own input routing, viewport, and optional paint hook for drawing viewports into sub-rects of its surface.
+- **More `ViewportEvent` variants** - `ThemeChanged`, `Occluded`, `RawMotion` for unaccelerated device deltas, `TrackpadPinch` / `TrackpadPan`, and `FileDropped` / `FileHovered` / `FileHoverCancelled` for OS file drag-and-drop.
+- **Retained overlays take a per-frame tint and uniform scale** - `RetainedOverlay::with_tint` and `with_scale` animate a flash, fade, or pulse without re-compiling the group.
 
 ### Fixes
-- **Lit sprites now get the same shadow quality as mesh receivers.** `sprite_lit.wgsl`
-  hand-rolled its own 16-tap PCF shadow sampler instead of calling the shared CSM
-  helper the mesh shaders use, so a lit sprite ignored `shadow_filter` entirely
-  (always plain PCF, never PCSS or the hard tier) and used a coarser, less accurate
-  receiver bias. Lit sprites now call the same `sample_shadow_csm` helper as
-  `mesh.wgsl`, so shadow filter mode, bias, and cascade selection match exactly.
-- **`replace_texture` and `update_texture_view` now show the new pixels
-  immediately.** They bump the resource-free epoch like `free_texture`, so the
-  per-object bind-group cache and cached render bundle rebuild against the new view.
-  Previously a scene with a stable item set (same mesh and texture id) kept sampling
-  the old texture after a replace or external-view re-point, so a per-frame updated
-  texture never changed on screen.
-- **A replaced texture now updates on the GPU-culling instanced path too.** When
-  GPU-driven culling is active (devices with `INDIRECT_FIRST_INSTANCE`, i.e. the
-  indirect draw path), a batch's cull bind group doubles as the draw's texture bind
-  group but was only invalidated when the instance buffer was rebuilt, never on a
-  texture change. So `replace_texture` under a stable instanced scene kept drawing
-  the old view, even though the per-object and direct instanced paths already
-  updated. The cull bind groups now rebuild when the resource-free epoch moves.
-- **Alpha-cutout shadows track a replaced caster texture.** The shadow cull bind
-  groups sample a cutout caster's albedo (to discard alpha-masked fragments and carve
-  the silhouette) but, like the culling bind groups above, were only invalidated on an
-  instance-buffer rebuild. An alpha-mask caster whose texture was replaced under a
-  stable id kept casting the first frame's silhouette. They now rebuild, and the
-  cached shadow bundle re-records, when the resource-free epoch moves.
-- **Alpha-mask casters cast cut-out shadows on the per-object path.** A caster
-  with `AlphaMode::Mask` that fell to the per-object shadow path (any
-  per-object-only feature: a styled backface policy, matcap, GPU warp,
-  position/normal override, lightmap, or per-submesh materials) had no cutout
-  shadow pipeline and cast a solid silhouette, so a masked leaf card shadowed as
-  an opaque quad. The per-object shadow pass gained the alpha-cutout pipeline the
-  instanced path already had (`shadow.wgsl` grew a cutout fragment stage), so its
-  shadow now has the alpha holes punched through, matching the instanced path.
-- **Plugin-shaded opaque meshes get hardware early-Z again.** A material-plugin
-  material on plain-opaque geometry always drew through the discard-capable
-  pipeline, so occluded fragments were shaded instead of depth-rejected before
-  shading. Plugin opaque pipelines gained the discard-free twin the built-in
-  materials already have, so a plainly-opaque plugin material is early-depth
-  tested like any other. Performance only; output unchanged.
-- **Two-sided transparent surfaces keep their back faces on the HDR path.** The
-  OIT (weighted-blended) pipelines were hardcoded to back-face culling, so a
-  two-sided material (`BackfacePolicy::Identical` and the styled policies) at
-  opacity below 1 lost every back-facing triangle on the HDR path, while the
-  opaque and LDR paths drew them. Both OIT pipelines (per-object and instanced)
-  now have a `cull_mode: None` twin selected on the material's two-sidedness, and
-  two-sided transparent items instance again instead of being forced onto the
-  per-object path. Per-material-plugin OIT pipelines gained the same twin, so
-  two-sided transparent plugin materials keep their back faces too. Open surfaces
-  (math plots, shells) rendered as partial shapes through the OIT pass; they now
-  render whole.
-- **Freeing a mesh no longer blanks the instanced scene.** The instanced batch
-  cache is rebuilt when the resource-free epoch moves, matching the per-object
-  path. Previously the cache key tracked only the instanceable count, scene
-  generation, selection generation, and item count, so a scene rebuilt after
-  `free_mesh` with an unchanged item count and scene generation kept its cached
-  batches pointing at the freed meshes and skipped every draw, rendering the
-  whole instanced scene empty until the scene generation changed.
-- The HDR and LDR pipelines now agree on the background colour (the HDR path no
-  longer decodes it a second time).
-- **Gaussian splats render at full saturation.** The splat shader now decodes its
-  SH-evaluated colour (display-referred sRGB, the 3DGS convention) to linear
-  before output, so the sRGB target no longer encodes it a second time. Splats
-  were washed out; they now match their source. The decode also puts the alpha
-  blend in linear space. Uploaded `sh_coeffs` are unchanged.
-- **Wireframe polylines respect clip planes and clip volumes again.** The thin
-  1px wireframe pipeline never sampled the clip uniform at all, so a polyline
-  with `ItemSettings.ignore_clip` left at its default `false` was silently
-  drawn in full the moment it switched to wireframe mode, regardless of any
-  active clip plane or clip volume. The wireframe shader now runs the same
-  clip test as the thick-line pipeline, with its own clip-exempt twin for the
-  cases (clip-object overlays) that still need one.
-- **Wireframe ribbons keep their blend mode.** A ribbon drawn as wireframe
-  always used the alpha-blend pipeline regardless of `RibbonItem::blend`, so
-  an additive or premultiplied ribbon lost its blend mode the moment
-  wireframe mode was enabled. Wireframe ribbons now build one pipeline per
-  blend mode, matching the solid path.
-- **Instanced meshes honour wireframe again.** A surface mesh drawn through the
-  instanced path rendered solid when set to wireframe (per-item
-  `settings.wireframe` or the global wireframe mode), because the per-instance
-  wireframe flag was hardcoded off even though the instanced shader already
-  supported it. Batched items now render as wireframe like non-instanced ones,
-  and toggling the global wireframe mode invalidates the instanced batch cache so
-  the change takes effect on the next frame.
+- **Lit sprites get the same shadow quality as mesh receivers** - `sprite_lit.wgsl` hand-rolled its own PCF sampler and so ignored `shadow_filter` entirely; it now calls the same helper `mesh.wgsl` does.
+- **`replace_texture` and `update_texture_view` show the new pixels immediately** - a scene with a stable item set used to keep sampling the old texture, so a per-frame updated texture never changed on screen.
+- **A replaced texture updates on the GPU-culling instanced path too** - the cull bind groups double as the draw's texture bind groups and were only invalidated on an instance-buffer rebuild.
+- **Alpha-cutout shadows track a replaced caster texture** - an alpha-mask caster whose texture was replaced kept casting the first frame's silhouette.
+- **Alpha-mask casters cast cut-out shadows on the per-object path** - a masked leaf card that fell to that path (styled backface policy, matcap, GPU warp, position/normal override, lightmap, per-submesh materials) used to shadow as an opaque quad.
+- **Plugin-shaded opaque meshes get hardware early-Z again** - a plainly-opaque material-plugin material no longer draws through the discard-capable pipeline, so occluded fragments are depth-rejected instead of shaded.
+- **Two-sided transparent surfaces keep their back faces on the HDR path** - the OIT pipelines were hardcoded to back-face culling, so open surfaces like math plots and shells rendered as partial shapes below opacity 1.
+- **Freeing a mesh no longer blanks the instanced scene** - a scene rebuilt after `free_mesh` with an unchanged item count kept cached batches pointing at freed meshes and skipped every draw.
+- **Gaussian splats render at full saturation** - the splat shader decodes its SH-evaluated colour to linear before output, so the sRGB target no longer encodes it a second time.
+- **Wireframe polylines respect clip planes and clip volumes again** - the thin 1px wireframe pipeline never sampled the clip uniform, so switching a polyline to wireframe silently drew it in full.
+- **Wireframe ribbons keep their blend mode** - a ribbon drawn as wireframe always used the alpha-blend pipeline regardless of `RibbonItem::blend`.
+- **Instanced meshes honour wireframe again** - the per-instance wireframe flag was hardcoded off even though the instanced shader supported it.
+- **Open vector contours stroke as open lines** - a vector shape's border stroke closed every subpath back to its start point, so an open path picked up a spurious closing segment.
+- **The HDR and LDR pipelines agree on the background colour** - the HDR path no longer decodes it a second time.
 
 ## [0.21.0]
 
