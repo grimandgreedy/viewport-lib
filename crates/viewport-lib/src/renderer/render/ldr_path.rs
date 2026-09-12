@@ -474,6 +474,8 @@ impl ViewportRenderer {
                 &slot_hdr.outline_depth_view
             };
             {
+                let overlay_ts_writes =
+                    self.ts_writes_for(crate::renderer::GPU_TS_OVERLAY, true, true);
                 let mut overlay_pass =
                     encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                         #[cfg(any(wgpu29, wgpu30))]
@@ -498,7 +500,7 @@ impl ViewportRenderer {
                                 stencil_ops: None,
                             },
                         ),
-                        timestamp_writes: None,
+                        timestamp_writes: overlay_ts_writes,
                         occlusion_query_set: None,
                     });
                 // Draw blur backdrop shapes first.

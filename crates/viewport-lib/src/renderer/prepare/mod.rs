@@ -995,6 +995,7 @@ impl ViewportRenderer {
         // Retained groups always draw through the sorted segment list (they carry
         // their own z_order and are separate draws), so force the ordered path
         // whenever any are present, even if no immediate item sets a z_order.
+        let overlay_start = web_time::Instant::now();
         self.overlay_uses_zorder =
             frame.overlays.uses_nonzero_z_order() || !frame.overlays.retained.is_empty();
         self.overlay_draw_segments.clear();
@@ -1004,6 +1005,7 @@ impl ViewportRenderer {
         self.prepare_overlay_labels(device, queue, frame);
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);
+        self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
         self.prepare_splat_sort(device, queue, frame);
         self.prepare_splat_wireframe(device, queue, frame);
         self.prepare_sprite_wireframe(device, queue, frame);
@@ -1131,6 +1133,7 @@ impl ViewportRenderer {
                             ssao_ms: slot_ms(crate::renderer::GPU_TS_SSAO),
                             bloom_ms: slot_ms(crate::renderer::GPU_TS_BLOOM),
                             fxaa_ms: slot_ms(crate::renderer::GPU_TS_FXAA),
+                            overlay_ms: slot_ms(crate::renderer::GPU_TS_OVERLAY),
                         };
                         // GPU frame time: the span from the first to the last
                         // measured pass. All slots were written on the same
@@ -1410,7 +1413,12 @@ impl ViewportRenderer {
 
         let viewport_start = web_time::Instant::now();
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, sink);
-        self.prepare_breakdown.viewport_ms = viewport_start.elapsed().as_secs_f32() * 1000.0;
+        // Overlays are timed inside the viewport phase and reported on their own,
+        // so take them back out of `viewport_ms`: the two fields are siblings, not
+        // a field and its subset, and every field here sums into `cpu_prepare_ms`.
+        let viewport_total = viewport_start.elapsed().as_secs_f32() * 1000.0;
+        self.prepare_breakdown.viewport_ms =
+            (viewport_total - self.prepare_breakdown.overlay_ms).max(0.0);
 
         let cpu_prepare_ms = prepare_start.elapsed().as_secs_f32() * 1000.0;
         // Remainder: timestamp readback, scatter sort, degradation logic, stats
@@ -1423,7 +1431,8 @@ impl ViewportRenderer {
             - b.instancing_ms
             - b.geometry_ms
             - b.shadow_ms
-            - b.viewport_ms)
+            - b.viewport_ms
+            - b.overlay_ms)
             .max(0.0);
 
         let budget_ms = policy.target_fps.map(|fps| 1000.0 / fps);

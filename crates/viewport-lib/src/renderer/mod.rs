@@ -305,9 +305,15 @@ pub(crate) const GPU_TS_SSAO: u32 = 7;
 pub(crate) const GPU_TS_BLOOM: u32 = 8;
 /// FXAA fullscreen pass.
 pub(crate) const GPU_TS_FXAA: u32 = 9;
+/// The dedicated screen-space overlay pass (shapes, labels, glyph runs,
+/// polylines, retained groups). Written only when the overlay runs as its own
+/// pass: the HDR path always does, the LDR path only when a backdrop-blur shape
+/// forces a second pass, otherwise its draws are inline at the end of the scene
+/// pass and counted there.
+pub(crate) const GPU_TS_OVERLAY: u32 = 10;
 /// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
 /// (a begin/end pair per slot).
-pub(crate) const GPU_TS_SLOTS: u32 = 10;
+pub(crate) const GPU_TS_SLOTS: u32 = 11;
 
 /// Whether a `render()` presents the frame the user sees, or is an auxiliary
 /// read.

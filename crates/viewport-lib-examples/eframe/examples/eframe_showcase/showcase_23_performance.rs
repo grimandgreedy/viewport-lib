@@ -329,6 +329,7 @@ pub(crate) fn controls_performance(app: &mut App, ui: &mut egui::Ui) {
         ("Shadow", pb.shadow_ms),
         ("Plugin", pb.plugin_ms),
         ("Viewport", pb.viewport_ms),
+        ("Overlay", pb.overlay_ms),
         ("Other", pb.other_ms),
     ] {
         perf_stat_row(ui, &format!("    {label}"), &format!("{ms:.2} ms"));

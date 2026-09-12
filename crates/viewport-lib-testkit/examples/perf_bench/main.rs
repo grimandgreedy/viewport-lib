@@ -513,6 +513,7 @@ struct Samples {
     prep_geometry_ms: Vec<f32>,
     prep_shadow_ms: Vec<f32>,
     prep_viewport_ms: Vec<f32>,
+    prep_overlay_ms: Vec<f32>,
     prep_other_ms: Vec<f32>,
     visible: Vec<f32>,
     frustum_vis: Vec<f32>,
@@ -775,6 +776,7 @@ fn run_one(
         b.prep_geometry_ms.push(pb.geometry_ms);
         b.prep_shadow_ms.push(pb.shadow_ms);
         b.prep_viewport_ms.push(pb.viewport_ms);
+        b.prep_overlay_ms.push(pb.overlay_ms);
         b.prep_other_ms.push(pb.other_ms);
         b.batches_reuploaded.push(st.batches_reuploaded as f32);
         b.batches_skipped.push(st.batches_skipped as f32);
@@ -856,6 +858,7 @@ fn write_header(f: &mut std::fs::File) {
         "prep_geometry_ms_p50",
         "prep_shadow_ms_p50",
         "prep_viewport_ms_p50",
+        "prep_overlay_ms_p50",
         "prep_other_ms_p50",
         "paint_ms_p50",
         "total_ms_p50",
@@ -900,6 +903,7 @@ fn write_row(f: &mut std::fs::File, run: &Run, segment: &str, s: &mut Samples) {
         pct(&mut s.prep_geometry_ms, 0.50),
         pct(&mut s.prep_shadow_ms, 0.50),
         pct(&mut s.prep_viewport_ms, 0.50),
+        pct(&mut s.prep_overlay_ms, 0.50),
         pct(&mut s.prep_other_ms, 0.50),
         pct(&mut s.paint_ms, 0.50),
         pct(&mut s.total_ms, 0.50),

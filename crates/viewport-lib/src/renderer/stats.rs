@@ -169,9 +169,21 @@ pub struct PrepareBreakdown {
     /// Recording the shadow depth pass (directional cascades and point-light
     /// cube-map faces) into the atlas.
     pub shadow_ms: f32,
-    /// Per-viewport prepare: camera and clip uniforms, grid, overlays, and
-    /// interaction state. Runs once per viewport.
+    /// Per-viewport prepare: camera and clip uniforms, grid, outlines, and
+    /// interaction state. Runs once per viewport. Overlay prepare is measured
+    /// separately in [`Self::overlay_ms`] and excluded from this field.
     pub viewport_ms: f32,
+    /// Building the screen-space overlay families: laying out and shaping labels
+    /// and glyph runs, tessellating vector shapes and polylines, building clip
+    /// shapes, sorting the cross-family draw order, and creating the vertex
+    /// buffers and bind groups the overlay passes draw from.
+    ///
+    /// Split out of [`Self::viewport_ms`] because a UI toolkit drawn through the
+    /// overlay system makes this a whole-screen per-frame cost, while the rest of
+    /// the viewport phase (camera, grid, interaction) stays roughly constant. A
+    /// consumer that draws its interface here needs to see the two move
+    /// independently.
+    pub overlay_ms: f32,
     /// Remainder of `prepare` not covered by the fields above.
     pub other_ms: f32,
 }
@@ -188,9 +200,9 @@ pub struct PrepareBreakdown {
 /// These passes are submitted in separate command buffers but resolved
 /// together, so the values are comparable. Like `gpu_frame_ms`, they lag one
 /// frame behind due to async readback. The passes measured here do not cover
-/// every GPU pass (decals, scatter, bloom, depth of field, and the final
-/// overlays are not split out), so the fields do not sum to the full frame GPU
-/// time; treat the remainder as those un-instrumented passes plus present.
+/// every GPU pass (decals, scatter, and depth of field are not split out), so
+/// the fields do not sum to the full frame GPU time; treat the remainder as
+/// those un-instrumented passes plus present.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GpuBreakdown {
     /// Main opaque HDR scene pass.
@@ -221,6 +233,17 @@ pub struct GpuBreakdown {
     pub bloom_ms: f32,
     /// FXAA fullscreen pass. `0.0` when FXAA is off.
     pub fxaa_ms: f32,
+    /// The dedicated screen-space overlay pass: SDF shapes, labels, glyph runs,
+    /// polylines, and retained overlay groups drawn over the resolved image.
+    ///
+    /// `0.0` when the frame drew no overlays, and also when the overlay draws
+    /// were folded into another pass rather than run as their own. That happens
+    /// on the LDR path ([`crate::PipelineMode::Direct`]) without backdrop blur,
+    /// where the overlay is emitted inline at the end of the scene pass and its
+    /// cost lands in [`Self::scene_ms`]. A frame in
+    /// [`crate::PipelineMode::Hdr`], or an LDR frame with a backdrop-blur shape,
+    /// runs the overlay as its own pass and reports it here.
+    pub overlay_ms: f32,
 }
 
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
