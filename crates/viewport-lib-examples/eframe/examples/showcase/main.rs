@@ -6,7 +6,7 @@
 //! scene, camera controllers, and interaction. Pick a showcase from the side
 //! panel; the host resets the scene and calls the new one's `setup`.
 //!
-//! Run with: cargo run --example showcase --features "example-egui,egui-adapter"
+//! Run with: cargo run --release -p viewport-lib-examples-eframe --example showcase
 
 mod camera;
 mod showcase;

@@ -12,8 +12,8 @@
 //!   - the event loop is started with `spawn_app`, which returns immediately,
 //!     instead of `run_app`, which would block.
 //!
-//! The whole file still compiles and runs natively (`cargo run --example
-//! winit-web`): the web-only pieces are behind `cfg(target_arch = "wasm32")`
+//! The whole file still compiles and runs natively (`cargo run -p
+//! viewport-lib-examples-winit --example winit-web`): the web-only pieces are behind `cfg(target_arch = "wasm32")`
 //! and the native path keeps the usual `block_on` + `run_app` shape.
 //!
 //! Target WebGPU, not WebGL2. viewport-lib's lit mesh path binds storage
@@ -25,11 +25,14 @@
 //!
 //!   rustup target add wasm32-unknown-unknown
 //!   cargo build --release --target wasm32-unknown-unknown \
-//!       --example winit-web --features wgpu27
-//!   wasm-bindgen --target web --no-typescript --out-dir examples/winit_web/pkg \
+//!       -p viewport-lib-examples-winit --example winit-web
+//!   wasm-bindgen --target web --no-typescript \
+//!       --out-dir crates/viewport-lib-examples/winit/examples/winit_web/pkg \
 //!       target/wasm32-unknown-unknown/release/examples/winit-web.wasm
-//!   # then serve examples/winit_web/ over http and open index.html in a
+//!   # then serve that example directory over http and open index.html in a
 //!   # WebGPU-capable browser (recent Chrome/Edge, or Safari/Firefox nightly).
+//!
+//! `scripts/build_web.sh [--release]` runs all of the above.
 
 use std::sync::Arc;
 use viewport_lib as vpl;

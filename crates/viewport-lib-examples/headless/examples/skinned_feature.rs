@@ -9,9 +9,9 @@
 //! Headless: it builds its own wgpu device and renders nothing to screen. Run
 //! with:
 //!
-//!     cargo run --example skinned-feature
+//!     cargo run --release -p viewport-lib-examples-headless --example skinned-feature
 //!
-//! Compare with `examples/eframe_showcase/showcase_45_skinned_animation.rs`,
+//! Compare with showcase 45 (skinned animation) in the eframe examples,
 //! which wires the same three pieces by hand across two frame hooks.
 
 use glam::{Affine3A, Vec3};

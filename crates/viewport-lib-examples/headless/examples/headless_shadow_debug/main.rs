@@ -2,7 +2,8 @@
 //! files so shadow bugs can be inspected without a window.
 //!
 //! Usage:
-//!   cargo run --release --example headless-shadow-debug -- <dir_x> <dir_y> <dir_z> [out_prefix]
+//!   cargo run --release -p viewport-lib-examples-headless --example headless-shadow-debug \
+//!       -- <dir_x> <dir_y> <dir_z> [out_prefix]
 //!
 //! Writes <out_prefix>_normal.ppm, _shadowfactor.ppm, _ndotl.ppm,
 //! _cascade.ppm, and _atlas.ppm to the current directory.

@@ -7,7 +7,7 @@
 //! reference, so the transmission lobe and the denoiser are both visible.
 //!
 //! Usage:
-//!   cargo run --release --example raytrace-reference --features raytrace
+//!   cargo run --release -p viewport-lib-examples-headless --example raytrace-reference
 //!
 //! Writes rt_noisy.ppm (16 spp), rt_denoised.ppm (16 spp + denoise), and
 //! rt_reference.ppm (256 spp) to the current directory.

@@ -12,7 +12,8 @@
 //! same types on both sides and unify with no conversion.
 //!
 //! Build (heavy first compile: Bevy default features):
-//!   cargo run --release --example bevy-swarm --no-default-features --features wgpu29
+//!   cargo run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml \
+//!       --example bevy-swarm
 //!
 //! Controls:
 //!   Left / Middle drag : orbit        (both views move together)

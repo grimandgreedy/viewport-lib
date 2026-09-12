@@ -5,7 +5,7 @@
 //!
 //! No window or GPU required. Run with:
 //!
-//!     cargo run --example runtime_jobs
+//!     cargo run --release -p viewport-lib-examples-headless --example runtime-jobs
 //!
 //! # What this shows
 //!

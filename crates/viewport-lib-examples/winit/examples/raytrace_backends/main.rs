@@ -15,8 +15,7 @@
 //! Controls: left-drag orbits, scroll zooms, B / Space toggles the backend.
 //!
 //! Usage:
-//!   cargo run --release --example raytrace-backends \
-//!       --features raytrace,raytrace-hardware
+//!   cargo run --release -p viewport-lib-examples-winit --example raytrace-backends
 
 use std::sync::Arc;
 use viewport_lib as vpl;

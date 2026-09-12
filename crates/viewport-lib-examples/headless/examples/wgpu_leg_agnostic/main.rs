@@ -3,8 +3,9 @@
 //! It names wgpu only through `viewport_lib::wgpu`, so the same source compiles
 //! whether the library was built with the `wgpu27` or the `wgpu29` feature:
 //!
-//!   cargo run --example wgpu-leg-agnostic
-//!   cargo run --example wgpu-leg-agnostic --no-default-features --features wgpu29
+//!   cargo run -p viewport-lib-examples-headless --example wgpu-leg-agnostic
+//!   cargo run -p viewport-lib-examples-headless --example wgpu-leg-agnostic \
+//!       --no-default-features --features wgpu29
 //!
 //! There is no `wgpu` crate in scope and no `#[cfg(feature = ...)]`: the wgpu
 //! types resolve to whichever version the active feature selected, and the

@@ -10,7 +10,7 @@
 //! Controls: left-drag orbits, scroll zooms.
 //!
 //! Usage:
-//!   cargo run --release --example raytrace-interactive --features raytrace
+//!   cargo run --release -p viewport-lib-examples-winit --example raytrace-interactive
 
 use std::sync::Arc;
 use viewport_lib as vpl;
