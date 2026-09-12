@@ -9,6 +9,7 @@
 - **`ViewportPlugin` is now `PluginInstaller`** - the installer trait's old name read as "a plugin for a viewport" rather than what it does; rename the trait in your `impl` and in any import. `PluginInstallCtx`, `install_plugin`, and `install` are unchanged.
 
 ### Features
+- **The egui event adapter works on every wgpu leg** - `from_egui` now ships one copy per supported egui version, selected by `egui-adapter` (0.33), `egui-adapter-035`, or `egui-adapter-036`; enable the one matching your egui instead of hand-rolling the translation off the 27 leg.
 - **Post-effect plugin surface** - register your own effects before or after tone mapping, in the same chain as the built-in ones.
 - **Vignette** - darken the image toward the corners. Off by default.
 - **Colour-grading LUT** - apply a lookup texture after tone mapping.

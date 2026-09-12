@@ -38,23 +38,21 @@ viewport-lib-lightbake = { version = "0.1.0" }
 
 [features]
 # Each leg pairs viewport-lib's wgpu leg with the eframe version that embeds the
-# same wgpu. `egui-adapter` (viewport-lib's `from_egui` translation) rides the 27
-# leg only, because that feature's egui dependency is pinned to 0.33: see the
-# leg-status table in src/lib.rs.
+# same wgpu, and with the matching egui version of viewport-lib's `from_egui`
+# adapter.
 # `showcase` is on by default so the path-tracer and lightmap-bake showcase
 # builds in a plain `cargo build --all-targets` instead of being silently
 # skipped.
 default = ["wgpu27", "showcase"]
 wgpu27 = ["viewport-lib/wgpu27", "viewport-lib/egui-adapter", "dep:eframe033"]
-wgpu29 = ["viewport-lib/wgpu29", "dep:eframe035"]
-wgpu30 = ["viewport-lib/wgpu30", "dep:eframe036"]
+wgpu29 = ["viewport-lib/wgpu29", "viewport-lib/egui-adapter-035", "dep:eframe035"]
+wgpu30 = ["viewport-lib/wgpu30", "viewport-lib/egui-adapter-036", "dep:eframe036"]
 # The full showcase drives the path tracer and the lightmap baker.
 showcase = ["viewport-lib/raytrace", "viewport-lib/bake"]
 
 [[example]]
 name = "eframe-minimal"
 path = "examples/eframe_minimal/main.rs"
-required-features = ["wgpu27"]
 
 # The leg-portable minimal example: it translates egui events itself instead of
 # using viewport-lib's `from_egui` (whose egui is pinned to 0.33), so one source
@@ -66,7 +64,6 @@ path = "examples/eframe_minimal_callback/main.rs"
 [[example]]
 name = "eframe-retained-overlay"
 path = "examples/eframe_retained_overlay/main.rs"
-required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-exposure"
@@ -86,7 +83,6 @@ required-features = ["wgpu27"]
 [[example]]
 name = "eframe-primitives"
 path = "examples/eframe_primitives/main.rs"
-required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-render-paths"
@@ -101,7 +97,6 @@ required-features = ["wgpu27"]
 [[example]]
 name = "eframe-multi-viewport"
 path = "examples/eframe_multi_viewport/main.rs"
-required-features = ["wgpu27"]
 
 [[example]]
 name = "eframe-showcase"
@@ -116,4 +111,3 @@ required-features = ["wgpu27", "showcase"]
 [[example]]
 name = "debug-light"
 path = "examples/debug_light/main.rs"
-required-features = ["wgpu27"]

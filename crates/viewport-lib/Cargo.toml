@@ -59,13 +59,11 @@ web-time = "1"
 
 # --- Optional host integrations (consumer-facing) ---
 # `winit`/`pollster` power the `app` runners and the `from_winit` event adapter.
-# `egui` powers the `from_egui` event adapter; it is pinned to 0.33, which pairs
-# with the wgpu27 leg. A host embedding a viewport in egui 0.35 or 0.36 (the 29
-# and 30 legs) translates events itself for now: aliasing egui per leg, the way
-# the eframe example crate aliases eframe, is the fix if a consumer needs it.
+# The `from_egui` event adapter lives in viewport-lib-input, which carries one
+# aliased egui per supported version; the `egui-adapter*` features below forward
+# to it, so no egui dependency is needed here.
 winit = { version = "0.30", optional = true }
 pollster = { version = "0.4", optional = true }
-egui = { version = "0.33", optional = true }
 
 # Native handles for the hardware VRAM budget query (`resources::vram_budget`).
 # Versions must match the ones wgpu-hal 27 resolves so the raw types are identical.
@@ -116,7 +114,12 @@ future = []
 # `from_egui` event translation for hosts embedding a viewport in egui.
 winit-adapter = ["dep:winit", "viewport-lib-input/winit-adapter"]
 app = ["winit-adapter", "dep:pollster"]
-egui-adapter = ["dep:egui", "viewport-lib-input/egui-adapter"]
+# `from_egui` is built against one egui version, so pick the feature matching
+# the egui your host runs: 0.33 pairs with the wgpu27 leg, 0.35 with wgpu29,
+# 0.36 with wgpu30 (a framework that embeds wgpu pins both). Enable one.
+egui-adapter = ["viewport-lib-input/egui-adapter"]
+egui-adapter-035 = ["viewport-lib-input/egui-adapter-035"]
+egui-adapter-036 = ["viewport-lib-input/egui-adapter-036"]
 [dev-dependencies]
 # Parses generated WGSL in the bindless and path-tracer unit tests.
 naga = "27"

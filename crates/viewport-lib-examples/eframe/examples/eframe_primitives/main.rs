@@ -162,11 +162,31 @@ impl App {
     }
 }
 
+// eframe 0.35 replaced `App::update(&Context, ..)` with `App::ui(&mut Ui, ..)`,
+// handing the app a margin-free root Ui instead of the Context. On the 0.33 leg a
+// frameless central panel makes the same Ui, so one body serves every leg.
+#[cfg(feature = "wgpu27")]
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, eframe_frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| {
+            .show(ctx, |ui| self.frame_ui(ui, eframe_frame));
+    }
+}
+
+#[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, eframe_frame: &mut eframe::Frame) {
+        self.frame_ui(ui, eframe_frame);
+    }
+}
+
+impl App {
+    fn frame_ui(&mut self, ui: &mut egui::Ui, eframe_frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
