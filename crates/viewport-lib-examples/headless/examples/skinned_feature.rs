@@ -1,6 +1,6 @@
 //! Installing GPU skinning in one call.
 //!
-//! Shows the `ViewportPlugin` installer path: build a skinned mesh and a pose
+//! Shows the `PluginInstaller` path: build a skinned mesh and a pose
 //! plugin, hand them to `SkinnedMeshFeature`, and install the deformer plus the
 //! runtime plugin with a single `install_plugin` call. Each frame, one
 //! `handle.apply(...)` drains the pose updates and uploads the joint palette,

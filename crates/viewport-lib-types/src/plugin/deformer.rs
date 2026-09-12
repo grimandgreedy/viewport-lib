@@ -18,12 +18,13 @@ pub enum DeformStage {
 /// `wgsl_body` defines:
 ///
 /// ```text
-/// fn <name>_deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { ... }
+/// fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex { ... }
 /// ```
 ///
 /// The composer prefixes every top-level identifier it finds inside
-/// `wgsl_body` with `<name>__` to keep multiple deformers independent. The
-/// body may read `deform_data` / `deform_instance_data` via the
+/// `wgsl_body` with `<name>__` to keep multiple deformers independent, so the
+/// entry point is written as plain `deform` and dispatched as
+/// `<name>__deform`. The body may read `deform_data` / `deform_instance_data` via the
 /// `deform_read_*` helpers in `deform.wgsl`, and read its slot's parameter
 /// region via `deform_header.slot_params[ctx.slot * 4 + k]`.
 ///
@@ -96,7 +97,7 @@ pub struct DeformerDesc {
     pub stage: DeformStage,
     /// Execution order within the stage; lower runs first. Ties break by name.
     pub priority: i32,
-    /// WGSL body defining `fn <name>_deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex`
+    /// WGSL body defining `fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex`
     /// plus any helper declarations. All top-level identifiers in this body
     /// are prefixed with `<name>__` at composition time.
     pub wgsl_body: String,

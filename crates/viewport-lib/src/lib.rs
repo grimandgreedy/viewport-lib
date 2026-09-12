@@ -193,8 +193,8 @@ pub use scene::traits;
 pub use error::{ViewportError, ViewportResult};
 
 pub use plugin_api::{
-    PluginInstallCtx, PostEffectContext, PostEffectProducer, PostEffectProducerId,
-    PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId, ViewportPlugin,
+    PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer, PostEffectProducerId,
+    PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId,
     build_post_effect_pipeline, install_plugin,
 };
 

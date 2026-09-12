@@ -6,6 +6,7 @@
 - **The `example-*` features are gone** - the examples moved to one crate per UI framework under `crates/viewport-lib-examples/`, so the library no longer carries optional eframe, iced, slint, or bevy dependencies. They were documented as not for consumers, and no library feature changed.
 - **Several enums are now `#[non_exhaustive]`** - a `match` on `ShadingModel`, `AlphaMode`, `BackfacePolicy`, or the animation-clip enums needs a `_ =>` arm.
 - **`gpu_phase::_RESERVED_INTERNAL` removed** - it reserved a plugin band that will never exist; the other phases are unchanged.
+- **`ViewportPlugin` is now `PluginInstaller`** - the installer trait's old name read as "a plugin for a viewport" rather than what it does; rename the trait in your `impl` and in any import. `PluginInstallCtx`, `install_plugin`, and `install` are unchanged.
 
 ### Features
 - **Post-effect plugin surface** - register your own effects before or after tone mapping, in the same chain as the built-in ones.
@@ -18,6 +19,9 @@
 - **More materials instance** - metallic-roughness and emissive textures, styled back faces, UV parameterisation visualisation, premultiplied blend, and plugin shading no longer force a draw per object.
 - **Per-texture UV transforms** - offset, scale, and rotate each map on its own, matching glTF `KHR_texture_transform`.
 - **Second UV set** - carry a lightmap or detail unwrap on its own UVs.
+
+### Fixes
+- **`DeformerDesc` documents the right hook name** - the doc said a body defines `fn <name>_deform`, but the composer dispatches `<name>__deform` from a body that defines plain `fn deform`; a body written to the old wording failed shader validation at registration.
 
 ## [0.22.0]
 

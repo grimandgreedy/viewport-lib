@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use crate::MeshId;
 use crate::error::ViewportResult;
-use crate::plugin_api::{PluginInstallCtx, ViewportPlugin};
+use crate::plugin_api::{PluginInstallCtx, PluginInstaller};
 use crate::plugins::skinning::{SkinWeights, SkinnedPoseUpdate, SkinningPlugin};
 use crate::resources::DeviceResources;
 use crate::runtime::{RuntimeOutput, RuntimePlugin};
@@ -52,7 +52,7 @@ impl<P: RuntimePlugin> SkinnedMeshFeature<P> {
     }
 }
 
-impl<P: RuntimePlugin> ViewportPlugin for SkinnedMeshFeature<P> {
+impl<P: RuntimePlugin> PluginInstaller for SkinnedMeshFeature<P> {
     type Handle = SkinnedMeshHandle;
 
     fn install(self, ctx: &mut PluginInstallCtx<'_>) -> ViewportResult<SkinnedMeshHandle> {

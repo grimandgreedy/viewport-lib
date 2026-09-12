@@ -224,7 +224,7 @@ impl RuntimePlugin for PhysicsLitePlugin {
     }
 }
 
-impl crate::plugin_api::ViewportPlugin for PhysicsLitePlugin {
+impl crate::plugin_api::PluginInstaller for PhysicsLitePlugin {
     type Handle = ();
 
     /// Register the configured plugin on the runtime. Add bodies and set
