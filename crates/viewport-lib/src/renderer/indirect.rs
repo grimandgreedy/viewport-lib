@@ -70,12 +70,12 @@ pub(super) struct CullResources {
     cull_instances_pipeline: crate::gpu::ComputePipeline,
     /// Compute pipeline for `write_indirect_args` (workgroup 64).
     write_indirect_args_pipeline: crate::gpu::ComputePipeline,
-    /// The deterministic compaction's four phases: lay out the chunk space,
-    /// count survivors per chunk, scan those counts within each batch, scatter
-    /// survivors into the visible list at `chunk base + rank`.
+    /// The order-free compaction's three steps: lay out the chunk space, count
+    /// survivors per chunk, then scatter survivors into the visible list at
+    /// `chunk base + rank`, where the scatter derives each chunk's base by
+    /// summing its predecessors' counts.
     plan_chunks_pipeline: crate::gpu::ComputePipeline,
     chunk_counts_pipeline: crate::gpu::ComputePipeline,
-    scan_chunks_pipeline: crate::gpu::ComputePipeline,
     scatter_visible_pipeline: crate::gpu::ComputePipeline,
 
     /// The compaction's scratch: chunk plan, chunk owners, chunk counts, and
@@ -176,13 +176,6 @@ impl CullResources {
             &layout,
             &shader,
             "chunk_counts",
-        );
-        let scan_chunks_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "scan_chunks_pipeline",
-            &layout,
-            &shader,
-            "scan_chunks",
         );
         let scatter_visible_pipeline = crate::resources::builders::compute_pipeline(
             device,
@@ -297,7 +290,6 @@ impl CullResources {
             write_indirect_args_pipeline,
             plan_chunks_pipeline,
             chunk_counts_pipeline,
-            scan_chunks_pipeline,
             scatter_visible_pipeline,
             compact_scratch_buf: std::sync::Mutex::new(None),
             bgl,
@@ -387,6 +379,16 @@ impl CullResources {
             &self.scratch_stats_buf
         };
 
+        // Does this submission fit the fixed chunk plan? Decided here because
+        // the cull kernel needs to know: when the compaction runs it owns both
+        // the visible list and the per-batch counts, and the kernel skips the
+        // arrival-order list and the per-instance counter increment.
+        let chunk_upper_bound = sub.instance_count.div_ceil(COMPACT_CHUNK) + sub.batch_count;
+        let plan_fits = sub.batch_count <= MAX_PLAN_BATCHES && chunk_upper_bound <= MAX_PLAN_CHUNKS;
+        if !plan_fits {
+            crate::renderer::warn_once_cull_plan_capacity(sub.batch_count, sub.instance_count);
+        }
+
         let frustum_uniform = FrustumUniform {
             planes: std::array::from_fn(|i| FrustumPlane {
                 normal: frustum.planes[i].normal.to_array(),
@@ -400,6 +402,8 @@ impl CullResources {
             viewport,
             cull_mask,
             do_mask_cull,
+            compact_enabled: u32::from(plan_fits),
+            _pad: [0; 3],
         };
         queue.write_buffer(
             frustum_buf,
@@ -526,16 +530,11 @@ impl CullResources {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(sub.instance_count.div_ceil(64), 1, 1);
         }
-        // Deterministic compaction: rewrite the visible list in instance order
-        // so an unchanged scene submits its draws identically every frame. Four
-        // phases (plan, count, scan, scatter), all pure functions of the
-        // instance index. Skipped when the submission outgrows the fixed chunk
-        // plan, which leaves the arrival-order list pass 1 also wrote.
-        let chunk_upper_bound = sub.instance_count.div_ceil(COMPACT_CHUNK) + sub.batch_count;
-        let plan_fits = sub.batch_count <= MAX_PLAN_BATCHES && chunk_upper_bound <= MAX_PLAN_CHUNKS;
-        if !plan_fits {
-            crate::renderer::warn_once_cull_plan_capacity(sub.batch_count, sub.instance_count);
-        }
+        // Order-free compaction: pack the visible list in instance order so an
+        // unchanged scene submits its draws identically every frame. Three
+        // dispatches (plan, count, scatter), all pure functions of the instance
+        // index. Skipped when the submission outgrows the fixed chunk plan,
+        // which leaves the arrival-order list the cull kernel wrote instead.
         if plan_fits {
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some(&compact_label),
@@ -546,8 +545,6 @@ impl CullResources {
             pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&self.chunk_counts_pipeline);
             pass.dispatch_workgroups(chunk_upper_bound.max(1), 1, 1);
-            pass.set_pipeline(&self.scan_chunks_pipeline);
-            pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&self.scatter_visible_pipeline);
             pass.dispatch_workgroups(chunk_upper_bound.max(1), 1, 1);
         }

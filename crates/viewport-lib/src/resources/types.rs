@@ -393,9 +393,16 @@ pub(crate) struct FrustumUniform {
     /// bound), 0 = skip it (shadow / single-mesh / plugin dispatches bind the
     /// fallback instance buffer and leave this off).
     pub(crate) do_mask_cull: u32,
+    /// 1 = the order-free compaction runs after the cull kernel and will write
+    /// both the visible list and the per-batch visible counts, so the cull
+    /// kernel skips its own arrival-order list and counter increments. 0 = the
+    /// submission outgrew the fixed chunk plan, so the cull kernel writes the
+    /// list itself, in arrival order.
+    pub(crate) compact_enabled: u32,
+    pub(crate) _pad: [u32; 3],
 }
 
-const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 192);
+const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 208);
 
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///
