@@ -10,7 +10,7 @@ use super::viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 /// the viewport interaction behaviour for a given interaction style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingPreset {
-    /// The canonical camera-navigation control scheme matching `examples/winit_primitives`.
+    /// The canonical camera-navigation control scheme the winit examples use.
     ///
     /// - Left drag -> Orbit
     /// - Right drag -> Pan
@@ -34,7 +34,7 @@ pub enum BindingPreset {
 
 /// Returns the viewport bindings for the [`BindingPreset::ViewportPrimitives`] preset.
 ///
-/// This is the canonical reference control scheme, matching `examples/winit_primitives`.
+/// This is the canonical reference control scheme the winit examples use.
 pub fn viewport_primitives_bindings() -> Vec<ViewportBinding> {
     vec![
         // Left drag -> Orbit (no modifiers)

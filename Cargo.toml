@@ -6,12 +6,35 @@ members = [
     "crates/viewport-lib-geometry",
     "crates/viewport-lib-input",
     "crates/viewport-lib-post-effects",
+    "crates/viewport-lib-examples/eframe",
+    "crates/viewport-lib-examples/winit",
+    "crates/viewport-lib-examples/iced",
+    "crates/viewport-lib-examples/headless",
+]
+# A bare `cargo build` / `cargo test` at the root builds the library crates only,
+# so routine work does not compile a UI framework. `--workspace` opts into the
+# example crates: `cargo build --workspace --all-targets` compiles every example
+# with no feature flags.
+default-members = [
+    "crates/viewport-lib",
+    "crates/viewport-lib-types",
+    "crates/viewport-lib-geometry",
+    "crates/viewport-lib-input",
+    "crates/viewport-lib-post-effects",
 ]
 # The testkit lives in `crates/` and has its own `[workspace]` table (it is a
 # `publish = false` crate, not a member, so `cargo publish -p viewport-lib` stays
 # clean). Excluding it here stops cargo treating that nested workspace root as
 # part of this one when `viewport-lib`'s dev-dependency resolves the path.
-exclude = ["crates/viewport-lib-testkit"]
+#
+# The slint and bevy example crates are excluded for a different reason: their
+# frameworks pin wgpu 29, and features unify across a workspace build, so as
+# members they would turn the 29 leg on for every crate defaulting to 27.
+exclude = [
+    "crates/viewport-lib-testkit",
+    "crates/viewport-lib-examples/slint",
+    "crates/viewport-lib-examples/bevy",
+]
 
 # Shared dependency pins. Both crates take `glam` from here so the version can
 # never drift across the workspace boundary (a mismatch would make `Vec3`/`Mat4`

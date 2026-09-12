@@ -1,0 +1,55 @@
+[package]
+name = "viewport-lib-examples-headless"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+description = "Headless viewport-lib examples: no window, no UI framework"
+publish = false
+
+# Nothing but the leg shim documentation lives here; the crate exists to host
+# the examples below.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# `default-features = false` so the wgpu leg comes from this crate's own leg
+# features rather than viewport-lib's default.
+viewport-lib = { path = "../../viewport-lib", default-features = false }
+glam = { workspace = true }
+pollster = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+# The leg features forward to viewport-lib and nothing else: none of these
+# examples links a UI framework, so there is no framework version to pair with
+# the leg. `raytrace` is on by default so the path-tracer reference build runs in a
+# plain `cargo build --all-targets` instead of being silently skipped.
+default = ["wgpu27", "raytrace"]
+wgpu27 = ["viewport-lib/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30"]
+raytrace = ["viewport-lib/raytrace"]
+
+[[example]]
+name = "headless-shadow-debug"
+path = "examples/headless_shadow_debug/main.rs"
+
+[[example]]
+name = "runtime-jobs"
+path = "examples/runtime_jobs.rs"
+
+[[example]]
+name = "skinned-feature"
+path = "examples/skinned_feature.rs"
+
+# Names wgpu only through `viewport_lib::wgpu`, so it builds on every leg with no
+# source edits: the point of the example.
+[[example]]
+name = "wgpu-leg-agnostic"
+path = "examples/wgpu_leg_agnostic/main.rs"
+
+[[example]]
+name = "raytrace-reference"
+path = "examples/raytrace_reference/main.rs"
+required-features = ["raytrace"]

@@ -1,0 +1,101 @@
+[package]
+name = "viewport-lib-examples-winit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+description = "winit-hosted viewport-lib examples: hand-written event loops and the built-in runners"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# winit does not embed wgpu, so the leg is viewport-lib's alone and the same
+# winit 0.30 serves every leg. `app` brings the built-in runners the app-* and
+# winit-minimal examples use.
+viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["app"] }
+glam = { workspace = true }
+winit = "0.30"
+pollster = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+# `raytrace` and `raytrace-hardware` are on by default so the two interactive
+# path-tracer examples build in a plain `cargo build --all-targets` instead of
+# being silently skipped.
+default = ["wgpu27", "raytrace", "raytrace-hardware"]
+wgpu27 = ["viewport-lib/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30"]
+raytrace = ["viewport-lib/raytrace"]
+raytrace-hardware = ["raytrace", "viewport-lib/raytrace-hardware"]
+
+# wasm-only glue for the `winit-web` example: async task spawning, the canvas in
+# the DOM, a browser-safe clock, and panic/log forwarding to the console. Only
+# pulled in for the wasm32 target, so native builds are unaffected.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-time = "1"
+console_error_panic_hook = "0.1"
+console_log = "1"
+log = "0.4"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "Node",
+] }
+
+[[example]]
+name = "winit-minimal"
+path = "examples/winit_minimal/main.rs"
+
+[[example]]
+name = "winit-viewport"
+path = "examples/winit_viewport/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "winit-basic-interaction"
+path = "examples/winit_basic_interaction/main.rs"
+
+[[example]]
+name = "winit-multi-viewport"
+path = "examples/winit_multi_viewport/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "winit-hdr"
+path = "examples/winit_hdr/main.rs"
+required-features = ["wgpu27"]
+
+# Runs natively (block_on + run_app) and on wasm32 (async device + spawn_app).
+# The web build needs `--target wasm32-unknown-unknown` and the wasm-only
+# dependencies above; scripts/build_web.sh drives it.
+[[example]]
+name = "winit-web"
+path = "examples/winit_web/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "app-multi-window"
+path = "examples/app_multi_window/main.rs"
+
+[[example]]
+name = "app-in-window-viewports"
+path = "examples/app_in_window_viewports/main.rs"
+
+# The two interactive path-tracer examples open winit windows, so they live here
+# rather than with the headless set.
+[[example]]
+name = "raytrace-interactive"
+path = "examples/raytrace_interactive/main.rs"
+required-features = ["wgpu27", "raytrace"]
+
+[[example]]
+name = "raytrace-backends"
+path = "examples/raytrace_backends/main.rs"
+required-features = ["wgpu27", "raytrace-hardware"]

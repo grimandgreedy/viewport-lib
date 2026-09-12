@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Breaking
+- **The `example-*` features are gone** - the examples moved to one crate per UI framework under `crates/viewport-lib-examples/`, so the library no longer carries optional eframe, iced, slint, or bevy dependencies. They were documented as not for consumers, and no library feature changed.
 - **Several enums are now `#[non_exhaustive]`** - a `match` on `ShadingModel`, `AlphaMode`, `BackfacePolicy`, or the animation-clip enums needs a `_ =>` arm.
 - **`gpu_phase::_RESERVED_INTERNAL` removed** - it reserved a plugin band that will never exist; the other phases are unchanged.
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the winit-web example for wasm and run wasm-bindgen so it can be served.
 #
-# Output lands in examples/winit_web/pkg/ next to index.html. Serve that folder
+# Output lands next to the example's index.html, in
+# crates/viewport-lib-examples/winit/examples/winit_web/pkg/. Serve that folder
 # over http (any static server) and open it in a WebGPU-capable browser.
 #
 # The default Homebrew rustc does not ship the wasm32 std, so this routes the
@@ -12,7 +13,7 @@ set -euo pipefail
 
 usage() {
     echo "usage: scripts/build_web.sh [--release]"
-    echo "  builds examples/winit_web for wasm32 and runs wasm-bindgen into pkg/"
+    echo "  builds the winit-web example for wasm32 and runs wasm-bindgen into its pkg/"
 }
 
 profile="debug"
@@ -48,15 +49,16 @@ fi
 
 echo "building winit-web ($profile) for wasm32-unknown-unknown ..."
 RUSTC="$tc_rustc" "$tc_cargo" build $cargo_profile_flag \
-    --target wasm32-unknown-unknown --example winit-web
+    --target wasm32-unknown-unknown -p viewport-lib-examples-winit --example winit-web
 
 wasm_in="$(cargo metadata --format-version 1 --no-deps \
     | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
 wasm_in="${wasm_in:-$repo_root/target}/wasm32-unknown-unknown/$profile/examples/winit-web.wasm"
 
-out_dir="$repo_root/examples/winit_web/pkg"
+example_dir="$repo_root/crates/viewport-lib-examples/winit/examples/winit_web"
+out_dir="$example_dir/pkg"
 echo "running wasm-bindgen -> $out_dir"
 wasm-bindgen --target web --no-typescript --out-dir "$out_dir" "$wasm_in"
 
-echo "done. serve examples/winit_web/ over http and open index.html:"
-echo "  (cd examples/winit_web && python3 -m http.server 8080)"
+echo "done. serve the example directory over http and open index.html:"
+echo "  (cd $example_dir && python3 -m http.server 8080)"

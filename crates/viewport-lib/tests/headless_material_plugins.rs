@@ -417,13 +417,15 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 }
 
-// The reference plugins shipped under examples/plugins/ must stay
-// registrable: their WGSL runs through the full composer + wgpu validation
-// at registration, so this catches contract or prefixer regressions (e.g.
-// a body local named like a ShadingSurface field).
-#[path = "../examples/plugins/surface_detail_plugin.rs"]
+// The reference plugins the examples ship must stay registrable: their WGSL runs
+// through the full composer + wgpu validation at registration, so this catches
+// contract or prefixer regressions (e.g. a body local named like a
+// ShadingSurface field). The sources live with the examples that demonstrate
+// them, so this test reaches across to them rather than keeping a second copy
+// that could drift.
+#[path = "../../viewport-lib-examples/eframe/examples/plugins/surface_detail_plugin.rs"]
 mod surface_detail_plugin;
-#[path = "../examples/plugins/toon_plugin.rs"]
+#[path = "../../viewport-lib-examples/eframe/examples/plugins/toon_plugin.rs"]
 mod toon_plugin;
 
 #[test]

@@ -1,0 +1,163 @@
+//! Showcase 3: Ground Plane.
+//!
+//! Demonstrates all four ground-plane modes:
+//!   - None       : plane disabled (zero overhead)
+//!   - ShadowOnly : invisible plane that receives and displays shadows
+//!   - Tile       : procedural checkerboard
+//!   - SolidColour : flat-coloured plane
+//!
+//! Layout: three spheres at y = -3, 0, +3 (along X-axis), floating at Z = 1.5
+//! above a ground plane at Z = 0.
+
+use crate::App;
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{Material, ViewportRenderer, scene::Scene};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct GroundPlaneState {
+    pub scene: Scene,
+    pub built: bool,
+    pub mode: GpMode,
+    pub height: f32,
+    pub colour: [f32; 4],
+    pub tile_colour2: [f32; 4],
+    pub tile_size: f32,
+    pub shadow_colour: [f32; 4],
+    pub shadow_opacity: f32,
+    pub grid_colour: [f32; 3],
+}
+
+impl Default for GroundPlaneState {
+    fn default() -> Self {
+        Self {
+            scene: Scene::new(),
+            built: false,
+            mode: GpMode::Grid,
+            height: 0.0,
+            colour: [0.85, 0.15, 0.10, 1.0].into(),
+            tile_colour2: [1.0, 1.0, 1.0, 1.0].into(),
+            tile_size: 1.0,
+            shadow_colour: [0.0, 0.0, 0.0, 1.0].into(),
+            shadow_opacity: 0.5,
+            grid_colour: [0.55, 0.55, 0.55],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+impl App {
+    pub(crate) fn build_ground_plane_scene(&mut self, renderer: &mut ViewportRenderer) {
+        self.gp_state.scene = Scene::new();
+
+        let sphere = vpl::geometry::primitives::sphere(1.0, 32, 16);
+        let sphere_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &sphere)
+            .expect("gp sphere mesh upload");
+
+        // Three spheres in a row along X.
+        let positions: [(f32, &str, [f32; 3]); 3] = [
+            (-3.5, "Left", [0.65, 0.09, 0.07]),
+            (0.0, "Centre", [0.10, 0.52, 0.18]),
+            (3.5, "Right", [0.10, 0.26, 0.68]),
+        ];
+
+        for (x, name, colour) in positions {
+            let mut mat = Material::from_colour(colour);
+            mat.roughness = 0.5;
+            mat.metallic = 0.1;
+            self.gp_state.scene.add_named(
+                name,
+                Some(sphere_id),
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 1.5)),
+                mat,
+            );
+        }
+
+        self.gp_state.built = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_ground_plane(app: &mut App, ui: &mut egui::Ui) {
+    let s = &mut app.gp_state;
+
+    ui.label("Ground plane mode:");
+    ui.horizontal_wrapped(|ui| {
+        for (label, mode) in [
+            ("None", GpMode::None),
+            ("Grid", GpMode::Grid),
+            ("ShadowOnly", GpMode::ShadowOnly),
+            ("Tile", GpMode::Tile),
+            ("SolidColour", GpMode::SolidColour),
+        ] {
+            if ui.selectable_label(s.mode == mode, label).clicked() {
+                s.mode = mode;
+            }
+        }
+    });
+
+    ui.separator();
+    ui.label("Height (Z):");
+    ui.add(egui::Slider::new(&mut s.height, -3.0..=3.0).step_by(0.1));
+
+    match s.mode {
+        GpMode::Grid => {
+            ui.separator();
+            ui.label("Grid colour:");
+            ui.color_edit_button_rgb(&mut s.grid_colour);
+        }
+        GpMode::Tile => {
+            ui.separator();
+            ui.label("Tile colour A:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.colour);
+            ui.label("Tile colour B:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.tile_colour2);
+            ui.label("Tile size:");
+            ui.add(egui::Slider::new(&mut s.tile_size, 0.1..=5.0).step_by(0.1));
+        }
+        GpMode::SolidColour => {
+            ui.separator();
+            ui.label("Surface colour:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.colour);
+        }
+        GpMode::ShadowOnly => {
+            ui.separator();
+            ui.label("Shadow colour:");
+            ui.color_edit_button_rgba_unmultiplied(&mut s.shadow_colour);
+            ui.label("Shadow opacity:");
+            ui.add(egui::Slider::new(&mut s.shadow_opacity, 0.0..=1.0).step_by(0.05));
+        }
+        GpMode::None => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ground plane mode enum
+// ---------------------------------------------------------------------------
+
+/// Ground plane mode selection (mirrors `viewport_lib::GroundPlaneMode`).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum GpMode {
+    /// Wire grid only, no ground plane.
+    #[default]
+    Grid,
+    /// Tile checkerboard ground plane, no wire grid.
+    Tile,
+    /// Invisible plane that receives shadows.
+    ShadowOnly,
+    /// Flat-coloured ground plane.
+    SolidColour,
+    /// Nothing.
+    None,
+}

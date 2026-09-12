@@ -33,21 +33,27 @@
 
 ## Examples
 
-The `examples/` directory contains working integrations for several GUI frameworks.
+`crates/viewport-lib-examples/` holds working integrations for several GUI frameworks, one crate per framework, so running an eframe example does not build bevy or slint.
 
 - **eframe-showcase**: run this first and cycle through the feature showcases: this demonstrates many of the viewport's built-in capabilities but is non-exhaustive.
 - **eframe-minimal**: the simplest integration: start here if you want to understand the minimal setup.
 - **eframe-primitives**: demonstrates the built-in geometry primitives.
-- **eframe-viewport**: a mid-complexity example with scene graph, picking, and gizmos.
+- **eframe-multi-viewport**: a mid-complexity example with several viewports in one window.
 - **eframe-input-controllers**: shows custom input bindings and controller configuration.
 
 ```
-cargo run --release --example eframe-minimal --features="wgpu27 example-egui egui-adapter" 
-cargo run --release --example eframe-showcase --features example-egui,example-io
-cargo run --release --example winit-minimal --features="wgpu27 app"
-cargo run --release --example iced-viewport --features="wgpu27 example-iced"
-cargo run --release --example slint-minimal --no-default-features --features="wgpu29,example-slint"
-cargo run --release --example bevy-swarm --no-default-features --features wgpu29,example-bevy
+cargo run --release -p viewport-lib-examples-eframe --example eframe-showcase
+cargo run --release -p viewport-lib-examples-eframe --example eframe-minimal
+cargo run --release -p viewport-lib-examples-winit  --example winit-minimal
+cargo run --release -p viewport-lib-examples-iced   --example iced-viewport
+cargo run --release --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --example slint-minimal
+cargo run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml  --example bevy-swarm
+```
+
+The slint and bevy crates are built by manifest path because their frameworks pin wgpu 29, so they cannot be workspace members alongside crates on the default wgpu 27 leg. Each example crate carries `wgpu27` / `wgpu29` / `wgpu30` features that select viewport-lib's leg:
+
+```
+cargo run --release -p viewport-lib-examples-winit --no-default-features --features wgpu30 --example winit-minimal
 ```
 
 ## Quick start

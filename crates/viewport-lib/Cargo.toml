@@ -12,7 +12,6 @@ keywords = ["3d", "viewport", "wgpu", "rendering", "visualization"]
 categories = ["graphics", "rendering", "visualization"]
 rust-version = "1.85"
 publish = true
-exclude = ["examples/"]
 
 [build-dependencies]
 # Defines the `wgpu27` / `wgpu29` cfg aliases (see build.rs) so the version-seam
@@ -58,37 +57,12 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 # and uses `performance.now()` on wasm, where `std::time::Instant::now()` panics.
 web-time = "1"
 
-# --- Example-only dependencies (all optional, enabled by `example-*` features) ---
-# Cargo compiles every non-optional dev-dependency for ANY example/test build,
-# so the UI frameworks live here as optional deps instead: building one example
-# only compiles the framework it declares via `required-features`. Consumers
-# should never enable these features; they exist purely for `cargo run
-# --example`.
-iced = { version = "0.14", features = ["wgpu"], optional = true }
-eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
-# egui 0.35 pairs with wgpu 29. Kept as a renamed dep alongside eframe 0.33 so
-# the wgpu29 example can pair egui 0.35 with viewport-lib's 29 leg without
-# moving the other eframe examples (still on 0.33 / the 27 leg).
-eframe035 = { package = "eframe", version = "0.35", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
-# eframe / egui 0.36 pairs with wgpu 30. Kept as a renamed dep alongside the 0.33
-# and 0.35 aliases so the wgpu30 example can pair egui 0.36 with viewport-lib's 30
-# leg without moving the other eframe examples.
-eframe036 = { package = "eframe", version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
-# Slint pairs with wgpu 29 through its unstable-wgpu-29 feature (tilde
-# requirement per Slint's own guidance: the feature is re-issued per wgpu
-# major).
-slint = { version = "~1.17", features = ["unstable-wgpu-29", "renderer-femtovg-wgpu"], optional = true }
-# Bevy 0.19 pins wgpu 29, so it shares viewport-lib's wgpu29 leg: viewport-lib
-# renders straight into a Bevy GPU texture on Bevy's own device with no CPU copy.
-bevy = { version = "0.19", optional = true }
-# Model/scene import (glTF, STL, VTK, HDF5, ...). Heavy; only showcase 45 uses it.
-viewport-lib-io = { version = "0.7.0", optional = true }
-
-# --- Optional host integrations for `session` (consumer-facing, not example-only) ---
-# `winit`/`pollster` power the `app` fullscreen runner and the `from_winit` event
-# adapter; they are also dev-dependencies so the hand-written winit examples build
-# without any feature. `egui`/`egui-wgpu` power the `egui-bridge` (event adapter +
-# CallbackTrait impl); they pair with the wgpu27 leg, matching eframe 0.33.
+# --- Optional host integrations (consumer-facing) ---
+# `winit`/`pollster` power the `app` runners and the `from_winit` event adapter.
+# `egui` powers the `from_egui` event adapter; it is pinned to 0.33, which pairs
+# with the wgpu27 leg. A host embedding a viewport in egui 0.35 or 0.36 (the 29
+# and 30 legs) translates events itself for now: aliasing egui per leg, the way
+# the eframe example crate aliases eframe, is the fix if a consumer needs it.
 winit = { version = "0.30", optional = true }
 pollster = { version = "0.4", optional = true }
 egui = { version = "0.33", optional = true }
@@ -143,37 +117,17 @@ future = []
 winit-adapter = ["dep:winit", "viewport-lib-input/winit-adapter"]
 app = ["winit-adapter", "dep:pollster"]
 egui-adapter = ["dep:egui", "viewport-lib-input/egui-adapter"]
-# Example-only dependency gates (see the optional deps above). Each example's
-# `required-features` names the gate(s) it needs, so `cargo run --example X
-# --features example-*` compiles only that example's framework. Not for
-# consumers.
-example-egui = ["dep:eframe"]
-example-egui-wgpu29 = ["dep:eframe035"]
-example-egui-wgpu30 = ["dep:eframe036"]
-example-iced = ["dep:iced"]
-example-slint = ["dep:slint"]
-example-bevy = ["dep:bevy"]
-example-io = ["dep:viewport-lib-io"]
-
 [dev-dependencies]
-# naga 27 (pulled by the iced / eframe 0.33 example deps) picks its diagnostic
-# writer type from its own `termcolor` feature, while
-# `codespan_reporting::term::emit` picks the trait it demands from
-# codespan-reporting's `termcolor` feature. Bevy's `naga_oil` turns
-# codespan-reporting/termcolor on for the shared 0.12 instance, so without this
-# naga 27 hands a `String` to an API that now wants `WriteColor` and fails to
-# compile. Enabling naga's own `termcolor` keeps the two in sync.
-naga = { version = "27", features = ["termcolor"] }
-winit = "0.30"
+# Parses generated WGSL in the bindless and path-tracer unit tests.
+naga = "27"
+# Blocks on the async device request in the headless integration tests.
 pollster = "0.4"
 # Used by the headless color-glyph test to look up an emoji glyph id. Same crate
 # as the normal dependency; listed here so the integration test can name it.
 ttf-parser = "0.25"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# The lightmap-bake showcase runs the full offline lightmapper: this crate's
-# unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Example-only.
-# Desktop-only: xatlas is C++ and does not cross-compile to wasm, so keep it off
-# that target where it would otherwise block building any example.
+# The lightmap-bake integration test runs the full offline lightmapper: this
+# crate's unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake.
+# Desktop-only: xatlas is C++ and does not cross-compile to wasm.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 viewport-lib-lightbake = { version = "0.1.0" }
 # The headless integration tests share one device constructor with the testkit
@@ -184,197 +138,8 @@ viewport-lib-lightbake = { version = "0.1.0" }
 # because dev-dependencies are outside the normal build graph.
 viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }
 
-# wasm-only glue for the `winit-web` example: async task spawning, the canvas in
-# the DOM, a browser-safe clock, and panic/log forwarding to the console. Only
-# pulled in for the wasm32 target, so native builds are unaffected.
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-time = "1"
-console_error_panic_hook = "0.1"
-console_log = "1"
-log = "0.4"
-web-sys = { version = "0.3", features = [
-    "Document",
-    "Window",
-    "Element",
-    "HtmlCanvasElement",
-    "Node",
-] }
-
 # CPU picking build/refit/query timing. Custom harness (uses std::time), so run
 # with `cargo bench --bench pick_bench`.
 [[bench]]
 name = "pick_bench"
 harness = false
-
-[[example]]
-name = "eframe-minimal"
-path = "examples/eframe_minimal/main.rs"
-required-features = ["wgpu27", "example-egui", "egui-adapter"]
-
-[[example]]
-name = "eframe-retained-overlay"
-path = "examples/eframe_retained_overlay/main.rs"
-required-features = ["wgpu27", "example-egui", "egui-adapter"]
-
-[[example]]
-name = "showcase"
-path = "examples/showcase/main.rs"
-required-features = ["wgpu27", "example-egui", "egui-adapter", "raytrace", "bake"]
-
-[[example]]
-name = "eframe-minimal-wgpu29"
-path = "examples/eframe_minimal_wgpu29/main.rs"
-required-features = ["wgpu29", "example-egui-wgpu29"]
-
-[[example]]
-name = "eframe-minimal-wgpu30"
-path = "examples/eframe_minimal_wgpu30/main.rs"
-required-features = ["wgpu30", "example-egui-wgpu30"]
-
-[[example]]
-name = "app-minimal-wgpu29"
-path = "examples/app_minimal_wgpu29/main.rs"
-required-features = ["wgpu29", "app"]
-
-[[example]]
-name = "slint-minimal"
-path = "examples/slint_minimal/main.rs"
-required-features = ["wgpu29", "example-slint"]
-
-[[example]]
-name = "bevy-swarm"
-path = "examples/bevy_swarm/main.rs"
-required-features = ["wgpu29", "example-bevy"]
-
-# Names wgpu only through `viewport_lib::wgpu`, so it builds on either leg with
-# no source edits. Deliberately has no `required-features` pinning a version.
-[[example]]
-name = "wgpu-leg-agnostic"
-path = "examples/wgpu_leg_agnostic/main.rs"
-
-[[example]]
-name = "debug-light"
-path = "examples/debug_light/main.rs"
-required-features = ["wgpu27", "example-egui"]
-
-[[example]]
-name = "eframe-lighting-shadows"
-path = "examples/eframe_lighting_shadows/main.rs"
-required-features = ["wgpu27", "example-egui", "egui-adapter"]
-
-[[example]]
-name = "eframe-exposure"
-path = "examples/eframe_exposure/main.rs"
-required-features = ["wgpu27", "example-egui", "egui-adapter"]
-
-[[example]]
-name = "eframe-render-paths"
-path = "examples/eframe_render_paths/main.rs"
-required-features = ["wgpu27", "example-egui"]
-
-[[example]]
-name = "headless-shadow-debug"
-path = "examples/headless_shadow_debug/main.rs"
-required-features = ["wgpu27"]
-
-[[example]]
-name = "raytrace-reference"
-path = "examples/raytrace_reference/main.rs"
-required-features = ["wgpu27", "raytrace"]
-
-[[example]]
-name = "raytrace-interactive"
-path = "examples/raytrace_interactive/main.rs"
-required-features = ["wgpu27", "raytrace"]
-
-[[example]]
-name = "raytrace-backends"
-path = "examples/raytrace_backends/main.rs"
-required-features = ["wgpu27", "raytrace", "raytrace-hardware"]
-
-[[example]]
-name = "eframe-testing"
-path = "examples/eframe_testing/main.rs"
-required-features = ["wgpu27", "example-egui"]
-
-[[example]]
-name = "eframe-primitives"
-path = "examples/eframe_primitives/main.rs"
-required-features = ["wgpu27", "example-egui"]
-
-[[example]]
-name = "eframe-input-controllers"
-path = "examples/eframe_input_controllers/main.rs"
-required-features = ["wgpu27", "example-egui"]
-
-[[example]]
-name = "eframe-showcase"
-path = "examples/eframe_showcase/main.rs"
-required-features = ["wgpu27", "example-egui", "example-io"]
-
-[[example]]
-name = "eframe-multi-viewport"
-path = "examples/eframe_multi_viewport/main.rs"
-required-features = ["wgpu27", "example-egui"]
-
-
-[[example]]
-name = "winit-viewport"
-path = "examples/winit_viewport/main.rs"
-required-features = ["wgpu27"]
-
-[[example]]
-name = "winit-minimal"
-path = "examples/winit_minimal/main.rs"
-required-features = ["wgpu27", "app"]
-
-[[example]]
-name = "winit-basic-interaction"
-path = "examples/winit_basic_interaction/main.rs"
-required-features = ["wgpu27", "app"]
-
-[[example]]
-name = "app-multi-window"
-path = "examples/app_multi_window/main.rs"
-required-features = ["wgpu27", "app"]
-
-[[example]]
-name = "app-in-window-viewports"
-path = "examples/app_in_window_viewports/main.rs"
-required-features = ["wgpu27", "app"]
-
-[[example]]
-name = "winit-multi-viewport"
-path = "examples/winit_multi_viewport/main.rs"
-required-features = ["wgpu27"]
-
-[[example]]
-name = "winit-hdr"
-path = "examples/winit_hdr/main.rs"
-required-features = ["wgpu27"]
-
-# Runs natively (block_on + run_app) and on wasm32 (async device + spawn_app).
-# The web build needs `--target wasm32-unknown-unknown` and the wasm-only
-# dev-dependencies below; see the header of the example for the build steps.
-[[example]]
-name = "winit-web"
-path = "examples/winit_web/main.rs"
-required-features = ["wgpu27"]
-
-
-[[example]]
-name = "iced-viewport"
-path = "examples/iced_viewport/main.rs"
-required-features = ["wgpu27", "example-iced"]
-
-[[example]]
-name = "runtime-jobs"
-path = "examples/runtime_jobs.rs"
-required-features = ["wgpu27"]
-
-[[example]]
-name = "skinned-feature"
-path = "examples/skinned_feature.rs"
-required-features = ["wgpu27"]
