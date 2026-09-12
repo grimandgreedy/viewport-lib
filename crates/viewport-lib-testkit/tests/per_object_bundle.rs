@@ -4,7 +4,10 @@
 //! viewport slot existed), so frame 1 exercises the immediate path and later
 //! frames the bundle replay; their images must match.
 
-use viewport_lib::{BackfacePolicy, CameraFrame, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib::{
+    CameraFrame, FrameData, Material, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
+    WrapMode,
+};
 use viewport_lib_testkit::{Harness, orbit_camera};
 
 #[test]
@@ -20,8 +23,10 @@ fn bundle_replay_matches_immediate_draws() {
         .upload_mesh_data(&h.device, &data)
         .expect("upload");
 
-    // 100 unbatchable items (styled backface forces the per-object path) in a
-    // grid, some overlapping in depth so wrong draw content would show.
+    // 100 unbatchable items in a grid, some overlapping in depth so wrong draw
+    // content would show. A per-material sampler is what keeps them off the
+    // instanced path: the instanced and bindless paths share one sampler per
+    // batch, so a material picking its own wrap mode draws per object.
     let items: Vec<SceneRenderItem> = (0..100)
         .map(|i| {
             let mut it = SceneRenderItem::default();
@@ -29,13 +34,19 @@ fn bundle_replay_matches_immediate_draws() {
             let (x, y) = ((i % 10) as f32 * 7.0 - 31.5, (i / 10) as f32 * 7.0 - 31.5);
             it.model = glam::Mat4::from_translation(glam::Vec3::new(x, y, (i % 3) as f32 * 3.0))
                 .to_cols_array_2d();
-            let mut m = Material::from_colour([
+            it.material = Material::from_colour([
                 0.3 + (i % 7) as f32 * 0.1,
                 0.4,
                 0.8 - (i % 5) as f32 * 0.1,
-            ]);
-            m.backface_policy = BackfacePolicy::Tint(0.4);
-            it.material = m;
+            ])
+            .with_sampler(
+                TextureSlot::Albedo,
+                SamplerKey {
+                    wrap_u: WrapMode::ClampToEdge,
+                    wrap_v: WrapMode::ClampToEdge,
+                    ..Default::default()
+                },
+            );
             it
         })
         .collect();

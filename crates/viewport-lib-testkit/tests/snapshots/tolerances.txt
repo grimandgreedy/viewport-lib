@@ -16,6 +16,8 @@
 # Example (do not keep; illustrative):
 #   transparent 2 40   # OIT pass is order-dependent; probe floor on lavapipe
 #
-# No overrides yet: every scene is exact. The reference set is blessed on the
-# pinned software adapter (lavapipe); populate this file from the probe's report
-# for any scene that is not bit-identical there.
+# The reference set is blessed on the pinned software adapter (lavapipe);
+# populate this file from the probe's report for any scene that is not
+# bit-identical there.
+
+many_objects 1 40   # instanced-path 1-LSB float; probe floor on Apple M4 / Metal
