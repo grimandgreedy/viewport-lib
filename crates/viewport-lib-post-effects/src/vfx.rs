@@ -15,7 +15,7 @@
 //! Register with [`vfx_stack`]:
 //!
 //! ```ignore
-//! let (stages, settings) = vfx_stack(renderer.resources().target_format());
+//! let (stages, settings) = vfx_stack();
 //! for (stage, order) in stages {
 //!     renderer.add_post_effect_stage(stage, order);
 //! }
@@ -31,7 +31,9 @@ use viewport_lib::plugin_api::post_effect::stage_order;
 use viewport_lib::wgpu;
 use viewport_lib::{PostEffectContext, PostEffectResizeContext, PostEffectStage};
 
-use crate::{SettingsHandle, clamp_sampler, colour_target, fullscreen_pass, fullscreen_pipeline};
+use viewport_lib::plugin_api::post_effect::build_post_effect_pipeline;
+
+use crate::{SettingsHandle, clamp_sampler, colour_target, fullscreen_pass, wgsl_module};
 
 /// Colour-grade parameters (exposure in stops, contrast and saturation as
 /// multipliers around mid-grey, multiplicative tint).
@@ -167,7 +169,9 @@ struct VfxViewport {
     _texture: wgpu::Texture,
     input_view: wgpu::TextureView,
     uniform_buf: wgpu::Buffer,
-    bind_group: Option<wgpu::BindGroup>,
+    /// Binds the stage input (and, for the depth passes, the viewport's
+    /// scene depth from the resize signal); valid until the next signal.
+    bind_group: wgpu::BindGroup,
 }
 
 /// One stage of the stack. All three passes share this implementation,
@@ -176,22 +180,17 @@ struct VfxViewport {
 pub struct VfxStage {
     pass: Pass,
     settings: SettingsHandle<VfxSettings>,
-    /// The renderer's LDR target format: the stage input must match it.
-    target_format: wgpu::TextureFormat,
-    device: Option<wgpu::Device>,
+    /// Built on the first resize signal: the pipeline's target format is
+    /// the renderer's LDR format, which arrives with that signal.
     pipeline: Option<wgpu::RenderPipeline>,
     bgl: Option<wgpu::BindGroupLayout>,
     sampler: Option<wgpu::Sampler>,
     per_viewport: HashMap<usize, VfxViewport>,
 }
 
-/// Build the three-stage stack. `target_format` is the renderer's LDR
-/// target format (`DeviceResources::target_format()`). Returns the stages
-/// paired with ascending chain order keys in the external band, and the
-/// shared settings handle.
-pub fn vfx_stack(
-    target_format: wgpu::TextureFormat,
-) -> (
+/// Build the three-stage stack. Returns the stages paired with ascending
+/// chain order keys in the external band, and the shared settings handle.
+pub fn vfx_stack() -> (
     Vec<(Box<dyn PostEffectStage>, i32)>,
     SettingsHandle<VfxSettings>,
 ) {
@@ -200,8 +199,6 @@ pub fn vfx_stack(
         Box::new(VfxStage {
             pass,
             settings: settings.clone(),
-            target_format,
-            device: None,
             pipeline: None,
             bgl: None,
             sampler: None,
@@ -319,65 +316,44 @@ impl PostEffectStage for VfxStage {
             label: Some(self.pass.label()),
             entries: &entries,
         });
-        self.pipeline = Some(fullscreen_pipeline(
-            device,
-            self.pass.label(),
-            self.pass.shader(),
-            &bgl,
-            self.target_format,
-        ));
         self.sampler = Some(clamp_sampler(
             device,
             self.pass.label(),
             wgpu::FilterMode::Linear,
         ));
         self.bgl = Some(bgl);
-        self.device = Some(device.clone());
+        // The pipeline waits for the first resize signal, which carries the
+        // target format.
+        self.pipeline = None;
         self.per_viewport.clear();
     }
 
     fn on_viewport_resized(&mut self, device: &wgpu::Device, ctx: &PostEffectResizeContext<'_>) {
-        let (texture, input_view) = colour_target(
-            device,
-            self.pass.label(),
-            ctx.scene_size,
-            self.target_format,
-        );
+        let (Some(bgl), Some(sampler)) = (&self.bgl, &self.sampler) else {
+            return;
+        };
+        if self.pipeline.is_none() {
+            let shader = wgsl_module(device, self.pass.label(), self.pass.shader());
+            self.pipeline = Some(build_post_effect_pipeline(
+                device,
+                self.pass.label(),
+                &shader,
+                bgl,
+                ctx.target_format,
+                None,
+            ));
+        }
+        let (texture, input_view) =
+            colour_target(device, self.pass.label(), ctx.scene_size, ctx.target_format);
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(self.pass.label()),
             size: std::mem::size_of::<VfxUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.per_viewport.insert(
-            ctx.viewport_index,
-            VfxViewport {
-                _texture: texture,
-                input_view,
-                uniform_buf,
-                bind_group: None,
-            },
-        );
-    }
-
-    fn prepare(&mut self, queue: &wgpu::Queue, ctx: &PostEffectContext<'_>) {
-        let (Some(device), Some(bgl), Some(sampler)) = (&self.device, &self.bgl, &self.sampler)
-        else {
-            return;
-        };
-        let (params0, params1) = self.params();
-        let Some(vp) = self.per_viewport.get_mut(&ctx.viewport_index) else {
-            return;
-        };
-        let uniform = VfxUniform::new(ctx.scene_size, params0, params1);
-        queue.write_buffer(&vp.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
-
-        // The depth-reading passes bind the frame's scene depth view, which
-        // can change on target recreation, so all bind groups are rebuilt
-        // here rather than at resize.
         let mut entries = vec![wgpu::BindGroupEntry {
             binding: 0,
-            resource: wgpu::BindingResource::TextureView(&vp.input_view),
+            resource: wgpu::BindingResource::TextureView(&input_view),
         }];
         if self.pass.reads_depth() {
             entries.push(wgpu::BindGroupEntry {
@@ -392,13 +368,31 @@ impl PostEffectStage for VfxStage {
         });
         entries.push(wgpu::BindGroupEntry {
             binding: next + 1,
-            resource: vp.uniform_buf.as_entire_binding(),
+            resource: uniform_buf.as_entire_binding(),
         });
-        vp.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(self.pass.label()),
             layout: bgl,
             entries: &entries,
-        }));
+        });
+        self.per_viewport.insert(
+            ctx.viewport_index,
+            VfxViewport {
+                _texture: texture,
+                input_view,
+                uniform_buf,
+                bind_group,
+            },
+        );
+    }
+
+    fn prepare(&mut self, queue: &wgpu::Queue, ctx: &PostEffectContext<'_>) {
+        let (params0, params1) = self.params();
+        let Some(vp) = self.per_viewport.get(&ctx.viewport_index) else {
+            return;
+        };
+        let uniform = VfxUniform::new(ctx.scene_size, params0, params1);
+        queue.write_buffer(&vp.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
     }
 
     fn input_view(&self, viewport_index: usize) -> &wgpu::TextureView {
@@ -417,16 +411,13 @@ impl PostEffectStage for VfxStage {
         let Some(vp) = self.per_viewport.get(&ctx.viewport_index) else {
             return;
         };
-        let Some(bind_group) = vp.bind_group.as_ref() else {
-            return;
-        };
         fullscreen_pass(
             encoder,
             self.pass.label(),
             target,
             wgpu::Color::BLACK,
             pipeline,
-            bind_group,
+            &vp.bind_group,
         );
     }
 }

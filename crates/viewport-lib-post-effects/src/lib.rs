@@ -14,10 +14,12 @@
 //!   depth fog, edge detect) ported from the `viewport-lib-vfx` kit, driven
 //!   through one shared settings handle.
 //!
-//! Every effect here owns its GPU resources: pipelines are built in
-//! `init_gpu`, per-viewport textures in `on_viewport_resized`, uniforms are
-//! written in `prepare`, and passes are encoded in `encode`. The host only
-//! registers the effect and keeps the settings handle.
+//! Every effect here owns its GPU resources: producer pipelines are built
+//! in `init_gpu`, stage pipelines and all per-viewport textures and bind
+//! groups in `on_viewport_resized` (which carries the scene views and the
+//! target format), uniforms are written in `prepare`, and passes are
+//! encoded in `encode`. The host only registers the effect and keeps the
+//! settings handle.
 //!
 //! [`PostEffectProducer`]: viewport_lib::PostEffectProducer
 //! [`PostEffectStage`]: viewport_lib::PostEffectStage
@@ -68,67 +70,12 @@ pub(crate) fn fullscreen_pass(
     pass.draw(0..3, 0..1);
 }
 
-/// Build a fullscreen post pipeline against a raw device: the same shape as
-/// `DeviceResources::build_post_effect_pipeline`, usable from `init_gpu`
-/// where only the device is available.
-pub(crate) fn fullscreen_pipeline(
-    device: &wgpu::Device,
-    label: &str,
-    source: &str,
-    bgl: &wgpu::BindGroupLayout,
-    target_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+/// Create a shader module from WGSL source. Pipelines are built with
+/// [`viewport_lib::plugin_api::post_effect::build_post_effect_pipeline`].
+pub(crate) fn wgsl_module(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    // 27 takes `push_constant_ranges` and `&[&BindGroupLayout]`; 29 replaced
-    // push constants with `immediate_size` and takes
-    // `&[Option<&BindGroupLayout>]`, which 30 keeps.
-    #[cfg(feature = "wgpu27")]
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &[bgl],
-        push_constant_ranges: &[],
-    });
-    #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &[Some(bgl)],
-        immediate_size: 0,
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: target_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        // 29 renamed `multiview` to the `multiview_mask` bitmask form.
-        #[cfg(feature = "wgpu27")]
-        multiview: None,
-        #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
-        multiview_mask: None,
-        cache: None,
     })
 }
 

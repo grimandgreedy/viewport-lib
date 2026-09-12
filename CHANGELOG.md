@@ -56,10 +56,15 @@ repair). See `docs/api-changes/v0.22.0-colour-type-and-srgb-contract.md`.
   stage into the frame's final target, so no host blits or ping-pong are
   needed. Register with `ViewportRenderer::add_post_effect_producer` /
   `add_post_effect_stage(stage, order)` (matching `remove_*`); `init_gpu` is
-  deferred to the next render and `on_viewport_resized` fires per viewport.
-  `DeviceResources::build_post_effect_pipeline` builds the standard
-  fullscreen pass shape and `shared_wgsl::POST_EFFECT_VS_WGSL` provides the
-  matching vertex stage.
+  deferred to the next render and `on_viewport_resized` fires per viewport,
+  carrying the scene colour/depth views and the LDR target format so
+  per-viewport textures, bind groups, and format-dependent stage pipelines
+  are all built there. `PostEffectContext` (per frame) carries the device,
+  camera block, sizes, scene views, and read-only settings.
+  `plugin_api::post_effect::build_post_effect_pipeline` (a free function,
+  also aliased on `DeviceResources`) builds the standard fullscreen pass
+  shape and `shared_wgsl::POST_EFFECT_VS_WGSL` provides the matching vertex
+  stage.
 - **Vignette.** `PostProcessSettings.vignette: VignetteSettings` (`enabled`,
   `amount`, `radius`, `softness`) darkens the image toward the corners at the
   end of the tone-map composite, covering the background too. Off by default;

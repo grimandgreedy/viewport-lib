@@ -28,11 +28,13 @@ struct HdrFrameCtx<'a> {
 /// Build the per-frame, per-viewport context handed to external post-effect
 /// producers.
 fn post_effect_ctx<'a>(
+    device: &'a crate::gpu::Device,
     slot_hdr: &'a crate::resources::ViewportHdrState,
     frame: &'a FrameData,
     viewport_index: usize,
 ) -> crate::plugin_api::PostEffectContext<'a> {
     crate::plugin_api::PostEffectContext {
+        device,
         viewport_index,
         scene_size: slot_hdr.scene_size,
         output_size: slot_hdr.output_size,
@@ -439,7 +441,7 @@ impl ViewportRenderer {
         self.frame_external_slot_views.clear();
         if !self.post_effect_producers.is_empty() || !self.post_effect_stages.is_empty() {
             let hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-            let ctx = post_effect_ctx(hdr, frame, vp_idx);
+            let ctx = post_effect_ctx(device, hdr, frame, vp_idx);
             for entry in &mut self.post_effect_producers {
                 if entry.gpu_ready && entry.producer.enabled() {
                     entry.producer.prepare(queue, &ctx);
@@ -4390,7 +4392,7 @@ impl ViewportRenderer {
         // wins, and an external view over an enabled built-in logs once.
         if !self.post_effect_producers.is_empty() && !throttle_effects {
             let ci = ctx.composite_inputs;
-            let ctx = post_effect_ctx(slot_hdr, frame, vp_idx);
+            let ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx);
             let mut collected: Vec<(crate::plugin_api::PostEffectSlot, crate::gpu::TextureView)> =
                 std::mem::take(&mut self.frame_external_slot_views);
             for entry in &mut self.post_effect_producers {
@@ -4569,7 +4571,7 @@ impl ViewportRenderer {
                 match &chain[i].1 {
                     ChainEntry::Builtin(s) => s.encode(slot_hdr, encoder, &target, &timing),
                     ChainEntry::External(j) => {
-                        let stage_ctx = post_effect_ctx(slot_hdr, frame, vp_idx);
+                        let stage_ctx = post_effect_ctx(ctx.device, slot_hdr, frame, vp_idx);
                         self.post_effect_stages[*j]
                             .stage
                             .encode(encoder, &target, &stage_ctx);

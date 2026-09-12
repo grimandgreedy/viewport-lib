@@ -195,7 +195,7 @@ pub use error::{ViewportError, ViewportResult};
 pub use plugin_api::{
     PluginInstallCtx, PostEffectContext, PostEffectProducer, PostEffectProducerId,
     PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId, ViewportPlugin,
-    install_plugin,
+    build_post_effect_pipeline, install_plugin,
 };
 
 pub use camera::camera::{Camera, CameraTarget, Projection};

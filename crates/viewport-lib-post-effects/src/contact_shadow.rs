@@ -21,7 +21,9 @@ use viewport_lib::{
     PostEffectContext, PostEffectProducer, PostEffectResizeContext, PostEffectSlot,
 };
 
-use crate::{SettingsHandle, clamp_sampler, colour_target, fullscreen_pass, fullscreen_pipeline};
+use viewport_lib::plugin_api::post_effect::build_post_effect_pipeline;
+
+use crate::{SettingsHandle, clamp_sampler, colour_target, fullscreen_pass, wgsl_module};
 
 /// Host-driven settings, matching the built-in
 /// `ContactShadowSettings` fields plus the light direction the context
@@ -69,16 +71,15 @@ struct CsViewport {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     uniform_buf: wgpu::Buffer,
-    /// Rebuilt each `prepare`: it binds the frame's scene depth view, which
-    /// the resize signal does not carry.
-    bind_group: Option<wgpu::BindGroup>,
+    /// Binds the viewport's scene depth view from the resize signal; valid
+    /// until the next signal recreates it.
+    bind_group: wgpu::BindGroup,
 }
 
 /// The external contact-shadow producer. Construct with
 /// [`ContactShadowEffect::new`], register the effect, keep the handle.
 pub struct ContactShadowEffect {
     settings: SettingsHandle<ContactShadowEffectSettings>,
-    device: Option<wgpu::Device>,
     pipeline: Option<wgpu::RenderPipeline>,
     bgl: Option<wgpu::BindGroupLayout>,
     sampler: Option<wgpu::Sampler>,
@@ -93,7 +94,6 @@ impl ContactShadowEffect {
         (
             Self {
                 settings: handle.clone(),
-                device: None,
                 pipeline: None,
                 bgl: None,
                 sampler: None,
@@ -151,12 +151,18 @@ impl PostEffectProducer for ContactShadowEffect {
                 },
             ],
         });
-        self.pipeline = Some(fullscreen_pipeline(
+        let shader = wgsl_module(
+            device,
+            "external_cs_shader",
+            include_str!("shaders/contact_shadow.wgsl"),
+        );
+        self.pipeline = Some(build_post_effect_pipeline(
             device,
             "external_cs_pipeline",
-            include_str!("shaders/contact_shadow.wgsl"),
+            &shader,
             &bgl,
             wgpu::TextureFormat::R8Unorm,
+            None,
         ));
         self.sampler = Some(clamp_sampler(
             device,
@@ -164,11 +170,13 @@ impl PostEffectProducer for ContactShadowEffect {
             wgpu::FilterMode::Nearest,
         ));
         self.bgl = Some(bgl);
-        self.device = Some(device.clone());
         self.per_viewport.clear();
     }
 
     fn on_viewport_resized(&mut self, device: &wgpu::Device, ctx: &PostEffectResizeContext<'_>) {
+        let (Some(bgl), Some(sampler)) = (&self.bgl, &self.sampler) else {
+            return;
+        };
         let (texture, view) = colour_target(
             device,
             "external_cs_texture",
@@ -181,23 +189,37 @@ impl PostEffectProducer for ContactShadowEffect {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("external_cs_bg"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(ctx.scene_depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+            ],
+        });
         self.per_viewport.insert(
             ctx.viewport_index,
             CsViewport {
                 _texture: texture,
                 view,
                 uniform_buf,
-                bind_group: None,
+                bind_group,
             },
         );
     }
 
     fn prepare(&mut self, queue: &wgpu::Queue, ctx: &PostEffectContext<'_>) {
-        let (Some(device), Some(bgl), Some(sampler)) = (&self.device, &self.bgl, &self.sampler)
-        else {
-            return;
-        };
-        let Some(vp) = self.per_viewport.get_mut(&ctx.viewport_index) else {
+        let Some(vp) = self.per_viewport.get(&ctx.viewport_index) else {
             return;
         };
         let settings = *self.settings.lock().unwrap();
@@ -219,27 +241,6 @@ impl PostEffectProducer for ContactShadowEffect {
             ],
         };
         queue.write_buffer(&vp.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
-
-        // The scene depth view can change when the viewport's targets are
-        // recreated, so bind it fresh each frame.
-        vp.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("external_cs_bg"),
-            layout: bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(ctx.scene_depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: vp.uniform_buf.as_entire_binding(),
-                },
-            ],
-        }));
     }
 
     fn encode<'a>(
@@ -249,14 +250,13 @@ impl PostEffectProducer for ContactShadowEffect {
     ) -> Option<&'a wgpu::TextureView> {
         let pipeline = self.pipeline.as_ref()?;
         let vp = self.per_viewport.get(&ctx.viewport_index)?;
-        let bind_group = vp.bind_group.as_ref()?;
         fullscreen_pass(
             encoder,
             "external_cs_pass",
             &vp.view,
             wgpu::Color::WHITE,
             pipeline,
-            bind_group,
+            &vp.bind_group,
         );
         Some(&vp.view)
     }

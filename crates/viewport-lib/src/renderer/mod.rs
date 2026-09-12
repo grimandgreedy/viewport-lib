@@ -1779,6 +1779,7 @@ impl ViewportRenderer {
         {
             return;
         }
+        let target_format = self.resources.target_format;
         let live: Vec<crate::plugin_api::PostEffectResizeContext<'_>> = self
             .viewport_slots
             .iter()
@@ -1790,7 +1791,9 @@ impl ViewportRenderer {
                         viewport_index: vp_idx,
                         scene_size: hdr.scene_size,
                         output_size: hdr.output_size,
-                        _reserved: std::marker::PhantomData,
+                        scene_colour: &hdr.hdr_view,
+                        scene_depth: &hdr.hdr_depth_only_view,
+                        target_format,
                     })
             })
             .collect();
@@ -1849,6 +1852,7 @@ impl ViewportRenderer {
             entry.stage.init_gpu(device);
             entry.gpu_ready = true;
         }
+        let target_format = self.resources.target_format;
         for (vp_idx, slot) in self.viewport_slots.iter().enumerate() {
             let Some(hdr) = slot.hdr.as_ref() else {
                 continue;
@@ -1857,7 +1861,9 @@ impl ViewportRenderer {
                 viewport_index: vp_idx,
                 scene_size: hdr.scene_size,
                 output_size: hdr.output_size,
-                _reserved: std::marker::PhantomData,
+                scene_colour: &hdr.hdr_view,
+                scene_depth: &hdr.hdr_depth_only_view,
+                target_format,
             };
             for entry in &mut self.post_effect_producers {
                 entry.producer.on_viewport_resized(device, &ctx);
@@ -3311,7 +3317,9 @@ impl ViewportRenderer {
                 viewport_index,
                 scene_size: hdr.scene_size,
                 output_size: hdr.output_size,
-                _reserved: std::marker::PhantomData,
+                scene_colour: &hdr.hdr_view,
+                scene_depth: &hdr.hdr_depth_only_view,
+                target_format: format,
             };
             for entry in &mut self.post_effect_producers {
                 if entry.gpu_ready {

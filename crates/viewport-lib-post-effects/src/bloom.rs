@@ -22,7 +22,9 @@ use viewport_lib::{
     PostEffectContext, PostEffectProducer, PostEffectResizeContext, PostEffectSlot,
 };
 
-use crate::{SettingsHandle, clamp_sampler, colour_target, fullscreen_pass, fullscreen_pipeline};
+use viewport_lib::plugin_api::post_effect::build_post_effect_pipeline;
+
+use crate::{SettingsHandle, clamp_sampler, colour_target, fullscreen_pass, wgsl_module};
 
 /// Host-driven settings, matching the built-in `BloomSettings` fields.
 #[derive(Clone, Copy, Debug)]
@@ -69,9 +71,9 @@ struct BloomViewport {
     ping_view: wgpu::TextureView,
     pong_view: wgpu::TextureView,
     uniform_buf: wgpu::Buffer,
-    /// Rebuilt each `prepare`: it binds the frame's scene colour view,
-    /// which the resize signal does not carry.
-    threshold_bg: Option<wgpu::BindGroup>,
+    /// Binds the viewport's scene colour view from the resize signal;
+    /// valid until the next signal recreates it.
+    threshold_bg: wgpu::BindGroup,
     /// H-blur reading the threshold target (iteration 0 only).
     blur_h_bg: wgpu::BindGroup,
     /// V-blur reading ping.
@@ -84,7 +86,6 @@ struct BloomViewport {
 /// register the effect, keep the handle.
 pub struct BloomEffect {
     settings: SettingsHandle<BloomEffectSettings>,
-    device: Option<wgpu::Device>,
     threshold_pipeline: Option<wgpu::RenderPipeline>,
     blur_pipeline: Option<wgpu::RenderPipeline>,
     bgl: Option<wgpu::BindGroupLayout>,
@@ -98,7 +99,6 @@ impl BloomEffect {
         (
             Self {
                 settings: handle.clone(),
-                device: None,
                 threshold_pipeline: None,
                 blur_pipeline: None,
                 bgl: None,
@@ -177,19 +177,31 @@ impl PostEffectProducer for BloomEffect {
                 },
             ],
         });
-        self.threshold_pipeline = Some(fullscreen_pipeline(
+        let threshold_shader = wgsl_module(
+            device,
+            "external_bloom_threshold_shader",
+            include_str!("shaders/bloom_threshold.wgsl"),
+        );
+        self.threshold_pipeline = Some(build_post_effect_pipeline(
             device,
             "external_bloom_threshold_pipeline",
-            include_str!("shaders/bloom_threshold.wgsl"),
+            &threshold_shader,
             &bgl,
             wgpu::TextureFormat::Rgba16Float,
+            None,
         ));
-        self.blur_pipeline = Some(fullscreen_pipeline(
+        let blur_shader = wgsl_module(
+            device,
+            "external_bloom_blur_shader",
+            include_str!("shaders/bloom_blur.wgsl"),
+        );
+        self.blur_pipeline = Some(build_post_effect_pipeline(
             device,
             "external_bloom_blur_pipeline",
-            include_str!("shaders/bloom_blur.wgsl"),
+            &blur_shader,
             &bgl,
             wgpu::TextureFormat::Rgba16Float,
+            None,
         ));
         self.sampler = Some(clamp_sampler(
             device,
@@ -197,7 +209,6 @@ impl PostEffectProducer for BloomEffect {
             wgpu::FilterMode::Linear,
         ));
         self.bgl = Some(bgl);
-        self.device = Some(device.clone());
         self.per_viewport.clear();
     }
 
@@ -278,44 +289,7 @@ impl PostEffectProducer for BloomEffect {
         let blur_h_bg = blur_bg("external_bloom_blur_h_bg", &threshold_view, &h_uniform);
         let blur_v_bg = blur_bg("external_bloom_blur_v_bg", &ping_view, &v_uniform);
         let blur_h_pong_bg = blur_bg("external_bloom_blur_h_pong_bg", &pong_view, &h_uniform);
-        self.per_viewport.insert(
-            ctx.viewport_index,
-            BloomViewport {
-                _threshold_texture: threshold_texture,
-                threshold_view,
-                _ping_texture: ping_texture,
-                _pong_texture: pong_texture,
-                ping_view,
-                pong_view,
-                uniform_buf,
-                threshold_bg: None,
-                blur_h_bg,
-                blur_v_bg,
-                blur_h_pong_bg,
-            },
-        );
-    }
-
-    fn prepare(&mut self, queue: &wgpu::Queue, ctx: &PostEffectContext<'_>) {
-        let (Some(device), Some(bgl), Some(sampler)) = (&self.device, &self.bgl, &self.sampler)
-        else {
-            return;
-        };
-        let Some(vp) = self.per_viewport.get_mut(&ctx.viewport_index) else {
-            return;
-        };
-        let settings = *self.settings.lock().unwrap();
-        let uniform = BloomUniform {
-            threshold: settings.threshold,
-            intensity: settings.intensity,
-            horizontal: 0,
-            max_brightness: settings.max_brightness,
-        };
-        queue.write_buffer(&vp.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
-
-        // The scene colour view can change when the viewport's targets are
-        // recreated, so bind it fresh each frame.
-        vp.threshold_bg = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let threshold_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("external_bloom_threshold_bg"),
             layout: bgl,
             entries: &[
@@ -329,10 +303,40 @@ impl PostEffectProducer for BloomEffect {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: vp.uniform_buf.as_entire_binding(),
+                    resource: uniform_buf.as_entire_binding(),
                 },
             ],
-        }));
+        });
+        self.per_viewport.insert(
+            ctx.viewport_index,
+            BloomViewport {
+                _threshold_texture: threshold_texture,
+                threshold_view,
+                _ping_texture: ping_texture,
+                _pong_texture: pong_texture,
+                ping_view,
+                pong_view,
+                uniform_buf,
+                threshold_bg,
+                blur_h_bg,
+                blur_v_bg,
+                blur_h_pong_bg,
+            },
+        );
+    }
+
+    fn prepare(&mut self, queue: &wgpu::Queue, ctx: &PostEffectContext<'_>) {
+        let Some(vp) = self.per_viewport.get(&ctx.viewport_index) else {
+            return;
+        };
+        let settings = *self.settings.lock().unwrap();
+        let uniform = BloomUniform {
+            threshold: settings.threshold,
+            intensity: settings.intensity,
+            horizontal: 0,
+            max_brightness: settings.max_brightness,
+        };
+        queue.write_buffer(&vp.uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
     }
 
     fn encode<'a>(
@@ -343,7 +347,6 @@ impl PostEffectProducer for BloomEffect {
         let threshold_pipeline = self.threshold_pipeline.as_ref()?;
         let blur_pipeline = self.blur_pipeline.as_ref()?;
         let vp = self.per_viewport.get(&ctx.viewport_index)?;
-        let threshold_bg = vp.threshold_bg.as_ref()?;
 
         fullscreen_pass(
             encoder,
@@ -351,7 +354,7 @@ impl PostEffectProducer for BloomEffect {
             &vp.threshold_view,
             wgpu::Color::BLACK,
             threshold_pipeline,
-            threshold_bg,
+            &vp.threshold_bg,
         );
         // Iteration 0 reads the threshold target; later iterations read the
         // previous vertical result from pong. Matches the built-in order.

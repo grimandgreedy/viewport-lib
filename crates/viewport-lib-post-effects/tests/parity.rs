@@ -254,7 +254,7 @@ fn vfx_stack_chains() {
             .upload_mesh_data(&device, &box_mesh())
             .unwrap();
         if register {
-            let (stages, settings) = vfx_stack(renderer.resources().target_format());
+            let (stages, settings) = vfx_stack();
             for (stage, order) in stages {
                 renderer.add_post_effect_stage(stage, order);
             }

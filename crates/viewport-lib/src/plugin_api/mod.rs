@@ -105,7 +105,7 @@ pub use item_type::{
 };
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,
-    PostEffectSlot, PostEffectStage, PostEffectStageId,
+    PostEffectSlot, PostEffectStage, PostEffectStageId, build_post_effect_pipeline,
 };
 pub use target_desc::{
     DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND,

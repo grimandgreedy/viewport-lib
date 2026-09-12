@@ -113,7 +113,7 @@ fn main() -> eframe::Result {
             let renderer = session.renderer_mut();
             renderer.add_post_effect_producer(Box::new(bloom));
             renderer.add_post_effect_producer(Box::new(cs));
-            let (stages, vfx_handle) = vfx_stack(session.resources().target_format());
+            let (stages, vfx_handle) = vfx_stack();
             for (stage, order) in stages {
                 session.renderer_mut().add_post_effect_stage(stage, order);
             }

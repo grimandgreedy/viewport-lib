@@ -100,6 +100,10 @@ pub mod stage_order {
 /// [`encode`](PostEffectProducer::encode).
 #[non_exhaustive]
 pub struct PostEffectContext<'a> {
+    /// The wgpu device, for bind groups or buffers an effect creates at
+    /// frame time (per-viewport allocations belong in
+    /// [`on_viewport_resized`](PostEffectProducer::on_viewport_resized)).
+    pub device: &'a crate::gpu::Device,
     /// Which viewport this frame belongs to. Matches
     /// [`CameraFrame::viewport_index`](crate::CameraFrame); producers key
     /// per-viewport state on it.
@@ -127,7 +131,12 @@ pub struct PostEffectContext<'a> {
 
 /// Passed to [`PostEffectProducer::on_viewport_resized`] when a viewport's
 /// render targets are (re)created: allocate or resize per-viewport textures
-/// against these dimensions.
+/// and bind groups against these dimensions and views.
+///
+/// The scene views here are the same objects the per-frame
+/// [`PostEffectContext`] carries, and they live until the next resize
+/// signal for this viewport, so bind groups built against them here stay
+/// valid between signals: no per-frame rebuilding is needed.
 #[non_exhaustive]
 pub struct PostEffectResizeContext<'a> {
     /// Which viewport was (re)created.
@@ -136,7 +145,14 @@ pub struct PostEffectResizeContext<'a> {
     pub scene_size: [u32; 2],
     /// Output (native) target size in pixels.
     pub output_size: [u32; 2],
-    pub(crate) _reserved: std::marker::PhantomData<&'a ()>,
+    /// The viewport's HDR scene colour target (scene resolution, linear).
+    pub scene_colour: &'a crate::gpu::TextureView,
+    /// Depth-only view of the viewport's scene depth target, sampleable.
+    pub scene_depth: &'a crate::gpu::TextureView,
+    /// The renderer's LDR target format. Stage input textures and stage
+    /// pipelines must use it; build format-dependent pipelines on the
+    /// first resize signal rather than in `init_gpu`.
+    pub target_format: crate::gpu::TextureFormat,
 }
 
 /// A pre-tone-map post effect that computes into its own texture and
@@ -275,4 +291,42 @@ pub trait PostEffectStage: Send + Sync + 'static {
         target: &crate::gpu::TextureView,
         ctx: &PostEffectContext<'_>,
     );
+}
+
+/// Build a fullscreen post-effect pipeline: the fixed shape shared by
+/// every post pass (three-vertex fullscreen triangle with `vs_main` /
+/// `fs_main` entry points, one bind group layout at group 0, no
+/// depth-stencil, single-sampled, no culling).
+///
+/// A free function taking only the device so it is callable from
+/// [`init_gpu`](PostEffectProducer::init_gpu) and
+/// [`on_viewport_resized`](PostEffectProducer::on_viewport_resized). See
+/// [`shared_wgsl::POST_EFFECT_VS_WGSL`](crate::plugin_api::shared_wgsl::POST_EFFECT_VS_WGSL)
+/// for a ready-made vertex stage.
+///
+/// `target_format` is the format of the view the pass renders into: the
+/// producer's own texture format for slot textures, or the resize
+/// context's [`target_format`](PostEffectResizeContext::target_format)
+/// for a stage pass.
+pub fn build_post_effect_pipeline(
+    device: &crate::gpu::Device,
+    label: &str,
+    shader: &crate::gpu::ShaderModule,
+    bind_group_layout: &crate::gpu::BindGroupLayout,
+    target_format: crate::gpu::TextureFormat,
+    blend: Option<crate::gpu::BlendState>,
+) -> crate::gpu::RenderPipeline {
+    let layout = crate::resources::builders::pipeline_layout(
+        device,
+        format!("{label}_layout").as_str(),
+        &[bind_group_layout],
+    );
+    crate::resources::builders::build_fullscreen_pipeline(
+        device,
+        label,
+        &layout,
+        shader,
+        target_format,
+        blend,
+    )
 }
