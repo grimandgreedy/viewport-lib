@@ -311,9 +311,18 @@ pub(crate) const GPU_TS_FXAA: u32 = 9;
 /// forces a second pass, otherwise its draws are inline at the end of the scene
 /// pass and counted there.
 pub(crate) const GPU_TS_OVERLAY: u32 = 10;
+/// The compaction's three dispatches inside the main-camera cull, split out so
+/// the cost of packing the visible list in instance order can be attributed to
+/// a specific dispatch rather than inferred. These are timestamps taken inside
+/// a compute pass, so they need `TIMESTAMP_QUERY_INSIDE_PASSES` on top of
+/// `TIMESTAMP_QUERY` and read `0.0` without it. Only the main-camera cull is
+/// split; shadow-cascade culls run the same three dispatches untimed.
+pub(crate) const GPU_TS_CULL_PLAN: u32 = 11;
+pub(crate) const GPU_TS_CULL_COUNT: u32 = 12;
+pub(crate) const GPU_TS_CULL_SCATTER: u32 = 13;
 /// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
 /// (a begin/end pair per slot).
-pub(crate) const GPU_TS_SLOTS: u32 = 11;
+pub(crate) const GPU_TS_SLOTS: u32 = 14;
 
 /// Whether a `render()` presents the frame the user sees, or is an auxiliary
 /// read.
@@ -785,7 +794,10 @@ impl ViewportRenderer {
     ///   and geometry chunk into one multi-draw (present on Vulkan/DX12; absent
     ///   on Metal, which keeps the per-batch loop).
     /// - `TIMESTAMP_QUERY` enables `FrameStats::gpu_frame_ms` and the
-    ///   per-pass GPU breakdown.
+    ///   per-pass GPU breakdown. `TIMESTAMP_QUERY_INSIDE_PASSES` additionally
+    ///   splits the cull's compaction into its three dispatches
+    ///   (`GpuBreakdown::cull_plan_ms` and friends); without it those read
+    ///   `0.0` and the rest of the breakdown is unaffected.
     /// - `PIPELINE_CACHE` enables
     ///   [`pipeline_cache_data`](Self::pipeline_cache_data) /
     ///   [`new_with_pipeline_cache`](Self::new_with_pipeline_cache), so
@@ -817,6 +829,7 @@ impl ViewportRenderer {
             crate::gpu::Features::INDIRECT_FIRST_INSTANCE,
             crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT,
             crate::gpu::Features::TIMESTAMP_QUERY,
+            crate::gpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
             crate::gpu::Features::PIPELINE_CACHE,
             crate::gpu::PRIMITIVE_INDEX_FEATURE,
             crate::gpu::Features::FLOAT32_FILTERABLE,

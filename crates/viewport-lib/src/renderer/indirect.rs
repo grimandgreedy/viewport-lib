@@ -1,16 +1,16 @@
 //! GPU-driven culling compute dispatch.
 //!
-//! `CullResources` holds the two compute pipelines used by every cull
-//! submission: `cull_instances` tests each AABB against the frustum and
-//! claims a slot in the visibility list via atomic add, then
-//! `write_indirect_args` packs the per-batch counts into
-//! `DrawIndexedIndirect` entries and zeroes the counter for the next call.
+//! `CullResources` holds the compute pipelines used by every cull submission:
+//! `cull_instances` tests each AABB against the frustum and records its
+//! verdict, three more dispatches pack the survivors into the visible list in
+//! instance order, and `write_indirect_args` turns the per-batch counts into
+//! `DrawIndexedIndirect` entries.
 //!
 //! All callers, internal and plugin, go through one entry point: `dispatch`
 //! takes a [`CullSubmission`] and a CPU [`Frustum`], picks the main or a
-//! cascade frustum slot, uploads, builds the bind group, and issues both
-//! compute passes. wgpu inserts an automatic storage-buffer barrier between
-//! compute passes so the second pass sees the first pass's writes.
+//! cascade frustum slot, uploads, builds the bind group, and issues the compute
+//! passes. wgpu inserts an automatic storage-buffer barrier between compute
+//! passes so each pass sees the writes of the ones before it.
 
 use crate::camera::frustum::Frustum;
 use crate::plugin_api::{BatchMeta, CullSubmission};
@@ -536,17 +536,44 @@ impl CullResources {
         // index. Skipped when the submission outgrows the fixed chunk plan,
         // which leaves the arrival-order list the cull kernel wrote instead.
         if plan_fits {
+            // Per-dispatch timing for the timed main-camera cull, when the
+            // device can take a timestamp inside a pass. Splitting the pass in
+            // three to use pass-boundary timestamps instead would add two pass
+            // boundaries and so measure something other than what ships.
+            let phase_ts = ts.filter(|_| {
+                device
+                    .features()
+                    .contains(crate::gpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+            });
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some(&compact_label),
                 timestamp_writes: None,
             });
             pass.set_bind_group(0, &bind_group, &[]);
+
+            let mut phase = |pass: &mut crate::gpu::ComputePass<'_>, slot: u32, begin: bool| {
+                if let Some((qs, mask)) = phase_ts {
+                    if begin {
+                        mask.fetch_or(1 << slot, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    pass.write_timestamp(qs, slot * 2 + u32::from(!begin));
+                }
+            };
+
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_PLAN, true);
             pass.set_pipeline(&self.plan_chunks_pipeline);
             pass.dispatch_workgroups(1, 1, 1);
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_PLAN, false);
+
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_COUNT, true);
             pass.set_pipeline(&self.chunk_counts_pipeline);
             pass.dispatch_workgroups(chunk_upper_bound.max(1), 1, 1);
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_COUNT, false);
+
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_SCATTER, true);
             pass.set_pipeline(&self.scatter_visible_pipeline);
             pass.dispatch_workgroups(chunk_upper_bound.max(1), 1, 1);
+            phase(&mut pass, crate::renderer::GPU_TS_CULL_SCATTER, false);
         }
 
         {

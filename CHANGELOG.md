@@ -19,9 +19,10 @@
 - **More materials instance** - metallic-roughness and emissive textures, styled back faces, UV parameterisation visualisation, premultiplied blend, and plugin shading no longer force a draw per object.
 - **Per-texture UV transforms** - offset, scale, and rotate each map on its own, matching glTF `KHR_texture_transform`.
 - **Second UV set** - carry a lightmap or detail unwrap on its own UVs.
+- **Per-dispatch cull timings** - `GpuBreakdown` splits the GPU cull's list-packing into `cull_plan_ms`, `cull_count_ms`, and `cull_scatter_ms`. Needs `TIMESTAMP_QUERY_INSIDE_PASSES` (request it via `recommended_device_features`); the fields read `0.0` without it, as they do on Metal.
 
 ### Fixes
-- **Frames are reproducible again with GPU-driven culling on** - the cull packed visible instances and draw lists in whichever order threads finished, so rendering the same scene twice gave images differing by 1 LSB on a few pixels. Both compactions now pack in instance order, at no measurable frame cost on Metal.
+- **Frames are reproducible again with GPU-driven culling on** - the cull packed visible instances and draw lists in whichever order threads finished, so rendering the same scene twice gave images differing by 1 LSB on a few pixels. Both compactions now pack in instance order. No measurable frame cost on Metal; on an RTX 3080 it costs about 2% (45.6 ms to 46.4 ms) on a shadowed 65536-instance scene, and under 0.1 ms on everything lighter.
 - **`DeformerDesc` documents the right hook name** - the doc said a body defines `fn <name>_deform`, but the composer dispatches `<name>__deform` from a body that defines plain `fn deform`; a body written to the old wording failed shader validation at registration.
 
 ## [0.22.0]

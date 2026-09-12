@@ -214,11 +214,23 @@ pub struct GpuBreakdown {
     /// Tone-map and resolve pass that writes the final LDR image.
     pub post_ms: f32,
     /// Main-camera GPU cull dispatch: the `cull_instances` + `write_indirect_args`
-    /// compute passes that produce the indirect draw args. `0.0` when GPU culling
-    /// is off or the scene has no instanced batches. Shadow-cascade culls are not
-    /// included here. Useful for checking whether the cull pass costs more than it
-    /// saves on a given scene.
+    /// compute passes that produce the indirect draw args, plus the compaction
+    /// between them. `0.0` when GPU culling is off or the scene has no instanced
+    /// batches. Shadow-cascade culls are not included here. Useful for checking
+    /// whether the cull pass costs more than it saves on a given scene.
     pub cull_ms: f32,
+    /// The three dispatches that pack the visible list in instance order, split
+    /// out of [`Self::cull_ms`]: laying out the chunk space, counting survivors
+    /// per chunk, and scattering them into the list.
+    ///
+    /// These are timestamps taken inside a compute pass, so they need
+    /// `TIMESTAMP_QUERY_INSIDE_PASSES` as well as `TIMESTAMP_QUERY` and stay at
+    /// `0.0` without it, even when the rest of the breakdown is populated. Only
+    /// the main-camera cull is split; a frame with shadow cascades runs the same
+    /// three dispatches per cascade and none of that is counted here.
+    pub cull_plan_ms: f32,
+    pub cull_count_ms: f32,
+    pub cull_scatter_ms: f32,
     /// Point-light cubemap shadow faces, spanning the first to the last face
     /// pass rendered this frame (up to casters x 6 depth passes). This work
     /// used to be invisible to the breakdown and can dominate frames with
