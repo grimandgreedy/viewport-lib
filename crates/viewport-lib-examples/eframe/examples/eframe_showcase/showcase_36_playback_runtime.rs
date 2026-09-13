@@ -781,3 +781,13 @@ pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}

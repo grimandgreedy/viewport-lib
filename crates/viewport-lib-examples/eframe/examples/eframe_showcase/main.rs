@@ -736,9 +736,10 @@ impl eframe::App for App {
                     rect,
                 };
 
-                // Multi-viewport has its own full update path; bypass all single-viewport logic.
-                if self.mode == ShowcaseMode::MultiViewport {
-                    self.update_multi_viewport(ctx, ui, rect, response, frame);
+                // A showcase may drive the whole viewport itself (the
+                // multi-viewport one does), in which case the host's
+                // single-viewport path below is skipped entirely.
+                if self.showcase_viewport_override(ui, &viewport_cx) {
                     return;
                 }
 
@@ -1776,6 +1777,123 @@ impl App {
                 showcase_58_physically_based_surfaces::cache_gizmo(self, cx)
             }
             ShowcaseMode::VectorArt => showcase_59_vector_art::cache_gizmo(self, cx),
+        }
+    }
+
+    /// Let the active showcase take over the whole viewport for this frame.
+    fn showcase_viewport_override(&mut self, ui: &mut egui::Ui, cx: &ViewportCtx) -> bool {
+        match self.mode {
+            ShowcaseMode::Basic => showcase_01_basic::viewport_override(self, ui, cx),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::viewport_override(self, ui, cx),
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::viewport_override(self, ui, cx),
+            ShowcaseMode::Interaction => showcase_04_interaction::viewport_override(self, ui, cx),
+            ShowcaseMode::MaterialsVisibility => {
+                showcase_05_materials_and_visibility::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::PostProcess => showcase_06_post_process::viewport_override(self, ui, cx),
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::viewport_override(self, ui, cx),
+            ShowcaseMode::Shadows => showcase_08_shadows::viewport_override(self, ui, cx),
+            ShowcaseMode::Annotation => showcase_09_annotation::viewport_override(self, ui, cx),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::viewport_override(self, ui, cx),
+            ShowcaseMode::Lights => showcase_11_lights::viewport_override(self, ui, cx),
+            ShowcaseMode::ScalarFields => {
+                showcase_12_scalar_fields::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::MultiViewport => {
+                showcase_13_multi_viewport::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::Isolines => showcase_14_isolines::viewport_override(self, ui, cx),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::viewport_override(self, ui, cx),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::viewport_override(self, ui, cx),
+            ShowcaseMode::Volume => showcase_17_volume::viewport_override(self, ui, cx),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::viewport_override(self, ui, cx),
+            ShowcaseMode::Matcap => showcase_19_matcap::viewport_override(self, ui, cx),
+            ShowcaseMode::FaceAttributes => {
+                showcase_20_face_attributes::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::Textures => showcase_21_textures::viewport_override(self, ui, cx),
+            ShowcaseMode::ParamVis => showcase_22_parameterization::viewport_override(self, ui, cx),
+            ShowcaseMode::Performance => showcase_23_performance::viewport_override(self, ui, cx),
+            ShowcaseMode::BackfacePolicy => {
+                showcase_24_backface_policy::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::SurfaceVectors => {
+                showcase_25_surface_vectors::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::viewport_override(self, ui, cx),
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::viewport_override(self, ui, cx),
+            ShowcaseMode::CurveNetworkQuantities => {
+                showcase_28_curve_network_quantities::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::DepthCompositeImages => {
+                showcase_29_depth_composite_images::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::ImplicitSurface => {
+                showcase_30_implicit_surface::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::SparseVolumeGrid => {
+                showcase_31_sparse_volume_grid::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::ExtendedQuantities => {
+                showcase_32_extended_quantities::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::PickLevels => showcase_33_picking_levels::viewport_override(self, ui, cx),
+            ShowcaseMode::Labels => showcase_34_labels::viewport_override(self, ui, cx),
+            ShowcaseMode::Overlay => showcase_35_overlay::viewport_override(self, ui, cx),
+            ShowcaseMode::PlaybackRuntime => {
+                showcase_36_playback_runtime::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::ProbeWidgets => {
+                showcase_37_probe_widgets::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::viewport_override(self, ui, cx),
+            ShowcaseMode::TensorGlyphs => {
+                showcase_39_tensor_glyphs::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::viewport_override(self, ui, cx),
+            ShowcaseMode::Sprites => showcase_41_sprites::viewport_override(self, ui, cx),
+            ShowcaseMode::GaussianSplats => {
+                showcase_42_gaussian_splats::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::SceneRuntime => {
+                showcase_43_scene_runtime::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::viewport_override(self, ui, cx),
+            ShowcaseMode::SkinnedAnimation => {
+                showcase_45_skinned_animation::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::Decals => showcase_46_decals::viewport_override(self, ui, cx),
+            ShowcaseMode::LightingConsistency => {
+                showcase_47_lighting_consistency::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::ScatterVolumes => {
+                showcase_48_scatter_volumes::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::viewport_override(self, ui, cx),
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::viewport_override(self, ui, cx),
+            ShowcaseMode::AsyncUploads => {
+                showcase_51_async_uploads::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::Lod => showcase_52_lod::viewport_override(self, ui, cx),
+            ShowcaseMode::VertexColours => {
+                showcase_53_vertex_colours::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::CustomShading => {
+                showcase_54_custom_shading::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::Foreground => {
+                showcase_55_foreground_pass::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::SubmeshMaterials => {
+                showcase_56_submesh_materials::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::PhotometricLighting => {
+                showcase_57_photometric_lighting::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                showcase_58_physically_based_surfaces::viewport_override(self, ui, cx)
+            }
+            ShowcaseMode::VectorArt => showcase_59_vector_art::viewport_override(self, ui, cx),
         }
     }
 

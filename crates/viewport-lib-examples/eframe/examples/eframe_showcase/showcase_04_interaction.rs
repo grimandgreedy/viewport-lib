@@ -579,3 +579,13 @@ pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
         );
     }
 }
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}

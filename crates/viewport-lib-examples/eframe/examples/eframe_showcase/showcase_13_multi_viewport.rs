@@ -168,7 +168,7 @@ impl App {
         _ctx: &egui::Context,
         ui: &mut egui::Ui,
         rect: egui::Rect,
-        response: egui::Response,
+        response: &egui::Response,
         frame: &eframe::Frame,
     ) {
         let Some(viewports) = self.mv_state.viewports else {
@@ -919,3 +919,14 @@ pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Take over the whole viewport for this frame: this showcase drives four
+/// quadrants itself rather than the host's single-viewport path.
+pub(crate) fn viewport_override(
+    app: &mut crate::App,
+    ui: &mut crate::eframe::egui::Ui,
+    cx: &crate::ViewportCtx,
+) -> bool {
+    app.update_multi_viewport(cx.egui, ui, cx.rect, cx.response, cx.frame);
+    true
+}
