@@ -174,3 +174,68 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
         ..vpl::Camera::default()
     };
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app.pp_state.scene.collect_render_items(&vpl::Selection::new());
+        let mut lights = vec![{
+            let mut _t = vpl::LightSource::default();
+            _t.kind = vpl::LightKind::Directional {
+                direction: [0.6, 0.4, 1.0],
+            };
+            _t.intensity = app.pp_state.dir_intensity;
+            _t
+        }];
+        if app.pp_state.point_light_on {
+            lights.push({
+                let mut _t = vpl::LightSource::default();
+                _t.kind = vpl::LightKind::Point {
+                    position: [3.0, 3.0, 3.0],
+                    range: 15.0,
+                    radius: 0.1,
+                };
+                _t.colour = [1.0, 0.9, 0.7].into();
+                _t.intensity = 20.0;
+                // Warm fill only. With two hard casters the shadows
+                // overlap as a two-tone shape with a seam; one key
+                // caster plus non-casting fill is the intended
+                // lighting pattern.
+                _t.cast_shadows = false;
+                _t
+            });
+        }
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.lights = lights;
+            _t.shadows.enabled = true;
+            _t.shadows.filter = if app.pp_state.shadow_pcss {
+                vpl::ShadowFilter::Pcss
+            } else {
+                vpl::ShadowFilter::Pcf
+            };
+            _t.hemisphere_intensity = 0.4;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
+        };
+        let sg = app.pp_state.scene.version();
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

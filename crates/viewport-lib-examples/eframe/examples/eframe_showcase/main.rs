@@ -5,13 +5,11 @@ use viewport_lib as vpl;
 use viewport_lib::wgpu;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera, CameraAnimator,
-    CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo, GizmoMode, GroundPlane,
-    GroundPlaneMode, LightKind, LightSource, LightingSettings, ManipResult, ManipulationContext,
-    MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController, PickBackend, PickId,
-    PickMask, PointCloudItem, PostProcessSettings, RenderCamera, RuntimeMode, SceneFrame,
-    SceneRenderItem, ScrollUnits, Selection, ShadowFilter, ViewportContext, ViewportEvent,
-    ViewportRenderer,
+    Action, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, ColourmapId, FrameData,
+    GizmoAxis, GizmoInfo, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, ManipResult,
+    ManipulationContext, MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController,
+    PickBackend, PickMask, PointCloudItem, PostProcessSettings, RenderCamera, RuntimeMode,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
 };
 
@@ -1984,6 +1982,48 @@ impl App {
 // Frame data assembly
 // ---------------------------------------------------------------------------
 
+/// What a showcase contributes to the frame: its render items, plus the few
+/// per-frame values the host reads back out of it.
+pub(crate) struct SceneContents {
+    pub(crate) items: Vec<SceneRenderItem>,
+    /// Replaces the viewport background for this frame when set.
+    pub(crate) bg_colour: Option<[f32; 4]>,
+    pub(crate) lighting: LightingSettings,
+    /// Scene and selection versions, so the renderer's instance cache can see
+    /// when the items really changed. Showcases that assemble items by hand
+    /// leave both at 0 and rely on the mode generation instead.
+    pub(crate) scene_gen: u64,
+    pub(crate) sel_gen: u64,
+}
+
+/// Frame settings a showcase may set from its `scene` hook on top of the items
+/// it returns. Most showcases set none of them and leave this at its default.
+pub(crate) struct SceneOverrides {
+    pub(crate) clip_objects: Vec<ClipObject>,
+    pub(crate) outline: bool,
+    pub(crate) xray: bool,
+    pub(crate) perf_outline: bool,
+    pub(crate) scene_graph_outline: bool,
+    pub(crate) scene_graph_outline_width: f32,
+    /// Hands the host a cached item list to draw instead of `items`, so a large
+    /// static scene is not deep-cloned every frame.
+    pub(crate) cached_items: Option<std::sync::Arc<[SceneRenderItem]>>,
+}
+
+impl Default for SceneOverrides {
+    fn default() -> Self {
+        Self {
+            clip_objects: Vec::new(),
+            outline: false,
+            xray: false,
+            perf_outline: false,
+            scene_graph_outline: false,
+            scene_graph_outline_width: 4.0,
+            cached_items: None,
+        }
+    }
+}
+
 impl App {
     fn build_frame_data(
         &mut self,
@@ -1997,906 +2037,160 @@ impl App {
             showcase_52_lod::update_lod(self, dt);
         }
 
-        let mut adv_clip_objects: Vec<ClipObject> = vec![];
-        let mut adv_outline = false;
-        let mut adv_xray = false;
-        let mut perf_outline = false;
-        let mut scene_graph_outline = false;
-        let mut scene_graph_outline_width = 4.0_f32;
-
-        // Performance showcase uses a cached Arc<[SceneRenderItem]> to avoid a per-frame
-        // deep clone of the 125K-item Vec. Set by the Performance arm below; None for all others.
-        let mut perf_arc: Option<std::sync::Arc<[SceneRenderItem]>> = None;
-
-        let (scene_items, bg_colour, lighting, scene_gen, sel_gen) = match self.mode {
-            ShowcaseMode::Basic => {
-                let items = self.basic_scene_items();
-
-                let lights = if self.basic_state.use_point_light {
-                    vec![{
-                        let mut _t = LightSource::default();
-                        _t.kind = LightKind::Point {
-                            position: [5.0, 5.0, 5.0],
-                            range: 30.0,
-                            radius: 0.1,
-                        };
-                        // Candela-scale key light: inverse-square over ~8 units to
-                        // the origin objects needs a large intensity to read.
-                        _t.intensity = 150.0;
-                        _t
-                    }]
-                } else {
-                    vec![LightSource::default()]
-                };
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.lights = lights;
-                    _t.hemisphere_intensity = 0.25;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, 0u64, 0u64)
-            }
-
-            ShowcaseMode::SceneGraph => {
-                let items = self
-                    .sg_state
-                    .scene
-                    .collect_render_items(&self.sg_state.selection);
-                let bg: Option<[f32; 4]> =
-                    showcase_02_scene_graph::background_colour(self.sg_state.bg_cycle);
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                scene_graph_outline = !self.sg_state.selection.is_empty();
-                scene_graph_outline_width = self.sg_state.outline_width;
-                let sg = self.sg_state.scene.version();
-                let ss = self.sg_state.selection.version();
-                (items, bg, lighting, sg, ss)
-            }
-
-            ShowcaseMode::Performance => {
-                let current_ver = (
-                    self.perf_state.scene.version(),
-                    self.perf_state.selection.version(),
-                );
-                if current_ver != self.perf_state.scene_items_version {
-                    self.perf_state.scene_items_cache = std::sync::Arc::from(
-                        self.perf_state
-                            .scene
-                            .collect_render_items(&self.perf_state.selection),
-                    );
-                    self.perf_state.scene_items_version = current_ver;
-                }
-                // Arc::clone is a single atomic refcount increment  :  no data copy.
-                perf_arc = Some(std::sync::Arc::clone(&self.perf_state.scene_items_cache));
-                let sg = self.perf_state.scene.version();
-                let ss = self.perf_state.selection.version();
-                perf_outline = !self.perf_state.selection.is_empty();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (vec![], None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::Interaction => {
-                let (items, lighting, sg, ss) =
-                    showcase_04_interaction::interact_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
+        let mut overrides = SceneOverrides::default();
+        let contents = match self.mode {
+            ShowcaseMode::Basic => showcase_01_basic::scene(self, frame, &mut overrides),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::scene(self, frame, &mut overrides),
             ShowcaseMode::MaterialsVisibility => {
-                let items = self
-                    .materials_visibility_state
-                    .scene
-                    .collect_render_items(&self.materials_visibility_state.selection);
-                if self.materials_visibility_state.clip_enabled {
-                    adv_clip_objects.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
-                }
-                adv_outline = self.materials_visibility_state.outline_on
-                    && !self.materials_visibility_state.selection.is_empty();
-                adv_xray = self.materials_visibility_state.xray_on
-                    && !self.materials_visibility_state.selection.is_empty();
-                let sg = self.materials_visibility_state.scene.version();
-                let ss = self.materials_visibility_state.selection.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, ss)
+                showcase_05_materials_and_visibility::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::PostProcess => {
-                let items = self.pp_state.scene.collect_render_items(&Selection::new());
-                let mut lights = vec![{
-                    let mut _t = LightSource::default();
-                    _t.kind = LightKind::Directional {
-                        direction: [0.6, 0.4, 1.0],
-                    };
-                    _t.intensity = self.pp_state.dir_intensity;
-                    _t
-                }];
-                if self.pp_state.point_light_on {
-                    lights.push({
-                        let mut _t = LightSource::default();
-                        _t.kind = LightKind::Point {
-                            position: [3.0, 3.0, 3.0],
-                            range: 15.0,
-                            radius: 0.1,
-                        };
-                        _t.colour = [1.0, 0.9, 0.7].into();
-                        _t.intensity = 20.0;
-                        // Warm fill only. With two hard casters the shadows
-                        // overlap as a two-tone shape with a seam; one key
-                        // caster plus non-casting fill is the intended
-                        // lighting pattern.
-                        _t.cast_shadows = false;
-                        _t
-                    });
-                }
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.lights = lights;
-                    _t.shadows.enabled = true;
-                    _t.shadows.filter = if self.pp_state.shadow_pcss {
-                        ShadowFilter::Pcss
-                    } else {
-                        ShadowFilter::Pcf
-                    };
-                    _t.hemisphere_intensity = 0.4;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let sg = self.pp_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::NormalMaps => {
-                let items = self.nm_state.scene.collect_render_items(&Selection::new());
-                if self.nm_state.clip_enabled {
-                    adv_clip_objects.push(ClipObject::plane([1.0, 0.0, 0.0], 0.0));
-                }
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.lights = vec![
-                        {
-                            let mut _t = LightSource::default();
-                            _t.kind = LightKind::Directional {
-                                direction: [0.5, 0.3, 1.0],
-                            };
-                            _t.intensity = 0.4;
-                            _t
-                        },
-                        {
-                            let mut _t = LightSource::default();
-                            _t.kind = LightKind::Point {
-                                position: [3.0, 3.0, 3.0],
-                                range: 15.0,
-                                radius: 0.1,
-                            };
-                            _t.colour = [1.0, 0.97, 0.93].into();
-                            _t.intensity = 20.0;
-                            // Fill light for the normal-map highlights; not a
-                            // shadow caster, so the directional's shadow stays
-                            // a single clean shape.
-                            _t.cast_shadows = false;
-                            _t
-                        },
-                    ];
-                    _t.shadows.enabled = true;
-                    _t.hemisphere_intensity = 0.4;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let sg = self.nm_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::Shadows => {
-                let items = self.shd_state.scene.collect_render_items(&Selection::new());
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.lights = vec![{
-                        let mut _t = LightSource::default();
-                        _t.kind = LightKind::Directional {
-                            direction: [0.5, 0.2, 1.2],
-                        };
-                        _t.intensity = 2.0;
-                        _t
-                    }];
-                    _t.shadows.enabled = true;
-                    _t.shadows.cascade_count = self.shd_state.cascade_count;
-                    _t.shadows.filter = if self.shd_state.pcss_on {
-                        ShadowFilter::Pcss
-                    } else {
-                        ShadowFilter::Pcf
-                    };
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let sg = self.shd_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::Annotation => {
-                let items = self.ann_state.scene.collect_render_items(&Selection::new());
-                let sg = self.ann_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::CameraTools => {
-                let items = self.ct_state.scene.collect_render_items(&Selection::new());
-                let sg = self.ct_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::Lights => {
-                let mut items = self
-                    .lights_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                if !self.lights_state.unlit_sphere {
-                    items.retain(|item| !item.settings.unlit);
-                }
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.lights = self.lights_state.sources.clone();
-                    _t.hemisphere_intensity = if self.lights_state.hemi_on {
-                        self.lights_state.hemi_intensity
-                    } else {
-                        0.0
-                    };
-                    _t.sky_colour = self.lights_state.sky_colour;
-                    _t.ground_colour = self.lights_state.ground_colour;
-                    _t
-                };
-                let sg = self.lights_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::MultiViewport => {
-                unreachable!("MultiViewport is handled before build_frame_data")
-            }
-            ShowcaseMode::Isolines => {
-                let (items, lighting, sg, ss) = showcase_14_isolines::iso_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::PointClouds => {
-                let (items, lighting, sg, ss) =
-                    showcase_15_point_clouds::pc_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::Streamlines => {
-                let (items, lighting, sg, ss) =
-                    showcase_16_streamlines::stream_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::Volume => {
-                let (items, lighting, sg, ss) = showcase_17_volume::vol_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::ClipVolumes => {
-                let (items, lighting, sg, ss) =
-                    showcase_18_clip_volumes::clipvol_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::ScalarFields => {
-                const ATTR_NAMES: [&str; 3] = ["height", "wave", "distance"];
-                let mut items = self
-                    .scalar_state
-                    .scene
-                    .collect_render_items(&self.scalar_state.selection);
-                let colourmap_id = vpl::ColourmapId(self.scalar_state.colourmap as usize);
-                let active_node_id = self.scalar_state.node_ids[self.scalar_state.active_object];
-                let wave_node_id = self.scalar_state.node_ids[1];
-                if let Some(item) = items
-                    .iter_mut()
-                    .find(|item| item.settings.pick_id == PickId(active_node_id))
-                {
-                    item.active_attribute = Some(vpl::AttributeRef {
-                        name: ATTR_NAMES[self.scalar_state.active_object].to_string(),
-                        kind: vpl::AttributeKind::Vertex,
-                    });
-                    item.colourmap_id = Some(colourmap_id);
-                    item.scalar_range = if self.scalar_state.range_auto {
-                        None
-                    } else {
-                        Some(self.scalar_state.range)
-                    };
-                    item.nan_colour = if self.scalar_state.nan_on {
-                        Some([0.85, 0.1, 0.85, 1.0].into())
-                    } else {
-                        None
-                    };
-                }
-                if let Some(item) = items
-                    .iter_mut()
-                    .find(|item| item.settings.pick_id == PickId(wave_node_id))
-                {
-                    item.material.backface_policy = BackfacePolicy::Identical;
-                }
-                let sg = self.scalar_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (
-                    items,
-                    None,
-                    lighting,
-                    sg,
-                    self.scalar_state.selection.version(),
-                )
-            }
-
-            ShowcaseMode::Matcap => {
-                let items = self
-                    .matcap_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let sg = self.matcap_state.scene.version();
-                // Lighting is not used by matcap-shaded objects, but we still
-                // need minimal settings for the framework.
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::Textures => {
-                let mut items = self
-                    .texture_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let plane_node = self.texture_state.plane_node;
-                if let Some(item) = items
-                    .iter_mut()
-                    .find(|i| i.settings.pick_id == PickId(plane_node))
-                {
-                    item.material.backface_policy = BackfacePolicy::Identical;
-                }
-                let sg = self.texture_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
             ShowcaseMode::ParamVis => {
-                let items = self
-                    .param_vis_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let sg = self.param_vis_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
+                showcase_22_parameterization::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::GroundPlane => {
-                let items = self.gp_state.scene.collect_render_items(&Selection::new());
-                let sg = self.gp_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.lights = vec![{
-                        let mut _t = LightSource::default();
-                        _t.kind = LightKind::Directional {
-                            direction: [0.4, 0.6, 1.0],
-                        };
-                        _t.intensity = 1.5;
-                        _t
-                    }];
-                    _t.shadows.enabled = true;
-                    _t.hemisphere_intensity = 0.3;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.3, 0.3, 0.3];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::FaceAttributes => {
-                let mut items = self
-                    .face_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let colourmap_id = ColourmapId(self.face_state.colourmap as usize);
-
-                // Node 0: Vertex attribute (interpolated)
-                // scalar_range left as None : renderer auto-detects from attribute_ranges.
-                if let Some(item) = items
-                    .iter_mut()
-                    .find(|i| i.settings.pick_id == PickId(self.face_state.node_ids[0]))
-                {
-                    item.active_attribute = Some(AttributeRef {
-                        name: "scalar".to_string(),
-                        kind: AttributeKind::Vertex,
-                    });
-                    item.colourmap_id = Some(colourmap_id);
-                }
-
-                // Node 1: Face attribute (flat per-triangle)
-                // scalar_range left as None : renderer auto-detects from attribute_ranges.
-                if let Some(item) = items
-                    .iter_mut()
-                    .find(|i| i.settings.pick_id == PickId(self.face_state.node_ids[1]))
-                {
-                    item.active_attribute = Some(AttributeRef {
-                        name: "scalar".to_string(),
-                        kind: AttributeKind::Face,
-                    });
-                    item.colourmap_id = Some(colourmap_id);
-                }
-
-                // Node 2: FaceColour attribute (direct RGBA, no colourmap)
-                if let Some(item) = items
-                    .iter_mut()
-                    .find(|i| i.settings.pick_id == PickId(self.face_state.node_ids[2]))
-                {
-                    item.active_attribute = Some(AttributeRef {
-                        name: "colour".to_string(),
-                        kind: AttributeKind::FaceColour,
-                    });
-                    item.settings.opacity = self.face_state.opacity;
-                }
-
-                let sg = self.face_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.4;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
             ShowcaseMode::BackfacePolicy => {
-                let items = self.sa_scene_items();
-                let sg = self.sa_state.scene.version();
-                (items, None, App::sa_lighting(), sg, 0)
+                showcase_24_backface_policy::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::SurfaceVectors => {
-                let (items, lighting, sg, ss) =
-                    showcase_25_surface_vectors::sv_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
+            ShowcaseMode::Interaction => {
+                showcase_04_interaction::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::VolumeMesh => {
-                let (items, lighting, sg, ss) =
-                    showcase_26_volume_mesh::vm_collect_scene_items(self, frame);
-                (items, None, lighting, sg, ss)
+            ShowcaseMode::CameraTools => {
+                showcase_10_camera_tools::scene(self, frame, &mut overrides)
             }
-
+            ShowcaseMode::MultiViewport => {
+                showcase_13_multi_viewport::scene(self, frame, &mut overrides)
+            }
             ShowcaseMode::Auxiliary => {
-                let items = self.aux_state.scene.collect_render_items(&Selection::new());
-                (items, None, App::aux_lighting(), 0, 0)
+                showcase_27_camera_framing::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::CurveNetworkQuantities => {
-                let (items, lighting, sg, ss) =
-                    showcase_28_curve_network_quantities::cnq_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::DepthCompositeImages => {
-                (self.dc_scene_items(), None, App::dc_lighting(), 0, 0)
-            }
-
-            ShowcaseMode::ImplicitSurface => (
-                self.implicit_scene_items(),
-                None,
-                App::implicit_lighting(),
-                self.mode_gen,
-                0,
-            ),
-
-            ShowcaseMode::SparseVolumeGrid => (
-                self.svg_scene_items(),
-                None,
-                App::svg_lighting(),
-                self.mode_gen,
-                0,
-            ),
-
-            ShowcaseMode::ExtendedQuantities => {
-                let (items, lighting, sg, ss) =
-                    showcase_32_extended_quantities::eq_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::PickLevels => {
-                let (items, lighting, sg, sel_gen) =
-                    showcase_33_picking_levels::pl_collect_scene_items(self);
-                (items, None, lighting, sg, sel_gen)
-            }
-
-            ShowcaseMode::Labels => {
-                let items = self.lbl_state.scene.collect_render_items(&Selection::new());
-                let sg = self.lbl_state.scene.version();
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::Overlay => (Vec::new(), None, LightingSettings::default(), 0, 0),
-
-            // The artwork is a 2-D overlay; the 3-D scene is empty.
-            ShowcaseMode::VectorArt => (Vec::new(), None, LightingSettings::default(), 0, 0),
-
-            ShowcaseMode::PlaybackRuntime => {
-                // Apply renderer settings and update deforming mesh.
-                let topology_changed = self.pb_state.grid_resolution
-                    != self.pb_state.last_grid_resolution
-                    || self.pb_state.grid_layers != self.pb_state.last_grid_layers;
-                let need_mesh_update =
-                    self.pb_state.mode == RuntimeMode::Playback || topology_changed;
-                if let Some(rs) = frame.wgpu_render_state() {
-                    let mut guard = rs.renderer.write();
-                    if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                        if need_mesh_update {
-                            if let Some(mesh_id) = self.pb_state.mesh_id {
-                                let t0 = std::time::Instant::now();
-                                let mesh = showcase_36_playback_runtime::build_sine_grid(
-                                    self.pb_state.grid_resolution,
-                                    self.pb_state.grid_layers,
-                                    self.pb_state.time,
-                                );
-                                if topology_changed {
-                                    let _ = renderer
-                                        .resources_mut()
-                                        .replace_mesh_data(&rs.device, &rs.queue, mesh_id, &mesh);
-                                    // The mesh changed size under a stable scene
-                                    // generation (the deform mesh is not part of
-                                    // pb_state.scene), which the renderer's instance
-                                    // cache cannot observe. Without this the cached
-                                    // batch keeps drawing the old, smaller index
-                                    // range and only part of the grid shows.
-                                    renderer.force_dirty();
-                                    self.pb_state.last_grid_resolution =
-                                        self.pb_state.grid_resolution;
-                                    self.pb_state.last_grid_layers = self.pb_state.grid_layers;
-                                } else {
-                                    let _ = renderer.resources_mut().write_mesh_positions_normals(
-                                        &rs.queue,
-                                        mesh_id,
-                                        &mesh.positions,
-                                        &mesh.normals,
-                                    );
-                                }
-                                self.pb_state.upload_ms = t0.elapsed().as_secs_f32() * 1000.0;
-                            }
-                        } else {
-                            self.pb_state.upload_ms = 0.0;
-                        }
-                        renderer.set_runtime_mode(self.pb_state.mode);
-                        renderer.set_performance_policy(self.pb_state.policy);
-                        if !self.pb_state.policy.allow_dynamic_resolution {
-                            renderer.set_render_scale(self.pb_state.manual_render_scale);
-                        }
-                        self.pb_state.last_stats = renderer.last_frame_stats();
-                    }
-                }
-
-                // Update rolling stats history.
-                self.pb_state
-                    .stats_history
-                    .push_back(self.pb_state.last_stats.total_frame_ms);
-                if self.pb_state.stats_history.len() > 60 {
-                    self.pb_state.stats_history.pop_front();
-                }
-
-                let items = showcase_36_playback_runtime::pb_scene_items(self);
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let sg = self.pb_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
             ShowcaseMode::ProbeWidgets => {
-                let (items, lighting, sg, ss) =
-                    showcase_37_probe_widgets::pw_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
+                showcase_37_probe_widgets::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::SurfaceLIC => {
-                let items = self.lic_state.scene.collect_render_items(&Selection::new());
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.7, 0.7, 0.7];
-                    _t
-                };
-                let sg = self.lic_state.scene.version();
-                (items, None, lighting, sg, 0)
+            ShowcaseMode::GroundPlane => {
+                showcase_03_ground_plane::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::TensorGlyphs => {
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.6;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let items = showcase_39_tensor_glyphs::beam_scene_items(self);
-                (items, None, lighting, 0, 0)
+            ShowcaseMode::PostProcess => {
+                showcase_06_post_process::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::VertexWarp => {
-                let items = showcase_40_vertex_warp::warp_scene_items(self);
-                (items, None, showcase_40_vertex_warp::warp_lighting(), 0, 0)
-            }
-
-            ShowcaseMode::Sprites => {
-                let items = showcase_41_sprites::sprite_scene_items(self);
-                (
-                    items,
-                    None,
-                    showcase_41_sprites::sprite_lighting(self),
-                    0,
-                    0,
-                )
-            }
-
-            ShowcaseMode::GaussianSplats => {
-                let (items, lighting, sg, ss) =
-                    showcase_42_gaussian_splats::splat_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::SceneRuntime => {
-                let items = if self.rt_state.built {
-                    showcase_43_scene_runtime::rt_demo_scene_items(self)
-                } else {
-                    Vec::new()
-                };
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let sg = self.rt_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::DebugDraw => {
-                let items = if self.dbg_draw_state.built {
-                    showcase_44_debug_draw::dbg_draw_scene_items(self)
-                } else {
-                    Vec::new()
-                };
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let sg = self.dbg_draw_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::SkinnedAnimation => {
-                // Apply pending skinned mesh updates to GPU before collecting render items.
-                let rs = frame.wgpu_render_state().expect("wgpu required");
-                let mut guard = rs.renderer.write();
-                if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                    showcase_45_skinned_animation::apply_skin47_updates(self, renderer);
-                }
-                drop(guard);
-                let items = if self.skin_state.built {
-                    showcase_45_skinned_animation::skin47_scene_items(self)
-                } else {
-                    Vec::new()
-                };
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.85;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [1.0, 1.0, 1.0];
-                    _t
-                };
-                let sg = self.skin_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::Decals => {
-                let items = if self.decal46_state.built {
-                    showcase_46_decals::decal46_scene_items(self)
-                } else {
-                    Vec::new()
-                };
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.hemisphere_intensity = 0.5;
-                    _t.sky_colour = [1.0, 1.0, 1.0];
-                    _t.ground_colour = [0.6, 0.6, 0.6];
-                    _t
-                };
-                let sg = self.decal46_state.scene.version();
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::LightingConsistency => {
-                let (items, lighting, sg, ss) =
-                    showcase_47_lighting_consistency::lc_collect_scene_items(self);
-                (items, None, lighting, sg, ss)
-            }
-
-            ShowcaseMode::ScatterVolumes => {
-                let items = self
-                    .svol_state
-                    .scene
-                    .collect_render_items(&Selection::new());
-                let sg = self.svol_state.scene.version();
-                let dir = self.svol_state.sun_dir;
-                let mut sun = LightSource::default();
-                sun.kind = LightKind::Directional { direction: dir };
-                sun.colour = self.svol_state.sun_colour.into();
-                sun.intensity = self.svol_state.sun_intensity;
-                let lighting = {
-                    let mut _t = LightingSettings::default();
-                    _t.lights = vec![sun];
-                    _t.shadows.enabled = self.svol_state.shadows_enabled;
-                    _t.sky_colour = self.svol_state.sky_colour;
-                    _t.ground_colour = self.svol_state.ground_colour;
-                    _t.hemisphere_intensity = self.svol_state.hemisphere_intensity;
-                    _t
-                };
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::SceneLights => {
-                let (items, lighting, sg) = showcase_49_scene_lights::sl_collect(self);
-                (items, None, lighting, sg, 0)
-            }
-
-            ShowcaseMode::GpuWave => {
-                let (items, lighting) = showcase_50_gpu_wave::wave_collect(self);
-                (items, None, lighting, 0, 0)
-            }
-
-            ShowcaseMode::AsyncUploads => {
-                let items = self.async_uploads_scene_items();
-                let lighting = self.async_uploads_lighting();
-                (items, None, lighting, 0, 0)
-            }
-
-            ShowcaseMode::Lod => {
-                let items = showcase_52_lod::lod_scene_items(self);
-                let lighting = {
-                    let mut t = LightingSettings::default();
-                    t.hemisphere_intensity = 0.4;
-                    t.sky_colour = [1.0, 1.0, 1.0];
-                    t.ground_colour = [1.0, 1.0, 1.0];
-                    t
-                };
-                let generation = self.lod_state.generation;
-                (items, None, lighting, generation, 0)
-            }
-
-            ShowcaseMode::CustomShading => {
-                let items = showcase_54_custom_shading::custom_shading_items(self);
-                (
-                    items,
-                    None,
-                    showcase_54_custom_shading::custom_shading_lighting(),
-                    0,
-                    0,
-                )
-            }
-
-            ShowcaseMode::VertexColours => {
-                let items = showcase_53_vertex_colours::vcol_scene_items(self);
-                (
-                    items,
-                    None,
-                    showcase_53_vertex_colours::vcol_lighting(),
-                    0,
-                    0,
-                )
-            }
-
             ShowcaseMode::Foreground => {
-                let items = showcase_55_foreground_pass::foreground_scene_items(self);
-                (items, None, App::foreground_lighting(), 0, 0)
+                showcase_55_foreground_pass::scene(self, frame, &mut overrides)
             }
-
-            ShowcaseMode::SubmeshMaterials => {
-                let items = showcase_56_submesh_materials::submesh_scene_items(self);
-                (
-                    items,
-                    None,
-                    showcase_56_submesh_materials::submesh_lighting(),
-                    0,
-                    0,
-                )
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::scene(self, frame, &mut overrides),
+            ShowcaseMode::Shadows => showcase_08_shadows::scene(self, frame, &mut overrides),
+            ShowcaseMode::Lights => showcase_11_lights::scene(self, frame, &mut overrides),
+            ShowcaseMode::Matcap => showcase_19_matcap::scene(self, frame, &mut overrides),
+            ShowcaseMode::LightingConsistency => {
+                showcase_47_lighting_consistency::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::SceneLights => {
+                showcase_49_scene_lights::scene(self, frame, &mut overrides)
             }
             ShowcaseMode::PhotometricLighting => {
-                let items = self
-                    .lighting_state
-                    .scene_mut()
-                    .collect_render_items(&Selection::new());
-                let lighting = self.lighting_state.lighting();
-                let sg = self.lighting_state.scene().version();
-                (items, None, lighting, sg, 0)
+                showcase_57_photometric_lighting::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Textures => showcase_21_textures::scene(self, frame, &mut overrides),
+            ShowcaseMode::Decals => showcase_46_decals::scene(self, frame, &mut overrides),
+            ShowcaseMode::VertexColours => {
+                showcase_53_vertex_colours::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::SubmeshMaterials => {
+                showcase_56_submesh_materials::scene(self, frame, &mut overrides)
             }
             ShowcaseMode::PhysicallyBasedSurfaces => {
-                let items = self
-                    .surfaces_state
-                    .scene_mut()
-                    .collect_render_items(&Selection::new());
-                let lighting = self.surfaces_state.lighting();
-                let sg = self.surfaces_state.scene().version();
-                (items, None, lighting, sg, 0)
+                showcase_58_physically_based_surfaces::scene(self, frame, &mut overrides)
             }
+            ShowcaseMode::ScalarFields => {
+                showcase_12_scalar_fields::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Isolines => showcase_14_isolines::scene(self, frame, &mut overrides),
+            ShowcaseMode::PointClouds => {
+                showcase_15_point_clouds::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Streamlines => {
+                showcase_16_streamlines::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::FaceAttributes => {
+                showcase_20_face_attributes::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::SurfaceVectors => {
+                showcase_25_surface_vectors::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::CurveNetworkQuantities => {
+                showcase_28_curve_network_quantities::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::ExtendedQuantities => {
+                showcase_32_extended_quantities::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::scene(self, frame, &mut overrides),
+            ShowcaseMode::TensorGlyphs => {
+                showcase_39_tensor_glyphs::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Volume => showcase_17_volume::scene(self, frame, &mut overrides),
+            ShowcaseMode::ClipVolumes => {
+                showcase_18_clip_volumes::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::scene(self, frame, &mut overrides),
+            ShowcaseMode::ImplicitSurface => {
+                showcase_30_implicit_surface::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::SparseVolumeGrid => {
+                showcase_31_sparse_volume_grid::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::ScatterVolumes => {
+                showcase_48_scatter_volumes::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Annotation => showcase_09_annotation::scene(self, frame, &mut overrides),
+            ShowcaseMode::DepthCompositeImages => {
+                showcase_29_depth_composite_images::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Labels => showcase_34_labels::scene(self, frame, &mut overrides),
+            ShowcaseMode::Overlay => showcase_35_overlay::scene(self, frame, &mut overrides),
+            ShowcaseMode::VectorArt => showcase_59_vector_art::scene(self, frame, &mut overrides),
+            ShowcaseMode::Sprites => showcase_41_sprites::scene(self, frame, &mut overrides),
+            ShowcaseMode::GaussianSplats => {
+                showcase_42_gaussian_splats::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::PlaybackRuntime => {
+                showcase_36_playback_runtime::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::scene(self, frame, &mut overrides),
+            ShowcaseMode::SceneRuntime => {
+                showcase_43_scene_runtime::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::scene(self, frame, &mut overrides),
+            ShowcaseMode::SkinnedAnimation => {
+                showcase_45_skinned_animation::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::scene(self, frame, &mut overrides),
+            ShowcaseMode::CustomShading => {
+                showcase_54_custom_shading::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Performance => {
+                showcase_23_performance::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::PickLevels => {
+                showcase_33_picking_levels::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::AsyncUploads => {
+                showcase_51_async_uploads::scene(self, frame, &mut overrides)
+            }
+            ShowcaseMode::Lod => showcase_52_lod::scene(self, frame, &mut overrides),
         };
+        let SceneContents {
+            items: scene_items,
+            bg_colour,
+            lighting,
+            scene_gen,
+            sel_gen,
+        } = contents;
+        let SceneOverrides {
+            clip_objects: mut adv_clip_objects,
+            outline: adv_outline,
+            xray: adv_xray,
+            perf_outline,
+            scene_graph_outline,
+            scene_graph_outline_width,
+            cached_items: perf_arc,
+        } = overrides;
 
         // Gizmo matrices for Interaction and ClipVolumes modes.
         let (gizmo_model, gizmo_mode, gizmo_space_orient, gizmo_hovered) =

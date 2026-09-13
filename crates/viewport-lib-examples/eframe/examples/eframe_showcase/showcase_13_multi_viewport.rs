@@ -851,3 +851,26 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
         app.build_mv_scene(renderer);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    _app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        unreachable!("MultiViewport is handled before build_frame_data")
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

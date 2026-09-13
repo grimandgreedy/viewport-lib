@@ -257,3 +257,43 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_scene_graph(renderer);
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app
+            .sg_state
+            .scene
+            .collect_render_items(&app.sg_state.selection);
+        let bg: Option<[f32; 4]> =
+            background_colour(app.sg_state.bg_cycle);
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
+        };
+        out.scene_graph_outline = !app.sg_state.selection.is_empty();
+        out.scene_graph_outline_width = app.sg_state.outline_width;
+        let sg = app.sg_state.scene.version();
+        let ss = app.sg_state.selection.version();
+        (items, bg, lighting, sg, ss)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

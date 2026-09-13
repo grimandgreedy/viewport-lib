@@ -853,3 +853,32 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     // Builds the active sub-scene and frames the camera for it.
     app.build_photometric_lighting_scene(renderer);
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app
+            .lighting_state
+            .scene_mut()
+            .collect_render_items(&vpl::Selection::new());
+        let lighting = app.lighting_state.lighting();
+        let sg = app.lighting_state.scene().version();
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

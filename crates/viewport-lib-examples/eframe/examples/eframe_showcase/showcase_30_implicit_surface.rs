@@ -528,3 +528,32 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_implicit_scene(renderer);
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        (
+                        app.implicit_scene_items(),
+                        None,
+                        crate::App::implicit_lighting(),
+                        app.mode_gen,
+                        0,
+                    )
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

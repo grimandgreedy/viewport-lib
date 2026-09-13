@@ -249,3 +249,26 @@ pub(crate) fn needs_build(_app: &crate::App) -> bool {
 /// Build this showcase's scene and frame its opening camera. Called once, on
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(_app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer) {}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    _app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        (Vec::new(), None, vpl::LightingSettings::default(), 0, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

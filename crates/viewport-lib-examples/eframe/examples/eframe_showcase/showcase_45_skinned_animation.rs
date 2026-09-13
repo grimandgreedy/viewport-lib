@@ -1885,3 +1885,46 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
         ..vpl::Camera::default()
     };
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        // Apply pending skinned mesh updates to GPU before collecting render items.
+        let rs = frame.wgpu_render_state().expect("wgpu required");
+        let mut guard = rs.renderer.write();
+        if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
+            apply_skin47_updates(app, renderer);
+        }
+        drop(guard);
+        let items = if app.skin_state.built {
+            skin47_scene_items(app)
+        } else {
+            Vec::new()
+        };
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.85;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
+        };
+        let sg = app.skin_state.scene.version();
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

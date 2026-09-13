@@ -342,3 +342,64 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
         ..vpl::Camera::default()
     };
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app.nm_state.scene.collect_render_items(&vpl::Selection::new());
+        if app.nm_state.clip_enabled {
+            out.clip_objects.push(vpl::ClipObject::plane([1.0, 0.0, 0.0], 0.0));
+        }
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.lights = vec![
+                {
+                    let mut _t = vpl::LightSource::default();
+                    _t.kind = vpl::LightKind::Directional {
+                        direction: [0.5, 0.3, 1.0],
+                    };
+                    _t.intensity = 0.4;
+                    _t
+                },
+                {
+                    let mut _t = vpl::LightSource::default();
+                    _t.kind = vpl::LightKind::Point {
+                        position: [3.0, 3.0, 3.0],
+                        range: 15.0,
+                        radius: 0.1,
+                    };
+                    _t.colour = [1.0, 0.97, 0.93].into();
+                    _t.intensity = 20.0;
+                    // Fill light for the normal-map highlights; not a
+                    // shadow caster, so the directional's shadow stays
+                    // a single clean shape.
+                    _t.cast_shadows = false;
+                    _t
+                },
+            ];
+            _t.shadows.enabled = true;
+            _t.hemisphere_intensity = 0.4;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
+        };
+        let sg = app.nm_state.scene.version();
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

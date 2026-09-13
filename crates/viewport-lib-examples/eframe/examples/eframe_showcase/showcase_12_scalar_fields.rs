@@ -330,3 +330,74 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
         ..vpl::Camera::default()
     };
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        const ATTR_NAMES: [&str; 3] = ["height", "wave", "distance"];
+        let mut items = app
+            .scalar_state
+            .scene
+            .collect_render_items(&app.scalar_state.selection);
+        let colourmap_id = vpl::ColourmapId(app.scalar_state.colourmap as usize);
+        let active_node_id = app.scalar_state.node_ids[app.scalar_state.active_object];
+        let wave_node_id = app.scalar_state.node_ids[1];
+        if let Some(item) = items
+            .iter_mut()
+            .find(|item| item.settings.pick_id == vpl::PickId(active_node_id))
+        {
+            item.active_attribute = Some(vpl::AttributeRef {
+                name: ATTR_NAMES[app.scalar_state.active_object].to_string(),
+                kind: vpl::AttributeKind::Vertex,
+            });
+            item.colourmap_id = Some(colourmap_id);
+            item.scalar_range = if app.scalar_state.range_auto {
+                None
+            } else {
+                Some(app.scalar_state.range)
+            };
+            item.nan_colour = if app.scalar_state.nan_on {
+                Some([0.85, 0.1, 0.85, 1.0].into())
+            } else {
+                None
+            };
+        }
+        if let Some(item) = items
+            .iter_mut()
+            .find(|item| item.settings.pick_id == vpl::PickId(wave_node_id))
+        {
+            item.material.backface_policy = vpl::BackfacePolicy::Identical;
+        }
+        let sg = app.scalar_state.scene.version();
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
+        };
+        (
+            items,
+            None,
+            lighting,
+            sg,
+            app.scalar_state.selection.version(),
+        )
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

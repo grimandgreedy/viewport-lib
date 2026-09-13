@@ -636,3 +636,96 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
         ..vpl::Camera::default()
     };
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        // Apply renderer settings and update deforming mesh.
+        let topology_changed = app.pb_state.grid_resolution
+            != app.pb_state.last_grid_resolution
+            || app.pb_state.grid_layers != app.pb_state.last_grid_layers;
+        let need_mesh_update =
+            app.pb_state.mode == vpl::RuntimeMode::Playback || topology_changed;
+        if let Some(rs) = frame.wgpu_render_state() {
+            let mut guard = rs.renderer.write();
+            if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
+                if need_mesh_update {
+                    if let Some(mesh_id) = app.pb_state.mesh_id {
+                        let t0 = std::time::Instant::now();
+                        let mesh = build_sine_grid(
+                            app.pb_state.grid_resolution,
+                            app.pb_state.grid_layers,
+                            app.pb_state.time,
+                        );
+                        if topology_changed {
+                            let _ = renderer
+                                .resources_mut()
+                                .replace_mesh_data(&rs.device, &rs.queue, mesh_id, &mesh);
+                            // The mesh changed size under a stable scene
+                            // generation (the deform mesh is not part of
+                            // pb_state.scene), which the renderer's instance
+                            // cache cannot observe. Without this the cached
+                            // batch keeps drawing the old, smaller index
+                            // range and only part of the grid shows.
+                            renderer.force_dirty();
+                            app.pb_state.last_grid_resolution =
+                                app.pb_state.grid_resolution;
+                            app.pb_state.last_grid_layers = app.pb_state.grid_layers;
+                        } else {
+                            let _ = renderer.resources_mut().write_mesh_positions_normals(
+                                &rs.queue,
+                                mesh_id,
+                                &mesh.positions,
+                                &mesh.normals,
+                            );
+                        }
+                        app.pb_state.upload_ms = t0.elapsed().as_secs_f32() * 1000.0;
+                    }
+                } else {
+                    app.pb_state.upload_ms = 0.0;
+                }
+                renderer.set_runtime_mode(app.pb_state.mode);
+                renderer.set_performance_policy(app.pb_state.policy);
+                if !app.pb_state.policy.allow_dynamic_resolution {
+                    renderer.set_render_scale(app.pb_state.manual_render_scale);
+                }
+                app.pb_state.last_stats = renderer.last_frame_stats();
+            }
+        }
+
+        // Update rolling stats history.
+        app.pb_state
+            .stats_history
+            .push_back(app.pb_state.last_stats.total_frame_ms);
+        if app.pb_state.stats_history.len() > 60 {
+            app.pb_state.stats_history.pop_front();
+        }
+
+        let items = pb_scene_items(app);
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
+        };
+        let sg = app.pb_state.scene.version();
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

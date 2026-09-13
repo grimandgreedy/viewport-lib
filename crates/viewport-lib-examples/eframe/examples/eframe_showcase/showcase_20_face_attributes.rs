@@ -271,3 +271,78 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
         ..vpl::Camera::default()
     };
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let mut items = app
+            .face_state
+            .scene
+            .collect_render_items(&vpl::Selection::new());
+        let colourmap_id = vpl::ColourmapId(app.face_state.colourmap as usize);
+
+        // Node 0: Vertex attribute (interpolated)
+        // scalar_range left as None : renderer auto-detects from attribute_ranges.
+        if let Some(item) = items
+            .iter_mut()
+            .find(|i| i.settings.pick_id == vpl::PickId(app.face_state.node_ids[0]))
+        {
+            item.active_attribute = Some(vpl::AttributeRef {
+                name: "scalar".to_string(),
+                kind: vpl::AttributeKind::Vertex,
+            });
+            item.colourmap_id = Some(colourmap_id);
+        }
+
+        // Node 1: Face attribute (flat per-triangle)
+        // scalar_range left as None : renderer auto-detects from attribute_ranges.
+        if let Some(item) = items
+            .iter_mut()
+            .find(|i| i.settings.pick_id == vpl::PickId(app.face_state.node_ids[1]))
+        {
+            item.active_attribute = Some(vpl::AttributeRef {
+                name: "scalar".to_string(),
+                kind: vpl::AttributeKind::Face,
+            });
+            item.colourmap_id = Some(colourmap_id);
+        }
+
+        // Node 2: FaceColour attribute (direct RGBA, no colourmap)
+        if let Some(item) = items
+            .iter_mut()
+            .find(|i| i.settings.pick_id == vpl::PickId(app.face_state.node_ids[2]))
+        {
+            item.active_attribute = Some(vpl::AttributeRef {
+                name: "colour".to_string(),
+                kind: vpl::AttributeKind::FaceColour,
+            });
+            item.settings.opacity = app.face_state.opacity;
+        }
+
+        let sg = app.face_state.scene.version();
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.4;
+            _t.sky_colour = [1.0, 1.0, 1.0];
+            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t
+        };
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}

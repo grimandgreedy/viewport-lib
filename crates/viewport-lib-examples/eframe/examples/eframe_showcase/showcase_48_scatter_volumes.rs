@@ -699,3 +699,45 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
     app.build_svol_scene(renderer);
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app
+            .svol_state
+            .scene
+            .collect_render_items(&vpl::Selection::new());
+        let sg = app.svol_state.scene.version();
+        let dir = app.svol_state.sun_dir;
+        let mut sun = vpl::LightSource::default();
+        sun.kind = vpl::LightKind::Directional { direction: dir };
+        sun.colour = app.svol_state.sun_colour.into();
+        sun.intensity = app.svol_state.sun_intensity;
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.lights = vec![sun];
+            _t.shadows.enabled = app.svol_state.shadows_enabled;
+            _t.sky_colour = app.svol_state.sky_colour;
+            _t.ground_colour = app.svol_state.ground_colour;
+            _t.hemisphere_intensity = app.svol_state.hemisphere_intensity;
+            _t
+        };
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
