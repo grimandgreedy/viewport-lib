@@ -9,9 +9,27 @@
 use crate::colour::ColourSpace;
 use crate::error::{ViewportError, ViewportResult};
 
-/// The pixel payload of a [`TextureData`], in the precision it was authored at.
-#[derive(Clone, PartialEq)]
+/// Which bind-group slot an uploaded texture occupies, and so what the renderer
+/// treats it as. Distinct from the colour space: a normal map and a roughness
+/// map are both linear, but only one of them binds as a normal map.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+pub enum TextureRole {
+    /// A colour or data image, bound in the albedo slot.
+    Image,
+    /// A tangent-space normal map, bound in the normal-map slot.
+    NormalMap,
+}
+
+/// The pixel payload of a [`TextureData`], in the precision it was authored at.
+///
+/// Deliberately exhaustive, unlike the types around it. The renderer maps each
+/// variant to a GPU texture format, so a new variant needs a new path there and
+/// is a breaking change whatever this attribute says; marking it
+/// `non_exhaustive` would only force a dead arm at the one place that has to
+/// handle all of them.
+#[derive(Clone, PartialEq)]
 pub enum TexturePayload {
     /// Eight bits per channel, RGBA order, four bytes per texel.
     Rgba8(Vec<u8>),
@@ -30,7 +48,7 @@ impl TexturePayload {
         }
     }
 
-    /// Element count, in bytes for `Rgba8` and in floats for `Rgba32F`.
+    /// Element count: bytes for `Rgba8`, floats for `Rgba32F`.
     fn len(&self) -> usize {
         match self {
             TexturePayload::Rgba8(v) => v.len(),
@@ -48,11 +66,10 @@ impl TexturePayload {
 /// ```
 /// use viewport_lib_types::data::texture::TextureData;
 ///
-/// # fn demo(albedo: Vec<u8>, roughness: Vec<u8>, crater: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
-/// let albedo = TextureData::srgb(128, 128, albedo)?;          // a colour image
-/// let roughness = TextureData::linear(128, 128, roughness)?;  // a data map
-/// let crater = TextureData::normal_map(128, 128, crater)?;    // linear, named for the use
-/// # Ok(())
+/// # fn demo(albedo: Vec<u8>, roughness: Vec<u8>, crater: Vec<u8>) {
+/// let albedo = TextureData::srgb(128, 128, albedo);          // a colour image
+/// let roughness = TextureData::linear(128, 128, roughness);  // a data map
+/// let crater = TextureData::normal_map(128, 128, crater);    // linear, binds as a normal map
 /// # }
 /// ```
 ///
@@ -78,17 +95,23 @@ impl TexturePayload {
 ///   base colour, emissive, sprite art, a decal's albedo.
 /// - **Linear** for images that hold numbers: roughness, metallic, combined
 ///   metallic-roughness, ambient occlusion, and tangent-space normal maps.
+///
+/// # Size
+///
+/// The constructors do not check the payload length against the dimensions; the
+/// upload does, returning
+/// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+/// exactly as it always has. Building a payload is therefore infallible, so a
+/// call site carries one `Result` rather than two.
 #[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub struct TextureData {
-    // Private, unlike the other `*Data` payloads in this module. The length of
-    // the payload has to match the dimensions, and that invariant is the reason
-    // the type exists: it moves the size check off the upload path. Public
-    // fields would let a caller break it after construction.
+    // Private so the description cannot drift from the payload after
+    // construction: the renderer reads both together when it picks a format.
     width: u32,
     height: u32,
-    layers: u32,
     colour_space: ColourSpace,
+    role: TextureRole,
     payload: TexturePayload,
 }
 
@@ -96,103 +119,64 @@ impl TextureData {
     /// An 8-bit RGBA image whose pixels are sRGB-encoded colour.
     ///
     /// Use this for base colour, emissive, sprite art, and decal albedo: images
-    /// holding a colour rather than a number. `rgba` must be exactly
-    /// `width * height * 4` bytes.
-    ///
-    /// # Errors
-    ///
-    /// [`ViewportError::InvalidTextureData`] when the length does not match the
-    /// dimensions.
-    pub fn srgb(width: u32, height: u32, rgba: Vec<u8>) -> ViewportResult<Self> {
-        Self::new(
+    /// holding a colour rather than a number. `rgba` should be
+    /// `width * height * 4` bytes; the length is checked at upload.
+    pub fn srgb(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
             width,
             height,
-            1,
-            ColourSpace::Srgb,
-            TexturePayload::Rgba8(rgba),
-        )
+            colour_space: ColourSpace::Srgb,
+            role: TextureRole::Image,
+            payload: TexturePayload::Rgba8(rgba),
+        }
     }
 
     /// An 8-bit RGBA image whose pixels are linear data.
     ///
     /// Use this for roughness, metallic, combined metallic-roughness (ORM), and
     /// ambient occlusion: images holding numbers rather than a colour. For a
-    /// tangent-space normal map prefer [`normal_map`](Self::normal_map), which
-    /// is the same thing named for the use. `rgba` must be exactly
-    /// `width * height * 4` bytes.
-    ///
-    /// # Errors
-    ///
-    /// [`ViewportError::InvalidTextureData`] when the length does not match the
-    /// dimensions.
-    pub fn linear(width: u32, height: u32, rgba: Vec<u8>) -> ViewportResult<Self> {
-        Self::new(
+    /// tangent-space normal map use [`normal_map`](Self::normal_map), which is
+    /// also linear but binds into a different slot.
+    pub fn linear(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
             width,
             height,
-            1,
-            ColourSpace::Linear,
-            TexturePayload::Rgba8(rgba),
-        )
+            colour_space: ColourSpace::Linear,
+            role: TextureRole::Image,
+            payload: TexturePayload::Rgba8(rgba),
+        }
     }
 
-    /// A tangent-space normal map. Linear, identical to
-    /// [`linear`](Self::linear), and named separately because this is the slot
-    /// that most often gets handed an sRGB texture by mistake: the encode bends
-    /// every normal the same way and renders as a lit surface with a
-    /// directional artefact rather than as an error.
+    /// A tangent-space normal map: linear, and bound into the normal-map slot
+    /// rather than the albedo one.
     ///
-    /// `rgba` must be exactly `width * height * 4` bytes.
-    ///
-    /// # Errors
-    ///
-    /// [`ViewportError::InvalidTextureData`] when the length does not match the
-    /// dimensions.
-    pub fn normal_map(width: u32, height: u32, rgba: Vec<u8>) -> ViewportResult<Self> {
-        Self::linear(width, height, rgba)
+    /// Named separately from [`linear`](Self::linear) for both reasons. The slot
+    /// differs, so the two are not interchangeable; and this is the case that
+    /// most often gets handed an sRGB texture by mistake, where the encode bends
+    /// every normal the same way and renders as a lit surface with a directional
+    /// artefact rather than as an error.
+    pub fn normal_map(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            colour_space: ColourSpace::Linear,
+            role: TextureRole::NormalMap,
+            payload: TexturePayload::Rgba8(rgba),
+        }
     }
 
     /// A 32-bit float RGBA image. Always linear.
     ///
-    /// Use this for environment maps and any other image whose values exceed
-    /// the display range. `rgba` must be exactly `width * height * 4` floats.
-    ///
-    /// # Errors
-    ///
-    /// [`ViewportError::InvalidTextureData`] when the length does not match the
-    /// dimensions.
-    pub fn hdr(width: u32, height: u32, rgba: Vec<f32>) -> ViewportResult<Self> {
-        Self::new(
+    /// Use this for baked lightmaps and anything else whose values exceed the
+    /// display range; the 8-bit paths clamp at upload and lose them.
+    pub fn hdr(width: u32, height: u32, rgba: Vec<f32>) -> Self {
+        Self {
             width,
             height,
-            1,
-            ColourSpace::Linear,
-            TexturePayload::Rgba32F(rgba),
-        )
-    }
-
-    /// A layered 32-bit float RGBA image, layers stored back to back. Always
-    /// linear.
-    ///
-    /// `rgba` must be exactly `width * height * 4 * layers` floats, and `layers`
-    /// must be non-zero.
-    ///
-    /// # Errors
-    ///
-    /// [`ViewportError::InvalidTextureData`] when the length does not match the
-    /// dimensions, or when `layers` is zero.
-    pub fn hdr_layers(
-        width: u32,
-        height: u32,
-        layers: u32,
-        rgba: Vec<f32>,
-    ) -> ViewportResult<Self> {
-        Self::new(
-            width,
-            height,
-            layers,
-            ColourSpace::Linear,
-            TexturePayload::Rgba32F(rgba),
-        )
+            colour_space: ColourSpace::Linear,
+            role: TextureRole::Image,
+            payload: TexturePayload::Rgba32F(rgba),
+        }
     }
 
     /// Width in texels.
@@ -205,16 +189,15 @@ impl TextureData {
         self.height
     }
 
-    /// Array layer count. `1` for every constructor except
-    /// [`hdr_layers`](Self::hdr_layers).
-    pub fn layers(&self) -> u32 {
-        self.layers
-    }
-
     /// The colour space the pixels are in. The renderer picks the texture
     /// format from this, and checks it against the space the slot requires.
     pub fn colour_space(&self) -> ColourSpace {
         self.colour_space
+    }
+
+    /// Which slot the texture binds into.
+    pub fn role(&self) -> TextureRole {
+        self.role
     }
 
     /// The pixels.
@@ -222,50 +205,30 @@ impl TextureData {
         &self.payload
     }
 
-    /// Take the payload, leaving the description behind. Lets the renderer move
-    /// the pixels onto an upload worker without copying them.
-    pub fn into_payload(self) -> TexturePayload {
-        self.payload
-    }
-
-    /// Everything at once, for an upload path that needs the dimensions and the
-    /// pixels without cloning either.
-    pub fn into_parts(self) -> (u32, u32, u32, ColourSpace, TexturePayload) {
-        (
-            self.width,
-            self.height,
-            self.layers,
-            self.colour_space,
-            self.payload,
-        )
-    }
-
-    fn new(
-        width: u32,
-        height: u32,
-        layers: u32,
-        colour_space: ColourSpace,
-        payload: TexturePayload,
-    ) -> ViewportResult<Self> {
-        let expected = (width as usize)
-            .saturating_mul(height as usize)
-            .saturating_mul(layers as usize)
+    /// Check the payload length against the dimensions. The upload calls this
+    /// before touching the GPU.
+    ///
+    /// # Errors
+    ///
+    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when the length does not match `width * height * 4`.
+    pub fn validate(&self) -> ViewportResult<()> {
+        let expected = (self.width as usize)
+            .saturating_mul(self.height as usize)
             .saturating_mul(4);
-        // A zero-layer image has no expected length to compare against, so it
-        // would otherwise slip through as "0 == 0".
-        if layers == 0 || payload.len() != expected {
+        if self.payload.len() != expected {
             return Err(ViewportError::InvalidTextureData {
                 expected,
-                actual: payload.len(),
+                actual: self.payload.len(),
             });
         }
-        Ok(Self {
-            width,
-            height,
-            layers,
-            colour_space,
-            payload,
-        })
+        Ok(())
+    }
+
+    /// Take the pixels, leaving the description behind. Lets the renderer move
+    /// the payload onto an upload worker without copying it.
+    pub fn into_payload(self) -> TexturePayload {
+        self.payload
     }
 }
 
@@ -281,8 +244,8 @@ impl std::fmt::Debug for TextureData {
         f.debug_struct("TextureData")
             .field("width", &self.width)
             .field("height", &self.height)
-            .field("layers", &self.layers)
             .field("colour_space", &self.colour_space)
+            .field("role", &self.role)
             .field("payload", &format_args!("{kind}({len})"))
             .finish()
     }
@@ -296,34 +259,36 @@ mod tests {
     fn constructors_record_the_space_they_name() {
         let px = vec![0u8; 4 * 4 * 4];
         assert_eq!(
-            TextureData::srgb(4, 4, px.clone()).unwrap().colour_space(),
+            TextureData::srgb(4, 4, px.clone()).colour_space(),
             ColourSpace::Srgb
         );
         assert_eq!(
-            TextureData::linear(4, 4, px.clone())
-                .unwrap()
-                .colour_space(),
+            TextureData::linear(4, 4, px.clone()).colour_space(),
             ColourSpace::Linear
         );
         assert_eq!(
-            TextureData::normal_map(4, 4, px).unwrap().colour_space(),
+            TextureData::normal_map(4, 4, px).colour_space(),
             ColourSpace::Linear
         );
+    }
+
+    #[test]
+    fn a_normal_map_is_linear_but_not_a_plain_data_image() {
+        // Both are linear, so the space alone cannot tell them apart. The role
+        // is what routes them to different bind-group slots.
+        let px = vec![0u8; 4 * 4 * 4];
+        let data = TextureData::linear(4, 4, px.clone());
+        let normal = TextureData::normal_map(4, 4, px);
+        assert_eq!(data.colour_space(), normal.colour_space());
+        assert_eq!(data.role(), TextureRole::Image);
+        assert_eq!(normal.role(), TextureRole::NormalMap);
     }
 
     #[test]
     fn float_payloads_are_always_linear() {
         let texels = vec![0.0f32; 2 * 2 * 4];
         assert_eq!(
-            TextureData::hdr(2, 2, texels.clone())
-                .unwrap()
-                .colour_space(),
-            ColourSpace::Linear
-        );
-        assert_eq!(
-            TextureData::hdr_layers(1, 2, 2, texels)
-                .unwrap()
-                .colour_space(),
+            TextureData::hdr(2, 2, texels).colour_space(),
             ColourSpace::Linear
         );
     }
@@ -333,7 +298,7 @@ mod tests {
         // The whole point of labelling rather than converting: an sRGB payload
         // reaches the GPU byte-identical, and the sampler does the decode.
         let px: Vec<u8> = (0..64).map(|i| i as u8).collect();
-        let data = TextureData::srgb(4, 4, px.clone()).unwrap();
+        let data = TextureData::srgb(4, 4, px.clone());
         match data.payload() {
             TexturePayload::Rgba8(v) => assert_eq!(v, &px),
             _ => panic!("expected an 8-bit payload"),
@@ -341,8 +306,11 @@ mod tests {
     }
 
     #[test]
-    fn length_is_checked_against_the_dimensions() {
-        let err = TextureData::srgb(4, 4, vec![0u8; 10]).unwrap_err();
+    fn validate_checks_the_length_against_the_dimensions() {
+        assert!(TextureData::srgb(4, 4, vec![0u8; 64]).validate().is_ok());
+        let err = TextureData::srgb(4, 4, vec![0u8; 10])
+            .validate()
+            .unwrap_err();
         match err {
             ViewportError::InvalidTextureData { expected, actual } => {
                 assert_eq!(expected, 64);
@@ -353,29 +321,26 @@ mod tests {
     }
 
     #[test]
-    fn layered_length_accounts_for_the_layers() {
-        let one_layer = vec![0.0f32; 2 * 2 * 4];
-        assert!(TextureData::hdr_layers(2, 2, 2, one_layer).is_err());
-        assert!(TextureData::hdr_layers(2, 2, 2, vec![0.0f32; 2 * 2 * 4 * 2]).is_ok());
+    fn float_payloads_are_measured_in_floats_not_bytes() {
+        // width * height * 4 elements, where an element is an f32 here and a
+        // byte above. Getting this wrong would reject every HDR upload.
+        assert!(TextureData::hdr(2, 2, vec![0.0f32; 16]).validate().is_ok());
+        assert!(TextureData::hdr(2, 2, vec![0.0f32; 64]).validate().is_err());
     }
 
     #[test]
-    fn zero_layers_is_rejected_rather_than_matching_an_empty_payload() {
-        assert!(TextureData::hdr_layers(2, 2, 0, Vec::new()).is_err());
-    }
-
-    #[test]
-    fn into_parts_round_trips_the_description() {
-        let data = TextureData::linear(2, 3, vec![7u8; 2 * 3 * 4]).unwrap();
-        let (w, h, layers, space, payload) = data.into_parts();
-        assert_eq!((w, h, layers), (2, 3, 1));
-        assert_eq!(space, ColourSpace::Linear);
-        assert_eq!(payload.texel_count(), 6);
+    fn building_is_infallible_so_call_sites_carry_one_result() {
+        // Regression guard for the ergonomics decision: a constructor that
+        // returned Result would force `?` here and again at the upload.
+        let data = TextureData::linear(2, 3, vec![7u8; 2 * 3 * 4]);
+        assert_eq!(data.width(), 2);
+        assert_eq!(data.height(), 3);
+        assert_eq!(data.into_payload().texel_count(), 6);
     }
 
     #[test]
     fn debug_summarises_the_payload_rather_than_printing_it() {
-        let data = TextureData::srgb(4, 4, vec![0u8; 64]).unwrap();
+        let data = TextureData::srgb(4, 4, vec![0u8; 64]);
         let shown = format!("{data:?}");
         assert!(shown.contains("Rgba8(64)"), "got {shown}");
         assert!(shown.contains("Srgb"), "got {shown}");

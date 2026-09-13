@@ -111,7 +111,11 @@ fn directional_lightmap_responds_to_normal() {
     // Uniform radiance 1.0, dominant direction (0.6,0,0.8) world, directionality 1.
     let radiance = renderer
         .resources_mut()
-        .upload_texture_hdr(&device, &queue, 2, 2, &[1.0f32; 2 * 2 * 4])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(2, 2, [1.0f32; 2 * 2 * 4].to_vec()),
+        )
         .unwrap();
     let dir_rgba: Vec<f32> = std::iter::repeat([0.6f32, 0.0, 0.8, 1.0])
         .take(2 * 2)
@@ -119,7 +123,11 @@ fn directional_lightmap_responds_to_normal() {
         .collect();
     let direction = renderer
         .resources_mut()
-        .upload_texture_hdr(&device, &queue, 2, 2, &dir_rgba)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(2, 2, dir_rgba.to_vec()),
+        )
         .unwrap();
     renderer
         .resources_mut()
@@ -155,11 +163,19 @@ fn directional_lightmap_responds_to_normal() {
         .collect();
     let nm_toward = renderer
         .resources_mut()
-        .upload_normal_map(&device, &queue, 2, 2, &toward)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::normal_map(2, 2, toward.to_vec()),
+        )
         .unwrap();
     let nm_away = renderer
         .resources_mut()
-        .upload_normal_map(&device, &queue, 2, 2, &away)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::normal_map(2, 2, away.to_vec()),
+        )
         .unwrap();
 
     let peak_with = |renderer: &mut ViewportRenderer, nm| -> f32 {
@@ -226,7 +242,11 @@ fn shadowmask_attenuates_direct_light() {
     // (gated by the shadowmask) reaches the readback.
     let radiance = renderer
         .resources_mut()
-        .upload_texture_hdr(&device, &queue, 2, 2, &[0.0f32; 2 * 2 * 4])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(2, 2, [0.0f32; 2 * 2 * 4].to_vec()),
+        )
         .unwrap();
 
     let peak_with_vis = |renderer: &mut ViewportRenderer, v: f32| -> f32 {
@@ -237,7 +257,11 @@ fn shadowmask_attenuates_direct_light() {
             .collect();
         let shadowmask = renderer
             .resources_mut()
-            .upload_texture_hdr(&device, &queue, 2, 2, &sm)
+            .upload_texture(
+                &device,
+                &queue,
+                viewport_lib::TextureData::hdr(2, 2, sm.to_vec()),
+            )
             .unwrap();
         renderer
             .resources_mut()
@@ -344,7 +368,11 @@ fn hdr_lightmap_survives_above_one() {
     // LDR upload: value 4.0 -> byte 255 -> ~1.0 after sRGB decode; clamped.
     let ldr = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 4, 4, &[255u8; 4 * 4 * 4])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(4, 4, [255u8; 4 * 4 * 4].to_vec()),
+        )
         .unwrap();
     let ldr_peak = capture_with(&mut renderer, ldr);
 
@@ -355,7 +383,11 @@ fn hdr_lightmap_survives_above_one() {
         .collect();
     let hdr = renderer
         .resources_mut()
-        .upload_texture_hdr(&device, &queue, 4, 4, &hdr_rgba)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::hdr(4, 4, hdr_rgba.to_vec()),
+        )
         .unwrap();
     let hdr_peak = capture_with(&mut renderer, hdr);
 

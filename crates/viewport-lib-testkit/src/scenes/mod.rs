@@ -342,7 +342,11 @@ fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = textures::checker(512, 8, [230, 230, 230], [40, 40, 50]);
     let tex_id = ctx
         .res
-        .upload_texture(ctx.device, ctx.queue, tex.width, tex.height, &tex.rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::srgb(tex.width, tex.height, tex.rgba.to_vec()),
+        )
         .expect("texture upload");
     let s = upload(ctx, &primitives::sphere(1.2, 48, 24));
     let mut mat = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.6);
@@ -359,7 +363,11 @@ fn build_textured_normalmap(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let nm = textures::normal_bumps(512, 8);
     let nm_id = ctx
         .res
-        .upload_normal_map(ctx.device, ctx.queue, nm.width, nm.height, &nm.rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::normal_map(nm.width, nm.height, nm.rgba.to_vec()),
+        )
         .expect("normal map upload");
     let s = upload(ctx, &primitives::sphere(1.3, 64, 32));
     let mut mat = Material::pbr([0.7, 0.7, 0.75], 0.1, 0.5);

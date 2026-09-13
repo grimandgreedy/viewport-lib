@@ -24,6 +24,7 @@ pub use crate::resources::material::colourmap_data::ColourmapId;
 pub use crate::resources::material::matcap_data::BuiltinMatcap;
 pub use crate::resources::material::matcap_data::MatcapId;
 pub use crate::resources::material::textures::GpuTexture;
+pub use crate::resources::material::textures::{TextureData, TexturePayload, TextureRole};
 pub use crate::resources::memory::ResidentBytes;
 pub use crate::resources::memory::TextureMemoryStats;
 pub use crate::resources::memory::VramBudget;

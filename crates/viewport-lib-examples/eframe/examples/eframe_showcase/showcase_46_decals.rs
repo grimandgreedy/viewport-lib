@@ -589,43 +589,60 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     let res = renderer.resources_mut();
 
     let albedo_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_disc_texture(128))
-        .expect("decal albedo upload");
-    // upload_normal_map, not upload_texture: a tangent-space normal map holds
-    // directions, not colour, and the sRGB path would decode a neutral 128 to
-    // 0.216 and tilt every normal the same way.
-    let normal_id = res
-        .upload_normal_map(
+        .upload_texture(
             &app.device,
             &app.queue,
-            128,
-            128,
-            &make_crater_normal_map(128),
+            vpl::TextureData::srgb(128, 128, make_disc_texture(128)),
+        )
+        .expect("decal albedo upload");
+    let normal_id = res
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::normal_map(128, 128, make_crater_normal_map(128)),
         )
         .expect("decal normal map upload");
     let wet_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_wet_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(128, 128, make_wet_texture(128)),
+        )
         .expect("wet texture upload");
     let stripe_id = res
-        .upload_texture(&app.device, &app.queue, 64, 64, &make_stripe_texture(64))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(64, 64, make_stripe_texture(64)),
+        )
         .expect("stripe texture upload");
     let footprint_id = res
         .upload_texture(
             &app.device,
             &app.queue,
-            128,
-            128,
-            &make_footprint_texture(128),
+            vpl::TextureData::srgb(128, 128, make_footprint_texture(128)),
         )
         .expect("footprint texture upload");
     let blood_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_blood_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(128, 128, make_blood_texture(128)),
+        )
         .expect("blood texture upload");
     let rune_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_rune_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(128, 128, make_rune_texture(128)),
+        )
         .expect("rune texture upload");
     let spark_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_spark_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(128, 128, make_spark_texture(128)),
+        )
         .expect("spark texture upload");
 
     app.decal46_state.albedo_tex = Some(albedo_id);
@@ -641,20 +658,26 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
         .upload_texture(
             &app.device,
             &app.queue,
-            128,
-            128,
-            &make_checker_texture(128),
+            vpl::TextureData::srgb(128, 128, make_checker_texture(128)),
         )
         .expect("checker texture upload");
     app.decal46_state.checker_tex = Some(checker_id);
 
     let label_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_label_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(128, 128, make_label_texture(128)),
+        )
         .expect("label texture upload");
     app.decal46_state.label_tex = Some(label_id);
 
     let fire_id = res
-        .upload_texture(&app.device, &app.queue, 128, 128, &make_fire_texture(128))
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(128, 128, make_fire_texture(128)),
+        )
         .expect("fire texture upload");
     app.decal46_state.fire_tex = Some(fire_id);
 

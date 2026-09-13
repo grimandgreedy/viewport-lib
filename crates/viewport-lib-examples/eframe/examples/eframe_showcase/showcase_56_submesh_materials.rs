@@ -185,14 +185,22 @@ pub(crate) fn build_submesh_scene(app: &mut App, renderer: &mut ViewportRenderer
         }
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, n as u32, n as u32, &rgba)
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(n as u32, n as u32, rgba.to_vec()),
+            )
             .ok()
     };
     // 1x1 translucent cyan albedo: alpha-blend materials read their alpha
     // from the sampled base colour, so this is what makes the canopy glass.
     let glass_tex = renderer
         .resources_mut()
-        .upload_texture(&app.device, &app.queue, 1, 1, &[170, 230, 255, 90])
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(1, 1, [170, 230, 255, 90].to_vec()),
+        )
         .ok();
 
     app.submesh_state = SubmeshState {

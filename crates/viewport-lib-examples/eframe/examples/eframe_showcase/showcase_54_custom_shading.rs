@@ -242,7 +242,11 @@ impl App {
                     }
                 }
                 resources
-                    .upload_texture(&self.device, &self.queue, 64, 64, &rgba)
+                    .upload_texture(
+                        &self.device,
+                        &self.queue,
+                        vpl::TextureData::srgb(64, 64, rgba.to_vec()),
+                    )
                     .expect("upload stripes")
             };
             self.cs_state.toon_tex = Some(
@@ -274,7 +278,11 @@ impl App {
                     }
                 }
                 resources
-                    .upload_texture(&self.device, &self.queue, 64, 64, &rgba)
+                    .upload_texture(
+                        &self.device,
+                        &self.queue,
+                        vpl::TextureData::srgb(64, 64, rgba.to_vec()),
+                    )
                     .expect("upload detail albedo")
             };
             self.cs_state.detail = Some(
@@ -317,10 +325,18 @@ impl App {
                 (
                     resources
                         // Height is linear data, not colour: no sRGB decode.
-                        .upload_data_texture(&self.device, &self.queue, 64, 64, &height)
+                        .upload_texture(
+                            &self.device,
+                            &self.queue,
+                            vpl::TextureData::linear(64, 64, height.to_vec()),
+                        )
                         .expect("upload parallax height"),
                     resources
-                        .upload_texture(&self.device, &self.queue, 64, 64, &albedo)
+                        .upload_texture(
+                            &self.device,
+                            &self.queue,
+                            vpl::TextureData::srgb(64, 64, albedo.to_vec()),
+                        )
                         .expect("upload parallax albedo"),
                 )
             };

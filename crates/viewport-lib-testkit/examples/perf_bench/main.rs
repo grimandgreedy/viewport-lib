@@ -394,7 +394,11 @@ fn build_meshes(
         let rgba = solid_texture(i);
         let id = renderer
             .resources_mut()
-            .upload_texture(device, queue, 8, 8, &rgba)
+            .upload_texture(
+                device,
+                queue,
+                viewport_lib::TextureData::srgb(8, 8, rgba.to_vec()),
+            )
             .expect("texture upload");
         textures.push(id);
     }

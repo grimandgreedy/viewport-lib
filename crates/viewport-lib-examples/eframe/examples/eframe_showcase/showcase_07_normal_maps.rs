@@ -75,7 +75,11 @@ impl App {
         let brick_nm_data = make_brick_normal_map(128, 128);
         let brick_nm_id = renderer
             .resources_mut()
-            .upload_normal_map(&self.device, &self.queue, 128, 128, &brick_nm_data)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::normal_map(128, 128, brick_nm_data.to_vec()),
+            )
             .expect("brick normal map upload");
 
         // upload_data_texture, not upload_texture: an AO map holds a cavity
@@ -84,19 +88,31 @@ impl App {
         let brick_ao_data = make_brick_ao_map(128, 128);
         let brick_ao_id = renderer
             .resources_mut()
-            .upload_data_texture(&self.device, &self.queue, 128, 128, &brick_ao_data)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::linear(128, 128, brick_ao_data.to_vec()),
+            )
             .expect("brick ao map upload");
 
         let tile_nm_data = make_tile_normal_map(128, 128);
         let tile_nm_id = renderer
             .resources_mut()
-            .upload_normal_map(&self.device, &self.queue, 128, 128, &tile_nm_data)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::normal_map(128, 128, tile_nm_data.to_vec()),
+            )
             .expect("tile normal map upload");
 
         let tile_ao_data = make_tile_ao_map(128, 128);
         let tile_ao_id = renderer
             .resources_mut()
-            .upload_data_texture(&self.device, &self.queue, 128, 128, &tile_ao_data)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::linear(128, 128, tile_ao_data.to_vec()),
+            )
             .expect("tile ao map upload");
 
         // --- Meshes ---

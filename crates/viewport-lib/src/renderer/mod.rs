@@ -2828,22 +2828,22 @@ impl ViewportRenderer {
         self.resources.on_upload_complete(id, cb);
     }
 
-    /// Start an asynchronous albedo texture upload. See
+    /// Start an asynchronous texture upload. See
     /// [`DeviceResources::begin_upload_texture`] for the semantics.
     pub fn begin_upload_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
+        data: crate::resources::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_texture(device, queue, width, height, rgba)
+        self.resources.begin_upload_texture(device, queue, data)
     }
 
-    /// Start an asynchronous normal-map upload. See
-    /// [`DeviceResources::begin_upload_normal_map`] for the semantics.
+    /// Start an asynchronous normal-map upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::normal_map(w, h, rgba))"
+    )]
     pub fn begin_upload_normal_map(
         &mut self,
         device: &crate::gpu::Device,
@@ -2852,8 +2852,11 @@ impl ViewportRenderer {
         height: u32,
         rgba: Vec<u8>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_normal_map(device, queue, width, height, rgba)
+        self.begin_upload_texture(
+            device,
+            queue,
+            crate::resources::TextureData::normal_map(width, height, rgba),
+        )
     }
 
     /// Take the texture id from a completed async texture upload. See

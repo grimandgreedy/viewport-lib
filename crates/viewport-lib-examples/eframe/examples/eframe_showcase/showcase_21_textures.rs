@@ -56,9 +56,7 @@ impl App {
             .upload_texture(
                 &self.device,
                 &self.queue,
-                PERCY_WIDTH,
-                PERCY_HEIGHT,
-                PERCY_RGBA,
+                vpl::TextureData::srgb(PERCY_WIDTH, PERCY_HEIGHT, PERCY_RGBA.to_vec()),
             )
             .expect("percy texture upload");
 
@@ -86,7 +84,11 @@ impl App {
         // --- Checkerboard on a sphere ---
         let checker = make_checkerboard(256, 8, [220, 220, 220, 255], [40, 40, 40, 255]);
         let checker_tex = res
-            .upload_texture(&self.device, &self.queue, 256, 256, &checker)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::srgb(256, 256, checker.to_vec()),
+            )
             .expect("checker texture upload");
 
         let sphere = vpl::geometry::primitives::sphere(1.8, 48, 24);
@@ -112,7 +114,11 @@ impl App {
         // --- Colour-gradient on a cube ---
         let gradient = make_gradient(256);
         let gradient_tex = res
-            .upload_texture(&self.device, &self.queue, 256, 256, &gradient)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::srgb(256, 256, gradient.to_vec()),
+            )
             .expect("gradient texture upload");
 
         let cube = vpl::geometry::primitives::cube(3.0);
@@ -136,7 +142,11 @@ impl App {
         // --- Stripe pattern on a torus ---
         let stripes = make_stripes(256, 16, [180, 100, 30, 255], [230, 200, 140, 255]);
         let stripes_tex = res
-            .upload_texture(&self.device, &self.queue, 256, 256, &stripes)
+            .upload_texture(
+                &self.device,
+                &self.queue,
+                vpl::TextureData::srgb(256, 256, stripes.to_vec()),
+            )
             .expect("stripes texture upload");
 
         let torus = vpl::geometry::primitives::torus(1.5, 0.5, 48, 24);

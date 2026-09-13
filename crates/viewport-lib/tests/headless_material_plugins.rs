@@ -191,7 +191,11 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let red = vec![[255u8, 0, 0, 255]; 16].concat();
     let red_tex = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 4, 4, &red)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(4, 4, red.to_vec()),
+        )
         .expect("upload texture");
     let red_variant = renderer
         .resources_mut()

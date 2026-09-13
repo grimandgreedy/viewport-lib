@@ -662,11 +662,11 @@ impl Showcase for PickingShowcase {
         // Decal straddling the cube's +Z face (cube half-extent 0.7).
         {
             let (dw, dh, rgba) = decal_texture();
-            if let Ok(tex) = ctx
-                .session
-                .resources_mut()
-                .upload_texture(ctx.device, ctx.queue, dw, dh, &rgba)
-            {
+            if let Ok(tex) = ctx.session.resources_mut().upload_texture(
+                ctx.device,
+                ctx.queue,
+                vpl::TextureData::srgb(dw, dh, rgba.to_vec()),
+            ) {
                 self.decal_tex = Some(tex);
                 self.decal_transform = Mat4::from_translation(cube_pos + Vec3::new(0.0, 0.0, 0.7))
                     * Mat4::from_scale(Vec3::new(1.0, 1.0, 0.5));

@@ -181,11 +181,19 @@ fn opaque_alpha_mask_matrix() {
                 // colour or opacity, so a real (1x1) texture is required.
                 let tex_below = renderer
                     .resources_mut()
-                    .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 20])
+                    .upload_texture(
+                        &device,
+                        &queue,
+                        viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 20].to_vec()),
+                    )
                     .unwrap();
                 let tex_above = renderer
                     .resources_mut()
-                    .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 220])
+                    .upload_texture(
+                        &device,
+                        &queue,
+                        viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 220].to_vec()),
+                    )
                     .unwrap();
 
                 let gen_ctr = std::cell::Cell::new(0u64);
@@ -312,7 +320,11 @@ fn oit_premultiplied_blend_matrix() {
     // A premultiplied grey: RGB already scaled by the 0.5 alpha it carries.
     let tex = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 1, 1, &[128, 128, 128, 128])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(1, 1, [128, 128, 128, 128].to_vec()),
+        )
         .unwrap();
 
     let gen_ctr = std::cell::Cell::new(0u64);
@@ -472,11 +484,19 @@ fn shadow_alpha_mask_matrix() {
         // Mask discard reads texture alpha, not base colour or opacity.
         let tex_below = renderer
             .resources_mut()
-            .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 20])
+            .upload_texture(
+                &device,
+                &queue,
+                viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 20].to_vec()),
+            )
             .unwrap();
         let tex_above = renderer
             .resources_mut()
-            .upload_texture(&device, &queue, 1, 1, &[255, 255, 255, 220])
+            .upload_texture(
+                &device,
+                &queue,
+                viewport_lib::TextureData::srgb(1, 1, [255, 255, 255, 220].to_vec()),
+            )
             .unwrap();
 
         let gen_ctr = std::cell::Cell::new(0u64);

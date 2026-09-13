@@ -21,6 +21,12 @@
 
 /// Order-2 real spherical harmonics: 9 coefficients per RGB channel.
 ///
+/// Linear. These are radiance, not a display colour, so they are used as they
+/// arrive with no sRGB decode anywhere in the path. Worth stating because
+/// Gaussian-splat SH looks like the same thing and is not: splat coefficients
+/// are trained against sRGB images, so the splat shader decodes them before
+/// use. Bake probe coefficients from linear radiance.
+///
 /// These are radiance coefficients (the raw projection of incoming light).
 /// [`evaluate_sh`] applies the cosine-lobe convolution that turns them into the
 /// diffuse irradiance a surface receives.
@@ -70,7 +76,7 @@ impl SHCoefficients {
 pub struct LightProbe {
     /// World-space position the probe was sampled at.
     pub position: [f32; 3],
-    /// SH radiance at that position.
+    /// SH radiance at that position. Linear; see [`SHCoefficients`].
     pub sh: SHCoefficients,
 }
 

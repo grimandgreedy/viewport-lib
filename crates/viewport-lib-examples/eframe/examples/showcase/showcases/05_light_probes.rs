@@ -521,7 +521,11 @@ impl IndirectLightingShowcase {
         let tex = ctx
             .session
             .resources_mut()
-            .upload_texture(device, queue, img.width, img.height, &texels)
+            .upload_texture(
+                device,
+                queue,
+                vpl::TextureData::srgb(img.width, img.height, texels.to_vec()),
+            )
             .unwrap();
         self.gi_baked_tex = Some(tex);
     }
@@ -741,9 +745,11 @@ impl Showcase for IndirectLightingShowcase {
                 .upload_texture(
                     ctx.device,
                     ctx.queue,
-                    LIGHTMAP_TEX,
-                    LIGHTMAP_TEX,
-                    &bake_radiance(LIGHTMAP_TEX, LIGHTMAP_TEX),
+                    vpl::TextureData::srgb(
+                        LIGHTMAP_TEX,
+                        LIGHTMAP_TEX,
+                        bake_radiance(LIGHTMAP_TEX, LIGHTMAP_TEX),
+                    ),
                 )
                 .unwrap(),
         );
@@ -753,9 +759,11 @@ impl Showcase for IndirectLightingShowcase {
                 .upload_texture(
                     ctx.device,
                     ctx.queue,
-                    LIGHTMAP_TEX,
-                    LIGHTMAP_TEX,
-                    &bake_ao(LIGHTMAP_TEX, LIGHTMAP_TEX),
+                    vpl::TextureData::srgb(
+                        LIGHTMAP_TEX,
+                        LIGHTMAP_TEX,
+                        bake_ao(LIGHTMAP_TEX, LIGHTMAP_TEX),
+                    ),
                 )
                 .unwrap(),
         );

@@ -318,7 +318,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .collect();
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
             .expect("sprite tex")
     };
 
@@ -356,7 +356,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         }
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
             .expect("flame tex")
     };
 
@@ -390,7 +390,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         }
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
             .expect("shockwave tex")
     };
 
@@ -422,7 +422,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .collect();
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
             .expect("streak tex")
     };
 
@@ -444,7 +444,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .collect();
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, w, h, &pixels)
+            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
             .expect("glow tex")
     };
 
@@ -499,7 +499,11 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         }
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, aw, ah, &pixels)
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(aw, ah, pixels.to_vec()),
+            )
             .expect("atlas tex")
     };
 

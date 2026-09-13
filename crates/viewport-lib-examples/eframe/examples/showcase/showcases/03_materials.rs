@@ -246,7 +246,11 @@ fn build_textures(ctx: &mut SetupCtx) -> Vec<TextureId> {
         out.push(
             ctx.session
                 .resources_mut()
-                .upload_texture(ctx.device, ctx.queue, w, h, &rgba)
+                .upload_texture(
+                    ctx.device,
+                    ctx.queue,
+                    vpl::TextureData::srgb(w, h, rgba.to_vec()),
+                )
                 .unwrap(),
         );
     }
@@ -371,7 +375,11 @@ fn upload(ctx: &mut SetupCtx, tex: (u32, u32, Vec<u8>)) -> TextureId {
     let (w, h, rgba) = tex;
     ctx.session
         .resources_mut()
-        .upload_texture(ctx.device, ctx.queue, w, h, &rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            vpl::TextureData::srgb(w, h, rgba.to_vec()),
+        )
         .unwrap()
 }
 
@@ -381,7 +389,11 @@ fn upload_data(ctx: &mut SetupCtx, tex: (u32, u32, Vec<u8>)) -> TextureId {
     let (w, h, rgba) = tex;
     ctx.session
         .resources_mut()
-        .upload_data_texture(ctx.device, ctx.queue, w, h, &rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            vpl::TextureData::linear(w, h, rgba.to_vec()),
+        )
         .unwrap()
 }
 
@@ -494,7 +506,11 @@ fn build_surface_maps(ctx: &mut SetupCtx) -> SurfaceMaps {
     let normal = ctx
         .session
         .resources_mut()
-        .upload_normal_map(ctx.device, ctx.queue, w, h, &rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            vpl::TextureData::normal_map(w, h, rgba.to_vec()),
+        )
         .unwrap();
     let ao = upload_data(ctx, bump_ao_texture());
     let orm = upload_data(ctx, orm_texture());

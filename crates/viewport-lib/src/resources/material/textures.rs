@@ -1,38 +1,45 @@
 use crate::resources::*;
 
+pub use viewport_lib_types::data::texture::{TextureData, TexturePayload, TextureRole};
+
 impl DeviceResources {
-    /// Upload an RGBA texture to the GPU and return its texture ID.
+    /// Upload a texture and return its ID.
     ///
-    /// The ID can be stored in `Material::texture_id` to apply the texture to objects.
-    /// `rgba_data` must be exactly `width * height * 4` bytes in RGBA8 format.
+    /// The colour space travels on the [`TextureData`], not in the name of this
+    /// function: build the payload with [`TextureData::srgb`] for a colour
+    /// image, [`TextureData::linear`] for a data map, [`TextureData::normal_map`]
+    /// for a tangent-space normal map, or [`TextureData::hdr`] for float values
+    /// beyond the display range. The renderer picks the texture format from the
+    /// space and the bind slot from the role.
+    ///
+    /// Store the returned id in the matching slot, for example
+    /// `Material::texture_id` for an sRGB image or `Material::ao_map_id` for a
+    /// linear one.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData) if the data length is incorrect.
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when the payload length does not match the dimensions.
     pub fn upload_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: &[u8],
+        data: TextureData,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         // Sync wrapper around the async path: build the job, drive it to
         // completion on the calling thread, and take the typed result. The
         // worker performs the same texture creation, sampler setup, and
-        // bind-group build that the apply closure runs from
-        // `process_uploads`. The data is copied into an owned `Vec` for the
-        // worker thread; small textures absorb this trivially, large
-        // textures pay one extra memcpy.
-        let id = self.begin_upload_texture(device, queue, width, height, rgba_data.to_vec())?;
+        // bind-group build that the apply closure runs from `process_uploads`.
+        let id = self.begin_upload_texture(device, queue, data)?;
         self.drain_until(device, queue, id)?;
         self.upload_result_texture(id)
     }
 
-    /// Upload an RGBA texture as a normal map and return its texture ID.
-    ///
-    /// Uses Rgba8Unorm format (not sRGB) so values are linear : required for correct
-    /// normal map decoding. `rgba_data` must be `width * height * 4` bytes.
+    /// Upload a tangent-space normal map.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: upload_texture(device, queue, TextureData::normal_map(w, h, rgba))"
+    )]
     pub fn upload_normal_map(
         &mut self,
         device: &crate::gpu::Device,
@@ -41,24 +48,18 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        // Sync wrapper; see `upload_texture` for the worker / apply layout.
-        let id = self.begin_upload_normal_map(device, queue, width, height, rgba_data.to_vec())?;
-        self.drain_until(device, queue, id)?;
-        self.upload_result_texture(id)
+        self.upload_texture(
+            device,
+            queue,
+            TextureData::normal_map(width, height, rgba_data.to_vec()),
+        )
     }
 
-    /// Upload a linear (non-sRGB) RGBA8 data texture and return its texture ID.
-    ///
-    /// For 8-bit textures that hold values rather than colour: metallic-roughness
-    /// / ORM, ambient occlusion, and standalone roughness or metallic maps. Uses
-    /// the linear `Rgba8Unorm` format (like [`upload_normal_map`](Self::upload_normal_map))
-    /// so the values are read back unchanged, and builds mips in linear space.
-    /// Store the returned id in the matching `Material` slot
-    /// (`metallic_roughness_texture_id`, `ao_map_id`, ...).
-    ///
-    /// Use [`upload_texture`](Self::upload_texture) instead for base-colour /
-    /// emissive images, which are sRGB. `rgba_data` must be `width * height * 4`
-    /// bytes.
+    /// Upload a linear (non-sRGB) RGBA8 data texture.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: upload_texture(device, queue, TextureData::linear(w, h, rgba))"
+    )]
     pub fn upload_data_texture(
         &mut self,
         device: &crate::gpu::Device,
@@ -67,149 +68,18 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        // Sync wrapper; see `upload_texture` for the worker / apply layout.
-        let id =
-            self.begin_upload_data_texture(device, queue, width, height, rgba_data.to_vec())?;
-        self.drain_until(device, queue, id)?;
-        self.upload_result_texture(id)
-    }
-
-    // -----------------------------------------------------------------------
-    // Async texture upload (routed through the upload-job runner)
-    // -----------------------------------------------------------------------
-
-    /// Start an asynchronous albedo texture upload.
-    ///
-    /// Returns a `JobId` immediately. The mip chain is built on a worker
-    /// thread; the texture creation and pixel copy then run on the device
-    /// thread during a `process_uploads` call, under the frame budget when
-    /// one is set, and the runner gates the job on a submission that
-    /// flushes those writes. Once the status is `Ready`, take the resulting
-    /// texture id with `upload_result_texture` and store it in
-    /// `Material::texture_id`.
-    ///
-    /// `rgba` transfers into the worker; clone at the call site to retain
-    /// it. Format and binding match the synchronous `upload_texture`.
-    ///
-    /// # Errors
-    ///
-    /// Returns
-    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// when `rgba.len() != width * height * 4`, reported before any job is
-    /// submitted.
-    pub fn begin_upload_texture(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        Ok(self.spawn_texture_upload(
+        self.upload_texture(
             device,
             queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
-                is_normal_map: false,
-                mip_levels: vec![rgba],
-            },
-        ))
+            TextureData::linear(width, height, rgba_data.to_vec()),
+        )
     }
 
-    /// Start an asynchronous normal-map upload.
-    ///
-    /// Same shape as `begin_upload_texture`, but the texture is created
-    /// with the linear `Rgba8Unorm` format and bound into the normal-map
-    /// slot. Take the result with `upload_result_texture` once `Ready`.
-    ///
-    /// # Errors
-    ///
-    /// Same as `begin_upload_texture`.
-    pub fn begin_upload_normal_map(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        Ok(self.spawn_texture_upload(
-            device,
-            queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba8Unorm,
-                is_normal_map: true,
-                mip_levels: vec![rgba],
-            },
-        ))
-    }
-
-    /// Start an asynchronous linear data-texture upload.
-    ///
-    /// Same shape as [`begin_upload_texture`](Self::begin_upload_texture) but the
-    /// texture is created with the linear `Rgba8Unorm` format (mips built in
-    /// linear space) and bound as a general material texture, not a normal map.
-    /// For metallic-roughness / ORM / AO / roughness / metallic maps. Take the
-    /// result with [`upload_result_texture`](Self::upload_result_texture) once
-    /// `Ready`.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`begin_upload_texture`](Self::begin_upload_texture).
-    pub fn begin_upload_data_texture(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        Ok(self.spawn_texture_upload(
-            device,
-            queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba8Unorm,
-                is_normal_map: false,
-                mip_levels: vec![rgba],
-            },
-        ))
-    }
-
-    /// Upload a linear HDR RGBA texture (`Rgba16Float`) and return its texture ID.
-    ///
-    /// For baked lightmaps and other data whose values exceed 1.0: the 8-bit
-    /// [`upload_texture`](Self::upload_texture) path clamps at upload, so bright
-    /// baked radiance is lost before it reaches the HDR render path. This keeps
-    /// the full range. `rgba` is `width * height * 4` linear `f32` values (RGBA,
-    /// row-major); they are converted to half floats. No mip chain is built
-    /// (lightmaps sample the base level), so the texture is single-mip.
+    /// Upload a linear HDR RGBA texture (`Rgba16Float`).
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: upload_texture(device, queue, TextureData::hdr(w, h, rgba))"
+    )]
     pub fn upload_texture_hdr(
         &mut self,
         device: &crate::gpu::Device,
@@ -218,24 +88,114 @@ impl DeviceResources {
         height: u32,
         rgba: &[f32],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        let id = self.begin_upload_texture_hdr(device, queue, width, height, rgba.to_vec())?;
-        self.drain_until(device, queue, id)?;
-        self.upload_result_texture(id)
+        self.upload_texture(
+            device,
+            queue,
+            TextureData::hdr(width, height, rgba.to_vec()),
+        )
     }
 
-    /// Start an asynchronous linear-HDR (`Rgba16Float`) texture upload.
+    // -----------------------------------------------------------------------
+    // Async texture upload (routed through the upload-job runner)
+    // -----------------------------------------------------------------------
+
+    /// Start an asynchronous texture upload.
     ///
-    /// Same shape as [`begin_upload_texture`](Self::begin_upload_texture) but the
-    /// texture is created as `Rgba16Float` (single mip) so values above 1.0
-    /// survive. `rgba` is `width * height * 4` linear `f32` values, converted to
-    /// half floats before upload. Take the result with
-    /// [`upload_result_texture`](Self::upload_result_texture) once `Ready`.
+    /// Returns a [`JobId`](crate::resources::JobId) immediately; the texture is
+    /// created and written on a worker thread during a `process_uploads` call,
+    /// under the frame budget when one is set. Once the status is `Ready`, take
+    /// the id with [`upload_result_texture`](Self::upload_result_texture).
+    ///
+    /// Format and binding follow the [`TextureData`], exactly as for the
+    /// synchronous [`upload_texture`](Self::upload_texture); `data` transfers
+    /// into the worker.
     ///
     /// # Errors
     ///
-    /// Returns
-    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// when `rgba.len() != width * height * 4`.
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when the payload length does not match the dimensions, reported before
+    /// any job is submitted.
+    pub fn begin_upload_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        data: TextureData,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        data.validate()?;
+        let width = data.width();
+        let height = data.height();
+        let space = data.colour_space();
+        let is_normal_map = data.role() == TextureRole::NormalMap;
+        // Format comes from the payload precision and the colour space: an
+        // 8-bit payload is sRGB or linear depending on what the caller named,
+        // and a float payload is always linear.
+        let (format, bytes) = match data.into_payload() {
+            TexturePayload::Rgba8(rgba) => {
+                let format = match space {
+                    crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
+                    crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
+                };
+                (format, rgba)
+            }
+            TexturePayload::Rgba32F(texels) => {
+                // Pack to half-float bytes (2 bytes per channel, little-endian).
+                let mut bytes = Vec::with_capacity(texels.len() * 2);
+                for &v in &texels {
+                    bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+                }
+                (crate::gpu::TextureFormat::Rgba16Float, bytes)
+            }
+        };
+        Ok(self.spawn_texture_upload(
+            device,
+            queue,
+            TextureUploadSpec {
+                width,
+                height,
+                format,
+                is_normal_map,
+                mip_levels: vec![bytes],
+            },
+        ))
+    }
+
+    /// Start an asynchronous normal-map upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::normal_map(w, h, rgba))"
+    )]
+    pub fn begin_upload_normal_map(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.begin_upload_texture(device, queue, TextureData::normal_map(width, height, rgba))
+    }
+
+    /// Start an asynchronous linear data-texture upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::linear(w, h, rgba))"
+    )]
+    pub fn begin_upload_data_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.begin_upload_texture(device, queue, TextureData::linear(width, height, rgba))
+    }
+
+    /// Start an asynchronous linear-HDR (`Rgba16Float`) texture upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::hdr(w, h, rgba))"
+    )]
     pub fn begin_upload_texture_hdr(
         &mut self,
         device: &crate::gpu::Device,
@@ -244,29 +204,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<f32>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        // Pack to half-float bytes (2 bytes per channel, little-endian).
-        let mut bytes = Vec::with_capacity(rgba.len() * 2);
-        for &v in &rgba {
-            bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
-        }
-        Ok(self.spawn_texture_upload(
-            device,
-            queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba16Float,
-                is_normal_map: false,
-                mip_levels: vec![bytes],
-            },
-        ))
+        self.begin_upload_texture(device, queue, TextureData::hdr(width, height, rgba))
     }
 
     /// Upload a multi-page HDR lightmap atlas (`Rgba16Float` texture array) and
@@ -2361,6 +2299,7 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod async_texture_tests {
+    use super::TextureData;
     use crate::DeviceResources;
     use crate::resources::UploadStatus;
 
@@ -2440,7 +2379,7 @@ mod async_texture_tests {
         // before any job is submitted.
         let rgba = vec![0u8; 12];
         let err = resources
-            .begin_upload_texture(&device, &queue, 2, 2, rgba)
+            .begin_upload_texture(&device, &queue, TextureData::srgb(2, 2, rgba))
             .expect_err("invalid size should error");
         assert!(matches!(
             err,
@@ -2463,7 +2402,7 @@ mod async_texture_tests {
 
         let rgba = vec![128u8; 4 * 4 * 4];
         let id = resources
-            .begin_upload_texture(&device, &queue, 4, 4, rgba)
+            .begin_upload_texture(&device, &queue, TextureData::srgb(4, 4, rgba))
             .unwrap();
         assert_eq!(resources.uploads_pending(), 1);
 
@@ -2496,7 +2435,7 @@ mod async_texture_tests {
 
         let rgba = vec![64u8; 8 * 8 * 4];
         let id = resources
-            .begin_upload_normal_map(&device, &queue, 8, 8, rgba)
+            .begin_upload_texture(&device, &queue, TextureData::normal_map(8, 8, rgba))
             .unwrap();
         drive_until_ready(&mut resources, &device, &queue, id);
         let tex_id = resources.upload_result_texture(id).expect("ready result");
@@ -2514,7 +2453,7 @@ mod async_texture_tests {
 
         let rgba = vec![200u8; 4 * 4 * 4];
         let tex_id = resources
-            .upload_texture(&device, &queue, 4, 4, &rgba)
+            .upload_texture(&device, &queue, TextureData::srgb(4, 4, rgba.to_vec()))
             .unwrap();
         assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
     }
@@ -2531,7 +2470,7 @@ mod async_texture_tests {
         // A metallic-roughness style data map: linear bytes, not colour.
         let rgba = vec![128u8; 8 * 8 * 4];
         let tex_id = resources
-            .upload_data_texture(&device, &queue, 8, 8, &rgba)
+            .upload_texture(&device, &queue, TextureData::linear(8, 8, rgba.to_vec()))
             .unwrap();
         assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
     }
@@ -2546,7 +2485,11 @@ mod async_texture_tests {
             DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id = resources
-            .upload_texture(&device, &queue, 4, 4, &vec![200u8; 4 * 4 * 4])
+            .upload_texture(
+                &device,
+                &queue,
+                TextureData::srgb(4, 4, vec![200u8; 4 * 4 * 4].to_vec()),
+            )
             .unwrap();
         let bytes_4x4 = resources.resident_bytes().texture_bytes;
 

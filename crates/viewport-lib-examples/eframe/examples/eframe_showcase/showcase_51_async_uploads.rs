@@ -1525,9 +1525,7 @@ impl App {
             match renderer.resources_mut().upload_texture(
                 &self.device,
                 &self.queue,
-                dim,
-                dim,
-                &rgba,
+                vpl::TextureData::srgb(dim, dim, rgba.to_vec()),
             ) {
                 Ok(tex_id) => {
                     self.async_uploads_state.loaded_texture_id = Some(tex_id);
@@ -1543,7 +1541,7 @@ impl App {
                 }
             }
         } else {
-            match renderer.begin_upload_texture(&self.device, &self.queue, dim, dim, rgba) {
+            match renderer.begin_upload_texture(&self.device, &self.queue, vpl::TextureData::srgb(dim, dim, rgba)) {
                 Ok(job) => {
                     self.async_uploads_state.texture_state = AssetState::InFlight {
                         job,

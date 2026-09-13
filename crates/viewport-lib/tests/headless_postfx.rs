@@ -767,7 +767,11 @@ fn grade_lut_remaps_colour() {
     }
     let lut_id = renderer
         .resources_mut()
-        .upload_normal_map(&device, &queue, n * n, n, &lut)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::normal_map(n * n, n, lut.to_vec()),
+        )
         .unwrap();
 
     let size = 32u32;

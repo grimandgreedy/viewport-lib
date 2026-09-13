@@ -3,12 +3,14 @@
 ## [Unreleased]
 
 ### Breaking
+- **`upload_texture` takes a `TextureData`** - a texture's colour space now travels on the data instead of in the name of the upload function you pick. Build the payload with `TextureData::srgb` for a colour image, `TextureData::linear` for a data map, `TextureData::normal_map` for a tangent-space normal map, or `TextureData::hdr` for float values, and pass it to `upload_texture` / `begin_upload_texture`. `upload_normal_map`, `upload_data_texture`, `upload_texture_hdr` and their `begin_*` counterparts still work but are deprecated and go away next release. `upload_texture` itself changes signature with no shim, because Rust cannot overload it.
 - **The `example-*` features are gone** - the examples moved to one crate per UI framework under `crates/viewport-lib-examples/`, so the library no longer carries optional eframe, iced, slint, or bevy dependencies. They were documented as not for consumers, and no library feature changed.
 - **Several enums are now `#[non_exhaustive]`** - a `match` on `ShadingModel`, `AlphaMode`, `BackfacePolicy`, or the animation-clip enums needs a `_ =>` arm.
 - **`gpu_phase::_RESERVED_INTERNAL` removed** - it reserved a plugin band that will never exist; the other phases are unchanged.
 - **`ViewportPlugin` is now `PluginInstaller`** - the installer trait's old name read as "a plugin for a viewport" rather than what it does; rename the trait in your `impl` and in any import. `PluginInstallCtx`, `install_plugin`, and `install` are unchanged.
 
 ### Features
+- **`TextureData` carries a texture's colour space** - the space is stated where the pixels are prepared, so it survives being built on a worker, cached, or returned across a loader boundary. `TextureRole` distinguishes a normal map from a plain linear data map, since the two bind to different slots. Nothing is converted: an sRGB payload reaches the GPU byte-identical and the sampler decodes it, which is why this labels the space rather than erasing it the way `Colour` does.
 - **The egui event adapter works on every wgpu leg** - `from_egui` now ships one copy per supported egui version, selected by `egui-adapter` (0.33), `egui-adapter-035`, or `egui-adapter-036`; enable the one matching your egui instead of hand-rolling the translation off the 27 leg.
 - **Post-effect plugin surface** - register your own effects before or after tone mapping, in the same chain as the built-in ones.
 - **Vignette** - darken the image toward the corners. Off by default.

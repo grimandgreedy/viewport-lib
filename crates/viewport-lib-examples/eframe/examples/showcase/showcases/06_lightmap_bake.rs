@@ -533,7 +533,11 @@ impl LightmapBakeShowcase {
                         dir_tex = Some(
                             ctx.session
                                 .resources_mut()
-                                .upload_texture_hdr(device, queue, aw, ah, &dirbuf)
+                                .upload_texture(
+                                    device,
+                                    queue,
+                                    vpl::TextureData::hdr(aw, ah, dirbuf.to_vec()),
+                                )
                                 .unwrap(),
                         );
                     }
@@ -547,7 +551,7 @@ impl LightmapBakeShowcase {
                 res.upload_texture_hdr_layers(device, queue, aw, ah, atlas_count, &layers)
                     .unwrap()
             } else {
-                res.upload_texture_hdr(device, queue, aw, ah, &layers)
+                res.upload_texture(device, queue, vpl::TextureData::hdr(aw, ah, layers.to_vec()))
                     .unwrap()
             };
             self.pieces[i].tex = Some(tex);
@@ -1562,7 +1566,11 @@ fn make_bump_normal_map(ctx: &mut SetupCtx, size: u32, bumps: f32) -> TextureId 
     }
     ctx.session
         .resources_mut()
-        .upload_normal_map(ctx.device, ctx.queue, size, size, &rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            vpl::TextureData::normal_map(size, size, rgba.to_vec()),
+        )
         .unwrap()
 }
 

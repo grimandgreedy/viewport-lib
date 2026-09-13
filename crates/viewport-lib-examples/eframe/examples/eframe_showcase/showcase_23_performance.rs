@@ -462,7 +462,11 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
             let (size, rgba) = make_box_texture(i);
             renderer
                 .resources_mut()
-                .upload_texture(&app.device, &app.queue, size, size, &rgba)
+                .upload_texture(
+                    &app.device,
+                    &app.queue,
+                    vpl::TextureData::srgb(size, size, rgba.to_vec()),
+                )
                 .expect("perf texture upload")
         })
         .collect();

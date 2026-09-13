@@ -871,7 +871,11 @@ impl App {
         if let Ok(tex) =
             renderer
                 .resources_mut()
-                .upload_texture(&self.device, &self.queue, dw, dh, &drgba)
+                .upload_texture(
+                    &self.device,
+                    &self.queue,
+                    vpl::TextureData::srgb(dw, dh, drgba.to_vec()),
+                )
         {
             self.pl_state.decal_texture_id = Some(tex);
         }

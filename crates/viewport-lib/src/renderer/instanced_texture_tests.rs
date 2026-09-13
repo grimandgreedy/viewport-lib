@@ -120,11 +120,19 @@ fn two_textured_planes(
         .unwrap();
     let tex_a = renderer
         .resources_mut()
-        .upload_texture(device, queue, 2, 2, &solid_rgba(2, 2, C_START))
+        .upload_texture(
+            device,
+            queue,
+            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
+        )
         .unwrap();
     let tex_b = renderer
         .resources_mut()
-        .upload_texture(device, queue, 2, 2, &solid_rgba(2, 2, C_START))
+        .upload_texture(
+            device,
+            queue,
+            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
+        )
         .unwrap();
     (
         textured_plane(mesh, tex_a, -1.05),
@@ -208,9 +216,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         .upload_texture(
             &device,
             &queue,
-            2,
-            2,
-            &solid_rgba(2, 2, [255, 255, 255, 255]),
+            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, [255, 255, 255, 255])),
         )
         .unwrap();
 
@@ -391,7 +397,11 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
         .unwrap();
     let tex = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 2, 2, &solid_rgba(2, 2, C_START))
+        .upload_texture(
+            &device,
+            &queue,
+            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
+        )
         .unwrap();
 
     let textured = textured_plane(mesh, tex, -1.05);
@@ -565,7 +575,11 @@ fn bindless_scene(
         .map(|(colour, x)| {
             let tex = renderer
                 .resources_mut()
-                .upload_texture(device, queue, 2, 2, &solid_rgba(2, 2, *colour))
+                .upload_texture(
+                    device,
+                    queue,
+                    crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
+                )
                 .unwrap();
             textured_plane(mesh, tex, x)
         })
@@ -705,7 +719,11 @@ fn bindless_keeps_mesh_instance_path_per_batch() {
         .unwrap();
     let tex = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 2, 2, &solid_rgba(2, 2, [220, 40, 40, 255]))
+        .upload_texture(
+            &device,
+            &queue,
+            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, [220, 40, 40, 255])),
+        )
         .unwrap();
 
     let mut item = MeshInstanceItem::default();
@@ -778,7 +796,11 @@ fn bindless_plugin_scene(
         .map(|(colour, x)| {
             let tex = renderer
                 .resources_mut()
-                .upload_texture(device, queue, 2, 2, &solid_rgba(2, 2, *colour))
+                .upload_texture(
+                    device,
+                    queue,
+                    crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
+                )
                 .unwrap();
             let mut it = textured_plane(mesh, tex, x);
             it.material.shading_plugin = Some(plugin);

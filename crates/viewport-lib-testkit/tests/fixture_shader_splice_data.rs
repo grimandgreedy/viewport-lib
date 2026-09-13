@@ -129,9 +129,7 @@ fn textured_material_plugin_samples_its_texture_and_params() {
     let texture = match harness.renderer.resources_mut().upload_texture(
         &harness.device,
         &harness.queue,
-        2,
-        2,
-        &[128u8; 16],
+        viewport_lib::TextureData::srgb(2, 2, [128u8; 16].to_vec()),
     ) {
         Ok(id) => id,
         Err(err) => {

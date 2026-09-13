@@ -164,7 +164,11 @@ fn main() -> eframe::Result {
                     .upload_mesh_data(device, &primitives::plane(4.5, 4.5 * percy_aspect))
                     .expect("percy plane");
                 tex_percy = res
-                    .upload_texture(device, queue, PERCY_WIDTH, PERCY_HEIGHT, PERCY_RGBA)
+                    .upload_texture(
+                        device,
+                        queue,
+                        vpl::TextureData::srgb(PERCY_WIDTH, PERCY_HEIGHT, PERCY_RGBA.to_vec()),
+                    )
                     .expect("percy texture");
             }
 

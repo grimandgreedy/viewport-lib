@@ -52,11 +52,14 @@ fn material_sampler_wrap_mode_changes_tiling() {
         .upload_texture(
             &device,
             &queue,
-            2,
-            1,
-            &[
-                255, 0, 0, 255, /* red */ 0, 0, 255, 255, /* blue */
-            ],
+            viewport_lib::TextureData::srgb(
+                2,
+                1,
+                [
+                    255, 0, 0, 255, /* red */ 0, 0, 255, 255, /* blue */
+                ]
+                .to_vec(),
+            ),
         )
         .unwrap();
 

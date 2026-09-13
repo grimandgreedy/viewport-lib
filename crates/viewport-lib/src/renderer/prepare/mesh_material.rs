@@ -434,7 +434,11 @@ mod tests {
         );
 
         let tex = resources
-            .upload_texture(&device, &queue, 1, 1, &[255u8, 255, 255, 255])
+            .upload_texture(
+                &device,
+                &queue,
+                crate::resources::TextureData::srgb(1, 1, [255u8, 255, 255, 255].to_vec()),
+            )
             .unwrap();
         resources
             .set_lightmap(
