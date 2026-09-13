@@ -678,39 +678,22 @@ impl eframe::App for App {
         // Lazy scene builds for the active mode.
         self.ensure_scene_built(frame);
 
-        // ---- Top panel: showcase selector ----
-        // One dropdown over the whole set, with a heading per registry group so
-        // related demos are found together rather than scanned for.
+        // ---- Top panel: mode switching ----
         egui::TopBottomPanel::top("mode_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label("Showcase:");
                 let mut chosen = None;
-                egui::ComboBox::from_id_salt("showcase_selector")
-                    .width(260.0)
-                    .selected_text(self.mode.label())
-                    .show_ui(ui, |ui| {
-                        let mut group = None;
-                        for entry in &registry::SHOWCASES {
-                            if group != Some(entry.group) {
-                                if group.is_some() {
-                                    ui.separator();
-                                }
-                                ui.label(egui::RichText::new(entry.group.title()).small().strong());
-                                group = Some(entry.group);
-                            }
-                            if ui
-                                .selectable_label(self.mode == entry.mode, entry.label())
-                                .clicked()
-                            {
-                                chosen = Some(entry.mode);
-                            }
-                        }
-                    });
+                for entry in &registry::SHOWCASES {
+                    if ui
+                        .selectable_label(self.mode == entry.mode, entry.label())
+                        .clicked()
+                    {
+                        chosen = Some(entry.mode);
+                    }
+                }
                 if let Some(mode) = chosen {
                     self.switch_mode(mode);
                 }
-                ui.separator();
-                ui.weak("Ctrl + [ / ] to cycle");
             });
         });
 
