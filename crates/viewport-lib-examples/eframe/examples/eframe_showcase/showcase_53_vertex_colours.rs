@@ -461,11 +461,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    _app: &mut crate::App,
-    _fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {}
+
 
 // ---------------------------------------------------------------------------
 // Viewport overlay and per-frame tick
@@ -473,7 +469,7 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -534,22 +530,22 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
-pub(crate) fn on_click(_app: &mut crate::App, _cx: &crate::ClickCtx) {}
+
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-pub(crate) fn drag_input(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Advance this showcase's own camera animation or object motion for the frame.
-pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Update this showcase's interactive widgets for the frame.
-pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Flush any per-frame GPU writes this showcase has queued.
-pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Cache gizmo placement for next frame's hit-testing.
-pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -572,4 +568,41 @@ pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> b
 pub(crate) fn suppress_orbit(app: &crate::App, cx: &crate::ViewportCtx) -> bool {
     app.vcol_state.paint_mode
         && (cx.response.dragged() || cx.response.drag_started())
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScVertexColours;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScVertexColours = ScVertexColours;
+
+impl crate::Showcase for ScVertexColours {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        tick(app, cx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_vertex_colour(app, ui)
+    }
 }

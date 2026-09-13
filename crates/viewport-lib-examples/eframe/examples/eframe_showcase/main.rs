@@ -2,7 +2,6 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib::wgpu;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData, GizmoAxis, GizmoMode,
@@ -1114,906 +1113,58 @@ impl App {
     /// renderer lock is only taken on the frame a build actually happens.
     /// Let the active showcase draw its own egui overlay over the viewport.
     fn showcase_overlay(&mut self, ui: &mut egui::Ui, cx: &ViewportCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::overlay(self, ui, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::overlay(self, ui, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::overlay(self, ui, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::overlay(self, ui, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::overlay(self, ui, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::overlay(self, ui, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::overlay(self, ui, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::overlay(self, ui, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::overlay(self, ui, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::overlay(self, ui, cx),
-            ShowcaseMode::Lights => showcase_11_lights::overlay(self, ui, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::overlay(self, ui, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::overlay(self, ui, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::overlay(self, ui, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::overlay(self, ui, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::overlay(self, ui, cx),
-            ShowcaseMode::Volume => showcase_17_volume::overlay(self, ui, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::overlay(self, ui, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::overlay(self, ui, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::overlay(self, ui, cx),
-            ShowcaseMode::Textures => showcase_21_textures::overlay(self, ui, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::overlay(self, ui, cx),
-            ShowcaseMode::Performance => showcase_23_performance::overlay(self, ui, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::overlay(self, ui, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::overlay(self, ui, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::overlay(self, ui, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::overlay(self, ui, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::overlay(self, ui, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::overlay(self, ui, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::overlay(self, ui, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::overlay(self, ui, cx),
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::overlay(self, ui, cx)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::overlay(self, ui, cx),
-            ShowcaseMode::Labels => showcase_34_labels::overlay(self, ui, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::overlay(self, ui, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::overlay(self, ui, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::overlay(self, ui, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::overlay(self, ui, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::overlay(self, ui, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::overlay(self, ui, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::overlay(self, ui, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::overlay(self, ui, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::overlay(self, ui, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::overlay(self, ui, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::overlay(self, ui, cx),
-            ShowcaseMode::Decals => showcase_46_decals::overlay(self, ui, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::overlay(self, ui, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::overlay(self, ui, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::overlay(self, ui, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::overlay(self, ui, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::overlay(self, ui, cx),
-            ShowcaseMode::Lod => showcase_52_lod::overlay(self, ui, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::overlay(self, ui, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::overlay(self, ui, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::overlay(self, ui, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::overlay(self, ui, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::overlay(self, ui, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::overlay(self, ui, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::overlay(self, ui, cx),
-        }
+        self.mode.showcase().overlay(self, ui, cx)
     }
 
     /// Let the active showcase advance its animation and request a repaint.
     fn showcase_tick(&mut self, cx: &ViewportCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::tick(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::tick(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::tick(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::tick(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::tick(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::tick(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::tick(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::tick(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::tick(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::tick(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::tick(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::tick(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::tick(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::tick(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::tick(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::tick(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::tick(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::tick(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::tick(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::tick(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::tick(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::tick(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::tick(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::tick(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::tick(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::tick(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::tick(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::tick(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::tick(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::tick(self, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::tick(self, cx),
-            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::tick(self, cx),
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::tick(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::tick(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::tick(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::tick(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::tick(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::tick(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::tick(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::tick(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::tick(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::tick(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::tick(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::tick(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::tick(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::tick(self, cx),
-            ShowcaseMode::LightingConsistency => showcase_47_lighting_consistency::tick(self, cx),
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::tick(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::tick(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::tick(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::tick(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::tick(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::tick(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::tick(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::tick(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::tick(self, cx),
-            ShowcaseMode::PhotometricLighting => showcase_57_photometric_lighting::tick(self, cx),
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::tick(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::tick(self, cx),
-        }
+        self.mode.showcase().tick(self, cx)
     }
 
     /// Handle drag gestures this showcase owns, before the camera controller runs.
     fn showcase_drag_input(&mut self, cx: &ViewportCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::drag_input(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::drag_input(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::drag_input(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::drag_input(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::drag_input(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::drag_input(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::drag_input(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::drag_input(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::drag_input(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::drag_input(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::drag_input(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::drag_input(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::drag_input(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::drag_input(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::drag_input(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::drag_input(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::drag_input(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::drag_input(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::drag_input(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::drag_input(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::drag_input(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::drag_input(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::drag_input(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::drag_input(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::drag_input(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::drag_input(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::drag_input(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::drag_input(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::drag_input(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::drag_input(self, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::drag_input(self, cx),
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::drag_input(self, cx)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::drag_input(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::drag_input(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::drag_input(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::drag_input(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::drag_input(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::drag_input(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::drag_input(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::drag_input(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::drag_input(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::drag_input(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::drag_input(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::drag_input(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::drag_input(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::drag_input(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::drag_input(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::drag_input(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::drag_input(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::drag_input(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::drag_input(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::drag_input(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::drag_input(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::drag_input(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::drag_input(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::drag_input(self, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::drag_input(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::drag_input(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::drag_input(self, cx),
-        }
+        self.mode.showcase().drag_input(self, cx)
     }
 
     /// Advance this showcase's own camera animation or object motion for the frame.
     fn showcase_advance(&mut self, cx: &ViewportCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::advance(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::advance(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::advance(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::advance(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::advance(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::advance(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::advance(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::advance(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::advance(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::advance(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::advance(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::advance(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::advance(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::advance(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::advance(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::advance(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::advance(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::advance(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::advance(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::advance(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::advance(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::advance(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::advance(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::advance(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::advance(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::advance(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::advance(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::advance(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::advance(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::advance(self, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::advance(self, cx),
-            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::advance(self, cx),
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::advance(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::advance(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::advance(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::advance(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::advance(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::advance(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::advance(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::advance(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::advance(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::advance(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::advance(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::advance(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::advance(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::advance(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::advance(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::advance(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::advance(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::advance(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::advance(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::advance(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::advance(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::advance(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::advance(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::advance(self, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::advance(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::advance(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::advance(self, cx),
-        }
+        self.mode.showcase().advance(self, cx)
     }
 
     /// Update this showcase's interactive widgets for the frame.
     fn showcase_widgets(&mut self, cx: &ViewportCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::widgets(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::widgets(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::widgets(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::widgets(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::widgets(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::widgets(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::widgets(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::widgets(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::widgets(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::widgets(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::widgets(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::widgets(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::widgets(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::widgets(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::widgets(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::widgets(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::widgets(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::widgets(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::widgets(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::widgets(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::widgets(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::widgets(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::widgets(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::widgets(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::widgets(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::widgets(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::widgets(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::widgets(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::widgets(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::widgets(self, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::widgets(self, cx),
-            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::widgets(self, cx),
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::widgets(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::widgets(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::widgets(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::widgets(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::widgets(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::widgets(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::widgets(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::widgets(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::widgets(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::widgets(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::widgets(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::widgets(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::widgets(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::widgets(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::widgets(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::widgets(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::widgets(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::widgets(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::widgets(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::widgets(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::widgets(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::widgets(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::widgets(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::widgets(self, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::widgets(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::widgets(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::widgets(self, cx),
-        }
+        self.mode.showcase().widgets(self, cx)
     }
 
     /// Flush any per-frame GPU writes this showcase has queued.
     fn showcase_flush_gpu(&mut self, cx: &ViewportCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::flush_gpu(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::flush_gpu(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::flush_gpu(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::flush_gpu(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::flush_gpu(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::flush_gpu(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::flush_gpu(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::flush_gpu(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::flush_gpu(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::flush_gpu(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::flush_gpu(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::flush_gpu(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::flush_gpu(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::flush_gpu(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::flush_gpu(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::flush_gpu(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::flush_gpu(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::flush_gpu(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::flush_gpu(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::flush_gpu(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::flush_gpu(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::flush_gpu(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::flush_gpu(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::flush_gpu(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::flush_gpu(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::flush_gpu(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::flush_gpu(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::flush_gpu(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::flush_gpu(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::flush_gpu(self, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::flush_gpu(self, cx),
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::flush_gpu(self, cx)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::flush_gpu(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::flush_gpu(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::flush_gpu(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::flush_gpu(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::flush_gpu(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::flush_gpu(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::flush_gpu(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::flush_gpu(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::flush_gpu(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::flush_gpu(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::flush_gpu(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::flush_gpu(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::flush_gpu(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::flush_gpu(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::flush_gpu(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::flush_gpu(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::flush_gpu(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::flush_gpu(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::flush_gpu(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::flush_gpu(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::flush_gpu(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::flush_gpu(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::flush_gpu(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::flush_gpu(self, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::flush_gpu(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::flush_gpu(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::flush_gpu(self, cx),
-        }
+        self.mode.showcase().flush_gpu(self, cx)
     }
 
     /// Cache gizmo placement for next frame's hit-testing.
     fn showcase_cache_gizmo(&mut self, cx: &ViewportCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::cache_gizmo(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::cache_gizmo(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::cache_gizmo(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::cache_gizmo(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::cache_gizmo(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::cache_gizmo(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::cache_gizmo(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::cache_gizmo(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::cache_gizmo(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::cache_gizmo(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::cache_gizmo(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::cache_gizmo(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::cache_gizmo(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::cache_gizmo(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::cache_gizmo(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::cache_gizmo(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::cache_gizmo(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::cache_gizmo(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::cache_gizmo(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::cache_gizmo(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::cache_gizmo(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::cache_gizmo(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::cache_gizmo(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::cache_gizmo(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::cache_gizmo(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::cache_gizmo(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::cache_gizmo(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::cache_gizmo(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::cache_gizmo(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::cache_gizmo(self, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::cache_gizmo(self, cx),
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::cache_gizmo(self, cx)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::cache_gizmo(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::cache_gizmo(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::cache_gizmo(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::cache_gizmo(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::cache_gizmo(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::cache_gizmo(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::cache_gizmo(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::cache_gizmo(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::cache_gizmo(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::cache_gizmo(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::cache_gizmo(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::cache_gizmo(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::cache_gizmo(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::cache_gizmo(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::cache_gizmo(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::cache_gizmo(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::cache_gizmo(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::cache_gizmo(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::cache_gizmo(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::cache_gizmo(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::cache_gizmo(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::cache_gizmo(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::cache_gizmo(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::cache_gizmo(self, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::cache_gizmo(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::cache_gizmo(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::cache_gizmo(self, cx),
-        }
+        self.mode.showcase().cache_gizmo(self, cx)
     }
 
     /// Let the active showcase take over the whole viewport for this frame.
     fn showcase_viewport_override(&mut self, ui: &mut egui::Ui, cx: &ViewportCtx) -> bool {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::viewport_override(self, ui, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::viewport_override(self, ui, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::viewport_override(self, ui, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::viewport_override(self, ui, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::viewport_override(self, ui, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::viewport_override(self, ui, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::viewport_override(self, ui, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::viewport_override(self, ui, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::viewport_override(self, ui, cx),
-            ShowcaseMode::Lights => showcase_11_lights::viewport_override(self, ui, cx),
-            ShowcaseMode::ScalarFields => {
-                showcase_12_scalar_fields::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::MultiViewport => {
-                showcase_13_multi_viewport::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::Isolines => showcase_14_isolines::viewport_override(self, ui, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::viewport_override(self, ui, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::viewport_override(self, ui, cx),
-            ShowcaseMode::Volume => showcase_17_volume::viewport_override(self, ui, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::viewport_override(self, ui, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::viewport_override(self, ui, cx),
-            ShowcaseMode::FaceAttributes => {
-                showcase_20_face_attributes::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::Textures => showcase_21_textures::viewport_override(self, ui, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::viewport_override(self, ui, cx),
-            ShowcaseMode::Performance => showcase_23_performance::viewport_override(self, ui, cx),
-            ShowcaseMode::BackfacePolicy => {
-                showcase_24_backface_policy::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::SurfaceVectors => {
-                showcase_25_surface_vectors::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::viewport_override(self, ui, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::viewport_override(self, ui, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::ImplicitSurface => {
-                showcase_30_implicit_surface::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::SparseVolumeGrid => {
-                showcase_31_sparse_volume_grid::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::viewport_override(self, ui, cx),
-            ShowcaseMode::Labels => showcase_34_labels::viewport_override(self, ui, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::viewport_override(self, ui, cx),
-            ShowcaseMode::PlaybackRuntime => {
-                showcase_36_playback_runtime::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::ProbeWidgets => {
-                showcase_37_probe_widgets::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::viewport_override(self, ui, cx),
-            ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::viewport_override(self, ui, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::viewport_override(self, ui, cx),
-            ShowcaseMode::GaussianSplats => {
-                showcase_42_gaussian_splats::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::SceneRuntime => {
-                showcase_43_scene_runtime::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::viewport_override(self, ui, cx),
-            ShowcaseMode::SkinnedAnimation => {
-                showcase_45_skinned_animation::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::Decals => showcase_46_decals::viewport_override(self, ui, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::ScatterVolumes => {
-                showcase_48_scatter_volumes::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::viewport_override(self, ui, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::viewport_override(self, ui, cx),
-            ShowcaseMode::AsyncUploads => {
-                showcase_51_async_uploads::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::Lod => showcase_52_lod::viewport_override(self, ui, cx),
-            ShowcaseMode::VertexColours => {
-                showcase_53_vertex_colours::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::CustomShading => {
-                showcase_54_custom_shading::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::Foreground => {
-                showcase_55_foreground_pass::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::SubmeshMaterials => {
-                showcase_56_submesh_materials::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::viewport_override(self, ui, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::viewport_override(self, ui, cx),
-        }
+        self.mode.showcase().viewport_override(self, ui, cx)
     }
 
     /// Let the active showcase drive the orbit controller itself. Returns true
     /// if it did, in which case the host leaves the camera alone.
     fn showcase_drive_camera(&mut self, cx: &ViewportCtx) -> bool {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::drive_camera(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::drive_camera(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::drive_camera(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::drive_camera(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::drive_camera(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::drive_camera(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::drive_camera(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::drive_camera(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::drive_camera(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::drive_camera(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::drive_camera(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::drive_camera(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::drive_camera(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::drive_camera(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::drive_camera(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::drive_camera(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::drive_camera(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::drive_camera(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::drive_camera(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::drive_camera(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::drive_camera(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::drive_camera(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::drive_camera(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::drive_camera(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::drive_camera(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::drive_camera(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::drive_camera(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::drive_camera(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::drive_camera(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::drive_camera(self, cx),
-            ShowcaseMode::SparseVolumeGrid => {
-                showcase_31_sparse_volume_grid::drive_camera(self, cx)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::drive_camera(self, cx)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::drive_camera(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::drive_camera(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::drive_camera(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::drive_camera(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::drive_camera(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::drive_camera(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::drive_camera(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::drive_camera(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::drive_camera(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::drive_camera(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::drive_camera(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::drive_camera(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::drive_camera(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::drive_camera(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::drive_camera(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::drive_camera(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::drive_camera(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::drive_camera(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::drive_camera(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::drive_camera(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::drive_camera(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::drive_camera(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::drive_camera(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::drive_camera(self, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::drive_camera(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::drive_camera(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::drive_camera(self, cx),
-        }
+        self.mode.showcase().drive_camera(self, cx)
     }
 
     /// Whether the active showcase wants the orbit resolved without moving the
     /// camera this frame.
     fn showcase_suppress_orbit(&self, cx: &ViewportCtx) -> bool {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::suppress_orbit(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::suppress_orbit(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::suppress_orbit(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::suppress_orbit(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::suppress_orbit(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::suppress_orbit(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::suppress_orbit(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::suppress_orbit(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::suppress_orbit(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::suppress_orbit(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::suppress_orbit(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::suppress_orbit(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::suppress_orbit(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::suppress_orbit(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::suppress_orbit(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::suppress_orbit(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::suppress_orbit(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::suppress_orbit(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::suppress_orbit(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::suppress_orbit(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::suppress_orbit(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::suppress_orbit(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::suppress_orbit(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::suppress_orbit(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::suppress_orbit(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::suppress_orbit(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::suppress_orbit(self, cx),
-            ShowcaseMode::SparseVolumeGrid => {
-                showcase_31_sparse_volume_grid::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::suppress_orbit(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::suppress_orbit(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::suppress_orbit(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::suppress_orbit(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::suppress_orbit(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::suppress_orbit(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::suppress_orbit(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::suppress_orbit(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::suppress_orbit(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::suppress_orbit(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::suppress_orbit(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::suppress_orbit(self, cx),
-            ShowcaseMode::SkinnedAnimation => {
-                showcase_45_skinned_animation::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::Decals => showcase_46_decals::suppress_orbit(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::suppress_orbit(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::suppress_orbit(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::suppress_orbit(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::suppress_orbit(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::suppress_orbit(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::suppress_orbit(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::suppress_orbit(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::suppress_orbit(self, cx),
-            ShowcaseMode::SubmeshMaterials => {
-                showcase_56_submesh_materials::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::suppress_orbit(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::suppress_orbit(self, cx),
-        }
+        self.mode.showcase().suppress_orbit(self, cx)
     }
 
     fn ensure_scene_built(&mut self, frame: &eframe::Frame) {
-        let needs = match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::needs_build(self),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::needs_build(self),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::needs_build(self)
-            }
-            ShowcaseMode::ParamVis => showcase_22_parameterization::needs_build(self),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::needs_build(self),
-            ShowcaseMode::Interaction => showcase_04_interaction::needs_build(self),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::needs_build(self),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::needs_build(self),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::needs_build(self),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::needs_build(self),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::needs_build(self),
-            ShowcaseMode::PostProcess => showcase_06_post_process::needs_build(self),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::needs_build(self),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::needs_build(self),
-            ShowcaseMode::Shadows => showcase_08_shadows::needs_build(self),
-            ShowcaseMode::Lights => showcase_11_lights::needs_build(self),
-            ShowcaseMode::Matcap => showcase_19_matcap::needs_build(self),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::needs_build(self)
-            }
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::needs_build(self),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::needs_build(self)
-            }
-            ShowcaseMode::Textures => showcase_21_textures::needs_build(self),
-            ShowcaseMode::Decals => showcase_46_decals::needs_build(self),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::needs_build(self),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::needs_build(self),
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::needs_build(self)
-            }
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::needs_build(self),
-            ShowcaseMode::Isolines => showcase_14_isolines::needs_build(self),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::needs_build(self),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::needs_build(self),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::needs_build(self),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::needs_build(self),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::needs_build(self)
-            }
-            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::needs_build(self),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::needs_build(self),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::needs_build(self),
-            ShowcaseMode::Volume => showcase_17_volume::needs_build(self),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::needs_build(self),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::needs_build(self),
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::needs_build(self),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::needs_build(self),
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::needs_build(self),
-            ShowcaseMode::Annotation => showcase_09_annotation::needs_build(self),
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::needs_build(self)
-            }
-            ShowcaseMode::Labels => showcase_34_labels::needs_build(self),
-            ShowcaseMode::Overlay => showcase_35_overlay::needs_build(self),
-            ShowcaseMode::VectorArt => showcase_59_vector_art::needs_build(self),
-            ShowcaseMode::Sprites => showcase_41_sprites::needs_build(self),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::needs_build(self),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::needs_build(self),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::needs_build(self),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::needs_build(self),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::needs_build(self),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::needs_build(self),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::needs_build(self),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::needs_build(self),
-            ShowcaseMode::Performance => showcase_23_performance::needs_build(self),
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::needs_build(self),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::needs_build(self),
-            ShowcaseMode::Lod => showcase_52_lod::needs_build(self),
-        };
+        let needs = self.mode.showcase().needs_build(self);
         if !needs {
             return;
         }
@@ -2024,81 +1175,7 @@ impl App {
             .get_mut::<ViewportRenderer>()
             .expect("ViewportRenderer must be registered");
 
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::build(self, renderer),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::build(self, renderer),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::build(self, renderer)
-            }
-            ShowcaseMode::ParamVis => showcase_22_parameterization::build(self, renderer),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::build(self, renderer),
-            ShowcaseMode::Interaction => showcase_04_interaction::build(self, renderer),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::build(self, renderer),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::build(self, renderer),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::build(self, renderer),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::build(self, renderer),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::build(self, renderer),
-            ShowcaseMode::PostProcess => showcase_06_post_process::build(self, renderer),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::build(self, renderer),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::build(self, renderer),
-            ShowcaseMode::Shadows => showcase_08_shadows::build(self, renderer),
-            ShowcaseMode::Lights => showcase_11_lights::build(self, renderer),
-            ShowcaseMode::Matcap => showcase_19_matcap::build(self, renderer),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::build(self, renderer)
-            }
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::build(self, renderer),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::build(self, renderer)
-            }
-            ShowcaseMode::Textures => showcase_21_textures::build(self, renderer),
-            ShowcaseMode::Decals => showcase_46_decals::build(self, renderer),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::build(self, renderer),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::build(self, renderer),
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::build(self, renderer)
-            }
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::build(self, renderer),
-            ShowcaseMode::Isolines => showcase_14_isolines::build(self, renderer),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::build(self, renderer),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::build(self, renderer),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::build(self, renderer),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::build(self, renderer),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::build(self, renderer)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::build(self, renderer)
-            }
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::build(self, renderer),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::build(self, renderer),
-            ShowcaseMode::Volume => showcase_17_volume::build(self, renderer),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::build(self, renderer),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::build(self, renderer),
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::build(self, renderer),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::build(self, renderer),
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::build(self, renderer),
-            ShowcaseMode::Annotation => showcase_09_annotation::build(self, renderer),
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::build(self, renderer)
-            }
-            ShowcaseMode::Labels => showcase_34_labels::build(self, renderer),
-            ShowcaseMode::Overlay => showcase_35_overlay::build(self, renderer),
-            ShowcaseMode::VectorArt => showcase_59_vector_art::build(self, renderer),
-            ShowcaseMode::Sprites => showcase_41_sprites::build(self, renderer),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::build(self, renderer),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::build(self, renderer),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::build(self, renderer),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::build(self, renderer),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::build(self, renderer),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::build(self, renderer),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::build(self, renderer),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::build(self, renderer),
-            ShowcaseMode::Performance => showcase_23_performance::build(self, renderer),
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::build(self, renderer),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::build(self, renderer),
-            ShowcaseMode::Lod => showcase_52_lod::build(self, renderer),
-        }
+        self.mode.showcase().build(self, renderer)
     }
 }
 
@@ -2116,113 +1193,98 @@ impl App {
         });
         ui.separator();
 
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::controls_basic(self, ui),
-            ShowcaseMode::SceneGraph => {
-                showcase_02_scene_graph::controls_scene_graph(self, ui, frame)
-            }
-            ShowcaseMode::Performance => showcase_23_performance::controls_performance(self, ui),
-            ShowcaseMode::Interaction => showcase_04_interaction::controls_interaction(self, ui),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::controls_materials_visibility(self, ui)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::controls_post_process(self, ui),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::controls_normal_maps(self, ui),
-            ShowcaseMode::Shadows => showcase_08_shadows::controls_shadows(self, ui),
-            ShowcaseMode::Annotation => showcase_09_annotation::controls_annotation(self, ui),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::controls_camera_tools(self, ui),
-            ShowcaseMode::Lights => showcase_11_lights::controls_lights(self, ui),
-            ShowcaseMode::ScalarFields => {
-                showcase_12_scalar_fields::controls_scalar_fields(self, ui)
-            }
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::controls_mv(self, ui),
-            ShowcaseMode::Isolines => showcase_14_isolines::controls_isolines(self, ui),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::controls_point_clouds(self, ui),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::controls_streamlines(self, ui),
-            ShowcaseMode::Volume => showcase_17_volume::controls_volume(self, ui, frame),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::controls_clipvol(self, ui),
-            ShowcaseMode::Matcap => showcase_19_matcap::controls_matcap(self, ui, frame),
-            ShowcaseMode::FaceAttributes => {
-                showcase_20_face_attributes::controls_face_attr(self, ui)
-            }
-            ShowcaseMode::Textures => showcase_21_textures::controls_textures(self, ui),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::controls_param_vis(self, ui),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::controls_ground_plane(self, ui),
-            ShowcaseMode::BackfacePolicy => {
-                showcase_24_backface_policy::controls_surface_appearance(self, ui)
-            }
-            ShowcaseMode::SurfaceVectors => {
-                showcase_25_surface_vectors::controls_surface_vectors(self, ui)
-            }
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::controls_volume_mesh(self, ui),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::controls_aux(self, ui),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::controls_cnq(self, ui)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::controls_dc(self, ui)
-            }
-            ShowcaseMode::ImplicitSurface => {
-                showcase_30_implicit_surface::controls_implicit(self, ui)
-            }
-            ShowcaseMode::SparseVolumeGrid => {
-                showcase_31_sparse_volume_grid::controls_sparse_volume_grid(self, ui)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::controls_eq(self, ui)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::controls_pick_levels(self, ui),
-            ShowcaseMode::Labels => showcase_34_labels::controls_labels(self, ui),
-            ShowcaseMode::Overlay => showcase_35_overlay::controls_overlay(self, ui),
-            ShowcaseMode::PlaybackRuntime => {
-                showcase_36_playback_runtime::controls_pb(self, ui, frame)
-            }
-            ShowcaseMode::ProbeWidgets => {
-                showcase_37_probe_widgets::controls_probe_widgets(self, ui)
-            }
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::controls_lic(self, ui),
-            ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::controls_tensor_glyphs(self, ui)
-            }
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::controls_warp(self, ui),
-            ShowcaseMode::Sprites => showcase_41_sprites::controls_sprites(self, ui),
-            ShowcaseMode::GaussianSplats => {
-                showcase_42_gaussian_splats::controls_gaussian_splats(self, ui)
-            }
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::controls_rt_demo(self, ui),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::controls_dbg_draw(self, ui),
-            ShowcaseMode::SkinnedAnimation => {
-                showcase_45_skinned_animation::controls_skin47(self, ui)
-            }
-            ShowcaseMode::Decals => showcase_46_decals::controls_decal46(self, ui),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::controls_lc(self, ui)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::controls_svol(self, ui),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::controls_sl(self, ui),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::controls_wave(self, ui),
-            ShowcaseMode::AsyncUploads => {
-                showcase_51_async_uploads::controls_async_uploads(self, ui, frame)
-            }
-            ShowcaseMode::Lod => showcase_52_lod::controls_lod(self, ui),
-            ShowcaseMode::VertexColours => {
-                showcase_53_vertex_colours::controls_vertex_colour(self, ui)
-            }
-            ShowcaseMode::CustomShading => {
-                showcase_54_custom_shading::controls_custom_shading(self, ui)
-            }
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::controls_foreground(self, ui),
-            ShowcaseMode::SubmeshMaterials => {
-                showcase_56_submesh_materials::controls_submesh(self, ui)
-            }
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::controls_photometric_lighting(self, ui)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::controls_physically_based_surfaces(self, ui)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::controls_vector_art(self, ui),
-        }
+        self.mode.showcase().controls(self, ui, frame)
+    }
+}
+
+/// One showcase. Implemented by a zero-sized marker per showcase module; the
+/// scene state itself lives in a field on [`App`]. Every method has a default,
+/// so a showcase writes only the hooks it actually uses.
+pub(crate) trait Showcase {
+    /// Whether the host should call [`build`](Self::build) before the next frame.
+    fn needs_build(&self, _app: &crate::App) -> bool {
+        false
+    }
+
+    /// Build the scene and frame the opening camera, once, on the first frame
+    /// after this showcase becomes active.
+    fn build(&self, _app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer) {}
+
+    /// Collect the render items and lighting for this frame.
+    fn scene(
+        &self,
+        _app: &mut crate::App,
+        _frame: &crate::eframe::Frame,
+        _out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
+        crate::SceneContents::empty()
+    }
+
+    /// Fold per-frame extras into the assembled frame: items, overlays, and
+    /// effect settings that are not part of the scene.
+    fn frame(&self, _app: &mut crate::App, _fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {}
+
+    /// Draw an egui overlay on top of the rendered viewport.
+    fn overlay(
+        &self,
+        _app: &mut crate::App,
+        _ui: &mut crate::eframe::egui::Ui,
+        _cx: &crate::ViewportCtx,
+    ) {
+    }
+
+    /// Advance animation and request another frame, after the viewport is drawn.
+    fn tick(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+    /// Route a plain viewport click that no gizmo or widget consumed.
+    fn on_click(&self, _app: &mut crate::App, _cx: &crate::ClickCtx) {}
+
+    /// Handle drag gestures this showcase owns, before the camera controller runs.
+    fn drag_input(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+    /// Advance this showcase's own camera animation or object motion.
+    fn advance(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+    /// Update interactive widgets for the frame.
+    fn widgets(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+    /// Flush any per-frame GPU writes this showcase has queued.
+    fn flush_gpu(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+    /// Cache gizmo placement for next frame's hit-testing.
+    fn cache_gizmo(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+    /// Take over the whole viewport for this frame. Returning true skips the
+    /// host's single-viewport path entirely.
+    fn viewport_override(
+        &self,
+        _app: &mut crate::App,
+        _ui: &mut crate::eframe::egui::Ui,
+        _cx: &crate::ViewportCtx,
+    ) -> bool {
+        false
+    }
+
+    /// Drive the orbit controller directly, for showcases that need the
+    /// resulting `ActionFrame`. Returning true leaves the camera to this
+    /// showcase.
+    fn drive_camera(&self, _app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+        false
+    }
+
+    /// Whether the orbit should resolve without moving the camera this frame,
+    /// because this showcase is using the drag for something of its own.
+    fn suppress_orbit(&self, _app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+        false
+    }
+
+    /// Controls panel for this showcase, drawn in the left side panel.
+    fn controls(
+        &self,
+        _app: &mut crate::App,
+        _ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
     }
 }
 
@@ -2242,6 +1304,19 @@ pub(crate) struct SceneContents {
     /// leave both at 0 and rely on the mode generation instead.
     pub(crate) scene_gen: u64,
     pub(crate) sel_gen: u64,
+}
+
+impl SceneContents {
+    /// An empty scene: no items, no background override, default lighting.
+    pub(crate) fn empty() -> Self {
+        Self {
+            items: Vec::new(),
+            bg_colour: None,
+            lighting: LightingSettings::default(),
+            scene_gen: 0,
+            sel_gen: 0,
+        }
+    }
 }
 
 /// Frame settings a showcase may set from its `scene` hook on top of the items
@@ -2317,143 +1392,7 @@ impl App {
         }
 
         let mut overrides = SceneOverrides::default();
-        let contents = match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::scene(self, frame, &mut overrides),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::scene(self, frame, &mut overrides),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::ParamVis => {
-                showcase_22_parameterization::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::BackfacePolicy => {
-                showcase_24_backface_policy::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Interaction => {
-                showcase_04_interaction::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::CameraTools => {
-                showcase_10_camera_tools::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::MultiViewport => {
-                showcase_13_multi_viewport::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Auxiliary => {
-                showcase_27_camera_framing::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::ProbeWidgets => {
-                showcase_37_probe_widgets::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::GroundPlane => {
-                showcase_03_ground_plane::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::PostProcess => {
-                showcase_06_post_process::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Foreground => {
-                showcase_55_foreground_pass::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::scene(self, frame, &mut overrides),
-            ShowcaseMode::Shadows => showcase_08_shadows::scene(self, frame, &mut overrides),
-            ShowcaseMode::Lights => showcase_11_lights::scene(self, frame, &mut overrides),
-            ShowcaseMode::Matcap => showcase_19_matcap::scene(self, frame, &mut overrides),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::SceneLights => {
-                showcase_49_scene_lights::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Textures => showcase_21_textures::scene(self, frame, &mut overrides),
-            ShowcaseMode::Decals => showcase_46_decals::scene(self, frame, &mut overrides),
-            ShowcaseMode::VertexColours => {
-                showcase_53_vertex_colours::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::SubmeshMaterials => {
-                showcase_56_submesh_materials::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::ScalarFields => {
-                showcase_12_scalar_fields::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Isolines => showcase_14_isolines::scene(self, frame, &mut overrides),
-            ShowcaseMode::PointClouds => {
-                showcase_15_point_clouds::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Streamlines => {
-                showcase_16_streamlines::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::FaceAttributes => {
-                showcase_20_face_attributes::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::SurfaceVectors => {
-                showcase_25_surface_vectors::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::scene(self, frame, &mut overrides),
-            ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Volume => showcase_17_volume::scene(self, frame, &mut overrides),
-            ShowcaseMode::ClipVolumes => {
-                showcase_18_clip_volumes::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::scene(self, frame, &mut overrides),
-            ShowcaseMode::ImplicitSurface => {
-                showcase_30_implicit_surface::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::SparseVolumeGrid => {
-                showcase_31_sparse_volume_grid::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::ScatterVolumes => {
-                showcase_48_scatter_volumes::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Annotation => showcase_09_annotation::scene(self, frame, &mut overrides),
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Labels => showcase_34_labels::scene(self, frame, &mut overrides),
-            ShowcaseMode::Overlay => showcase_35_overlay::scene(self, frame, &mut overrides),
-            ShowcaseMode::VectorArt => showcase_59_vector_art::scene(self, frame, &mut overrides),
-            ShowcaseMode::Sprites => showcase_41_sprites::scene(self, frame, &mut overrides),
-            ShowcaseMode::GaussianSplats => {
-                showcase_42_gaussian_splats::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::PlaybackRuntime => {
-                showcase_36_playback_runtime::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::scene(self, frame, &mut overrides),
-            ShowcaseMode::SceneRuntime => {
-                showcase_43_scene_runtime::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::scene(self, frame, &mut overrides),
-            ShowcaseMode::SkinnedAnimation => {
-                showcase_45_skinned_animation::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::scene(self, frame, &mut overrides),
-            ShowcaseMode::CustomShading => {
-                showcase_54_custom_shading::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Performance => {
-                showcase_23_performance::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::PickLevels => {
-                showcase_33_picking_levels::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::AsyncUploads => {
-                showcase_51_async_uploads::scene(self, frame, &mut overrides)
-            }
-            ShowcaseMode::Lod => showcase_52_lod::scene(self, frame, &mut overrides),
-        };
+        let contents = self.mode.showcase().scene(self, frame, &mut overrides);
         let SceneContents {
             items: scene_items,
             bg_colour,
@@ -2599,123 +1538,7 @@ impl App {
         // Everything a showcase re-submits per frame: extra render items,
         // overlays, and effect settings that are not part of its scene.
         let frame_ctx = FrameCtx { frame, w, h, dt };
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::ParamVis => {
-                showcase_22_parameterization::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::BackfacePolicy => {
-                showcase_24_backface_policy::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Interaction => showcase_04_interaction::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::MultiViewport => {
-                showcase_13_multi_viewport::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::ProbeWidgets => {
-                showcase_37_probe_widgets::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::PostProcess => showcase_06_post_process::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Foreground => {
-                showcase_55_foreground_pass::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Shadows => showcase_08_shadows::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Lights => showcase_11_lights::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Matcap => showcase_19_matcap::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Textures => showcase_21_textures::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Decals => showcase_46_decals::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::VertexColours => {
-                showcase_53_vertex_colours::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::SubmeshMaterials => {
-                showcase_56_submesh_materials::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::ScalarFields => {
-                showcase_12_scalar_fields::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Isolines => showcase_14_isolines::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::FaceAttributes => {
-                showcase_20_face_attributes::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::SurfaceVectors => {
-                showcase_25_surface_vectors::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Volume => showcase_17_volume::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::ImplicitSurface => {
-                showcase_30_implicit_surface::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::SparseVolumeGrid => {
-                showcase_31_sparse_volume_grid::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::ScatterVolumes => {
-                showcase_48_scatter_volumes::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Annotation => showcase_09_annotation::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Labels => showcase_34_labels::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Overlay => showcase_35_overlay::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::VectorArt => showcase_59_vector_art::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::Sprites => showcase_41_sprites::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::GaussianSplats => {
-                showcase_42_gaussian_splats::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::PlaybackRuntime => {
-                showcase_36_playback_runtime::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::SceneRuntime => {
-                showcase_43_scene_runtime::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::SkinnedAnimation => {
-                showcase_45_skinned_animation::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::CustomShading => {
-                showcase_54_custom_shading::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Performance => showcase_23_performance::frame(self, &mut fd, &frame_ctx),
-            ShowcaseMode::PickLevels => {
-                showcase_33_picking_levels::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::AsyncUploads => {
-                showcase_51_async_uploads::frame(self, &mut fd, &frame_ctx)
-            }
-            ShowcaseMode::Lod => showcase_52_lod::frame(self, &mut fd, &frame_ctx),
-        }
+        self.mode.showcase().frame(self, &mut fd, &frame_ctx);
 
         fd
     }
@@ -2728,79 +1551,7 @@ impl App {
 impl App {
     /// Route a plain viewport click to the active showcase.
     fn handle_click_select(&mut self, cx: &ClickCtx) {
-        match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::on_click(self, cx),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::on_click(self, cx),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::on_click(self, cx),
-            ShowcaseMode::Interaction => showcase_04_interaction::on_click(self, cx),
-            ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::on_click(self, cx)
-            }
-            ShowcaseMode::PostProcess => showcase_06_post_process::on_click(self, cx),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::on_click(self, cx),
-            ShowcaseMode::Shadows => showcase_08_shadows::on_click(self, cx),
-            ShowcaseMode::Annotation => showcase_09_annotation::on_click(self, cx),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::on_click(self, cx),
-            ShowcaseMode::Lights => showcase_11_lights::on_click(self, cx),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::on_click(self, cx),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::on_click(self, cx),
-            ShowcaseMode::Isolines => showcase_14_isolines::on_click(self, cx),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::on_click(self, cx),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::on_click(self, cx),
-            ShowcaseMode::Volume => showcase_17_volume::on_click(self, cx),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::on_click(self, cx),
-            ShowcaseMode::Matcap => showcase_19_matcap::on_click(self, cx),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::on_click(self, cx),
-            ShowcaseMode::Textures => showcase_21_textures::on_click(self, cx),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::on_click(self, cx),
-            ShowcaseMode::Performance => showcase_23_performance::on_click(self, cx),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::on_click(self, cx),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::on_click(self, cx),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::on_click(self, cx),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::on_click(self, cx),
-            ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::on_click(self, cx)
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::on_click(self, cx)
-            }
-            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::on_click(self, cx),
-            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::on_click(self, cx),
-            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::on_click(self, cx),
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::on_click(self, cx),
-            ShowcaseMode::Labels => showcase_34_labels::on_click(self, cx),
-            ShowcaseMode::Overlay => showcase_35_overlay::on_click(self, cx),
-            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::on_click(self, cx),
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::on_click(self, cx),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::on_click(self, cx),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::on_click(self, cx),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::on_click(self, cx),
-            ShowcaseMode::Sprites => showcase_41_sprites::on_click(self, cx),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::on_click(self, cx),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::on_click(self, cx),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::on_click(self, cx),
-            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::on_click(self, cx),
-            ShowcaseMode::Decals => showcase_46_decals::on_click(self, cx),
-            ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::on_click(self, cx)
-            }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::on_click(self, cx),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::on_click(self, cx),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::on_click(self, cx),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::on_click(self, cx),
-            ShowcaseMode::Lod => showcase_52_lod::on_click(self, cx),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::on_click(self, cx),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::on_click(self, cx),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::on_click(self, cx),
-            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::on_click(self, cx),
-            ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::on_click(self, cx)
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::on_click(self, cx)
-            }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::on_click(self, cx),
-        }
+        self.mode.showcase().on_click(self, cx)
     }
 
     /// Resolve a deferred click pick against the on-screen frame using the

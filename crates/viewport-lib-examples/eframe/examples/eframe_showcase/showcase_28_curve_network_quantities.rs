@@ -213,7 +213,7 @@ pub(crate) fn needs_build(_app: &crate::App) -> bool {
 
 /// Build this showcase's scene and frame its opening camera. Called once, on
 /// the first frame after it becomes the active showcase.
-pub(crate) fn build(_app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer) {}
+
 
 // ---------------------------------------------------------------------------
 // Per-frame scene contents
@@ -262,31 +262,31 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
-pub(crate) fn on_click(_app: &mut crate::App, _cx: &crate::ClickCtx) {}
+
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-pub(crate) fn drag_input(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Advance this showcase's own camera animation or object motion for the frame.
-pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Update this showcase's interactive widgets for the frame.
-pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Flush any per-frame GPU writes this showcase has queued.
-pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Cache gizmo placement for next frame's hit-testing.
-pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -308,4 +308,38 @@ pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> b
 /// frame. This showcase never suppresses it.
 pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
     false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScCurveNetworkQuantities;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScCurveNetworkQuantities = ScCurveNetworkQuantities;
+
+impl crate::Showcase for ScCurveNetworkQuantities {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+        frame(app, fd, ctx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_cnq(app, ui)
+    }
 }

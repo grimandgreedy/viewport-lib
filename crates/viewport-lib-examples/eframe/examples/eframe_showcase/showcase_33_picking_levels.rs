@@ -2370,7 +2370,7 @@ pub(crate) fn overlay(
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
@@ -2446,16 +2446,16 @@ pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
 }
 
 /// Advance this showcase's own camera animation or object motion for the frame.
-pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Update this showcase's interactive widgets for the frame.
-pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Flush any per-frame GPU writes this showcase has queued.
-pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Cache gizmo placement for next frame's hit-testing.
-pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -2477,4 +2477,50 @@ pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> b
 /// frame, because this showcase is using the drag for something of its own.
 pub(crate) fn suppress_orbit(app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
     app.pl_state.drag_start.is_some()
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScPickingLevels;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScPickingLevels = ScPickingLevels;
+
+impl crate::Showcase for ScPickingLevels {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+        frame(app, fd, ctx)
+    }
+    fn overlay(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+        overlay(app, ui, cx)
+    }
+    fn on_click(&self, app: &mut crate::App, cx: &crate::ClickCtx) {
+        on_click(app, cx)
+    }
+    fn drag_input(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        drag_input(app, cx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_pick_levels(app, ui)
+    }
 }
