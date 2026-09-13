@@ -30,7 +30,7 @@ pub(crate) struct DecalUniformRaw {
     pub has_emissive_tex: u32, //  4
     // D7
     pub edge_fade: f32, //  4
-    pub _pad: u32,      //  4  (alignment gap before D8)
+    pub ambient: f32,   //  4
     // D8
     pub projection: u32,          //  4  (0 = Planar, 1 = TriPlanar)
     pub tri_blend_sharpness: f32, //  4
@@ -117,7 +117,7 @@ pub(crate) fn decal_uniform_raw(item: &crate::renderer::DecalItem) -> DecalUnifo
         emissive: item.emissive,
         has_emissive_tex,
         edge_fade: item.edge_fade.clamp(0.0, 0.5),
-        _pad: 0,
+        ambient: item.ambient.max(0.0),
         projection: projection_u32,
         tri_blend_sharpness,
         _pad2: 0,

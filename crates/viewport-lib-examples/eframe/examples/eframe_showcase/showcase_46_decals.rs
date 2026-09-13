@@ -34,7 +34,7 @@ fn make_disc_texture(size: u32) -> Vec<u8> {
             buf[idx] = 120;
             buf[idx + 1] = 115;
             buf[idx + 2] = 110;
-            buf[idx + 3] = (alpha * 220.0) as u8;
+            buf[idx + 3] = (alpha * 255.0) as u8;
         }
     }
     buf
@@ -85,7 +85,7 @@ fn make_wet_texture(size: u32) -> Vec<u8> {
             buf[idx] = 50;
             buf[idx + 1] = 95;
             buf[idx + 2] = 205;
-            buf[idx + 3] = (alpha * 200.0) as u8;
+            buf[idx + 3] = (alpha * 235.0) as u8;
         }
     }
     buf
@@ -106,12 +106,12 @@ fn make_stripe_texture(size: u32) -> Vec<u8> {
                 buf[idx] = 10;
                 buf[idx + 1] = 10;
                 buf[idx + 2] = 10;
-                buf[idx + 3] = 230;
+                buf[idx + 3] = 255;
             } else {
                 buf[idx] = 245;
                 buf[idx + 1] = 245;
                 buf[idx + 2] = 245;
-                buf[idx + 3] = 230;
+                buf[idx + 3] = 255;
             }
         }
     }
@@ -138,7 +138,7 @@ fn make_footprint_texture(size: u32) -> Vec<u8> {
                 buf[idx] = 12;
                 buf[idx + 1] = 12;
                 buf[idx + 2] = 12;
-                buf[idx + 3] = (alpha * 210.0) as u8;
+                buf[idx + 3] = (alpha * 255.0) as u8;
             }
         }
     }
@@ -173,7 +173,7 @@ fn make_blood_texture(size: u32) -> Vec<u8> {
                 buf[idx] = 85;
                 buf[idx + 1] = 3;
                 buf[idx + 2] = 3;
-                buf[idx + 3] = (alpha * 230.0) as u8;
+                buf[idx + 3] = (alpha * 255.0) as u8;
             }
         }
     }
@@ -304,7 +304,7 @@ fn make_checker_texture(size: u32) -> Vec<u8> {
                 buf[idx + 1] = 210;
                 buf[idx + 2] = 245;
             }
-            buf[idx + 3] = 220;
+            buf[idx + 3] = 255;
         }
     }
     buf
@@ -330,17 +330,17 @@ fn make_label_texture(size: u32) -> Vec<u8> {
                 buf[idx] = 255;
                 buf[idx + 1] = 200;
                 buf[idx + 2] = 0;
-                buf[idx + 3] = 230;
+                buf[idx + 3] = 255;
             } else if chevron {
                 buf[idx] = 30;
                 buf[idx + 1] = 30;
                 buf[idx + 2] = 30;
-                buf[idx + 3] = 220;
+                buf[idx + 3] = 255;
             } else {
                 buf[idx] = 220;
                 buf[idx + 1] = 220;
                 buf[idx + 2] = 220;
-                buf[idx + 3] = 200;
+                buf[idx + 3] = 255;
             }
         }
     }
@@ -498,9 +498,9 @@ impl Default for Decal46State {
             use_normal_map: true,
             normal_blend: 0.8,
             blend_mode: DecalBlendMode::Replace,
-            alpha: 0.9,
-            decal_roughness: 0.25,
-            decal_metallic: 0.5,
+            alpha: 1.0,
+            decal_roughness: 0.8,
+            decal_metallic: 0.0,
             show_wet_patch: false,
             fading_mode: true,
             fade_lifetime: 6.0,
@@ -795,7 +795,7 @@ pub(crate) fn update_decal46(app: &mut App, dt: f32) {
             let mut item = DecalItem::default();
             item.transform = transform;
             item.texture_id = stripe;
-            item.alpha = 0.85;
+            item.alpha = 1.0;
             item.sort_key = -10;
             let handle = st.scene.add_decal_animated(
                 item,
@@ -830,9 +830,12 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             let mut item = DecalItem::default();
             item.transform = transform;
             item.texture_id = wet;
-            item.roughness = 0.05;
+            // 0.3 is about as smooth as a decal can go: the pass takes the
+            // receiver normal from depth derivatives, and a tighter lobe than
+            // this bands on the quantisation steps.
+            item.roughness = 0.3;
             item.metallic = 0.0;
-            item.alpha = 0.85;
+            item.alpha = 1.0;
             item.sort_key = 10;
             fd.scene.decals.push(item);
         }
@@ -966,7 +969,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             let mut item = DecalItem::default();
             item.transform = transform;
             item.texture_id = checker;
-            item.alpha = 0.9;
+            item.alpha = 1.0;
             item.edge_fade = 0.05;
             item.projection = if st.use_tri_planar {
                 vpl::DecalProjection::TriPlanar {
@@ -994,7 +997,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         let mut item = DecalItem::default();
         item.transform = transform;
         item.texture_id = label;
-        item.alpha = 0.95;
+        item.alpha = 1.0;
         item.edge_fade = 0.05;
         item.projection = DecalProjection::Cylindrical {
             facing: st.cyl_facing,
@@ -1061,6 +1064,8 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(4.0);
         ui.label("Blend mode:");
+        ui.small("Replace is lit by the scene. Multiply and Additive are not: one scales");
+        ui.small("a colour that already carries the lighting, the other adds emitted light.");
         ui.horizontal(|ui| {
             let cur = app.decal46_state.blend_mode;
             if ui
@@ -1094,6 +1099,9 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.separator();
         ui.label("Roughness / metallic:");
+        ui.small("The decal texture is albedo, lit by the scene like the surface under it.");
+        ui.small("Below about 0.3 roughness the highlight bands: the receiver normal");
+        ui.small("comes from the depth buffer and is too coarse for a tighter lobe.");
         ui.add(
             egui::Slider::new(&mut app.decal46_state.decal_roughness, 0.0..=1.0).text("Roughness"),
         );
@@ -1105,7 +1113,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
             &mut app.decal46_state.show_wet_patch,
             "Show wet patch (ground left)",
         );
-        ui.small("Wet patch: roughness 0.05, sort above footprints.");
+        ui.small("Wet patch: roughness 0.3, sort above footprints.");
 
         ui.add_space(6.0);
         ui.separator();
@@ -1356,7 +1364,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -1380,18 +1387,13 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
 
-
 /// Advance this showcase's own camera animation or object motion for the frame.
-
 
 /// Update this showcase's interactive widgets for the frame.
 
-
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -1432,7 +1434,12 @@ impl crate::Showcase for ScDecals {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -1444,7 +1451,12 @@ impl crate::Showcase for ScDecals {
     fn on_click(&self, app: &mut crate::App, cx: &crate::ClickCtx) {
         on_click(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -1453,7 +1465,12 @@ impl crate::Showcase for ScDecals {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_decal46(app, ui)
     }
 }

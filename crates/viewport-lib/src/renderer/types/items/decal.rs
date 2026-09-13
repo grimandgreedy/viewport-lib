@@ -115,15 +115,30 @@ pub enum DecalAnimation {
 /// Lower keys render first (underneath); higher keys render on top.
 /// Decals with equal keys render in insertion order.
 ///
-/// # Roughness / metallic (D3)
+/// # Lighting
 ///
-/// `roughness` and `metallic` add a view-angle specular approximation on top
-/// of the decal colour. Because decals run post-opaque without access to scene
-/// light data, the highlight uses the view direction as a retroreflection proxy:
-/// low roughness produces a tight glossy highlight at near-normal incidence;
-/// high metallic tints the highlight by the albedo colour. This approximation
-/// is sufficient for wet-surface and scuff effects; it is not physically
-/// accurate PBR.
+/// A `Replace` decal's texture is treated as albedo and lit by the scene's
+/// lights before it composites, using the same Cook-Torrance BRDF, cascaded
+/// shadows, and hemisphere ambient the opaque pass uses. A decal therefore
+/// darkens in shadow and tracks the key light the way the surface under it
+/// does. `roughness` and `metallic` drive that BRDF and mean what they mean on
+/// [`Material`](crate::scene::Material).
+///
+/// Three gaps to know about. Shadowing follows the primary directional light
+/// only: point-light shadow cubes are not sampled, so a decal inside a point
+/// light's shadow still takes that light. The ambient term is the hemisphere
+/// fill plus `ambient`; image-based lighting is not sampled, so in an IBL-lit
+/// scene a decal takes the hemisphere fill where the surface under it takes
+/// the environment. And the receiver normal the BRDF uses is reconstructed
+/// from the depth buffer, so it is quantised: below roughness of about 0.3 the
+/// highlight is tight enough to land on those steps and band, worsening with
+/// distance as depth precision drops. Mirror-smooth decals are outside what
+/// this pass can resolve; author a wet patch at 0.3 or above, or model it as
+/// geometry.
+///
+/// `Multiply` and `Additive` decals are not lit. Multiply scales a receiver
+/// colour that already carries the lighting, and additive adds emitted light;
+/// lighting either would apply the scene's light twice.
 ///
 /// # UV animation (D4)
 ///
@@ -188,6 +203,12 @@ pub struct DecalItem {
     /// Fraction of each local half-extent over which the alpha fades to zero at the box boundary.
     /// Range [0.0, 0.5]. Default: 0.0 (hard edge).
     pub edge_fade: f32,
+    /// Constant ambient coefficient added to the hemisphere fill when the decal is lit,
+    /// the same role [`Material::ambient`](crate::scene::Material::ambient) plays for a
+    /// mesh. Default 0.15, matching `Material`'s default, so a decal on a default-material
+    /// surface picks up the same floor. Set it to the receiver material's `ambient` when
+    /// that has been changed, or to 0.0 to rely on the hemisphere fill alone.
+    pub ambient: f32,
     // -- D8 fields --
     /// How the decal texture is projected onto the receiver surface. Default: `Planar`.
     ///
@@ -223,6 +244,7 @@ impl Default for DecalItem {
             emissive: 0.0,
             emissive_texture_id: None,
             edge_fade: 0.0,
+            ambient: 0.15,
             projection: DecalProjection::Planar,
             settings: ItemSettings::default(),
         }
