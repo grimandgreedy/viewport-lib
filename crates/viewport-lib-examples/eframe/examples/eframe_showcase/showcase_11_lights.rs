@@ -207,7 +207,7 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
                         // Colour
                         ui.horizontal(|ui| {
                             ui.label("Colour:");
-                            let mut c = src.colour;
+                            let mut c = src.colour.to_linear_rgb();
                             if ui.color_edit_button_rgb(&mut c).changed() {
                                 src.colour = c.into();
                             }
@@ -404,8 +404,8 @@ pub(crate) fn scene(
             } else {
                 0.0
             };
-            _t.sky_colour = app.lights_state.sky_colour;
-            _t.ground_colour = app.lights_state.ground_colour;
+            _t.sky_colour = app.lights_state.sky_colour.into();
+            _t.ground_colour = app.lights_state.ground_colour.into();
             _t
         };
         let sg = app.lights_state.scene.version();

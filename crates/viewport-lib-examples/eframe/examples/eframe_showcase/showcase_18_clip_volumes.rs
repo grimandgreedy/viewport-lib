@@ -593,8 +593,8 @@ pub(crate) fn clipvol_collect_scene_items(
             _t
         }];
         _t.hemisphere_intensity = 0.4;
-        _t.sky_colour = [1.0, 1.0, 1.0];
-        _t.ground_colour = [0.8, 0.8, 0.8];
+        _t.sky_colour = [1.0, 1.0, 1.0].into();
+        _t.ground_colour = [0.8, 0.8, 0.8].into();
         _t
     };
     (items, lighting, sg, 0)

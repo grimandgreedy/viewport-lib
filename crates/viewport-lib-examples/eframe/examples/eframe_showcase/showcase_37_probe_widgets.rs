@@ -365,8 +365,8 @@ pub(crate) fn pw_collect_scene_items(
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.6;
-        _t.sky_colour = [1.0, 1.0, 1.0];
-        _t.ground_colour = [0.8, 0.8, 0.8];
+        _t.sky_colour = [1.0, 1.0, 1.0].into();
+        _t.ground_colour = [0.8, 0.8, 0.8].into();
         _t
     };
     let sg = app.pw_state.scene.version();

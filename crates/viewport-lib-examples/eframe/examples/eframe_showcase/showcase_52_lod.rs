@@ -316,8 +316,8 @@ pub(crate) fn scene(
         let lighting = {
             let mut t = vpl::LightingSettings::default();
             t.hemisphere_intensity = 0.4;
-            t.sky_colour = [1.0, 1.0, 1.0];
-            t.ground_colour = [1.0, 1.0, 1.0];
+            t.sky_colour = [1.0, 1.0, 1.0].into();
+            t.ground_colour = [1.0, 1.0, 1.0].into();
             t
         };
         let generation = app.lod_state.generation;

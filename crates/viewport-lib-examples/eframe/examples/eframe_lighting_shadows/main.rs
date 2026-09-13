@@ -451,8 +451,8 @@ impl App {
             shadow_extent_enabled: false,
             shadow_extent_value: 20.0,
             hemisphere_intensity: 0.2,
-            sky_colour: [0.8, 0.9, 1.0],
-            ground_colour: [0.5, 0.55, 0.6],
+            sky_colour: [0.8, 0.9, 1.0].into(),
+            ground_colour: [0.5, 0.55, 0.6].into(),
             debug_vis_active: false,
             debug_vis_mode_replace: true,
             debug_vis_splitscreen: false,
@@ -522,7 +522,7 @@ impl App {
                 self.light_radius,
             ),
         };
-        light.colour = self.light_colour;
+        light.colour = self.light_colour.into();
         light.importance = self.light_importance;
         light.cast_shadows = self.light_cast_shadows;
         light
@@ -544,8 +544,8 @@ impl App {
                 None
             };
             _t.hemisphere_intensity = self.hemisphere_intensity;
-            _t.sky_colour = self.sky_colour;
-            _t.ground_colour = self.ground_colour;
+            _t.sky_colour = self.sky_colour.into();
+            _t.ground_colour = self.ground_colour.into();
             _t
         }
     }

@@ -1683,8 +1683,8 @@ pub(crate) fn sprite_lighting(app: &App) -> LightingSettings {
             settings.lights = vec![];
             settings.shadows.enabled = app.sprite_state.lit_receive_shadows;
             settings.hemisphere_intensity = 0.35;
-            settings.sky_colour = [0.65, 0.72, 0.85];
-            settings.ground_colour = [0.18, 0.16, 0.14];
+            settings.sky_colour = [0.65, 0.72, 0.85].into();
+            settings.ground_colour = [0.18, 0.16, 0.14].into();
         }
         _ => {
             let mut light = LightSource::default();
@@ -1696,8 +1696,8 @@ pub(crate) fn sprite_lighting(app: &App) -> LightingSettings {
             settings.lights = vec![light];
             settings.shadows.enabled = false;
             settings.hemisphere_intensity = 0.4;
-            settings.sky_colour = [0.85, 0.9, 1.0];
-            settings.ground_colour = [0.4, 0.4, 0.5];
+            settings.sky_colour = [0.85, 0.9, 1.0].into();
+            settings.ground_colour = [0.4, 0.4, 0.5].into();
         }
     }
     settings

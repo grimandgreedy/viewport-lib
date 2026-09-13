@@ -157,7 +157,7 @@ impl PresetsState {
     pub(crate) fn lighting(&self) -> LightingSettings {
         let sun = {
             let mut s = LightSource::directional_lux(self.sky.direction(), self.sky.illuminance());
-            s.colour = self.sky.colour();
+            s.colour = self.sky.colour().into();
             s.cast_shadows = true;
             s
         };
@@ -166,7 +166,7 @@ impl PresetsState {
         if self.bulb_on {
             let mut bulb =
                 LightSource::point_lumens(self.bulb_position(), self.bulb.flux(), 25.0, 0.15);
-            bulb.colour = self.bulb.colour();
+            bulb.colour = self.bulb.colour().into();
             bulb.cast_shadows = true;
             lights.push(bulb);
         }
@@ -178,8 +178,8 @@ impl PresetsState {
         // readable. Ambient is added without the diffuse 1/pi, so the fraction is
         // smaller than it looks. (Provisional ambient until IBL carries nits.)
         l.hemisphere_intensity = self.sky.illuminance().0 * 0.05;
-        l.sky_colour = self.sky.colour();
-        l.ground_colour = [0.28, 0.26, 0.24];
+        l.sky_colour = self.sky.colour().into();
+        l.ground_colour = [0.28, 0.26, 0.24].into();
         l
     }
 
@@ -272,8 +272,8 @@ impl FalloffState {
         l.lights = vec![self.light()];
         l.shadows.enabled = false;
         l.hemisphere_intensity = self.hemi_intensity;
-        l.sky_colour = [0.7, 0.8, 1.0];
-        l.ground_colour = [0.3, 0.3, 0.35];
+        l.sky_colour = [0.7, 0.8, 1.0].into();
+        l.ground_colour = [0.3, 0.3, 0.35].into();
         l
     }
 }
@@ -348,8 +348,8 @@ impl ExposureSubState {
         l.lights = vec![s];
         l.shadows.enabled = true;
         l.hemisphere_intensity = 0.05;
-        l.sky_colour = [0.6, 0.7, 0.9];
-        l.ground_colour = [0.25, 0.22, 0.2];
+        l.sky_colour = [0.6, 0.7, 0.9].into();
+        l.ground_colour = [0.25, 0.22, 0.2].into();
         l
     }
 

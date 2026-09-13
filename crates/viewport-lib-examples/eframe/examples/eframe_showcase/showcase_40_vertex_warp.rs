@@ -195,8 +195,8 @@ pub(crate) fn warp_lighting() -> LightingSettings {
         ];
         _t.shadows.enabled = false;
         _t.hemisphere_intensity = 0.35;
-        _t.sky_colour = [0.9, 0.92, 1.0];
-        _t.ground_colour = [0.5, 0.5, 0.55];
+        _t.sky_colour = [0.9, 0.92, 1.0].into();
+        _t.ground_colour = [0.5, 0.5, 0.55].into();
         _t
     }
 }

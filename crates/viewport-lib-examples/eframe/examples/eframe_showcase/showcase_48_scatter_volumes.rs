@@ -726,8 +726,8 @@ pub(crate) fn scene(
             let mut _t = vpl::LightingSettings::default();
             _t.lights = vec![sun];
             _t.shadows.enabled = app.svol_state.shadows_enabled;
-            _t.sky_colour = app.svol_state.sky_colour;
-            _t.ground_colour = app.svol_state.ground_colour;
+            _t.sky_colour = app.svol_state.sky_colour.into();
+            _t.ground_colour = app.svol_state.ground_colour.into();
             _t.hemisphere_intensity = app.svol_state.hemisphere_intensity;
             _t
         };

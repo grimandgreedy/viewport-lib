@@ -1129,8 +1129,8 @@ impl App {
         };
         lighting.lights = vec![sun];
         lighting.hemisphere_intensity = 0.35;
-        lighting.sky_colour = [0.85, 0.9, 1.0];
-        lighting.ground_colour = [0.3, 0.3, 0.32];
+        lighting.sky_colour = [0.85, 0.9, 1.0].into();
+        lighting.ground_colour = [0.3, 0.3, 0.32].into();
         // When the env-map has landed, drop hemisphere a bit so the IBL
         // contribution is visible.
         if matches!(

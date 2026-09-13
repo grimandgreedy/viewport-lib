@@ -680,8 +680,8 @@ impl LightmapBakeShowcase {
             if self.mode == BAKED_MODE || self.mode == EMISSIVE_MODE {
                 l.lights = Vec::new();
                 l.hemisphere_intensity = 0.28;
-                l.sky_colour = [0.5, 0.54, 0.62];
-                l.ground_colour = [0.16, 0.16, 0.18];
+                l.sky_colour = [0.5, 0.54, 0.62].into();
+                l.ground_colour = [0.16, 0.16, 0.18].into();
             } else if self.mode == MIXED_MODE {
                 // The lightmap (consumed subtractively) carries the static lighting;
                 // the realtime directional stays on. On lightmapped surfaces its
@@ -696,8 +696,8 @@ impl LightmapBakeShowcase {
                 key.cast_shadows = true;
                 l.lights = vec![key];
                 l.hemisphere_intensity = 0.15;
-                l.sky_colour = [0.5, 0.54, 0.62];
-                l.ground_colour = [0.16, 0.16, 0.18];
+                l.sky_colour = [0.5, 0.54, 0.62].into();
+                l.ground_colour = [0.16, 0.16, 0.18].into();
                 l.shadows.enabled = true;
                 l.shadows.extent_override = Some(13.0);
                 // Soft (PCSS) shadow with a wide penumbra, so the dynamic object's
@@ -720,8 +720,8 @@ impl LightmapBakeShowcase {
                 // Low ambient so the realtime shadow (when the toggle is on) is
                 // not washed out by fill light.
                 l.hemisphere_intensity = 0.18;
-                l.sky_colour = [0.6, 0.64, 0.72];
-                l.ground_colour = [0.2, 0.2, 0.22];
+                l.sky_colour = [0.6, 0.64, 0.72].into();
+                l.ground_colour = [0.2, 0.2, 0.22].into();
                 // Shadow rendering persists on the shared session across
                 // showcases, so set it explicitly rather than assuming a prior
                 // showcase left it on. Fit the shadow frustum to this room (auto

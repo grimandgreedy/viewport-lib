@@ -280,8 +280,8 @@ impl App {
                         },
                     ];
                     _t.hemisphere_intensity = 0.35;
-                    _t.sky_colour = [0.80, 0.90, 1.0];
-                    _t.ground_colour = [0.35, 0.28, 0.22];
+                    _t.sky_colour = [0.80, 0.90, 1.0].into();
+                    _t.ground_colour = [0.35, 0.28, 0.22].into();
                     _t
                 };
                 frame_data.viewport.show_grid = false;

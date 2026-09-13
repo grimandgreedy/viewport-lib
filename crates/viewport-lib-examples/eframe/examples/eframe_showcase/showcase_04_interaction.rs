@@ -352,8 +352,8 @@ pub(crate) fn interact_collect_scene_items(
     let lighting = {
         let mut _t = LightingSettings::default();
         _t.hemisphere_intensity = 0.5;
-        _t.sky_colour = [1.0, 1.0, 1.0];
-        _t.ground_colour = [1.0, 1.0, 1.0];
+        _t.sky_colour = [1.0, 1.0, 1.0].into();
+        _t.ground_colour = [1.0, 1.0, 1.0].into();
         _t
     };
     (items, lighting, sg, ss)

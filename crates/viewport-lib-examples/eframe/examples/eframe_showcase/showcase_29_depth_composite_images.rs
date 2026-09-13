@@ -204,8 +204,8 @@ impl App {
                 _t
             }];
             _t.hemisphere_intensity = 0.45;
-            _t.sky_colour = [0.08, 0.10, 0.18];
-            _t.ground_colour = [0.15, 0.15, 0.20];
+            _t.sky_colour = [0.08, 0.10, 0.18].into();
+            _t.ground_colour = [0.15, 0.15, 0.20].into();
             _t
         }
     }

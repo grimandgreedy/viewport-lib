@@ -298,8 +298,8 @@ pub(crate) fn wave_collect(app: &App) -> (Vec<SceneRenderItem>, LightingSettings
         let mut t = LightingSettings::default();
         t.lights = vec![sun, fill];
         t.hemisphere_intensity = 0.35;
-        t.sky_colour = [0.85, 0.92, 1.0];
-        t.ground_colour = [0.40, 0.35, 0.30];
+        t.sky_colour = [0.85, 0.92, 1.0].into();
+        t.ground_colour = [0.40, 0.35, 0.30].into();
         t
     };
 

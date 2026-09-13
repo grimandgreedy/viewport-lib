@@ -201,7 +201,7 @@ impl ViewportRenderer {
                     // from spiking right at the centre.
                     radius: extent.max(0.1),
                 };
-                light.colour = colour;
+                light.colour = colour.into();
                 light.intensity = intensity;
                 lights.push(light);
             }
@@ -226,7 +226,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *direction,
                     light_type: 0,
-                    colour: src.colour,
+                    colour: src.colour.to_linear_rgb(),
                     intensity: src.intensity,
                     range: 0.0,
                     inner_angle: 0.0,
@@ -247,7 +247,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 1,
-                    colour: src.colour,
+                    colour: src.colour.to_linear_rgb(),
                     intensity: src.intensity,
                     range: *range,
                     inner_angle: 0.0,
@@ -271,7 +271,7 @@ impl ViewportRenderer {
                     light_view_proj: shadow_mat.to_cols_array_2d(),
                     pos_or_dir: *position,
                     light_type: 2,
-                    colour: src.colour,
+                    colour: src.colour.to_linear_rgb(),
                     intensity: src.intensity,
                     range: *range,
                     inner_angle: *inner_angle,
@@ -740,9 +740,9 @@ impl ViewportRenderer {
             shadow_bias: lighting.shadows.bias,
             shadows_enabled: if lighting.shadows.enabled { 1 } else { 0 },
             debug_vis_mode,
-            sky_colour: lighting.sky_colour,
+            sky_colour: lighting.sky_colour.to_linear_rgb(),
             hemisphere_intensity: lighting.hemisphere_intensity,
-            ground_colour: lighting.ground_colour,
+            ground_colour: lighting.ground_colour.to_linear_rgb(),
             debug_vis_scale,
             ibl_enabled,
             ibl_intensity,

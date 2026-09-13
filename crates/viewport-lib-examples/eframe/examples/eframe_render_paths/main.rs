@@ -454,7 +454,7 @@ impl App {
                 direction: self.dir_direction,
             },
         };
-        light.colour = self.light_colour;
+        light.colour = self.light_colour.into();
         // Normalised 0..1 slider scaled into the selected kind's unit: directional
         // is illuminance (direct); point/spot are candela with 1/d^2 falloff, so
         // they need a much larger number to read at the light's throw distance.

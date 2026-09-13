@@ -495,8 +495,8 @@ impl App {
                 },
             ];
             _t.hemisphere_intensity = 0.45;
-            _t.sky_colour = [0.50, 0.60, 0.80];
-            _t.ground_colour = [0.25, 0.25, 0.35];
+            _t.sky_colour = [0.50, 0.60, 0.80].into();
+            _t.ground_colour = [0.25, 0.25, 0.35].into();
             _t.shadows.bias = 0.003;
             _t
         }

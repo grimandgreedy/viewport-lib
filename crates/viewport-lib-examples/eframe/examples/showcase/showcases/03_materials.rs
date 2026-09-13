@@ -151,8 +151,8 @@ impl Showcase for MaterialsShowcase {
         let l = &mut ctx.session.effects_mut().lighting;
         l.lights = vec![key, fill];
         l.hemisphere_intensity = 0.25;
-        l.sky_colour = [0.9, 0.95, 1.0];
-        l.ground_colour = [0.24, 0.22, 0.20];
+        l.sky_colour = [0.9, 0.95, 1.0].into();
+        l.ground_colour = [0.24, 0.22, 0.20].into();
         l.shadows.enabled = true;
 
         // Set A (kinds): shading models, custom WGSL, textures, PBR, matcaps.

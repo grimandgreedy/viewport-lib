@@ -407,8 +407,8 @@ pub(crate) fn scene(
             ];
             _t.shadows.enabled = true;
             _t.hemisphere_intensity = 0.4;
-            _t.sky_colour = [1.0, 1.0, 1.0];
-            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t.sky_colour = [1.0, 1.0, 1.0].into();
+            _t.ground_colour = [1.0, 1.0, 1.0].into();
             _t
         };
         let sg = app.nm_state.scene.version();

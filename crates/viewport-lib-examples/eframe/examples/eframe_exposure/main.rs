@@ -342,8 +342,8 @@ impl App {
         // A softer sky fill so shadows aren't near-black: less extreme metering
         // swings when the camera points into shadow (closer to real ambient/GI).
         l.hemisphere_intensity = 0.15;
-        l.sky_colour = [0.6, 0.7, 0.9];
-        l.ground_colour = [0.25, 0.22, 0.2];
+        l.sky_colour = [0.6, 0.7, 0.9].into();
+        l.ground_colour = [0.25, 0.22, 0.2].into();
         l
     }
 
@@ -368,7 +368,7 @@ impl App {
     /// plus an optional bulb authored in lumens.
     fn photometric_lighting(&self) -> LightingSettings {
         let mut sun = LightSource::directional_lux(self.sky.direction(), self.sky.illuminance());
-        sun.colour = self.sky.colour();
+        sun.colour = self.sky.colour().into();
         sun.cast_shadows = true;
 
         let mut lights = vec![sun];
@@ -376,7 +376,7 @@ impl App {
             let span = (COLUMNS - 1) as f32 * COL_SPACING;
             let mut bulb =
                 LightSource::point_lumens([span * 0.5, 0.9, 3.2], self.bulb.flux(), 25.0, 0.15);
-            bulb.colour = self.bulb.colour();
+            bulb.colour = self.bulb.colour().into();
             bulb.cast_shadows = true;
             lights.push(bulb);
         }
@@ -387,8 +387,8 @@ impl App {
         // ~15% sky fill (ambient carries no 1/pi, so the factor is smaller than
         // it looks); provisional until IBL carries nits.
         l.hemisphere_intensity = self.sky.illuminance().0 * 0.05;
-        l.sky_colour = self.sky.colour();
-        l.ground_colour = [0.28, 0.26, 0.24];
+        l.sky_colour = self.sky.colour().into();
+        l.ground_colour = [0.28, 0.26, 0.24].into();
         l
     }
 

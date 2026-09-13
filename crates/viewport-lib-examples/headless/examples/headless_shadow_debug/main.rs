@@ -135,8 +135,8 @@ fn main() {
         l.shadows.filter = ShadowFilter::Pcf;
         l.shadows.atlas_resolution = args.get(11).and_then(|s| s.parse().ok()).unwrap_or(4096);
         l.hemisphere_intensity = hemi;
-        l.sky_colour = [0.8, 0.9, 1.0];
-        l.ground_colour = [0.5, 0.55, 0.6];
+        l.sky_colour = [0.8, 0.9, 1.0].into();
+        l.ground_colour = [0.5, 0.55, 0.6].into();
         l
     };
 

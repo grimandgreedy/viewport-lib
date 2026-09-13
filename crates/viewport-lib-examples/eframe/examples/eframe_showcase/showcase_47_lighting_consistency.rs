@@ -381,8 +381,8 @@ fn lc_lighting(state: &LcState) -> LightingSettings {
     let mut light = LightingSettings::default();
     light.lights = lights;
     light.hemisphere_intensity = state.hemisphere_intensity;
-    light.sky_colour = state.sky_colour;
-    light.ground_colour = state.ground_colour;
+    light.sky_colour = state.sky_colour.into();
+    light.ground_colour = state.ground_colour.into();
     light
 }
 

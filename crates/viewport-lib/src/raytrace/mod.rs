@@ -183,15 +183,16 @@ pub enum RtLight {
     Directional {
         /// Unit direction from the surface toward the light.
         direction: [f32; 3],
-        /// Linear radiance.
-        colour: [f32; 3],
+        /// Light colour, carrying the radiance magnitude in its channels.
+        colour: crate::Colour,
     },
     /// `range` <= 0 disables the windowed falloff (pure inverse-square).
     Point {
         /// World-space light position.
         position: [f32; 3],
-        /// Linear radiance (before distance attenuation).
-        colour: [f32; 3],
+        /// Light colour, carrying the radiance magnitude in its channels
+        /// (before distance attenuation).
+        colour: crate::Colour,
         /// Falloff range in world units; <= 0 disables the windowed falloff.
         range: f32,
         /// Source radius (world units): clamps the inverse-square term near the
@@ -986,7 +987,7 @@ impl Tracer {
             .map(|l| match *l {
                 RtLight::Directional { direction, colour } => GpuLight {
                     data: [direction[0], direction[1], direction[2], 0.0],
-                    colour: [colour[0], colour[1], colour[2], 0.0],
+                    colour: colour.with_alpha(0.0).to_linear_rgba(),
                     params: [0.0; 4],
                 },
                 RtLight::Point {
@@ -996,7 +997,7 @@ impl Tracer {
                     radius,
                 } => GpuLight {
                     data: [position[0], position[1], position[2], 1.0],
-                    colour: [colour[0], colour[1], colour[2], range.max(0.0)],
+                    colour: colour.with_alpha(range.max(0.0)).to_linear_rgba(),
                     params: [radius.max(0.0), 0.0, 0.0, 0.0],
                 },
             })

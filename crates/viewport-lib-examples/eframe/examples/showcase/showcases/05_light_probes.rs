@@ -568,8 +568,8 @@ impl IndirectLightingShowcase {
             let l = &mut session.effects_mut().lighting;
             l.lights = vec![key];
             l.hemisphere_intensity = 0.3;
-            l.sky_colour = [0.7, 0.78, 0.9];
-            l.ground_colour = [0.3, 0.3, 0.3];
+            l.sky_colour = [0.7, 0.78, 0.9].into();
+            l.ground_colour = [0.3, 0.3, 0.3].into();
         }
 
         if self.mode == 0 {
@@ -664,8 +664,8 @@ impl IndirectLightingShowcase {
                 let l = &mut session.effects_mut().lighting;
                 l.lights = Vec::new();
                 l.hemisphere_intensity = 0.32;
-                l.sky_colour = [0.5, 0.54, 0.62];
-                l.ground_colour = [0.16, 0.16, 0.18];
+                l.sky_colour = [0.5, 0.54, 0.62].into();
+                l.ground_colour = [0.16, 0.16, 0.18].into();
             }
 
             for piece in gi_layout() {
@@ -854,8 +854,8 @@ impl Showcase for IndirectLightingShowcase {
         let l = &mut ctx.session.effects_mut().lighting;
         l.lights = vec![key];
         l.hemisphere_intensity = 0.3;
-        l.sky_colour = [0.7, 0.78, 0.9];
-        l.ground_colour = [0.3, 0.3, 0.3];
+        l.sky_colour = [0.7, 0.78, 0.9].into();
+        l.ground_colour = [0.3, 0.3, 0.3].into();
 
         ctx.session.viewport_frame_mut().show_grid = true;
         ctx.session.camera_mut().distance = 22.0;

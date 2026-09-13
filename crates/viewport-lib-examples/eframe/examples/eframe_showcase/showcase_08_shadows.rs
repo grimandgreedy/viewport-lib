@@ -213,8 +213,8 @@ pub(crate) fn scene(
                 vpl::ShadowFilter::Pcf
             };
             _t.hemisphere_intensity = 0.5;
-            _t.sky_colour = [1.0, 1.0, 1.0];
-            _t.ground_colour = [1.0, 1.0, 1.0];
+            _t.sky_colour = [1.0, 1.0, 1.0].into();
+            _t.ground_colour = [1.0, 1.0, 1.0].into();
             _t
         };
         let sg = app.shd_state.scene.version();

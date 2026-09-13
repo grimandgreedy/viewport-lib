@@ -436,14 +436,14 @@ pub(crate) fn sl_collect(app: &mut App) -> (Vec<SceneRenderItem>, LightingSettin
     match app.sl_state.active_tab {
         SlTab::Basics => {
             l.hemisphere_intensity = app.sl_state.hemi_intensity;
-            l.sky_colour = [0.7, 0.8, 1.0];
-            l.ground_colour = [0.4, 0.35, 0.3];
+            l.sky_colour = [0.7, 0.8, 1.0].into();
+            l.ground_colour = [0.4, 0.35, 0.3].into();
         }
         SlTab::Stress => {
             // Near-black ambient so the per-light pools dominate.
             l.hemisphere_intensity = 0.03;
-            l.sky_colour = [0.1, 0.12, 0.18];
-            l.ground_colour = [0.02, 0.02, 0.03];
+            l.sky_colour = [0.1, 0.12, 0.18].into();
+            l.ground_colour = [0.02, 0.02, 0.03].into();
         }
     }
     let sg = app.sl_state.scene.version();
@@ -570,7 +570,10 @@ fn controls_basics(app: &mut App, ui: &mut egui::Ui) {
                 let src = &mut app.sl_state.lights[i];
                 ui.horizontal(|ui| {
                     ui.label("Colour:");
-                    ui.color_edit_button_rgb(&mut src.colour);
+                    let mut c = src.colour.to_linear_rgb();
+                    if ui.color_edit_button_rgb(&mut c).changed() {
+                        src.colour = c.into();
+                    }
                 });
                 ui.add(egui::Slider::new(&mut src.intensity, 0.0..=120.0).text("Intensity"));
                 #[allow(clippy::match_wildcard_for_catch_all)]
