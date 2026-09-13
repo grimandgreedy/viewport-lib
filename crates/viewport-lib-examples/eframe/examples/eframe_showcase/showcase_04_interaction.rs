@@ -589,3 +589,135 @@ pub(crate) fn viewport_override(
 ) -> bool {
     false
 }
+
+/// Drive the orbit controller for this showcase. Manipulation needs the
+/// `ActionFrame` that driving the camera produces, so that the same frame
+/// feeds both the camera and the gizmo; returning true tells the host this
+/// showcase has taken care of the camera itself.
+pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+    if app.interact_state.built {
+        let w = cx.rect.width();
+        let h = cx.rect.height();
+        let viewport_size = glam::Vec2::new(w, h);
+        let view_proj = app.camera.proj_matrix() * app.camera.view_matrix();
+
+        // Per-frame gizmo hover when no session is active.
+        if !app.interact_state.manip.is_active() {
+            if let Some(center) = app.interact_state.gizmo_center {
+                let ray_origin = app.camera.eye_position();
+                let cursor = app.cursor_viewport;
+                let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
+                let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
+                let inv_vp = view_proj.inverse();
+                let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
+                let ray_dir = (far - ray_origin).normalize_or_zero();
+                let orient = crate::gizmo_helpers::gizmo_orientation(
+                    &app.interact_state.gizmo,
+                    &app.interact_state.selection,
+                    &app.interact_state.scene,
+                );
+                app.interact_state.gizmo.hovered_axis = app.interact_state.gizmo.hit_test_oriented(
+                    ray_origin,
+                    ray_dir,
+                    center,
+                    app.interact_state.gizmo_scale,
+                    orient,
+                );
+            } else {
+                app.interact_state.gizmo.hovered_axis = vpl::GizmoAxis::None;
+            }
+        }
+
+        // Build GizmoInfo.
+        let orient = crate::gizmo_helpers::gizmo_orientation(
+            &app.interact_state.gizmo,
+            &app.interact_state.selection,
+            &app.interact_state.scene,
+        );
+        let gizmo_info = app
+            .interact_state
+            .gizmo_center
+            .map(|center| vpl::GizmoInfo {
+                center,
+                scale: app.interact_state.gizmo_scale,
+                orientation: orient,
+                mode: app.interact_state.gizmo.mode,
+            });
+
+        // Build ManipulationContext.
+        let pointer_delta = cx
+            .egui
+            .input(|i| glam::Vec2::new(i.pointer.delta().x, i.pointer.delta().y));
+        let manip_ctx = vpl::ManipulationContext {
+            camera: app.camera.clone(),
+            viewport_size,
+            cursor_viewport: Some(app.cursor_viewport),
+            pointer_delta,
+            selection_center: app.interact_state.gizmo_center,
+            gizmo: gizmo_info,
+            drag_started: cx.response.drag_started(),
+            dragging: app.interact_state.left_held,
+            clicked: cx.response.clicked(),
+        };
+
+        // Orbit: resolve (no camera movement) while manipulation is active.
+        let action_frame = if app.interact_state.manip.is_active() {
+            app.controller.resolve()
+        } else {
+            app.controller.apply_to_camera(&mut app.camera)
+        };
+
+        // Tab cycles gizmo mode when no session is active.
+        if !app.interact_state.manip.is_active()
+            && action_frame.is_active(vpl::Action::CycleGizmoMode)
+        {
+            app.interact_state.gizmo.mode = match app.interact_state.gizmo.mode {
+                vpl::GizmoMode::Translate => vpl::GizmoMode::Rotate,
+                vpl::GizmoMode::Rotate => vpl::GizmoMode::Scale,
+                vpl::GizmoMode::Scale => vpl::GizmoMode::Translate,
+                _ => vpl::GizmoMode::Translate,
+            };
+        }
+
+        match app.interact_state.manip.update(&action_frame, manip_ctx) {
+            vpl::ManipResult::Update(delta) => {
+                app.apply_interact_delta(delta);
+            }
+            vpl::ManipResult::Cancel | vpl::ManipResult::ConstraintChanged => {
+                app.restore_interact_snapshots();
+            }
+            vpl::ManipResult::Commit => {
+                app.save_interact_snapshots();
+            }
+            vpl::ManipResult::None => {
+                if !app.interact_state.manip.is_active() {
+                    // Keep snapshots current so G/R/S always starts clean.
+                    app.save_interact_snapshots();
+                }
+            }
+            _ => {}
+        }
+
+        // Click-to-select: only when no session is active.
+        if cx.response.clicked() && !app.interact_state.manip.is_active() {
+            let pick_pos = app.cursor_viewport;
+            let click_cx = crate::ClickCtx {
+                frame: cx.frame,
+                pos: pick_pos,
+                w,
+                h,
+                pixels_per_point: cx.egui.pixels_per_point(),
+            };
+            app.handle_click_select(&click_cx);
+        }
+    } else {
+        app.controller.apply_to_camera(&mut app.camera);
+    }
+    true
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}

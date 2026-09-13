@@ -5,11 +5,10 @@ use viewport_lib as vpl;
 use viewport_lib::wgpu;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    Action, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData, GizmoAxis,
-    GizmoInfo, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, ManipResult,
-    ManipulationContext, MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController,
-    PickBackend, PickMask, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportRenderer,
+    ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData, GizmoAxis, GizmoMode,
+    GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
+    OrbitCameraController, PickBackend, PickMask, SceneFrame, SceneRenderItem, ScrollUnits,
+    ViewportContext, ViewportEvent, ViewportRenderer,
 };
 
 mod geometry;
@@ -913,137 +912,13 @@ impl eframe::App for App {
                 self.showcase_drag_input(&viewport_cx);
                 // ----- Per-showcase advance -----
                 self.showcase_advance(&viewport_cx);
-                // ----- ManipulationController update (Showcase 4 only) -----
-                // For Interaction mode, orbit resolution is integrated here so that
-                // the same ActionFrame drives both camera and gizmo.
-                if self.mode == ShowcaseMode::Interaction {
-                    if self.interact_state.built {
-                        let w = rect.width();
-                        let h = rect.height();
-                        let viewport_size = glam::Vec2::new(w, h);
-                        let view_proj = self.camera.proj_matrix() * self.camera.view_matrix();
-
-                        // Per-frame gizmo hover when no session is active.
-                        if !self.interact_state.manip.is_active() {
-                            if let Some(center) = self.interact_state.gizmo_center {
-                                let ray_origin = self.camera.eye_position();
-                                let cursor = self.cursor_viewport;
-                                let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
-                                let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
-                                let inv_vp = view_proj.inverse();
-                                let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
-                                let ray_dir = (far - ray_origin).normalize_or_zero();
-                                let orient = gizmo_helpers::gizmo_orientation(
-                                    &self.interact_state.gizmo,
-                                    &self.interact_state.selection,
-                                    &self.interact_state.scene,
-                                );
-                                self.interact_state.gizmo.hovered_axis =
-                                    self.interact_state.gizmo.hit_test_oriented(
-                                        ray_origin,
-                                        ray_dir,
-                                        center,
-                                        self.interact_state.gizmo_scale,
-                                        orient,
-                                    );
-                            } else {
-                                self.interact_state.gizmo.hovered_axis = GizmoAxis::None;
-                            }
-                        }
-
-                        // Build GizmoInfo.
-                        let orient = gizmo_helpers::gizmo_orientation(
-                            &self.interact_state.gizmo,
-                            &self.interact_state.selection,
-                            &self.interact_state.scene,
-                        );
-                        let gizmo_info = self.interact_state.gizmo_center.map(|center| GizmoInfo {
-                            center,
-                            scale: self.interact_state.gizmo_scale,
-                            orientation: orient,
-                            mode: self.interact_state.gizmo.mode,
-                        });
-
-                        // Build ManipulationContext.
-                        let pointer_delta = ctx
-                            .input(|i| glam::Vec2::new(i.pointer.delta().x, i.pointer.delta().y));
-                        let manip_ctx = ManipulationContext {
-                            camera: self.camera.clone(),
-                            viewport_size,
-                            cursor_viewport: Some(self.cursor_viewport),
-                            pointer_delta,
-                            selection_center: self.interact_state.gizmo_center,
-                            gizmo: gizmo_info,
-                            drag_started: response.drag_started(),
-                            dragging: self.interact_state.left_held,
-                            clicked: response.clicked(),
-                        };
-
-                        // Orbit: resolve (no camera movement) while manipulation is active.
-                        let action_frame = if self.interact_state.manip.is_active() {
-                            self.controller.resolve()
-                        } else {
-                            self.controller.apply_to_camera(&mut self.camera)
-                        };
-
-                        // Tab cycles gizmo mode when no session is active.
-                        if !self.interact_state.manip.is_active()
-                            && action_frame.is_active(Action::CycleGizmoMode)
-                        {
-                            self.interact_state.gizmo.mode = match self.interact_state.gizmo.mode {
-                                GizmoMode::Translate => GizmoMode::Rotate,
-                                GizmoMode::Rotate => GizmoMode::Scale,
-                                GizmoMode::Scale => GizmoMode::Translate,
-                                _ => GizmoMode::Translate,
-                            };
-                        }
-
-                        match self.interact_state.manip.update(&action_frame, manip_ctx) {
-                            ManipResult::Update(delta) => {
-                                self.apply_interact_delta(delta);
-                            }
-                            ManipResult::Cancel | ManipResult::ConstraintChanged => {
-                                self.restore_interact_snapshots();
-                            }
-                            ManipResult::Commit => {
-                                self.save_interact_snapshots();
-                            }
-                            ManipResult::None => {
-                                if !self.interact_state.manip.is_active() {
-                                    // Keep snapshots current so G/R/S always starts clean.
-                                    self.save_interact_snapshots();
-                                }
-                            }
-                            _ => {}
-                        }
-
-                        // Click-to-select: only when no session is active.
-                        if response.clicked() && !self.interact_state.manip.is_active() {
-                            let pick_pos = self.cursor_viewport;
-                            let click_cx = ClickCtx {
-                                frame,
-                                pos: pick_pos,
-                                w,
-                                h,
-                                pixels_per_point: ctx.pixels_per_point(),
-                            };
-                            self.handle_click_select(&click_cx);
-                        }
-                    } else {
-                        self.controller.apply_to_camera(&mut self.camera);
-                    }
-                } else {
-                    // ----- Apply / resolve orbit controller (non-Interaction modes) -----
-                    let suppress_orbit = (self.mode == ShowcaseMode::ClipVolumes
-                        && self.clipvol_state.gizmo_drag_active)
-                        || (self.mode == ShowcaseMode::PickLevels
-                            && self.pl_state.drag_start.is_some())
-                        || (self.mode == ShowcaseMode::ProbeWidgets
-                            && self.pw_state.suppress_orbit)
-                        || (self.mode == ShowcaseMode::VertexColours
-                            && self.vcol_state.paint_mode
-                            && (response.dragged() || response.drag_started()));
-                    if suppress_orbit {
+                // ----- Camera control -----
+                // A showcase that needs the resulting `ActionFrame` (gizmo
+                // manipulation) drives the controller itself; otherwise the
+                // host applies it, or resolves it without moving the camera
+                // when the showcase is using the drag for something else.
+                if !self.showcase_drive_camera(&viewport_cx) {
+                    if self.showcase_suppress_orbit(&viewport_cx) {
                         self.controller.resolve();
                     } else {
                         self.controller.apply_to_camera(&mut self.camera);
@@ -1897,6 +1772,174 @@ impl App {
         }
     }
 
+    /// Let the active showcase drive the orbit controller itself. Returns true
+    /// if it did, in which case the host leaves the camera alone.
+    fn showcase_drive_camera(&mut self, cx: &ViewportCtx) -> bool {
+        match self.mode {
+            ShowcaseMode::Basic => showcase_01_basic::drive_camera(self, cx),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::drive_camera(self, cx),
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::drive_camera(self, cx),
+            ShowcaseMode::Interaction => showcase_04_interaction::drive_camera(self, cx),
+            ShowcaseMode::MaterialsVisibility => {
+                showcase_05_materials_and_visibility::drive_camera(self, cx)
+            }
+            ShowcaseMode::PostProcess => showcase_06_post_process::drive_camera(self, cx),
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::drive_camera(self, cx),
+            ShowcaseMode::Shadows => showcase_08_shadows::drive_camera(self, cx),
+            ShowcaseMode::Annotation => showcase_09_annotation::drive_camera(self, cx),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::drive_camera(self, cx),
+            ShowcaseMode::Lights => showcase_11_lights::drive_camera(self, cx),
+            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::drive_camera(self, cx),
+            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::drive_camera(self, cx),
+            ShowcaseMode::Isolines => showcase_14_isolines::drive_camera(self, cx),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::drive_camera(self, cx),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::drive_camera(self, cx),
+            ShowcaseMode::Volume => showcase_17_volume::drive_camera(self, cx),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::drive_camera(self, cx),
+            ShowcaseMode::Matcap => showcase_19_matcap::drive_camera(self, cx),
+            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::drive_camera(self, cx),
+            ShowcaseMode::Textures => showcase_21_textures::drive_camera(self, cx),
+            ShowcaseMode::ParamVis => showcase_22_parameterization::drive_camera(self, cx),
+            ShowcaseMode::Performance => showcase_23_performance::drive_camera(self, cx),
+            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::drive_camera(self, cx),
+            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::drive_camera(self, cx),
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::drive_camera(self, cx),
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::drive_camera(self, cx),
+            ShowcaseMode::CurveNetworkQuantities => {
+                showcase_28_curve_network_quantities::drive_camera(self, cx)
+            }
+            ShowcaseMode::DepthCompositeImages => {
+                showcase_29_depth_composite_images::drive_camera(self, cx)
+            }
+            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::drive_camera(self, cx),
+            ShowcaseMode::SparseVolumeGrid => {
+                showcase_31_sparse_volume_grid::drive_camera(self, cx)
+            }
+            ShowcaseMode::ExtendedQuantities => {
+                showcase_32_extended_quantities::drive_camera(self, cx)
+            }
+            ShowcaseMode::PickLevels => showcase_33_picking_levels::drive_camera(self, cx),
+            ShowcaseMode::Labels => showcase_34_labels::drive_camera(self, cx),
+            ShowcaseMode::Overlay => showcase_35_overlay::drive_camera(self, cx),
+            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::drive_camera(self, cx),
+            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::drive_camera(self, cx),
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::drive_camera(self, cx),
+            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::drive_camera(self, cx),
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::drive_camera(self, cx),
+            ShowcaseMode::Sprites => showcase_41_sprites::drive_camera(self, cx),
+            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::drive_camera(self, cx),
+            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::drive_camera(self, cx),
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::drive_camera(self, cx),
+            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::drive_camera(self, cx),
+            ShowcaseMode::Decals => showcase_46_decals::drive_camera(self, cx),
+            ShowcaseMode::LightingConsistency => {
+                showcase_47_lighting_consistency::drive_camera(self, cx)
+            }
+            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::drive_camera(self, cx),
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::drive_camera(self, cx),
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::drive_camera(self, cx),
+            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::drive_camera(self, cx),
+            ShowcaseMode::Lod => showcase_52_lod::drive_camera(self, cx),
+            ShowcaseMode::VertexColours => showcase_53_vertex_colours::drive_camera(self, cx),
+            ShowcaseMode::CustomShading => showcase_54_custom_shading::drive_camera(self, cx),
+            ShowcaseMode::Foreground => showcase_55_foreground_pass::drive_camera(self, cx),
+            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::drive_camera(self, cx),
+            ShowcaseMode::PhotometricLighting => {
+                showcase_57_photometric_lighting::drive_camera(self, cx)
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                showcase_58_physically_based_surfaces::drive_camera(self, cx)
+            }
+            ShowcaseMode::VectorArt => showcase_59_vector_art::drive_camera(self, cx),
+        }
+    }
+
+    /// Whether the active showcase wants the orbit resolved without moving the
+    /// camera this frame.
+    fn showcase_suppress_orbit(&self, cx: &ViewportCtx) -> bool {
+        match self.mode {
+            ShowcaseMode::Basic => showcase_01_basic::suppress_orbit(self, cx),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::suppress_orbit(self, cx),
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::suppress_orbit(self, cx),
+            ShowcaseMode::Interaction => showcase_04_interaction::suppress_orbit(self, cx),
+            ShowcaseMode::MaterialsVisibility => {
+                showcase_05_materials_and_visibility::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::PostProcess => showcase_06_post_process::suppress_orbit(self, cx),
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::suppress_orbit(self, cx),
+            ShowcaseMode::Shadows => showcase_08_shadows::suppress_orbit(self, cx),
+            ShowcaseMode::Annotation => showcase_09_annotation::suppress_orbit(self, cx),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::suppress_orbit(self, cx),
+            ShowcaseMode::Lights => showcase_11_lights::suppress_orbit(self, cx),
+            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::suppress_orbit(self, cx),
+            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::suppress_orbit(self, cx),
+            ShowcaseMode::Isolines => showcase_14_isolines::suppress_orbit(self, cx),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::suppress_orbit(self, cx),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::suppress_orbit(self, cx),
+            ShowcaseMode::Volume => showcase_17_volume::suppress_orbit(self, cx),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::suppress_orbit(self, cx),
+            ShowcaseMode::Matcap => showcase_19_matcap::suppress_orbit(self, cx),
+            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::suppress_orbit(self, cx),
+            ShowcaseMode::Textures => showcase_21_textures::suppress_orbit(self, cx),
+            ShowcaseMode::ParamVis => showcase_22_parameterization::suppress_orbit(self, cx),
+            ShowcaseMode::Performance => showcase_23_performance::suppress_orbit(self, cx),
+            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::suppress_orbit(self, cx),
+            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::suppress_orbit(self, cx),
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::suppress_orbit(self, cx),
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::suppress_orbit(self, cx),
+            ShowcaseMode::CurveNetworkQuantities => {
+                showcase_28_curve_network_quantities::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::DepthCompositeImages => {
+                showcase_29_depth_composite_images::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::suppress_orbit(self, cx),
+            ShowcaseMode::SparseVolumeGrid => {
+                showcase_31_sparse_volume_grid::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::ExtendedQuantities => {
+                showcase_32_extended_quantities::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::PickLevels => showcase_33_picking_levels::suppress_orbit(self, cx),
+            ShowcaseMode::Labels => showcase_34_labels::suppress_orbit(self, cx),
+            ShowcaseMode::Overlay => showcase_35_overlay::suppress_orbit(self, cx),
+            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::suppress_orbit(self, cx),
+            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::suppress_orbit(self, cx),
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::suppress_orbit(self, cx),
+            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::suppress_orbit(self, cx),
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::suppress_orbit(self, cx),
+            ShowcaseMode::Sprites => showcase_41_sprites::suppress_orbit(self, cx),
+            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::suppress_orbit(self, cx),
+            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::suppress_orbit(self, cx),
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::suppress_orbit(self, cx),
+            ShowcaseMode::SkinnedAnimation => {
+                showcase_45_skinned_animation::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::Decals => showcase_46_decals::suppress_orbit(self, cx),
+            ShowcaseMode::LightingConsistency => {
+                showcase_47_lighting_consistency::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::suppress_orbit(self, cx),
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::suppress_orbit(self, cx),
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::suppress_orbit(self, cx),
+            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::suppress_orbit(self, cx),
+            ShowcaseMode::Lod => showcase_52_lod::suppress_orbit(self, cx),
+            ShowcaseMode::VertexColours => showcase_53_vertex_colours::suppress_orbit(self, cx),
+            ShowcaseMode::CustomShading => showcase_54_custom_shading::suppress_orbit(self, cx),
+            ShowcaseMode::Foreground => showcase_55_foreground_pass::suppress_orbit(self, cx),
+            ShowcaseMode::SubmeshMaterials => {
+                showcase_56_submesh_materials::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::PhotometricLighting => {
+                showcase_57_photometric_lighting::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                showcase_58_physically_based_surfaces::suppress_orbit(self, cx)
+            }
+            ShowcaseMode::VectorArt => showcase_59_vector_art::suppress_orbit(self, cx),
+        }
+    }
+
     fn ensure_scene_built(&mut self, frame: &eframe::Frame) {
         let needs = match self.mode {
             ShowcaseMode::Basic => showcase_01_basic::needs_build(self),
@@ -2419,7 +2462,7 @@ impl App {
             sel_gen,
         } = contents;
         let SceneOverrides {
-            clip_objects: mut adv_clip_objects,
+            clip_objects: adv_clip_objects,
             outline: adv_outline,
             xray: adv_xray,
             perf_outline,

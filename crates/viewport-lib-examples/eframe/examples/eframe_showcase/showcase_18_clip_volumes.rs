@@ -752,3 +752,15 @@ pub(crate) fn viewport_override(
 ) -> bool {
     false
 }
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame, because this showcase is using the drag for something of its own.
+pub(crate) fn suppress_orbit(app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    app.clipvol_state.gizmo_drag_active
+}

@@ -504,3 +504,15 @@ pub(crate) fn viewport_override(
 ) -> bool {
     false
 }
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
