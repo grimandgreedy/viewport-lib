@@ -566,10 +566,15 @@ pub struct DeviceResources {
     /// MSAA sample count used by all render pipelines.
     pub(crate) sample_count: u32,
     /// True while the lit pipelines are compiled with the pixel-inspector
-    /// debug block. Off by default: the block's storage write disables early
-    /// depth rejection (see `builders::strip_debug_vis`). Toggled per frame
-    /// from the `DebugVis` state, which rebuilds the lit pipelines.
+    /// debug block. Off by default, so the lit shaders do not carry the block's
+    /// register cost on every draw (see `builders::strip_debug_vis`). Toggled
+    /// per frame from the `DebugVis` state, which rebuilds the lit pipelines.
     pub(crate) debug_vis_shaders: bool,
+    /// Diagnostic: keep the debug block compiled in even with `DebugVis` off,
+    /// so a benchmark can measure what stripping it is worth. Shading is
+    /// unchanged, because the block sits under a uniform branch that only
+    /// `DebugVis` takes. Set through `ViewportRenderer::set_force_debug_vis_shaders`.
+    pub(crate) force_debug_vis_shaders: bool,
     /// Set by `register_deformer` / `register_internal_deformer` instead of
     /// rebuilding the mesh-family pipelines inline, so a burst of
     /// registrations costs one recompose instead of one per call. Cleared by

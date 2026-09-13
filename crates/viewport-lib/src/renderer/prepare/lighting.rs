@@ -729,10 +729,11 @@ impl ViewportRenderer {
         } else {
             1.0
         };
-        // The lit pipelines normally compile without the debug-vis block (its
-        // storage write disables early depth rejection); swap in the full
+        // The lit pipelines normally compile without the debug-vis block, so
+        // they do not carry its registers on every draw; swap in the full
         // shader variant while debug vis is active, and back when it stops.
-        resources.set_debug_vis_shaders(device, debug_vis_mode != 0);
+        let keep_debug_block = debug_vis_mode != 0 || resources.force_debug_vis_shaders;
+        resources.set_debug_vis_shaders(device, keep_debug_block);
 
         let lights_uniform = LightsUniform {
             count: light_count,

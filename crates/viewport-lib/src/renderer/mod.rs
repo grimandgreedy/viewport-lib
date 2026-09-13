@@ -1325,6 +1325,23 @@ impl ViewportRenderer {
         self.resources.set_force_po_discard(force);
     }
 
+    /// Keep the debug-visualisation block compiled into the lit pipelines even
+    /// while [`DebugVis`] is off.
+    ///
+    /// The block sits under a uniform branch that only `DebugVis` takes, so
+    /// pixels are identical either way. What changes is what an ordinary draw
+    /// pays to carry it: the block declares a 24-element array, and a lit shader
+    /// holding that allocation spends registers on it on every draw. The lit
+    /// pipelines therefore compile without it by default.
+    ///
+    /// This exists so a benchmark can measure that cost by rendering one scene
+    /// both ways in a single process, which is the only way to compare them
+    /// without run-to-run variance swamping the difference. Off by default; not
+    /// a rendering mode.
+    pub fn set_force_debug_vis_shaders(&mut self, force: bool) {
+        self.resources.force_debug_vis_shaders = force;
+    }
+
     /// Force the indirect draw paths to collapse batch runs into
     /// `multi_draw_indexed_indirect` even where the backend emulates it as a
     /// per-entry loop (Metal). The emulated result is identical, so this exists

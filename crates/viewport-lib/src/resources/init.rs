@@ -2323,6 +2323,7 @@ impl DeviceResources {
             target_format,
             sample_count,
             debug_vis_shaders: false,
+            force_debug_vis_shaders: false,
             mesh_pipelines_dirty: false,
             pipeline_cache,
             scene: crate::resources::scene_pipelines::SceneCorePipelines {
