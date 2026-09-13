@@ -206,11 +206,10 @@ pub(crate) struct ViewportSlot {
     /// batch counters, and their bind groups). The cull dispatch for this
     /// viewport's camera writes here; the draw path reads from here.
     pub cull: crate::resources::ViewportCullState,
-    /// Per-fragment debug storage buffer (group 0 binding 12). Allocated at
-    /// `width * height * 16` bytes when debug_vis is active; None otherwise.
-    pub debug_frag_buf: Option<crate::gpu::Buffer>,
-    /// Viewport dimensions for which `debug_frag_buf` was allocated.
-    pub debug_frag_dims: (u32, u32),
+    /// Viewport dimensions when the last prepared frame left a readable debug
+    /// quantity in the HDR texture (debug vis active, HDR path, `Replace`
+    /// mode); `None` when it did not. Read by `read_debug_pixel`.
+    pub debug_readback_dims: Option<(u32, u32)>,
 
     // --- Per-viewport interaction state ---
     /// Per-frame selection-outline state, one entry per scene-item kind, rebuilt in prepare().
@@ -766,16 +765,20 @@ pub struct ViewportRenderer {
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
 }
 
-/// Warn once when a cull submission outgrows the deterministic compaction's
-/// fixed chunk plan, so the drop to arrival-order submission is visible rather
-/// than silent.
+/// Warn once when a cull submission needs more compaction scratch than the
+/// device will bind as one storage buffer, so the drop to arrival-order
+/// submission is visible rather than silent.
+///
+/// The scratch sizes to the submission, so this needs a scene far past what any
+/// device can draw: it takes tens of millions of instances to reach the default
+/// 128 MiB binding limit.
 pub(crate) fn warn_once_cull_plan_capacity(batches: u32, instances: u32) {
     static WARNED: std::sync::Once = std::sync::Once::new();
     WARNED.call_once(|| {
         tracing::warn!(
             batches,
             instances,
-            "cull submission exceeds the deterministic compaction's chunk plan; \
+            "cull submission needs more compaction scratch than max_storage_buffer_binding_size; \
              draws submit in cull-arrival order, so frames are not bit-reproducible"
         );
     });
@@ -2311,11 +2314,30 @@ impl ViewportRenderer {
         }
     }
 
-    /// Read the debug values at a specific pixel from the per-fragment storage buffer.
+    /// Read the debug quantity at a specific pixel, as the visible surface there
+    /// resolved it.
     ///
-    /// Returns `None` when debug_vis is inactive (no buffer allocated) or when `(x, y)`
-    /// is outside the viewport. The four channels correspond to the current R/G/B channel
-    /// selectors plus 1.0 for alpha.
+    /// The value comes out of the HDR target after the depth test, so it belongs
+    /// to the surface you can see rather than to whichever fragment happened to
+    /// shade last. The three colour channels hold the current R/G/B channel
+    /// selectors; alpha comes from the target and carries nothing useful.
+    ///
+    /// Returns `None` unless the last prepared frame could leave the quantity
+    /// there, which needs all of:
+    ///
+    /// - [`DebugVis::active`](crate::DebugVis) set,
+    /// - [`PipelineMode::Hdr`](crate::PipelineMode) : the LDR path renders
+    ///   straight into your target, which the renderer does not own,
+    /// - [`DebugOutputMode::Replace`](crate::DebugOutputMode) : the other modes
+    ///   mix the quantity with the shaded colour, so what lands in the target is
+    ///   not the quantity,
+    ///
+    /// and `(x, y)` inside the viewport. `None` means the configuration cannot
+    /// be answered, never that the pixel had no value.
+    ///
+    /// Values are half-float, so expect about three decimal digits. With
+    /// supersampling on, the texel has been resolved from several samples and is
+    /// a filtered average rather than one surface's value.
     ///
     /// This submits a GPU-to-CPU copy and waits synchronously. Only call from outside
     /// a render pass (e.g., in the next frame's prepare step), not inside paint callbacks.
@@ -2330,22 +2352,46 @@ impl ViewportRenderer {
     ) -> Option<[f32; 4]> {
         // Use the primary viewport slot (index 0).
         let slot = self.viewport_slots.first()?;
-        let buf = slot.debug_frag_buf.as_ref()?;
-        let (vw, vh) = slot.debug_frag_dims;
+        let (vw, vh) = slot.debug_readback_dims?;
         if x >= vw || y >= vh {
             return None;
         }
-        let byte_offset = ((y as u64) * (vw as u64) + (x as u64)) * 16;
+        let texture = &slot.hdr.as_ref()?.hdr_texture;
+
+        // One texel out of the HDR target. A buffer copy needs its rows aligned
+        // even for a single row, so the staging buffer is a whole aligned row
+        // and only its first texel is read.
         let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: None,
-            size: 16,
+            label: Some("debug_pixel_staging"),
+            size: u64::from(crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT),
             usage: crate::gpu::BufferUsages::MAP_READ | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let mut encoder =
             device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_buffer_to_buffer(buf, byte_offset, &staging, 0, 16);
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x, y, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
         queue.submit(Some(encoder.finish()));
+
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel::<Result<(), crate::gpu::BufferAsyncError>>();
         slice.map_async(crate::gpu::MapMode::Read, move |r| {
@@ -2357,7 +2403,11 @@ impl ViewportRenderer {
         });
         rx.recv().ok()?.ok()?;
         let data = crate::gpu::mapped_range(slice);
-        Some(bytemuck::pod_read_unaligned::<[f32; 4]>(&data))
+        // Rgba16Float: four halves.
+        Some(std::array::from_fn(|c| {
+            let bits = u16::from_le_bytes([data[c * 2], data[c * 2 + 1]]);
+            half::f16::from_bits(bits).to_f32()
+        }))
     }
 
     /// Upload a Gaussian splat set to the GPU.
@@ -2885,17 +2935,13 @@ impl ViewportRenderer {
         );
 
         for slot in &mut self.viewport_slots {
-            let dbg_buf = slot
-                .debug_frag_buf
-                .as_ref()
-                .unwrap_or(&self.resources.binds.debug_frag_sentinel_buf);
             slot.camera_bind_group = self.resources.create_camera_bind_group(
                 device,
                 &slot.camera_buf,
                 &slot.clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.clip_volume_buf,
-                dbg_buf,
+                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
             );
             slot.foreground_camera_bind_group = self.resources.create_camera_bind_group(
@@ -2904,7 +2950,7 @@ impl ViewportRenderer {
                 &slot.foreground_clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.foreground_clip_volume_buf,
-                dbg_buf,
+                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_foreground_camera_bg",
             );
         }
@@ -3026,8 +3072,7 @@ impl ViewportRenderer {
                 grid_bind_group,
                 hdr: None,
                 cull: crate::resources::ViewportCullState::new(),
-                debug_frag_buf: None,
-                debug_frag_dims: (0, 0),
+                debug_readback_dims: None,
                 selection_outlines: SelectionOutlines::default(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),

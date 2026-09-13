@@ -21,17 +21,20 @@ const CULL_BGL_ENTRY_COUNT: usize = 10;
 
 /// Instances per compaction chunk. Matches `CHUNK` in `cull.wgsl`.
 const COMPACT_CHUNK: u32 = 256;
-/// Chunk-plan capacity in batches. A scene past this many instanced batches
-/// falls back to the unpacked list (see `dispatch`), which still draws the
-/// right instances, just not in a reproducible order.
-const MAX_PLAN_BATCHES: u32 = 8192;
-/// Chunk capacity: one chunk per `COMPACT_CHUNK` instances, so this covers
-/// roughly 16M instances before the same fallback applies.
-const MAX_PLAN_CHUNKS: u32 = 16384;
-/// Fixed prefix of the compaction scratch (chunk plan + per-chunk counts),
-/// ahead of the per-instance verdict region. Matches the regions in
-/// `cull.wgsl`.
-const COMPACT_FIXED_U32S: u32 = (MAX_PLAN_BATCHES + 1) + MAX_PLAN_CHUNKS;
+
+/// The compaction scratch a submission needs, in u32s, as the three region
+/// sizes `cull.wgsl` lays the buffer out from: chunk plan, per-chunk totals,
+/// per-instance verdicts.
+///
+/// These size to the submission, so there is no scene shape that outgrows the
+/// compaction and falls back to an unreproducible draw order. The only bound
+/// left is the device's own storage-buffer limit, checked in `dispatch`.
+fn compact_regions(batch_count: u32, instance_count: u32) -> (u32, u32, u32) {
+    let plan_cap = batch_count + 1;
+    let chunk_cap = (instance_count.div_ceil(COMPACT_CHUNK) + batch_count).max(1);
+    let verdict_cap = instance_count.max(1);
+    (plan_cap, chunk_cap, verdict_cap)
+}
 
 /// Per-frame inputs for the HiZ occlusion test, supplied only by the
 /// main-camera cull. Shadow and single-mesh dispatches pass `None`, which
@@ -380,12 +383,18 @@ impl CullResources {
             &self.scratch_stats_buf
         };
 
-        // Does this submission fit the fixed chunk plan? Decided here because
-        // the cull kernel needs to know: when the compaction runs it owns both
-        // the visible list and the per-batch counts, and the kernel skips the
-        // arrival-order list and the per-instance counter increment.
-        let chunk_upper_bound = sub.instance_count.div_ceil(COMPACT_CHUNK) + sub.batch_count;
-        let plan_fits = sub.batch_count <= MAX_PLAN_BATCHES && chunk_upper_bound <= MAX_PLAN_CHUNKS;
+        // The compaction's scratch regions size to this submission. The only
+        // way it does not fit is the device refusing a storage buffer that
+        // large, which is decided here because the cull kernel needs to know:
+        // when the compaction runs it owns both the visible list and the
+        // per-batch counts, and the kernel skips the arrival-order list and the
+        // per-instance counter increment.
+        let (plan_cap, chunk_cap, verdict_cap) =
+            compact_regions(sub.batch_count, sub.instance_count);
+        let chunk_upper_bound = chunk_cap;
+        let scratch_u32s = u64::from(plan_cap) + u64::from(chunk_cap) + u64::from(verdict_cap);
+        let max_storage = u64::from(device.limits().max_storage_buffer_binding_size);
+        let plan_fits = scratch_u32s * 4 <= max_storage;
         if !plan_fits {
             crate::renderer::warn_once_cull_plan_capacity(sub.batch_count, sub.instance_count);
         }
@@ -404,7 +413,9 @@ impl CullResources {
             cull_mask,
             do_mask_cull,
             compact_enabled: u32::from(plan_fits),
-            _pad: [0; 3],
+            plan_cap,
+            chunk_cap,
+            _pad: [0; 1],
         };
         queue.write_buffer(
             frustum_buf,
@@ -424,13 +435,19 @@ impl CullResources {
         // buffer tracks the instance count rather than the visible count.
         let scratch_guard = {
             let mut slot = self.compact_scratch_buf.lock().unwrap();
-            let need = sub.instance_count.max(1);
+            // One allocation for all three regions. Rounded up so a scene that
+            // grows by an instance at a time does not reallocate every frame.
+            let need = scratch_u32s.min(max_storage / 4) as u32;
             let fits = slot.as_ref().is_some_and(|(_, cap)| *cap >= need);
             if !fits {
-                let cap = need.next_power_of_two();
+                // Rounded up, but never past what the device will bind: at
+                // the very top of the range the limit itself is the capacity.
+                let cap = need
+                    .next_power_of_two()
+                    .min((max_storage / 4).min(u64::from(u32::MAX)) as u32);
                 let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
                     label: Some("cull_compact_scratch"),
-                    size: u64::from(COMPACT_FIXED_U32S + cap) * 4,
+                    size: u64::from(cap) * 4,
                     usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });

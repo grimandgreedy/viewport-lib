@@ -25,9 +25,23 @@ impl Harness {
     /// The target format `new` builds its renderer with.
     pub const DEFAULT_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 
+    /// The target format [`Harness::render_float`] needs the renderer built with.
+    pub const FLOAT_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
     /// Build a harness on a headless device, or `None` if no adapter exists.
     pub fn new() -> Option<Self> {
         Self::with_profile(&crate::device::DeviceProfile::harness())
+    }
+
+    /// Build a harness on a headless device whose renderer targets
+    /// `target_format`, or `None` if no adapter exists.
+    ///
+    /// Pass [`Harness::FLOAT_TARGET_FORMAT`] to render into a half-float target
+    /// and read frames back with [`render_float`](Self::render_float).
+    pub fn with_target_format(target_format: wgpu::TextureFormat) -> Option<Self> {
+        let (device, queue) =
+            crate::device::headless_device_with(&crate::device::DeviceProfile::harness())?;
+        Some(Self::from_device(device, queue, target_format))
     }
 
     /// Build a harness on a device requested with `profile`, or `None` when no
@@ -87,6 +101,105 @@ impl Harness {
             .render_offscreen(&self.device, &self.queue, frame, width, height)
     }
 
+    /// Render a frame into a half-float target and return the pixels as `f32`,
+    /// row-major, four channels per pixel.
+    ///
+    /// The renderer must have been built with [`FLOAT_TARGET_FORMAT`](Self::FLOAT_TARGET_FORMAT)
+    /// (see [`with_target_format`](Self::with_target_format)) or the pipelines
+    /// will not match the target this creates.
+    ///
+    /// Use this instead of [`render`](Self::render) when comparing two frames for
+    /// equality. An 8-bit readback only reports a pixel whose value crosses a
+    /// quantisation step, so it misses most of a small difference and reports the
+    /// rest intermittently, and the size of the step a pixel crosses says nothing
+    /// about the size of the difference that moved it.
+    pub fn render_float(&mut self, frame: &FrameData, width: u32, height: u32) -> Vec<[f32; 4]> {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("harness_float_target"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::FLOAT_TARGET_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.renderer
+            .render_to_texture(&self.device, &self.queue, &view, frame);
+
+        let bytes_per_pixel = 8u32;
+        let unpadded_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_row = (unpadded_row + align - 1) & !(align - 1);
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("harness_float_staging"),
+            size: (padded_row * height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("harness_float_copy"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            size,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .expect("float readback poll");
+        let _ = rx.recv();
+
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+        {
+            let mapped = staging.slice(..).get_mapped_range();
+            for row in 0..height as usize {
+                let start = row * padded_row as usize;
+                let bytes = &mapped[start..start + unpadded_row as usize];
+                for texel in bytes.chunks_exact(bytes_per_pixel as usize) {
+                    let mut channels = [0f32; 4];
+                    for (c, slot) in channels.iter_mut().enumerate() {
+                        *slot = half_to_f32(u16::from_le_bytes([texel[c * 2], texel[c * 2 + 1]]));
+                    }
+                    pixels.push(channels);
+                }
+            }
+        }
+        staging.unmap();
+        pixels
+    }
+
     /// The most recent frame's statistics.
     pub fn stats(&self) -> FrameStats {
         self.renderer.last_frame_stats()
@@ -100,4 +213,31 @@ impl Harness {
         let _ = self.render(frame, width, height);
         self.stats()
     }
+}
+
+/// Decode an IEEE half into an `f32`.
+fn half_to_f32(bits: u16) -> f32 {
+    let sign = u32::from(bits >> 15) & 1;
+    let exponent = u32::from(bits >> 10) & 0x1f;
+    let fraction = u32::from(bits) & 0x3ff;
+    let out = if exponent == 0 {
+        if fraction == 0 {
+            sign << 31
+        } else {
+            // Subnormal half, normal f32: shift the fraction up until the
+            // implicit leading bit appears, paying for it in the exponent.
+            let mut shift = 0i32;
+            let mut f = fraction;
+            while f & 0x400 == 0 {
+                f <<= 1;
+                shift -= 1;
+            }
+            (sign << 31) | (((127 - 15 + shift) as u32) << 23) | ((f & 0x3ff) << 13)
+        }
+    } else if exponent == 0x1f {
+        (sign << 31) | (0xff << 23) | (fraction << 13)
+    } else {
+        (sign << 31) | ((exponent + 127 - 15) << 23) | (fraction << 13)
+    };
+    f32::from_bits(out)
 }

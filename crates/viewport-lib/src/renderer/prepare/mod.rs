@@ -1009,7 +1009,7 @@ impl ViewportRenderer {
         self.prepare_splat_sort(device, queue, frame);
         self.prepare_splat_wireframe(device, queue, frame);
         self.prepare_sprite_wireframe(device, queue, frame);
-        self.prepare_debug_buffer(device, frame);
+        self.prepare_debug_buffer(frame);
         self.prepare_atlas_blit(queue, frame, viewport_fx);
     }
 

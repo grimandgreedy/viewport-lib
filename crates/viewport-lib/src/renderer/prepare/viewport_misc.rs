@@ -151,53 +151,27 @@ impl ViewportRenderer {
         }
     }
 
-    pub(super) fn prepare_debug_buffer(&mut self, device: &crate::gpu::Device, frame: &FrameData) {
-        // Debug fragment buffer: allocate or resize when debug_vis is active.
-        // Must use physical pixels: clip_pos in the shader is in physical pixels,
-        // and viewport_width in ClipPlanesUniform (the buffer stride) is now physical too.
+    pub(super) fn prepare_debug_buffer(&mut self, frame: &FrameData) {
         {
             let vp_idx = frame.camera.viewport_index;
-            let debug_active = frame.effects.debug.debug_vis.active;
+            // Physical pixels: the viewport size the debug readback is bounded
+            // by is the one the HDR target was allocated at.
             let ppp = frame.camera.pixels_per_point;
             let vw = (frame.camera.viewport_size[0] * ppp).max(1.0) as u32;
             let vh = (frame.camera.viewport_size[1] * ppp).max(1.0) as u32;
-            let slot = &self.viewport_slots[vp_idx];
+            let debug_active = frame.effects.debug.debug_vis.active;
 
-            if debug_active && slot.debug_frag_dims != (vw, vh) {
-                let size = (vw as u64) * (vh as u64) * 16;
-                let new_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("debug_frag_buf"),
-                    size: size.max(16),
-                    usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                let new_bg = self.resources.create_camera_bind_group(
-                    device,
-                    &self.viewport_slots[vp_idx].camera_buf,
-                    &self.viewport_slots[vp_idx].clip_planes_buf,
-                    &self.viewport_slots[vp_idx].shadow_info_buf,
-                    &self.viewport_slots[vp_idx].clip_volume_buf,
-                    &new_buf,
-                    "per_viewport_camera_bg_debug",
-                );
-                self.viewport_slots[vp_idx].debug_frag_buf = Some(new_buf);
-                self.viewport_slots[vp_idx].debug_frag_dims = (vw, vh);
-                self.viewport_slots[vp_idx].camera_bind_group = new_bg;
-            } else if !debug_active && slot.debug_frag_buf.is_some() {
-                let sentinel = &self.resources.binds.debug_frag_sentinel_buf;
-                let new_bg = self.resources.create_camera_bind_group(
-                    device,
-                    &self.viewport_slots[vp_idx].camera_buf,
-                    &self.viewport_slots[vp_idx].clip_planes_buf,
-                    &self.viewport_slots[vp_idx].shadow_info_buf,
-                    &self.viewport_slots[vp_idx].clip_volume_buf,
-                    sentinel,
-                    "per_viewport_camera_bg",
-                );
-                self.viewport_slots[vp_idx].debug_frag_buf = None;
-                self.viewport_slots[vp_idx].debug_frag_dims = (0, 0);
-                self.viewport_slots[vp_idx].camera_bind_group = new_bg;
-            }
+            // Whether this frame will leave the debug quantity in the HDR
+            // texture, where `read_debug_pixel` can read it back after the depth
+            // test has chosen a winner. That needs the HDR path (the LDR path
+            // renders straight into the caller's target, which the renderer does
+            // not own) and `Replace` (the other modes blend the quantity with
+            // the shaded colour, so what lands there is not the quantity).
+            let readable = debug_active
+                && frame.effects.display.mode == crate::renderer::types::PipelineMode::Hdr
+                && frame.effects.debug.debug_vis.mode
+                    == crate::renderer::types::DebugOutputMode::Replace;
+            self.viewport_slots[vp_idx].debug_readback_dims = readable.then_some((vw, vh));
         }
     }
 

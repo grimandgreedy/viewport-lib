@@ -46,15 +46,19 @@ struct FrustumUniform {
     // dispatches bind the fallback instance buffer).
     do_mask_cull:   u32,
     // 1 = the compaction phases below run after this dispatch and write both
-    // the visible list and the per-batch visible counts. 0 = the submission
-    // outgrew the chunk plan, so `cull_instances` writes the list itself in
-    // arrival order and counts survivors atomically.
+    // the visible list and the per-batch visible counts. 0 = the scratch this
+    // submission needs is past what the device will bind, so `cull_instances`
+    // writes the list itself in arrival order and counts survivors atomically.
     compact_enabled: u32,
-    // Pad to a 16-byte multiple. Three scalars, not a vec3: a vec3 aligns to
-    // 16 and would push the struct to 224 bytes.
+    // Sizes of the first two `compact_scratch` regions for this dispatch, in
+    // u32s: the chunk plan (batch_count + 1) and the per-chunk totals. They
+    // size to the submission rather than to a fixed maximum, so the regions are
+    // exactly as large as this dispatch needs and no scene is too big for them.
+    plan_cap:        u32,
+    chunk_cap:       u32,
+    // Pad to a 16-byte multiple. A scalar, not a vec3: a vec3 aligns to 16 and
+    // would push the struct to 224 bytes.
     _pad0:           u32,
-    _pad1:           u32,
-    _pad2:           u32,
 }
 
 struct InstanceAabb {
@@ -163,12 +167,19 @@ struct DrawIndirect {
 
 // Instances per compaction chunk, and the workgroup width that walks one.
 const CHUNK: u32 = 256u;
-// Region bases inside `compact_scratch`. Must match MAX_PLAN_* in indirect.rs.
+// Region bases inside `compact_scratch`. The first region starts at zero and
+// the other two follow the sizes the dispatch was given, so the whole buffer is
+// laid out from `frustum` rather than from constants that a large scene could
+// outgrow. `indirect.rs` allocates for the same three regions.
 const PLAN_BASE: u32 = 0u;
-const PLAN_CAP: u32 = 8193u;
-const CHUNK_CAP: u32 = 16384u;
-const TOTAL_BASE: u32 = PLAN_BASE + PLAN_CAP;
-const FLAGS_BASE: u32 = TOTAL_BASE + CHUNK_CAP;
+
+fn total_base() -> u32 {
+    return PLAN_BASE + frustum.plan_cap;
+}
+
+fn flags_base() -> u32 {
+    return total_base() + frustum.chunk_cap;
+}
 // Marker left in a scratch slot whose instance the cull rejected.
 const CULLED_SLOT: u32 = 0xffffffffu;
 
@@ -261,7 +272,7 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     let slot_meta = batch_metas[aabb.batch_index];
     let slot_local = i - slot_meta.instance_offset;
     if slot_local < slot_meta.instance_count {
-        compact_scratch[FLAGS_BASE + slot_meta.vis_offset + slot_local] = CULLED_SLOT;
+        compact_scratch[flags_base() + slot_meta.vis_offset + slot_local] = CULLED_SLOT;
     }
 
     // Per-receiver shadow opt-out: shadow cull dispatches skip instances that
@@ -305,7 +316,7 @@ fn cull_instances(@builtin(global_invocation_id) id: vec3<u32>) {
     if slot_local >= slot_meta.instance_count {
         return;
     }
-    compact_scratch[FLAGS_BASE + slot_meta.vis_offset + slot_local] = i;
+    compact_scratch[flags_base() + slot_meta.vis_offset + slot_local] = i;
 
     // When the compaction runs it writes the list and the per-batch counts, so
     // there is nothing more to do here. Only the over-capacity fallback needs
@@ -409,7 +420,7 @@ fn chunk_counts(
     let idx = (ch - compact_scratch[PLAN_BASE + owner]) * CHUNK + lid.x;
 
     var survives = 0u;
-    if idx < bmeta.instance_count && compact_scratch[FLAGS_BASE + bmeta.vis_offset + idx] != CULLED_SLOT {
+    if idx < bmeta.instance_count && compact_scratch[flags_base() + bmeta.vis_offset + idx] != CULLED_SLOT {
         survives = 1u;
     }
     scan[lid.x] = survives;
@@ -423,7 +434,7 @@ fn chunk_counts(
         workgroupBarrier();
     }
     if lid.x == 0u {
-        compact_scratch[TOTAL_BASE + ch] = scan[0];
+        compact_scratch[total_base() + ch] = scan[0];
     }
 }
 
@@ -457,7 +468,7 @@ fn scatter_visible(
     // Sum of the earlier chunks' survivor counts: this chunk's base.
     var before = 0u;
     for (var c = first + lid.x; c < ch; c = c + CHUNK) {
-        before = before + compact_scratch[TOTAL_BASE + c];
+        before = before + compact_scratch[total_base() + c];
     }
     scan[lid.x] = before;
     workgroupBarrier();
@@ -471,7 +482,7 @@ fn scatter_visible(
 
     var entry = CULLED_SLOT;
     if idx < bmeta.instance_count {
-        entry = compact_scratch[FLAGS_BASE + bmeta.vis_offset + idx];
+        entry = compact_scratch[flags_base() + bmeta.vis_offset + idx];
     }
     let survives = select(0u, 1u, entry != CULLED_SLOT);
 

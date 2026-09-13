@@ -13,8 +13,11 @@ use viewport_lib::plugin_api::CullSubmission;
 use viewport_lib::wgpu;
 use viewport_lib_testkit::Harness;
 
-/// Matches `MAX_PLAN_BATCHES` in the renderer's cull resources.
-const MAX_PLAN_BATCHES: u32 = 8192;
+/// The batch count the compaction's chunk plan was once fixed at. It no longer
+/// means anything to the renderer: the plan sizes to the submission. The tests
+/// below straddle it so that a return to a fixed capacity, at this number or any
+/// other, shows up as a batch count that stops packing in instance order.
+const OLD_PLAN_LIMIT: u32 = 8192;
 
 /// Runs one cull submission and reads back the visible list and the per-batch
 /// instance counts from the indirect entries.
@@ -209,7 +212,7 @@ fn fixture_cull_packs_survivors_in_instance_order() {
 }
 
 #[test]
-fn fixture_cull_within_plan_capacity_draws_every_batch() {
+fn fixture_cull_at_the_old_plan_limit_draws_every_batch() {
     let Some(mut h) = Harness::new() else {
         eprintln!("skipping: no GPU adapter");
         return;
@@ -223,7 +226,7 @@ fn fixture_cull_within_plan_capacity_draws_every_batch() {
         return;
     }
 
-    let batches = MAX_PLAN_BATCHES;
+    let batches = OLD_PLAN_LIMIT;
     let (vis, counts) = run_cull(&mut h, &vec![1; batches as usize], |_| true);
 
     let expected: Vec<u32> = (0..batches).collect();
@@ -239,7 +242,7 @@ fn fixture_cull_within_plan_capacity_draws_every_batch() {
 }
 
 #[test]
-fn fixture_cull_over_plan_capacity_still_draws_every_instance() {
+fn fixture_cull_past_the_old_plan_limit_still_packs_in_order() {
     let Some(mut h) = Harness::new() else {
         eprintln!("skipping: no GPU adapter");
         return;
@@ -253,24 +256,64 @@ fn fixture_cull_over_plan_capacity_still_draws_every_instance() {
         return;
     }
 
-    // One batch past the plan, so the compaction is skipped and the cull
-    // kernel's own arrival-order list is what gets drawn.
-    let batches = MAX_PLAN_BATCHES + 1;
-    let (mut vis, counts) = run_cull(&mut h, &vec![1; batches as usize], |_| true);
+    // Past the batch count the plan used to be capped at. The compaction sizes
+    // its scratch to the submission, so this is an ordinary case: it has to pack
+    // in instance order like any other, not fall back to the cull kernel's
+    // arrival-order list.
+    let batches = OLD_PLAN_LIMIT + 1;
+    let (vis, counts) = run_cull(&mut h, &vec![1; batches as usize], |_| true);
 
     assert!(
         counts.iter().all(|&c| c == 1),
-        "expected one visible instance per batch on the fallback path"
+        "expected one visible instance per batch"
     );
-    // Each batch owns one visibility slot here, so the fallback list happens to
-    // match instance order too. What matters is that every slot was written and
-    // the contents are the full set.
-    vis.sort_unstable();
     let expected: Vec<u32> = (0..batches).collect();
     assert_eq!(
         vis, expected,
-        "fallback path left the visible list incomplete"
+        "compaction did not pack the visible list in instance order past the old plan limit"
     );
+}
+
+#[test]
+fn fixture_cull_packs_in_order_with_far_more_chunks_than_the_old_limit() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    if !h
+        .device
+        .features()
+        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+    {
+        eprintln!("skipping: no INDIRECT_FIRST_INSTANCE");
+        return;
+    }
+
+    // The other bound the plan used to carry was on chunks, one per 256
+    // instances plus one per batch. Many single-instance batches is the cheapest
+    // way to push the chunk count well past the old 16384, since each batch
+    // costs a chunk on its own.
+    let batches = 20_000u32;
+    let keep = |i: u32| i % 3 != 0;
+    let (vis, counts) = run_cull(&mut h, &vec![1; batches as usize], keep);
+
+    // Each batch owns a single visibility slot, so a survivor's slot holds its
+    // own instance index and a culled batch draws nothing. Getting that right
+    // across 20000 chunks means the plan and the owner bisect both scaled.
+    for b in 0..batches {
+        let want = u32::from(keep(b));
+        assert_eq!(
+            counts[b as usize], want,
+            "batch {b} drew {} instances, expected {want}",
+            counts[b as usize]
+        );
+        if keep(b) {
+            assert_eq!(
+                vis[b as usize], b,
+                "batch {b} did not write its own instance index"
+            );
+        }
+    }
 }
 
 #[test]
