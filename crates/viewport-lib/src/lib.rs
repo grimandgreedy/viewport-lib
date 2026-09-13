@@ -236,6 +236,7 @@ pub use scene::scene::{
 };
 pub use scene::traits::{RenderMode, ViewportObject};
 pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
+pub use vplt::data::texture::{TextureData, TexturePayload};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::implicit::{

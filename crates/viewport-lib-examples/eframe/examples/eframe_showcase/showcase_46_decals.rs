@@ -19,51 +19,91 @@ use crate::App;
 // Procedural textures
 // ---------------------------------------------------------------------------
 
-/// Circular gunshot decal albedo: medium-gray disc on transparent background.
+/// Gunshot albedo: a dark punched hole ringed by bruised plaster and a few
+/// cracks running out of it. The outline wobbles so the impact does not read as
+/// a drawn circle.
 fn make_disc_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let c = size as f32 * 0.5;
-    let r = c * 0.9;
     for y in 0..size {
         for x in 0..size {
             let dx = x as f32 - c;
             let dy = y as f32 - c;
             let d = (dx * dx + dy * dy).sqrt();
-            let alpha = ((r - d) / (r * 0.15)).clamp(0.0, 1.0);
+            let angle = dy.atan2(dx);
+
+            // Ragged outline: a small angular wobble on the radius.
+            let wobble = 1.0 + 0.035 * (angle * 5.0).sin() + 0.02 * (angle * 11.0).cos();
+            let rr = d / (c * 0.88 * wobble);
+            if rr >= 1.0 {
+                continue;
+            }
+
+            // The punched hole. Its edge wobbles on its own frequencies so it
+            // is not a clean circle inside a clean circle.
+            let hole_r =
+                0.24 * (1.0 + 0.09 * (angle * 3.0 + 1.1).sin() + 0.06 * (angle * 7.0).cos());
+            let hole = 1.0 - ((rr - hole_r) / 0.13).clamp(0.0, 1.0);
+
+            // Cracks: thin, only in the plaster outside the hole, and uneven,
+            // so some run further and darker than others.
+            let spokes = (angle * 3.5 + 0.7).sin().abs().powf(70.0);
+            let uneven = 0.35 + 0.65 * (angle * 1.5 + 0.4).sin().abs();
+            let crack =
+                spokes * uneven * (1.0 - rr).powf(0.9) * ((rr - hole_r) / 0.2).clamp(0.0, 1.0);
+
+            // Plaster chipped back around the hole, settling toward the wall
+            // colour outward.
+            let plaster = 0.78 - 0.30 * rr;
+            let v = (plaster * (1.0 - 0.94 * hole) * (1.0 - 0.3 * crack)).clamp(0.0, 1.0);
+
             let idx = ((y * size + x) * 4) as usize;
-            buf[idx] = 120;
-            buf[idx + 1] = 115;
-            buf[idx + 2] = 110;
-            buf[idx + 3] = (alpha * 255.0) as u8;
+            buf[idx] = (v * 255.0) as u8;
+            buf[idx + 1] = (v * 247.0) as u8;
+            buf[idx + 2] = (v * 236.0) as u8;
+            buf[idx + 3] = (((1.0 - rr) / 0.22).clamp(0.0, 1.0) * 255.0) as u8;
         }
     }
     buf
 }
 
-/// Bullet-hole crater normal map: encodes an inward dome shape.
+/// Bullet-hole crater normal map: a dish sunk into the wall with a small raised
+/// lip around it.
+///
+/// Tangent space, +Z out of the wall. The radial slope reverses at half radius:
+/// the inner dish leans toward the centre, the lip leans away from it, which is
+/// what catches the light around the rim. The centre is flat +Z, so there is no
+/// point where the radial direction is undefined.
 fn make_crater_normal_map(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let c = size as f32 * 0.5;
-    let r = c * 0.85;
+    let r_max = c * 0.85;
     for y in 0..size {
         for x in 0..size {
             let dx = x as f32 - c;
             let dy = y as f32 - c;
             let d = (dx * dx + dy * dy).sqrt();
-            let t = (d / r).clamp(0.0, 1.0);
-            let nz = t;
-            let scale = (1.0 - nz * nz).sqrt();
-            let (nx, ny) = if d > 0.001 {
-                (dx / d * scale * 0.6, dy / d * scale * 0.6)
+            let rr = (d / r_max).clamp(0.0, 1.0);
+
+            // Slope along the radius: zero at the centre and at the rim, one
+            // sign through the dish, the other over the lip.
+            // The lip is weaker than the dish, so the rim catches the light
+            // without the whole decal reading as a dome.
+            let slope = (rr * std::f32::consts::TAU).sin() * 0.7 * (1.0 - 0.5 * rr);
+
+            // Lean against the radial direction, so a positive slope tips the
+            // surface toward the centre.
+            let (rx, ry) = if d > 1.0e-4 {
+                (dx / d, dy / d)
             } else {
                 (0.0, 0.0)
             };
-            let len = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-6);
-            let (nx, ny, nz) = (nx / len, ny / len, nz / len);
+            let n = glam::Vec3::new(-rx * slope, -ry * slope, 1.0).normalize();
+
             let idx = ((y * size + x) * 4) as usize;
-            buf[idx] = ((nx * 0.5 + 0.5) * 255.0) as u8;
-            buf[idx + 1] = ((ny * 0.5 + 0.5) * 255.0) as u8;
-            buf[idx + 2] = ((nz * 0.5 + 0.5) * 255.0) as u8;
+            buf[idx] = ((n.x * 0.5 + 0.5) * 255.0) as u8;
+            buf[idx + 1] = ((n.y * 0.5 + 0.5) * 255.0) as u8;
+            buf[idx + 2] = ((n.z * 0.5 + 0.5) * 255.0) as u8;
             buf[idx + 3] = 255;
         }
     }
@@ -551,8 +591,11 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
     let albedo_id = res
         .upload_texture(&app.device, &app.queue, 128, 128, &make_disc_texture(128))
         .expect("decal albedo upload");
+    // upload_normal_map, not upload_texture: a tangent-space normal map holds
+    // directions, not colour, and the sRGB path would decode a neutral 128 to
+    // 0.216 and tilt every normal the same way.
     let normal_id = res
-        .upload_texture(
+        .upload_normal_map(
             &app.device,
             &app.queue,
             128,
@@ -1292,7 +1335,9 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.separator();
         ui.label("Surface guide:");
-        ui.small("Wall (y = 0):       gunshot craters, fire overlay (left), rune and spark (centre).");
+        ui.small(
+            "Wall (y = 0):       gunshot craters, fire overlay (left), rune and spark (centre).",
+        );
         ui.small("Ground left  (x<0): muddy footprints (static).");
         ui.small("Ground right (x>=0): blood splatter.");
     });

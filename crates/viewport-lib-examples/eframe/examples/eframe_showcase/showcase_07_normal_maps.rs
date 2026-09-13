@@ -78,10 +78,13 @@ impl App {
             .upload_normal_map(&self.device, &self.queue, 128, 128, &brick_nm_data)
             .expect("brick normal map upload");
 
+        // upload_data_texture, not upload_texture: an AO map holds a cavity
+        // factor, not colour, so it must stay linear. The sRGB path would decode
+        // it on sample and darken the occlusion.
         let brick_ao_data = make_brick_ao_map(128, 128);
         let brick_ao_id = renderer
             .resources_mut()
-            .upload_texture(&self.device, &self.queue, 128, 128, &brick_ao_data)
+            .upload_data_texture(&self.device, &self.queue, 128, 128, &brick_ao_data)
             .expect("brick ao map upload");
 
         let tile_nm_data = make_tile_normal_map(128, 128);
@@ -93,7 +96,7 @@ impl App {
         let tile_ao_data = make_tile_ao_map(128, 128);
         let tile_ao_id = renderer
             .resources_mut()
-            .upload_texture(&self.device, &self.queue, 128, 128, &tile_ao_data)
+            .upload_data_texture(&self.device, &self.queue, 128, 128, &tile_ao_data)
             .expect("tile ao map upload");
 
         // --- Meshes ---

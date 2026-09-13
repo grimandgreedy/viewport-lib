@@ -34,7 +34,7 @@ pub mod prelude {
     pub use crate::camera::Camera;
     pub use crate::colour::{Colour, ColourSpace};
     pub use crate::colourmap::BuiltinColourmap;
-    pub use crate::data::{attribute::AttributeData, mesh::MeshData};
+    pub use crate::data::{attribute::AttributeData, mesh::MeshData, texture::TextureData};
     pub use crate::error::{ViewportError, ViewportResult};
     pub use crate::ids::{MeshId, TextureId};
     pub use crate::input::{Action, ActionFrame, ViewportEvent};
