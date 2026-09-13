@@ -151,6 +151,7 @@ fn main() -> eframe::Result {
             Ok(Box::new(App {
                 device,
                 queue,
+                cursor_viewport: glam::Vec2::ZERO,
                 viewport_target: None,
                 mv_targets: Vec::new(),
                 camera: Camera {
@@ -358,6 +359,11 @@ pub(crate) struct App {
     /// cache is always invalidated when changing showcases.
     mode_gen: u64,
     show_keybinds: bool,
+
+    /// Cursor position in viewport pixels, updated once per frame from the
+    /// pointer. Shared: several showcases read it for picking and painting,
+    /// so it belongs to the host rather than to any one of them.
+    pub(crate) cursor_viewport: glam::Vec2,
 
     /// Deferred object/instance pick request from the input handler. Set on a
     /// click; consumed at the render site, where the renderer, device, queue,
@@ -751,7 +757,7 @@ impl eframe::App for App {
 
                     if let Some(pos) = i.pointer.interact_pos() {
                         let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
-                        self.interact_state.last_cursor_viewport = local;
+                        self.cursor_viewport = local;
                         self.controller
                             .push_event(ViewportEvent::PointerMoved { position: local });
                     }
@@ -901,7 +907,7 @@ impl eframe::App for App {
                     self.pl_state.shift_held = ctx.input(|i| i.modifiers.shift);
                     if response.drag_stopped() {
                         if let Some(drag_start) = self.pl_state.drag_start.take() {
-                            let drag_end = self.interact_state.last_cursor_viewport;
+                            let drag_end = self.cursor_viewport;
                             if (drag_end - drag_start).length() > 4.0 {
                                 let shift = self.pl_state.shift_held;
                                 if self.pl_state.unified_mode {
@@ -1020,7 +1026,7 @@ impl eframe::App for App {
                         if !self.interact_state.manip.is_active() {
                             if let Some(center) = self.interact_state.gizmo_center {
                                 let ray_origin = self.camera.eye_position();
-                                let cursor = self.interact_state.last_cursor_viewport;
+                                let cursor = self.cursor_viewport;
                                 let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
                                 let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
                                 let inv_vp = view_proj.inverse();
@@ -1063,7 +1069,7 @@ impl eframe::App for App {
                         let manip_ctx = ManipulationContext {
                             camera: self.camera.clone(),
                             viewport_size,
-                            cursor_viewport: Some(self.interact_state.last_cursor_viewport),
+                            cursor_viewport: Some(self.cursor_viewport),
                             pointer_delta,
                             selection_center: self.interact_state.gizmo_center,
                             gizmo: gizmo_info,
@@ -1112,7 +1118,7 @@ impl eframe::App for App {
 
                         // Click-to-select: only when no session is active.
                         if response.clicked() && !self.interact_state.manip.is_active() {
-                            let pick_pos = self.interact_state.last_cursor_viewport;
+                            let pick_pos = self.cursor_viewport;
                             self.handle_click_select(pick_pos, w, h);
                         }
                     } else {
@@ -1146,7 +1152,7 @@ impl eframe::App for App {
                     let widget_ctx = vpl::WidgetContext {
                         camera: render_cam,
                         viewport_size: glam::Vec2::new(rect.width(), rect.height()),
-                        cursor_viewport: self.interact_state.last_cursor_viewport,
+                        cursor_viewport: self.cursor_viewport,
                         drag_started: response.drag_started(),
                         dragging: response.dragged(),
                         released: response.drag_stopped(),
@@ -1163,7 +1169,7 @@ impl eframe::App for App {
                     let widget_ctx = vpl::WidgetContext {
                         camera: render_cam,
                         viewport_size: glam::Vec2::new(rect.width(), rect.height()),
-                        cursor_viewport: self.interact_state.last_cursor_viewport,
+                        cursor_viewport: self.cursor_viewport,
                         drag_started: response.drag_started(),
                         dragging: response.dragged(),
                         released: response.drag_stopped(),
@@ -1174,7 +1180,7 @@ impl eframe::App for App {
 
                 // ----- Click-to-select (non-Interaction modes) -----
                 if response.clicked() && self.mode != ShowcaseMode::Interaction {
-                    let pick_pos = self.interact_state.last_cursor_viewport;
+                    let pick_pos = self.cursor_viewport;
                     // Unified pick for PickLevels showcase uses renderer.pick_object(),
                     // which dispatches to the GPU or CPU backend per the UI toggle.
                     if self.mode == ShowcaseMode::PickLevels && self.pl_state.unified_mode {

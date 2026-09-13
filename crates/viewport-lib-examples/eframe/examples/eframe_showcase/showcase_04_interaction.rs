@@ -26,7 +26,6 @@ pub(crate) struct InteractState {
     pub gizmo_center: Option<glam::Vec3>,
     pub gizmo_scale: f32,
     pub spline: vpl::SplineWidget,
-    pub last_cursor_viewport: glam::Vec2,
 }
 
 impl Default for InteractState {
@@ -48,7 +47,6 @@ impl Default for InteractState {
                 glam::Vec3::new(0.5, -1.5, 1.5),
                 glam::Vec3::new(2.0, 0.0, 1.5),
             ]),
-            last_cursor_viewport: glam::Vec2::ZERO,
         }
     }
 }
@@ -376,7 +374,7 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
     let spline_ctx = vpl::WidgetContext {
         camera: render_cam,
         viewport_size: glam::Vec2::new(w, h),
-        cursor_viewport: app.interact_state.last_cursor_viewport,
+        cursor_viewport: app.cursor_viewport,
         drag_started: false,
         dragging: false,
         released: false,

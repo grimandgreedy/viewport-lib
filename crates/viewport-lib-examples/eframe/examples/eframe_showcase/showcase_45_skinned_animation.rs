@@ -1956,7 +1956,7 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
     // ----- Skinned animation: step runtime -----
     if app.skin_state.built {
         let dt = cx.egui.input(|i| i.stable_dt.min(0.25));
-        let cursor = app.interact_state.last_cursor_viewport;
+        let cursor = app.cursor_viewport;
         let viewport_size = glam::Vec2::new(cx.rect.width(), cx.rect.height());
         let clicked = cx.response.clicked();
         update_skin47(

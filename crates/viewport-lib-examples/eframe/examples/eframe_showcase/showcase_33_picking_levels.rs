@@ -2350,7 +2350,7 @@ pub(crate) fn frame(
 pub(crate) fn overlay(app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
     // ----- PickLevels: rubber-band drag rect overlay -----
     if let Some(drag_start) = app.pl_state.drag_start {
-        let drag_end = app.interact_state.last_cursor_viewport;
+        let drag_end = app.cursor_viewport;
         if cx.response.dragged() && (drag_end - drag_start).length() > 4.0 {
             let a =
                 egui::pos2(cx.rect.left() + drag_start.x, cx.rect.top() + drag_start.y);

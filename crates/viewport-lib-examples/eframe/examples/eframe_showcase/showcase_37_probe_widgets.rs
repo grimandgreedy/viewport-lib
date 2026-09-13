@@ -507,7 +507,7 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
     let widget_ctx = WidgetContext {
         camera: render_cam,
         viewport_size: glam::Vec2::new(w, h),
-        cursor_viewport: app.interact_state.last_cursor_viewport,
+        cursor_viewport: app.cursor_viewport,
         drag_started: false,
         dragging: false,
         released: false,

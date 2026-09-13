@@ -483,7 +483,7 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
     // in-place GPU write, so nothing here re-uploads a mesh.
     if app.vcol_state.built {
         let dt = cx.egui.input(|i| i.stable_dt).min(0.1);
-        let cursor = app.interact_state.last_cursor_viewport;
+        let cursor = app.cursor_viewport;
         let view_proj = app.camera.view_proj_matrix();
         let vp_w = cx.rect.width();
         let vp_h = cx.rect.height();
