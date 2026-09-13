@@ -1,9 +1,9 @@
 //! Feature showcase for `viewport-lib` using `eframe` / `egui`.
 
-pub use viewport_lib_examples_eframe::eframe;
-use viewport_lib::wgpu;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::wgpu;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Action, AttributeKind, AttributeRef, BackfacePolicy, ButtonState, Camera, CameraAnimator,
     CameraFrame, ClipObject, ColourmapId, FrameData, GizmoAxis, GizmoInfo, GizmoMode, GroundPlane,
@@ -18,6 +18,7 @@ use vpl::{
 
 mod geometry;
 mod gizmo_helpers;
+mod registry;
 mod shared;
 mod showcase_01_basic;
 mod showcase_02_scene_graph;
@@ -326,71 +327,7 @@ enum ShowcaseMode {
     VectorArt,
 }
 
-impl ShowcaseMode {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Basic => "1: Rendering Basics",
-            Self::SceneGraph => "2: Scene Graph",
-            Self::Performance => "23: Performance",
-            Self::Interaction => "4: Interaction",
-            Self::MaterialsVisibility => "5: Materials and Visibility",
-            Self::PostProcess => "6: Post-Processing",
-            Self::NormalMaps => "7: Normal Maps",
-            Self::Shadows => "8: Shadows",
-            Self::Annotation => "9: Annotations",
-            Self::CameraTools => "10: Camera Tools",
-            Self::Lights => "11: Lights",
-            Self::ScalarFields => "12: Scalar Fields",
-            Self::MultiViewport => "13: Multi-Viewport",
-            Self::Isolines => "14: Isolines & Contours",
-            Self::PointClouds => "15: Point Clouds & Glyphs",
-            Self::Streamlines => "16: Streamlines & Tubes",
-            Self::Volume => "17: Volume & Isosurface",
-            Self::ClipVolumes => "18: Clip Volumes",
-            Self::Matcap => "19: Matcap Shading",
-            Self::FaceAttributes => "20: Face Attributes",
-            Self::Textures => "21: Textures",
-            Self::ParamVis => "22: UV Parameterization",
-            Self::GroundPlane => "3: Ground Plane",
-            Self::BackfacePolicy => "24: Backface Policy",
-            Self::SurfaceVectors => "25: Surface Vectors",
-            Self::VolumeMesh => "26: Volume Meshes",
-            Self::Auxiliary => "27: Camera Framing & HUD",
-            Self::CurveNetworkQuantities => "28: Curve Network Quantities",
-            Self::DepthCompositeImages => "29: Depth-Composited Images",
-            Self::ImplicitSurface => "30: Implicit Surfaces",
-            Self::SparseVolumeGrid => "31: Sparse Volume Grid",
-            Self::ExtendedQuantities => "32: Extended Quantities",
-            Self::PickLevels => "33: Picking Levels",
-            Self::Labels => "34: Labels",
-            Self::Overlay => "35: Overlay Composition",
-            Self::PlaybackRuntime => "36: Playback Runtime Control",
-            Self::ProbeWidgets => "37: Probe Widgets",
-            Self::SurfaceLIC => "38: Surface LIC",
-            Self::TensorGlyphs => "39: Tensor Glyphs",
-            Self::VertexWarp => "40: GPU Vertex Warp",
-            Self::Sprites => "41: Sprites & Particles",
-            Self::GaussianSplats => "42: Gaussian Splats",
-            Self::SceneRuntime => "43: Scene Runtime",
-            Self::DebugDraw => "44: Debug Draw",
-            Self::SkinnedAnimation => "45: Skeletal Animation",
-            Self::Decals => "46: Decals",
-            Self::LightingConsistency => "47: Lighting Consistency",
-            Self::ScatterVolumes => "48: Scatter Volumes",
-            Self::SceneLights => "49: Scene Lights",
-            Self::GpuWave => "50: GPU Wave (compute plugin)",
-            Self::AsyncUploads => "51: Async Asset Streaming",
-            Self::Lod => "52: Level of Detail",
-            Self::VertexColours => "53: Vertex Colours & Painting",
-            Self::CustomShading => "54: Custom Shading Plugins",
-            Self::Foreground => "55: Foreground Composite Pass",
-            Self::SubmeshMaterials => "56: Submesh Materials",
-            Self::PhotometricLighting => "57: Photometric Lighting",
-            Self::PhysicallyBasedSurfaces => "58: Physically-Based Surfaces",
-            Self::VectorArt => "59: Vector Art (SVG)",
-        }
-    }
-}
+// `ShowcaseMode::label` and the menu order live in `registry.rs`.
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -744,78 +681,39 @@ impl eframe::App for App {
         // Lazy scene builds for the active mode.
         self.ensure_scene_built(frame);
 
-        // ---- Top panel: mode switching ----
+        // ---- Top panel: showcase selector ----
+        // One dropdown over the whole set, with a heading per registry group so
+        // related demos are found together rather than scanned for.
         egui::TopBottomPanel::top("mode_panel").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 ui.label("Showcase:");
-                for mode in [
-                    ShowcaseMode::Basic,
-                    ShowcaseMode::SceneGraph,
-                    ShowcaseMode::GroundPlane,
-                    ShowcaseMode::Interaction,
-                    ShowcaseMode::MaterialsVisibility,
-                    ShowcaseMode::PostProcess,
-                    ShowcaseMode::NormalMaps,
-                    ShowcaseMode::Shadows,
-                    ShowcaseMode::Annotation,
-                    ShowcaseMode::CameraTools,
-                    ShowcaseMode::Lights,
-                    ShowcaseMode::ScalarFields,
-                    ShowcaseMode::MultiViewport,
-                    ShowcaseMode::Isolines,
-                    ShowcaseMode::PointClouds,
-                    ShowcaseMode::Streamlines,
-                    ShowcaseMode::Volume,
-                    ShowcaseMode::ClipVolumes,
-                    ShowcaseMode::Matcap,
-                    ShowcaseMode::FaceAttributes,
-                    ShowcaseMode::Textures,
-                    ShowcaseMode::ParamVis,
-                    ShowcaseMode::Performance,
-                    ShowcaseMode::BackfacePolicy,
-                    ShowcaseMode::SurfaceVectors,
-                    ShowcaseMode::VolumeMesh,
-                    ShowcaseMode::Auxiliary,
-                    ShowcaseMode::CurveNetworkQuantities,
-                    ShowcaseMode::DepthCompositeImages,
-                    ShowcaseMode::ImplicitSurface,
-                    ShowcaseMode::SparseVolumeGrid,
-                    ShowcaseMode::ExtendedQuantities,
-                    ShowcaseMode::PickLevels,
-                    ShowcaseMode::Labels,
-                    ShowcaseMode::Overlay,
-                    ShowcaseMode::PlaybackRuntime,
-                    ShowcaseMode::ProbeWidgets,
-                    ShowcaseMode::SurfaceLIC,
-                    ShowcaseMode::TensorGlyphs,
-                    ShowcaseMode::VertexWarp,
-                    ShowcaseMode::Sprites,
-                    ShowcaseMode::GaussianSplats,
-                    ShowcaseMode::SceneRuntime,
-                    ShowcaseMode::DebugDraw,
-                    ShowcaseMode::SkinnedAnimation,
-                    ShowcaseMode::Decals,
-                    ShowcaseMode::LightingConsistency,
-                    ShowcaseMode::ScatterVolumes,
-                    ShowcaseMode::SceneLights,
-                    ShowcaseMode::GpuWave,
-                    ShowcaseMode::AsyncUploads,
-                    ShowcaseMode::Lod,
-                    ShowcaseMode::VertexColours,
-                    ShowcaseMode::CustomShading,
-                    ShowcaseMode::Foreground,
-                    ShowcaseMode::SubmeshMaterials,
-                    ShowcaseMode::PhotometricLighting,
-                    ShowcaseMode::PhysicallyBasedSurfaces,
-                    ShowcaseMode::VectorArt,
-                ] {
-                    if ui
-                        .selectable_label(self.mode == mode, mode.label())
-                        .clicked()
-                    {
-                        self.switch_mode(mode);
-                    }
+                let mut chosen = None;
+                egui::ComboBox::from_id_salt("showcase_selector")
+                    .width(260.0)
+                    .selected_text(self.mode.label())
+                    .show_ui(ui, |ui| {
+                        let mut group = None;
+                        for entry in &registry::SHOWCASES {
+                            if group != Some(entry.group) {
+                                if group.is_some() {
+                                    ui.separator();
+                                }
+                                ui.label(egui::RichText::new(entry.group.title()).small().strong());
+                                group = Some(entry.group);
+                            }
+                            if ui
+                                .selectable_label(self.mode == entry.mode, entry.label())
+                                .clicked()
+                            {
+                                chosen = Some(entry.mode);
+                            }
+                        }
+                    });
+                if let Some(mode) = chosen {
+                    self.switch_mode(mode);
                 }
+                ui.separator();
+                ui.weak("Ctrl + [ / ] to cycle");
             });
         });
 
@@ -1718,74 +1616,12 @@ impl eframe::App for App {
 
 impl App {
     fn cycle_showcase(&mut self, dir: i32) {
-        const SHOWCASE_MODES: [ShowcaseMode; 59] = [
-            ShowcaseMode::Basic,
-            ShowcaseMode::SceneGraph,
-            ShowcaseMode::GroundPlane,
-            ShowcaseMode::Interaction,
-            ShowcaseMode::MaterialsVisibility,
-            ShowcaseMode::PostProcess,
-            ShowcaseMode::NormalMaps,
-            ShowcaseMode::Shadows,
-            ShowcaseMode::Annotation,
-            ShowcaseMode::CameraTools,
-            ShowcaseMode::Lights,
-            ShowcaseMode::ScalarFields,
-            ShowcaseMode::MultiViewport,
-            ShowcaseMode::Isolines,
-            ShowcaseMode::PointClouds,
-            ShowcaseMode::Streamlines,
-            ShowcaseMode::Volume,
-            ShowcaseMode::ClipVolumes,
-            ShowcaseMode::Matcap,
-            ShowcaseMode::FaceAttributes,
-            ShowcaseMode::Textures,
-            ShowcaseMode::ParamVis,
-            ShowcaseMode::Performance,
-            ShowcaseMode::BackfacePolicy,
-            ShowcaseMode::SurfaceVectors,
-            ShowcaseMode::VolumeMesh,
-            ShowcaseMode::Auxiliary,
-            ShowcaseMode::CurveNetworkQuantities,
-            ShowcaseMode::DepthCompositeImages,
-            ShowcaseMode::ImplicitSurface,
-            ShowcaseMode::SparseVolumeGrid,
-            ShowcaseMode::ExtendedQuantities,
-            ShowcaseMode::PickLevels,
-            ShowcaseMode::Labels,
-            ShowcaseMode::Overlay,
-            ShowcaseMode::PlaybackRuntime,
-            ShowcaseMode::ProbeWidgets,
-            ShowcaseMode::SurfaceLIC,
-            ShowcaseMode::TensorGlyphs,
-            ShowcaseMode::VertexWarp,
-            ShowcaseMode::Sprites,
-            ShowcaseMode::GaussianSplats,
-            ShowcaseMode::SceneRuntime,
-            ShowcaseMode::DebugDraw,
-            ShowcaseMode::SkinnedAnimation,
-            ShowcaseMode::Decals,
-            ShowcaseMode::LightingConsistency,
-            ShowcaseMode::ScatterVolumes,
-            ShowcaseMode::SceneLights,
-            ShowcaseMode::GpuWave,
-            ShowcaseMode::AsyncUploads,
-            ShowcaseMode::Lod,
-            ShowcaseMode::VertexColours,
-            ShowcaseMode::CustomShading,
-            ShowcaseMode::Foreground,
-            ShowcaseMode::SubmeshMaterials,
-            ShowcaseMode::PhotometricLighting,
-            ShowcaseMode::PhysicallyBasedSurfaces,
-            ShowcaseMode::VectorArt,
-        ];
-
-        let Some(current) = SHOWCASE_MODES.iter().position(|&mode| mode == self.mode) else {
+        let Some(current) = registry::SHOWCASES.iter().position(|e| e.mode == self.mode) else {
             return;
         };
-        let len = SHOWCASE_MODES.len() as i32;
+        let len = registry::SHOWCASES.len() as i32;
         let next = (current as i32 + dir).rem_euclid(len) as usize;
-        self.switch_mode(SHOWCASE_MODES[next]);
+        self.switch_mode(registry::SHOWCASES[next].mode);
     }
 
     fn cycle_selection_tab(&mut self) {
