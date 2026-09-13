@@ -437,7 +437,8 @@ mod tests {
             .upload_texture(
                 &device,
                 &queue,
-                crate::resources::TextureData::srgb(1, 1, [255u8, 255, 255, 255].to_vec()),
+                // Baked radiance, so linear: a lightmap slot rejects an sRGB upload.
+                crate::resources::TextureData::linear(1, 1, [255u8, 255, 255, 255].to_vec()),
             )
             .unwrap();
         resources

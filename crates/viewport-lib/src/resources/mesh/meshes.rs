@@ -1072,6 +1072,14 @@ impl DeviceResources {
         data: crate::resources::lightmap::LightmapData,
         mode: crate::resources::lightmap::LightmapMode,
     ) -> crate::error::ViewportResult<()> {
+        // Lightmaps are radiance, direction, and visibility: all linear. This one
+        // is caught at set time rather than at bind, because the call already
+        // returns a result.
+        use crate::resources::TextureSlot;
+        self.check_texture_slot(Some(data.texture_id()), TextureSlot::LightmapPrimary);
+        self.check_texture_slot(data.direction_texture_id(), TextureSlot::LightmapSecondary);
+        self.texture_slot_mismatch()?;
+
         let store_len = self.mesh_store.len();
         let mesh =
             self.mesh_store

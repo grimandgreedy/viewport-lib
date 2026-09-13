@@ -304,6 +304,23 @@ impl crate::resources::DeviceResources {
     ) -> GpuParticleSystemId {
         self.ensure_particle_pipelines(device);
 
+        {
+            use crate::resources::TextureSlot;
+            match &config.render {
+                ParticleRender::Sprite {
+                    texture_id,
+                    normal_texture_id,
+                    ..
+                } => {
+                    self.check_texture_slot(*texture_id, TextureSlot::SpriteAlbedo);
+                    self.check_texture_slot(*normal_texture_id, TextureSlot::SpriteNormalMap);
+                }
+                ParticleRender::Mesh { texture_id, .. } => {
+                    self.check_texture_slot(*texture_id, TextureSlot::MeshInstanceAlbedo);
+                }
+            }
+        }
+
         let capacity = config.capacity.max(1);
 
         // Persistent particle buffer, initialised to all-dead.

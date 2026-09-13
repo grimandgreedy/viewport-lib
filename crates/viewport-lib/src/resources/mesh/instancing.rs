@@ -1461,6 +1461,13 @@ impl DeviceResources {
         emissive_id: Option<crate::resources::TextureId>,
         uv1_chunk: u32,
     ) -> Option<&crate::gpu::BindGroup> {
+        use crate::resources::TextureSlot;
+        self.check_texture_slot(albedo_id, TextureSlot::MaterialAlbedo);
+        self.check_texture_slot(normal_map_id, TextureSlot::MaterialNormalMap);
+        self.check_texture_slot(ao_map_id, TextureSlot::MaterialAoMap);
+        self.check_texture_slot(mr_id, TextureSlot::MaterialMetallicRoughness);
+        self.check_texture_slot(emissive_id, TextureSlot::MaterialEmissive);
+
         let uv1_key = self.uv1_chunk_key(uv1_chunk);
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),

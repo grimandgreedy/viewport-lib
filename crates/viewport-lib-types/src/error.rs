@@ -167,6 +167,29 @@ pub enum ViewportError {
         actual: usize,
     },
 
+    /// A texture was bound into a slot that needs the other colour space.
+    ///
+    /// The space travels on the [`TextureData`](crate::data::texture::TextureData)
+    /// the texture was uploaded with, and each slot documents the space it needs.
+    /// Uploading a data map through the colour path renders a plausible but wrong
+    /// image (a neutral 128 in a normal map decodes to 0.216 instead of 0), so it
+    /// is reported here rather than drawn. Rebuild the payload with the named
+    /// constructor; if the bytes really are meant to be read as given, say so with
+    /// the matching constructor rather than working around this.
+    #[error(
+        "{slot} was given a texture uploaded as {found}; build it with {constructor} (texture {texture})"
+    )]
+    TextureColourSpaceMismatch {
+        /// The slot field, as a consumer writes it.
+        slot: &'static str,
+        /// The space the texture was uploaded in.
+        found: &'static str,
+        /// The `TextureData` constructor that produces what the slot needs.
+        constructor: &'static str,
+        /// Raw id of the offending texture.
+        texture: u64,
+    },
+
     /// `upload_environment` was called after the environment set filled its
     /// fixed layer capacity. The default (layer 0) and up to `max - 1` extra
     /// environments fit; beyond that, callers must reuse an existing handle.

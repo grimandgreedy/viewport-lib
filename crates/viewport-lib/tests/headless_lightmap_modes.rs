@@ -34,7 +34,7 @@ fn lightmap_replace_mode_recolors_object() {
         .upload_texture(
             &device,
             &queue,
-            viewport_lib::TextureData::srgb(4, 4, red.to_vec()),
+            viewport_lib::TextureData::linear(4, 4, red.to_vec()),
         )
         .expect("upload lightmap texture");
     renderer
@@ -149,7 +149,7 @@ fn lightmap_ao_mode_darkens_object() {
         .upload_texture(
             &device,
             &queue,
-            viewport_lib::TextureData::srgb(4, 4, dark.to_vec()),
+            viewport_lib::TextureData::linear(4, 4, dark.to_vec()),
         )
         .expect("upload occlusion texture");
     renderer
@@ -191,7 +191,7 @@ fn lightmap_set_clear_lifecycle() {
         .upload_texture(
             &device,
             &queue,
-            viewport_lib::TextureData::srgb(4, 4, white.to_vec()),
+            viewport_lib::TextureData::linear(4, 4, white.to_vec()),
         )
         .expect("upload texture");
     let data = viewport_lib::resources::LightmapData::NonDirectional { radiance };

@@ -318,8 +318,8 @@ fn shadowmask_attenuates_direct_light() {
 }
 
 /// A baked lightmap with radiance above 1.0 must survive to the HDR render path.
-/// The 8-bit `upload_texture` path clamps at upload (sRGB, [0,1]); the
-/// `upload_texture_hdr` (`Rgba16Float`) path must not. Both are rendered in
+/// The 8-bit path clamps at upload ([0,1]); the `TextureData::hdr`
+/// (`Rgba16Float`) path must not. Both are rendered in
 /// Replace mode with no runtime lights, so the captured radiance is the lightmap
 /// value straight through: the LDR one saturates near 1.0, the HDR one keeps 4.0.
 #[test]
@@ -371,7 +371,8 @@ fn hdr_lightmap_survives_above_one() {
         .upload_texture(
             &device,
             &queue,
-            viewport_lib::TextureData::srgb(4, 4, [255u8; 4 * 4 * 4].to_vec()),
+            // Baked radiance is linear, and a lightmap slot rejects sRGB.
+            viewport_lib::TextureData::linear(4, 4, [255u8; 4 * 4 * 4].to_vec()),
         )
         .unwrap();
     let ldr_peak = capture_with(&mut renderer, ldr);

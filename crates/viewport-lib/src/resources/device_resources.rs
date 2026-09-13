@@ -447,6 +447,12 @@ pub struct ContentResources {
     #[allow(dead_code)]
     pub(crate) material_bind_groups:
         std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
+    /// Textures found bound into a slot that needs the other colour space,
+    /// recorded as (raw texture id, slot) where the binding is built and drained
+    /// by `prepare` into a `TextureColourSpaceMismatch`. One entry per pair, so a
+    /// scene that keeps redrawing does not grow it.
+    pub(crate) texture_slot_mismatches:
+        Vec<(u64, crate::resources::material::textures::TextureSlot)>,
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,

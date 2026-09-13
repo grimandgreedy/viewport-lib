@@ -2424,6 +2424,7 @@ impl DeviceResources {
             },
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
+                texture_slot_mismatches: Vec::new(),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
                 polyline_store: crate::resources::PolylineStore::new(),
                 streamtube_store: crate::resources::StreamtubeStore::new(),

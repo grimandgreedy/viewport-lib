@@ -1110,6 +1110,8 @@ impl DeviceResources {
         item: &crate::renderer::RibbonItem,
         wireframe: bool,
     ) -> StreamtubeGpuData {
+        self.check_texture_slot(item.texture_id, crate::resources::TextureSlot::RibbonAlbedo);
+
         // Per-vertex RGBA (`colour_attribute`) takes precedence over the
         // scalar+LUT path and the flat `colour` fallback. Trails typically
         // drive only the alpha channel to fade along their length.
