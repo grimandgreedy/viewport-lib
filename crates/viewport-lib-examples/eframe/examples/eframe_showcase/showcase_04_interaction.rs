@@ -401,8 +401,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.6)
-            * glam::Quat::from_rotation_x(1.1),
+        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()
     };
 }
@@ -419,8 +418,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            interact_collect_scene_items(app);
+        let (items, lighting, sg, ss) = interact_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -439,11 +437,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
     // Spline widget polyline + handles (Showcase 4) : submitted every frame.
     submit_interact_items(app, &mut *fd, ctx.w, ctx.h);
 }
@@ -454,7 +448,11 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-pub(crate) fn overlay(app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+pub(crate) fn overlay(
+    app: &mut crate::App,
+    ui: &mut crate::eframe::egui::Ui,
+    cx: &crate::ViewportCtx,
+) {
     // ----- Manipulation mode overlay (Showcase 4) -----
     if let Some(ms) = app.interact_state.manip.state() {
         let kind_label = match ms.kind {
@@ -495,8 +493,10 @@ pub(crate) fn overlay(app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx
         let galley = ui
             .painter()
             .layout_no_wrap(text, font, egui::Color32::WHITE);
-        let pos =
-            egui::pos2(cx.rect.center().x - galley.size().x / 2.0, cx.rect.max.y - 30.0);
+        let pos = egui::pos2(
+            cx.rect.center().x - galley.size().x / 2.0,
+            cx.rect.max.y - 30.0,
+        );
         let bg = egui::Rect::from_min_size(
             pos - egui::vec2(6.0, 3.0),
             galley.size() + egui::vec2(12.0, 6.0),
@@ -525,4 +525,57 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
     // renderer and the on-screen `FrameData` are in scope, and resolve it with
     // the unified GPU picker. See `apply_pending_pick`.
     app.pending_pick = Some(cx.pos);
+}
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+pub(crate) fn drag_input(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Advance camera animator (Showcases 4 and 10) -----
+    let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
+    app.interact_state.animator.update(dt, &mut app.camera);
+}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Spline widget update (Showcase 4) -----
+    if app.interact_state.built {
+        let render_cam =
+            vpl::CameraFrame::from_camera(&app.camera, [cx.rect.width(), cx.rect.height()])
+                .render_camera;
+        let widget_ctx = vpl::WidgetContext {
+            camera: render_cam,
+            viewport_size: glam::Vec2::new(cx.rect.width(), cx.rect.height()),
+            cursor_viewport: app.cursor_viewport,
+            drag_started: cx.response.drag_started(),
+            dragging: cx.response.dragged(),
+            released: cx.response.drag_stopped(),
+            double_clicked: false,
+        };
+        app.interact_state.spline.update(&widget_ctx);
+    }
+}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Update gizmo_center cache for next frame's hit-testing -----
+    app.interact_state.gizmo_center =
+        vpl::gizmo::gizmo_center_from_selection(&app.interact_state.selection, |id| {
+            app.interact_state.scene.node(id).map(|n| {
+                let t = n.world_transform();
+                glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
+            })
+        });
+    if let Some(center) = app.interact_state.gizmo_center {
+        app.interact_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
+            center,
+            app.camera.eye_position(),
+            app.camera.fov_y,
+            cx.rect.height(),
+        );
+    }
 }

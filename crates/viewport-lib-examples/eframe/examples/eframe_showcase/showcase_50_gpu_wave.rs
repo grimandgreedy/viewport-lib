@@ -638,3 +638,18 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 pub(crate) fn on_click(_app: &mut crate::App, _cx: &crate::ClickCtx) {}
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+pub(crate) fn drag_input(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}

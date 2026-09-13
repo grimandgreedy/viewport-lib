@@ -162,8 +162,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.6)
-            * glam::Quat::from_rotation_x(1.1),
+        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()
     };
 }
@@ -180,7 +179,10 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let items = app.ct_state.scene.collect_render_items(&vpl::Selection::new());
+        let items = app
+            .ct_state
+            .scene
+            .collect_render_items(&vpl::Selection::new());
         let sg = app.ct_state.scene.version();
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
@@ -207,11 +209,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    _app: &mut crate::App,
-    _fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {}
+pub(crate) fn frame(_app: &mut crate::App, _fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {}
 
 // ---------------------------------------------------------------------------
 // Viewport overlay and per-frame tick
@@ -219,7 +217,12 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+pub(crate) fn overlay(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) {
+}
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -233,3 +236,21 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 pub(crate) fn on_click(_app: &mut crate::App, _cx: &crate::ClickCtx) {}
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+pub(crate) fn drag_input(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
+    app.cam_animator.update(dt, &mut app.camera);
+}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}

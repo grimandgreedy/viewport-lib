@@ -698,3 +698,33 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
     // The click paints a voxel here rather than selecting anything.
     app.handle_svg_paint_click(cx.pos, cx.w, cx.h);
 }
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+pub(crate) fn drag_input(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Voxel paint: flush painted cell to GPU -----
+    if app.svg_state.paint_dirty {
+        app.svg_state.paint_dirty = false;
+        let rs = cx.frame.wgpu_render_state().expect("wgpu required");
+        let mut guard = rs.renderer.write();
+        if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
+            let _ = renderer.resources_mut().replace_sparse_volume_grid_data(
+                &app.device,
+                &app.queue,
+                app.svg_state.paint_mesh_id,
+                &app.svg_state.paint_data,
+            );
+        }
+    }
+}
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}

@@ -675,3 +675,35 @@ pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 pub(crate) fn on_click(_app: &mut crate::App, _cx: &crate::ClickCtx) {}
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+pub(crate) fn drag_input(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Probe widgets update (Showcase 37) -----
+    if app.pw_state.built {
+        let render_cam =
+            vpl::CameraFrame::from_camera(&app.camera, [cx.rect.width(), cx.rect.height()])
+                .render_camera;
+        let widget_ctx = vpl::WidgetContext {
+            camera: render_cam,
+            viewport_size: glam::Vec2::new(cx.rect.width(), cx.rect.height()),
+            cursor_viewport: app.cursor_viewport,
+            drag_started: cx.response.drag_started(),
+            dragging: cx.response.dragged(),
+            released: cx.response.drag_stopped(),
+            double_clicked: cx.response.double_clicked(),
+        };
+        app.update_probe_widgets(widget_ctx);
+    }
+}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}

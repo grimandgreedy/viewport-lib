@@ -2392,3 +2392,67 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
         app.handle_pl_click(cx.pos, cx.w, cx.h, shift);
     }
 }
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- PickLevels: update shift state and fire box-select on drag end -----
+    app.pl_state.shift_held = cx.egui.input(|i| i.modifiers.shift);
+    if cx.response.drag_stopped() {
+        if let Some(drag_start) = app.pl_state.drag_start.take() {
+            let drag_end = app.cursor_viewport;
+            if (drag_end - drag_start).length() > 4.0 {
+                let shift = app.pl_state.shift_held;
+                if app.pl_state.unified_mode {
+                    let device = app.device.clone();
+                    let queue = app.queue.clone();
+                    let pick_frame =
+                        pl_build_pick_frame(
+                            app,
+                            cx.rect.width(),
+                            cx.rect.height(),
+                            cx.egui.pixels_per_point(),
+                        );
+                    let rs = cx.frame.wgpu_render_state().expect("wgpu required");
+                    let mut guard = rs.renderer.write();
+                    if let Some(renderer) =
+                        guard.callback_resources.get_mut::<vpl::ViewportRenderer>()
+                    {
+                        app.handle_pl_unified_box_select(
+                            drag_start,
+                            drag_end,
+                            shift,
+                            renderer,
+                            &device,
+                            &queue,
+                            &pick_frame,
+                        );
+                    }
+                } else {
+                    app.handle_pl_box_select(
+                        drag_start,
+                        drag_end,
+                        cx.rect.width(),
+                        cx.rect.height(),
+                        shift,
+                    );
+                }
+            }
+        }
+    }
+    // Clear drag start if the button was released below egui's drag threshold.
+    if !cx.egui.input(|i| i.pointer.primary_down()) {
+        app.pl_state.drag_start = None;
+    }
+}
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}

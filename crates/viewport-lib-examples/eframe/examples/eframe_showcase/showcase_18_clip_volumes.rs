@@ -643,8 +643,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 14.0,
-        orientation: glam::Quat::from_rotation_z(0.6)
-            * glam::Quat::from_rotation_x(1.1),
+        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()
     };
 }
@@ -661,8 +660,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            clipvol_collect_scene_items(app);
+        let (items, lighting, sg, ss) = clipvol_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -681,11 +679,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     // Clip volume (Showcase 18) : set every frame from current state.
     submit_clipvol_items(app, &mut *fd);
 }
@@ -696,7 +690,12 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+pub(crate) fn overlay(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) {
+}
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -706,3 +705,40 @@ pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 pub(crate) fn on_click(_app: &mut crate::App, _cx: &crate::ClickCtx) {}
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Clip-vol gizmo drag (Showcase 18) -----
+    if app.clipvol_state.gizmo_drag_active && cx.response.dragged() {
+        let drag_delta = cx.response.drag_delta();
+        let dx = drag_delta.x;
+        let dy = drag_delta.y;
+        if dx.abs() > 0.001 || dy.abs() > 0.001 {
+            app.apply_clipvol_gizmo_drag(dx, dy, cx.rect.width(), cx.rect.height());
+        }
+    }
+}
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+pub(crate) fn flush_gpu(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    if app.clipvol_state.built {
+        app.clipvol_state.gizmo_center = app.clip_gizmo_center();
+        if let Some(center) = app.clipvol_state.gizmo_center {
+            app.clipvol_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
+                center,
+                app.camera.eye_position(),
+                app.camera.fov_y,
+                cx.rect.height(),
+            );
+        }
+    }
+}
