@@ -124,28 +124,8 @@ impl DeviceResources {
         data.validate()?;
         let width = data.width();
         let height = data.height();
-        let space = data.colour_space();
         let is_normal_map = data.role() == TextureRole::NormalMap;
-        // Format comes from the payload precision and the colour space: an
-        // 8-bit payload is sRGB or linear depending on what the caller named,
-        // and a float payload is always linear.
-        let (format, bytes) = match data.into_payload() {
-            TexturePayload::Rgba8(rgba) => {
-                let format = match space {
-                    crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
-                    crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
-                };
-                (format, rgba)
-            }
-            TexturePayload::Rgba32F(texels) => {
-                // Pack to half-float bytes (2 bytes per channel, little-endian).
-                let mut bytes = Vec::with_capacity(texels.len() * 2);
-                for &v in &texels {
-                    bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
-                }
-                (crate::gpu::TextureFormat::Rgba16Float, bytes)
-            }
-        };
+        let (format, bytes) = texture_format_and_bytes(data);
         Ok(self.spawn_texture_upload(
             device,
             queue,
@@ -328,6 +308,8 @@ impl DeviceResources {
             view,
             sampler,
             bind_group,
+            // Half-float radiance, always linear.
+            colour_space: Some(crate::ColourSpace::Linear),
         };
         Ok(self
             .content
@@ -707,6 +689,19 @@ impl DeviceResources {
         }
     }
 
+    /// The colour space `id` was uploaded in, or `None` if `id` does not resolve
+    /// to a live texture or names an external caller-owned view (whose format the
+    /// store cannot see).
+    ///
+    /// This is what a slot requiring a particular space is checked against, so it
+    /// is also the answer to "why did that texture come back as a mismatch".
+    pub fn texture_colour_space(
+        &self,
+        id: crate::resources::TextureId,
+    ) -> Option<crate::ColourSpace> {
+        self.content.textures.get(id).and_then(|t| t.colour_space)
+    }
+
     /// Release a user-uploaded texture, reclaiming its slot and GPU memory.
     ///
     /// Drops the `GpuTexture` (wgpu defers the real free until in-flight
@@ -739,10 +734,11 @@ impl DeviceResources {
     /// this for content that changes over time (a streamed or animated texture)
     /// where re-uploading and reassigning a fresh id would be wasteful.
     ///
-    /// The texture is recreated as an `Rgba8UnormSrgb` albedo texture, matching
-    /// [`upload_texture`](Self::upload_texture); `rgba_data` must be exactly
-    /// `width * height * 4` bytes. Dimensions and format need not match the
-    /// original upload.
+    /// The colour space and the bind slot come from `data`, exactly as for
+    /// [`upload_texture`](Self::upload_texture): replacing a normal map means
+    /// passing [`TextureData::normal_map`], not raw bytes that would be recreated
+    /// as sRGB colour. Dimensions, space, and role need not match the original
+    /// upload, though changing the role moves which slot the texture binds into.
     ///
     /// # Errors
     ///
@@ -761,31 +757,26 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         id: crate::resources::TextureId,
-        width: u32,
-        height: u32,
-        rgba_data: &[u8],
+        data: TextureData,
     ) -> crate::error::ViewportResult<()> {
-        let expected = (width * height * 4) as usize;
-        if rgba_data.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba_data.len(),
-            });
-        }
+        data.validate()?;
+        let (width, height) = (data.width(), data.height());
+        let is_normal_map = data.role() == TextureRole::NormalMap;
+        let (format, pixels) = texture_format_and_bytes(data);
         let gpu_texture = build_gpu_texture(
             device,
             queue,
             width,
             height,
-            crate::gpu::TextureFormat::Rgba8UnormSrgb,
-            false,
-            std::slice::from_ref(&rgba_data.to_vec()),
+            format,
+            is_normal_map,
+            std::slice::from_ref(&pixels),
             &self.material.texture_bgl,
             &self.material.texture.view,
             &self.material.normal_map_view,
             &self.material.ao_map_view,
         );
-        let bytes = rgba_data.len() as u64;
+        let bytes = pixels.len() as u64;
         if self
             .content
             .textures
@@ -1167,6 +1158,7 @@ fn finish_gpu_texture(
         ],
     });
     GpuTexture {
+        colour_space: Some(format_colour_space(texture.format())),
         texture: Some(texture),
         view,
         sampler,
@@ -1216,6 +1208,9 @@ fn build_external_gpu_texture(
         view: view.clone(),
         sampler,
         bind_group,
+        // A `TextureView` does not report its format, so an external entry has
+        // no recorded space and slot checks skip it.
+        colour_space: None,
     }
 }
 
@@ -2495,7 +2490,7 @@ mod async_texture_tests {
 
         // Replace in place with a larger image: same handle, larger byte total.
         resources
-            .replace_texture(&device, &queue, id, 8, 8, &vec![10u8; 8 * 8 * 4])
+            .replace_texture(&device, &queue, id, TextureData::srgb(8, 8, vec![10u8; 8 * 8 * 4]))
             .expect("replace on a live handle succeeds");
         assert!(resources.texture_view(id).is_some(), "handle stays valid");
         let bytes_8x8 = resources.resident_bytes().texture_bytes;
@@ -2506,7 +2501,7 @@ mod async_texture_tests {
 
         // Wrong data length is rejected before touching the slot.
         let err = resources
-            .replace_texture(&device, &queue, id, 8, 8, &[0u8; 3])
+            .replace_texture(&device, &queue, id, TextureData::srgb(8, 8, vec![0u8; 3]))
             .unwrap_err();
         assert!(matches!(
             err,
@@ -2516,7 +2511,7 @@ mod async_texture_tests {
         // A stale handle is rejected.
         assert!(resources.free_texture(id));
         let err = resources
-            .replace_texture(&device, &queue, id, 4, 4, &vec![0u8; 4 * 4 * 4])
+            .replace_texture(&device, &queue, id, TextureData::srgb(4, 4, vec![0u8; 4 * 4 * 4]))
             .unwrap_err();
         assert!(matches!(
             err,
@@ -2783,4 +2778,49 @@ pub struct GpuTexture {
     /// own material bind groups, so this one is not read.
     #[allow(dead_code)]
     pub bind_group: crate::gpu::BindGroup,
+    /// Colour space the pixels were uploaded in, taken from the texture format.
+    /// `None` for an external caller-owned view, whose format the store cannot
+    /// see. Slots that require a particular space compare against this, so a
+    /// data map uploaded through the colour path is reported rather than
+    /// rendered.
+    pub colour_space: Option<crate::ColourSpace>,
+}
+
+/// Pick the texture format for a payload and hand back the bytes to write.
+///
+/// The format comes from the payload precision and the colour space: an 8-bit
+/// payload is sRGB or linear depending on what the caller named, and a float
+/// payload is always linear. Shared by the upload path and `replace_texture` so
+/// both land on the same format for the same data.
+pub(crate) fn texture_format_and_bytes(
+    data: TextureData,
+) -> (crate::gpu::TextureFormat, Vec<u8>) {
+    let space = data.colour_space();
+    match data.into_payload() {
+        TexturePayload::Rgba8(rgba) => {
+            let format = match space {
+                crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
+                crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
+            };
+            (format, rgba)
+        }
+        TexturePayload::Rgba32F(texels) => {
+            // Pack to half-float bytes (2 bytes per channel, little-endian).
+            let mut bytes = Vec::with_capacity(texels.len() * 2);
+            for &v in &texels {
+                bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+            }
+            (crate::gpu::TextureFormat::Rgba16Float, bytes)
+        }
+    }
+}
+
+/// The colour space a format is sampled in: an sRGB format decodes to linear in
+/// hardware on read, and every other format is sampled as stored.
+pub(crate) fn format_colour_space(format: crate::gpu::TextureFormat) -> crate::ColourSpace {
+    if format.is_srgb() {
+        crate::ColourSpace::Srgb
+    } else {
+        crate::ColourSpace::Linear
+    }
 }

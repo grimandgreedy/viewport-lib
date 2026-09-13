@@ -1879,6 +1879,7 @@ impl DeviceResources {
                 view,
                 sampler,
                 bind_group,
+                colour_space: Some(crate::ColourSpace::Srgb),
             }
         };
 

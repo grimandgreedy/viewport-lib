@@ -10,7 +10,7 @@
 use super::types::FrameData;
 use super::{CameraFrame, RenderCamera, SceneFrame, ViewportRenderer};
 use crate::camera::Camera;
-use crate::resources::TextureId;
+use crate::resources::{TextureData, TextureId};
 use crate::scene::material::{BackfacePolicy, Material};
 
 fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
@@ -123,7 +123,7 @@ fn two_textured_planes(
         .upload_texture(
             device,
             queue,
-            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
         )
         .unwrap();
     let tex_b = renderer
@@ -131,7 +131,7 @@ fn two_textured_planes(
         .upload_texture(
             device,
             queue,
-            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
         )
         .unwrap();
     (
@@ -216,7 +216,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         .upload_texture(
             &device,
             &queue,
-            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, [255, 255, 255, 255])),
+            TextureData::srgb(2, 2, solid_rgba(2, 2, [255, 255, 255, 255])),
         )
         .unwrap();
 
@@ -310,9 +310,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
             &device,
             &queue,
             tex,
-            2,
-            2,
-            &solid_rgba(2, 2, [255, 255, 255, 0]),
+            TextureData::srgb(2, 2, solid_rgba(2, 2, [255, 255, 255, 0])),
         )
         .unwrap();
 
@@ -361,7 +359,12 @@ fn instanced_path_reflects_replace_texture() {
 
     renderer
         .resources_mut()
-        .replace_texture(&device, &queue, tex_b, 2, 2, &solid_rgba(2, 2, C_SWAP))
+        .replace_texture(
+            &device,
+            &queue,
+            tex_b,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
         .unwrap();
 
     let sum2 = checksum(&renderer.render_offscreen(
@@ -400,7 +403,7 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
         .upload_texture(
             &device,
             &queue,
-            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
         )
         .unwrap();
 
@@ -428,7 +431,12 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
 
     renderer
         .resources_mut()
-        .replace_texture(&device, &queue, tex, 2, 2, &solid_rgba(2, 2, C_SWAP))
+        .replace_texture(
+            &device,
+            &queue,
+            tex,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
         .unwrap();
 
     let sum2 = checksum(&renderer.render_offscreen(
@@ -491,7 +499,12 @@ fn gpu_culling_indirect_path_reflects_replace_texture() {
 
     renderer
         .resources_mut()
-        .replace_texture(&device, &queue, tex_b, 2, 2, &solid_rgba(2, 2, C_SWAP))
+        .replace_texture(
+            &device,
+            &queue,
+            tex_b,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
         .unwrap();
 
     let sum2 = checksum(&renderer.render_offscreen(
@@ -578,7 +591,7 @@ fn bindless_scene(
                 .upload_texture(
                     device,
                     queue,
-                    crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
+                    TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
                 )
                 .unwrap();
             textured_plane(mesh, tex, x)
@@ -722,7 +735,7 @@ fn bindless_keeps_mesh_instance_path_per_batch() {
         .upload_texture(
             &device,
             &queue,
-            crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, [220, 40, 40, 255])),
+            TextureData::srgb(2, 2, solid_rgba(2, 2, [220, 40, 40, 255])),
         )
         .unwrap();
 
@@ -799,7 +812,7 @@ fn bindless_plugin_scene(
                 .upload_texture(
                     device,
                     queue,
-                    crate::resources::TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
+                    TextureData::srgb(2, 2, solid_rgba(2, 2, *colour)),
                 )
                 .unwrap();
             let mut it = textured_plane(mesh, tex, x);
