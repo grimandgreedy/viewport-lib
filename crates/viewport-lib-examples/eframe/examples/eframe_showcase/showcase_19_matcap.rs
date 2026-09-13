@@ -283,3 +283,25 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
         _ => (v, p, q),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.matcap_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_matcap_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::new(0.0, 0.0, -0.5),
+        distance: 14.0,
+        orientation: glam::Quat::from_rotation_z(0.3)
+            * glam::Quat::from_rotation_x(0.9),
+        ..vpl::Camera::default()
+    };
+}

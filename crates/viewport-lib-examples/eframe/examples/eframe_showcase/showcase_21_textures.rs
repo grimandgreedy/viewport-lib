@@ -242,3 +242,18 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
         _ => (v, p, q),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.texture_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_texture_scene(renderer);
+}

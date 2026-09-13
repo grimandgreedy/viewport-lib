@@ -1281,3 +1281,18 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.small("Ground right (x>=0): blood splatter.");
     });
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.decal46_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    build_decal46_scene(app, renderer);
+}

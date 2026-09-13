@@ -236,3 +236,16 @@ pub(crate) fn controls_vector_art(app: &mut App, ui: &mut egui::Ui) {
          as outlines.",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(_app: &crate::App) -> bool {
+    false
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(_app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer) {}

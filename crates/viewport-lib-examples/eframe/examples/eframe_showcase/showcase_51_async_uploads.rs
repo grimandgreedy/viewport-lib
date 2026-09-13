@@ -2509,3 +2509,25 @@ fn asset_row(ui: &mut egui::Ui, name: &str, state: &AssetState, clicked: &mut bo
     }
     ui.end_row();
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.async_uploads_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_async_uploads_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 9.0,
+        orientation: glam::Quat::from_rotation_z(0.4)
+            * glam::Quat::from_rotation_x(1.0),
+        ..vpl::Camera::default()
+    };
+}

@@ -423,3 +423,63 @@ fn format_bytes(b: u64) -> String {
         format!("{b} B")
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.perf_state.built && app.perf_state.build_rx.is_none()
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    // Upload the cycled shapes (box, sphere, cylinder, spring) on the
+    // main thread (requires GPU access). Each box in the grid picks
+    // one shape, so the grid still shares a handful of meshes.
+    let shapes = shape_meshes();
+    let mut meshes: Vec<(vpl::MeshId, Option<vpl::Aabb>)> = Vec::with_capacity(shapes.len());
+    for data in &shapes {
+        let id = renderer
+            .resources_mut()
+            .upload_mesh_data(&app.device, data)
+            .expect("shape mesh upload");
+        let aabb = renderer.resources().mesh(id).map(|m| m.aabb);
+        meshes.push((id, aabb));
+    }
+    app.perf_state.scene = vpl::Scene::new();
+    app.perf_state.selection.clear();
+    app.camera.distance = 80.0;
+
+    // Upload the random texture pool on the main thread (GPU access),
+    // then hand the ids to the background build so each box can pick
+    // one. Each distinct texture is one instanced batch.
+    let texture_pool: Vec<vpl::TextureId> = (0
+        ..TEXTURE_POOL_SIZE)
+        .map(|i| {
+            let (size, rgba) = make_box_texture(i);
+            renderer
+                .resources_mut()
+                .upload_texture(&app.device, &app.queue, size, size, &rgba)
+                .expect("perf texture upload")
+        })
+        .collect();
+
+    let progress = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let progress_clone = std::sync::Arc::clone(&progress);
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = build_perf_scene_threaded(
+            meshes,
+            texture_pool,
+            &progress_clone,
+        );
+        let _ = tx.send(result);
+    });
+
+    app.perf_state.build_progress = Some(progress);
+    app.perf_state.build_rx = Some(rx);
+}

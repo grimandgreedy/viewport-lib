@@ -513,3 +513,18 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
     let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
     a * h + b * (1.0 - h) - k * h * (1.0 - h)
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.is_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_implicit_scene(renderer);
+}

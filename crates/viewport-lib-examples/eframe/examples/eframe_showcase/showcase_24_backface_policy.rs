@@ -365,3 +365,27 @@ pub(crate) fn controls_surface_appearance(app: &mut App, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.sa_state.clip_on, "Clip plane (y = 0)");
     ui.label("Slices the top four rows to reveal\nhow each policy treats back faces.");
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.sa_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_sa_scene(renderer);
+    app.camera = vpl::Camera {
+        // Pull back so both the front spheres and the background
+        // SSAA stress-grid are fully visible.
+        center: glam::Vec3::new(0.0, 0.0, -1.5),
+        distance: 16.0,
+        orientation: glam::Quat::from_rotation_z(0.4)
+            * glam::Quat::from_rotation_x(1.0),
+        ..vpl::Camera::default()
+    };
+}

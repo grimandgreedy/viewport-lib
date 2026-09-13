@@ -354,3 +354,25 @@ pub(crate) fn controls_lights(app: &mut App, ui: &mut egui::Ui) {
         ui.add(egui::Slider::new(&mut app.lights_state.edl_strength, 0.0..=5.0).text("Strength"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.lights_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_lights_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 14.0,
+        orientation: glam::Quat::from_rotation_z(0.6)
+            * glam::Quat::from_rotation_x(1.1),
+        ..vpl::Camera::default()
+    };
+}

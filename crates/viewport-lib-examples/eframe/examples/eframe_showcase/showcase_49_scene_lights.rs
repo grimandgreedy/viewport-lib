@@ -693,3 +693,25 @@ fn controls_stress(app: &mut App, ui: &mut egui::Ui) {
         rebuild_stress_lights(&mut app.sl_state);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.sl_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_sl_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::new(0.0, 0.0, 1.0),
+        distance: 20.0,
+        orientation: glam::Quat::from_rotation_z(0.5)
+            * glam::Quat::from_rotation_x(1.1),
+        ..vpl::Camera::default()
+    };
+}

@@ -116,3 +116,19 @@ pub(crate) fn controls_annotation(app: &mut App, ui: &mut egui::Ui) {
         ui.label(format!("L{i}: \"{}\" : {status}", label.text));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.ann_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_annotation_scene(renderer);
+    app.reset_annotation_camera();
+}

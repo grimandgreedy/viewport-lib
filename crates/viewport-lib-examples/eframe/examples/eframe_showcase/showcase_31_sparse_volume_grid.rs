@@ -614,3 +614,25 @@ pub(crate) fn controls_sparse_volume_grid(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Centre : hollow shell (54 cells, outer + inner surfaces).");
     ui.label("Right : voxel terrain (column heightmap).");
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.svg_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_svg_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 28.0,
+        orientation: glam::Quat::from_rotation_z(0.4)
+            * glam::Quat::from_rotation_x(0.8),
+        ..vpl::Camera::default()
+    };
+}

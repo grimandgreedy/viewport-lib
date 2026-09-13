@@ -201,3 +201,16 @@ pub(crate) fn cnq_collect_scene_items(
 pub(crate) fn submit_cnq_items(app: &App, fd: &mut FrameData) {
     fd.scene.polylines.push(make_cnq_polyline_item(app));
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(_app: &crate::App) -> bool {
+    false
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(_app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer) {}

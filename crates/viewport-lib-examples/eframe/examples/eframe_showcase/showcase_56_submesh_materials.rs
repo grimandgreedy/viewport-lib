@@ -299,3 +299,25 @@ pub(crate) fn controls_submesh(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Triangles were tagged per part and grouped with");
     ui.label("MeshData::sort_triangles_into_submeshes.");
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.submesh_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    build_submesh_scene(app, renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 14.0,
+        orientation: glam::Quat::from_rotation_z(0.5)
+            * glam::Quat::from_rotation_x(1.2),
+        ..vpl::Camera::default()
+    };
+}

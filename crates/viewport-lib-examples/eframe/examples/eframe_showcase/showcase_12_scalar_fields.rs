@@ -308,3 +308,25 @@ fn make_box_with_distance_scalar() -> (MeshData, Vec<f32>) {
         .collect();
     (mesh, scalars_finite)
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.scalar_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_scalar_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 16.0,
+        orientation: glam::Quat::from_rotation_z(0.5)
+            * glam::Quat::from_rotation_x(1.1),
+        ..vpl::Camera::default()
+    };
+}

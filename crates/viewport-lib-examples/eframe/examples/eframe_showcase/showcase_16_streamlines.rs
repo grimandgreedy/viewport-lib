@@ -574,3 +574,25 @@ pub(crate) fn submit_stream_items(app: &mut App, fd: &mut FrameData) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.stream_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer) {
+    app.build_stream_scene();
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 10.0,
+        orientation: glam::Quat::from_rotation_z(0.5)
+            * glam::Quat::from_rotation_x(1.0),
+        ..vpl::Camera::default()
+    };
+}

@@ -398,3 +398,25 @@ pub(crate) fn submit_eq_items(app: &mut App, fd: &mut FrameData) {
     fd.scene.glyphs.extend(glyphs);
     fd.scene.point_clouds.extend(pcs);
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.eq_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_eq_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 18.0,
+        orientation: glam::Quat::from_rotation_z(0.4)
+            * glam::Quat::from_rotation_x(0.8),
+        ..vpl::Camera::default()
+    };
+}

@@ -13,7 +13,6 @@ use vpl::{
     SceneRenderItem, ScrollUnits, Selection, ShadowFilter, ViewportContext, ViewportEvent,
     ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
-    scene::Scene,
 };
 
 mod geometry;
@@ -1694,70 +1693,82 @@ impl App {
         // Switching back to an already-built showcase doesn't reset.
     }
 
+    /// Run the active showcase's lazy scene build if it has not run yet. Both
+    /// halves dispatch to the showcase's own module: the predicate first, so the
+    /// renderer lock is only taken on the frame a build actually happens.
     fn ensure_scene_built(&mut self, frame: &eframe::Frame) {
         let needs = match self.mode {
-            ShowcaseMode::SceneGraph => !self.sg_state.built,
-            ShowcaseMode::Performance => {
-                !self.perf_state.built && self.perf_state.build_rx.is_none()
+            ShowcaseMode::Basic => showcase_01_basic::needs_build(self),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::needs_build(self),
+            ShowcaseMode::MaterialsVisibility => {
+                showcase_05_materials_and_visibility::needs_build(self)
             }
-            ShowcaseMode::Interaction => !self.interact_state.built,
-            ShowcaseMode::MaterialsVisibility => !self.materials_visibility_state.built,
-            ShowcaseMode::PostProcess => !self.pp_state.built,
-            ShowcaseMode::NormalMaps => !self.nm_state.built,
-            ShowcaseMode::Shadows => !self.shd_state.built,
-            ShowcaseMode::Annotation => !self.ann_state.built,
-            ShowcaseMode::CameraTools => !self.ct_state.built,
-            ShowcaseMode::Lights => !self.lights_state.built,
-            ShowcaseMode::ScalarFields => !self.scalar_state.built,
-            ShowcaseMode::MultiViewport => {
-                !self.mv_state.built || self.mv_state.viewports.is_none()
+            ShowcaseMode::ParamVis => showcase_22_parameterization::needs_build(self),
+            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::needs_build(self),
+            ShowcaseMode::Interaction => showcase_04_interaction::needs_build(self),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::needs_build(self),
+            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::needs_build(self),
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::needs_build(self),
+            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::needs_build(self),
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::needs_build(self),
+            ShowcaseMode::PostProcess => showcase_06_post_process::needs_build(self),
+            ShowcaseMode::Foreground => showcase_55_foreground_pass::needs_build(self),
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::needs_build(self),
+            ShowcaseMode::Shadows => showcase_08_shadows::needs_build(self),
+            ShowcaseMode::Lights => showcase_11_lights::needs_build(self),
+            ShowcaseMode::Matcap => showcase_19_matcap::needs_build(self),
+            ShowcaseMode::LightingConsistency => {
+                showcase_47_lighting_consistency::needs_build(self)
             }
-            ShowcaseMode::Isolines => !self.iso_state.built,
-            ShowcaseMode::PointClouds => !self.pc_state.built,
-            ShowcaseMode::Streamlines => !self.stream_state.built,
-            ShowcaseMode::Volume => !self.vol_state.built,
-            ShowcaseMode::ClipVolumes => !self.clipvol_state.built,
-            ShowcaseMode::Matcap => !self.matcap_state.built,
-            ShowcaseMode::FaceAttributes => !self.face_state.built,
-            ShowcaseMode::Textures => !self.texture_state.built,
-            ShowcaseMode::ParamVis => !self.param_vis_state.built,
-            ShowcaseMode::GroundPlane => !self.gp_state.built,
-            ShowcaseMode::BackfacePolicy => !self.sa_state.built,
-            ShowcaseMode::SurfaceVectors => !self.sv_state.built,
-            ShowcaseMode::VolumeMesh => !self.vm_state.built,
-            ShowcaseMode::Auxiliary => !self.aux_state.built,
-            ShowcaseMode::DepthCompositeImages => !self.dc_state.built,
-            ShowcaseMode::ImplicitSurface => !self.is_state.built,
-            ShowcaseMode::SparseVolumeGrid => !self.svg_state.built,
-            ShowcaseMode::ExtendedQuantities => !self.eq_state.built,
-            ShowcaseMode::PickLevels => !self.pl_state.built,
-            ShowcaseMode::Labels => !self.lbl_state.built,
-            ShowcaseMode::Overlay => !self.ovl_state.cloud_built,
-            ShowcaseMode::PlaybackRuntime => !self.pb_state.built,
-            ShowcaseMode::ProbeWidgets => !self.pw_state.built,
-            ShowcaseMode::SurfaceLIC => !self.lic_state.built,
-            ShowcaseMode::TensorGlyphs => !self.tg_state.built,
-            ShowcaseMode::VertexWarp => !self.warp_state.built,
-            ShowcaseMode::Sprites => !self.sprite_state.built,
-            ShowcaseMode::GaussianSplats => !self.splat_state.built,
-            ShowcaseMode::SceneRuntime => !self.rt_state.built,
-            ShowcaseMode::DebugDraw => !self.dbg_draw_state.built,
-            ShowcaseMode::SkinnedAnimation => !self.skin_state.built,
-            ShowcaseMode::Decals => !self.decal46_state.built,
-            ShowcaseMode::LightingConsistency => !self.lc_state.built,
-            ShowcaseMode::ScatterVolumes => !self.svol_state.built,
-            ShowcaseMode::SceneLights => !self.sl_state.built,
-            ShowcaseMode::GpuWave => !self.wave_state.built,
-            ShowcaseMode::AsyncUploads => !self.async_uploads_state.built,
-            ShowcaseMode::Lod => !self.lod_state.built,
-            ShowcaseMode::VertexColours => !self.vcol_state.built,
-            ShowcaseMode::CustomShading => !self.cs_state.built,
-            ShowcaseMode::Foreground => !self.fg_state.built,
-            ShowcaseMode::SubmeshMaterials => !self.submesh_state.built,
-            ShowcaseMode::PhotometricLighting => !self.lighting_state.built(),
-            ShowcaseMode::PhysicallyBasedSurfaces => !self.surfaces_state.built(),
-            ShowcaseMode::Basic => self.basic_state.mesh_id.is_none(),
-            _ => false,
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::needs_build(self),
+            ShowcaseMode::PhotometricLighting => {
+                showcase_57_photometric_lighting::needs_build(self)
+            }
+            ShowcaseMode::Textures => showcase_21_textures::needs_build(self),
+            ShowcaseMode::Decals => showcase_46_decals::needs_build(self),
+            ShowcaseMode::VertexColours => showcase_53_vertex_colours::needs_build(self),
+            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::needs_build(self),
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                showcase_58_physically_based_surfaces::needs_build(self)
+            }
+            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::needs_build(self),
+            ShowcaseMode::Isolines => showcase_14_isolines::needs_build(self),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::needs_build(self),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::needs_build(self),
+            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::needs_build(self),
+            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::needs_build(self),
+            ShowcaseMode::CurveNetworkQuantities => {
+                showcase_28_curve_network_quantities::needs_build(self)
+            }
+            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::needs_build(self),
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::needs_build(self),
+            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::needs_build(self),
+            ShowcaseMode::Volume => showcase_17_volume::needs_build(self),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::needs_build(self),
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::needs_build(self),
+            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::needs_build(self),
+            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::needs_build(self),
+            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::needs_build(self),
+            ShowcaseMode::Annotation => showcase_09_annotation::needs_build(self),
+            ShowcaseMode::DepthCompositeImages => {
+                showcase_29_depth_composite_images::needs_build(self)
+            }
+            ShowcaseMode::Labels => showcase_34_labels::needs_build(self),
+            ShowcaseMode::Overlay => showcase_35_overlay::needs_build(self),
+            ShowcaseMode::VectorArt => showcase_59_vector_art::needs_build(self),
+            ShowcaseMode::Sprites => showcase_41_sprites::needs_build(self),
+            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::needs_build(self),
+            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::needs_build(self),
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::needs_build(self),
+            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::needs_build(self),
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::needs_build(self),
+            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::needs_build(self),
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::needs_build(self),
+            ShowcaseMode::CustomShading => showcase_54_custom_shading::needs_build(self),
+            ShowcaseMode::Performance => showcase_23_performance::needs_build(self),
+            ShowcaseMode::PickLevels => showcase_33_picking_levels::needs_build(self),
+            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::needs_build(self),
+            ShowcaseMode::Lod => showcase_52_lod::needs_build(self),
         };
         if !needs {
             return;
@@ -1770,558 +1781,79 @@ impl App {
             .expect("ViewportRenderer must be registered");
 
         match self.mode {
-            ShowcaseMode::Basic => self.build_basic_scene(renderer),
-            ShowcaseMode::SceneGraph => self.build_scene_graph(renderer),
-            ShowcaseMode::Performance => {
-                // Upload the cycled shapes (box, sphere, cylinder, spring) on the
-                // main thread (requires GPU access). Each box in the grid picks
-                // one shape, so the grid still shares a handful of meshes.
-                let shapes = showcase_23_performance::shape_meshes();
-                let mut meshes: Vec<(MeshId, Option<vpl::Aabb>)> = Vec::with_capacity(shapes.len());
-                for data in &shapes {
-                    let id = renderer
-                        .resources_mut()
-                        .upload_mesh_data(&self.device, data)
-                        .expect("shape mesh upload");
-                    let aabb = renderer.resources().mesh(id).map(|m| m.aabb);
-                    meshes.push((id, aabb));
-                }
-                self.perf_state.scene = Scene::new();
-                self.perf_state.selection.clear();
-                self.camera.distance = 80.0;
-
-                // Upload the random texture pool on the main thread (GPU access),
-                // then hand the ids to the background build so each box can pick
-                // one. Each distinct texture is one instanced batch.
-                let texture_pool: Vec<vpl::TextureId> = (0
-                    ..showcase_23_performance::TEXTURE_POOL_SIZE)
-                    .map(|i| {
-                        let (size, rgba) = showcase_23_performance::make_box_texture(i);
-                        renderer
-                            .resources_mut()
-                            .upload_texture(&self.device, &self.queue, size, size, &rgba)
-                            .expect("perf texture upload")
-                    })
-                    .collect();
-
-                let progress = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-                let progress_clone = std::sync::Arc::clone(&progress);
-                let (tx, rx) = std::sync::mpsc::channel();
-
-                std::thread::spawn(move || {
-                    let result = showcase_23_performance::build_perf_scene_threaded(
-                        meshes,
-                        texture_pool,
-                        &progress_clone,
-                    );
-                    let _ = tx.send(result);
-                });
-
-                self.perf_state.build_progress = Some(progress);
-                self.perf_state.build_rx = Some(rx);
-            }
-            ShowcaseMode::Interaction => {
-                self.build_interact_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
+            ShowcaseMode::Basic => showcase_01_basic::build(self, renderer),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::build(self, renderer),
             ShowcaseMode::MaterialsVisibility => {
-                self.build_materials_visibility_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 2.0, 0.5),
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
+                showcase_05_materials_and_visibility::build(self, renderer)
             }
-            ShowcaseMode::PostProcess => {
-                self.build_pp_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 0.5),
-                    distance: 8.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
+            ShowcaseMode::ParamVis => showcase_22_parameterization::build(self, renderer),
+            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::build(self, renderer),
+            ShowcaseMode::Interaction => showcase_04_interaction::build(self, renderer),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::build(self, renderer),
+            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::build(self, renderer),
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::build(self, renderer),
+            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::build(self, renderer),
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::build(self, renderer),
+            ShowcaseMode::PostProcess => showcase_06_post_process::build(self, renderer),
+            ShowcaseMode::Foreground => showcase_55_foreground_pass::build(self, renderer),
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::build(self, renderer),
+            ShowcaseMode::Shadows => showcase_08_shadows::build(self, renderer),
+            ShowcaseMode::Lights => showcase_11_lights::build(self, renderer),
+            ShowcaseMode::Matcap => showcase_19_matcap::build(self, renderer),
+            ShowcaseMode::LightingConsistency => {
+                showcase_47_lighting_consistency::build(self, renderer)
             }
-            ShowcaseMode::NormalMaps => {
-                self.build_nm_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 0.8),
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::build(self, renderer),
+            ShowcaseMode::PhotometricLighting => {
+                showcase_57_photometric_lighting::build(self, renderer)
             }
-            ShowcaseMode::Shadows => {
-                self.build_shadow_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 1.0),
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
+            ShowcaseMode::Textures => showcase_21_textures::build(self, renderer),
+            ShowcaseMode::Decals => showcase_46_decals::build(self, renderer),
+            ShowcaseMode::VertexColours => showcase_53_vertex_colours::build(self, renderer),
+            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::build(self, renderer),
+            ShowcaseMode::PhysicallyBasedSurfaces => {
+                showcase_58_physically_based_surfaces::build(self, renderer)
             }
-            ShowcaseMode::Annotation => {
-                self.build_annotation_scene(renderer);
-                self.reset_annotation_camera();
-            }
-            ShowcaseMode::CameraTools => {
-                self.build_camera_tools_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Lights => {
-                self.build_lights_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::ScalarFields => {
-                self.build_scalar_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::MultiViewport => {
-                if self.mv_state.viewports.is_none() {
-                    let vp0 = renderer.create_viewport(&rs.device);
-                    let vp1 = renderer.create_viewport(&rs.device);
-                    let vp2 = renderer.create_viewport(&rs.device);
-                    let vp3 = renderer.create_viewport(&rs.device);
-                    self.mv_state.viewports = Some([vp0, vp1, vp2, vp3]);
-                }
-                if !self.mv_state.built {
-                    self.build_mv_scene(renderer);
-                }
-            }
-            ShowcaseMode::Isolines => {
-                self.build_iso_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.3)
-                        * glam::Quat::from_rotation_x(0.8),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::PointClouds => {
-                self.build_pc_scene();
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Streamlines => {
-                self.build_stream_scene();
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Volume => {
-                self.build_volume_scene(renderer);
-                self.ensure_surface_slice_mesh(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::ClipVolumes => {
-                self.build_clipvol_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Textures => {
-                self.build_texture_scene(renderer);
-            }
-            ShowcaseMode::ParamVis => {
-                self.build_param_vis_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 22.0,
-                    orientation: glam::Quat::from_rotation_z(0.3)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Matcap => {
-                self.build_matcap_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, -0.5),
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.3)
-                        * glam::Quat::from_rotation_x(0.9),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::FaceAttributes => {
-                self.build_face_attr_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::GroundPlane => {
-                self.build_ground_plane_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 1.0),
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::BackfacePolicy => {
-                self.build_sa_scene(renderer);
-                self.camera = Camera {
-                    // Pull back so both the front spheres and the background
-                    // SSAA stress-grid are fully visible.
-                    center: glam::Vec3::new(0.0, 0.0, -1.5),
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::SurfaceVectors => {
-                self.build_sv_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 6.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::VolumeMesh => {
-                self.build_vm_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 9.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Auxiliary => {
-                self.build_aux_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 0.5),
-                    distance: 30.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::DepthCompositeImages => {
-                self.build_dc_scene(renderer);
-            }
-            ShowcaseMode::ImplicitSurface => {
-                self.build_implicit_scene(renderer);
-            }
-            ShowcaseMode::SparseVolumeGrid => {
-                self.build_svg_scene(renderer);
-                self.camera = vpl::Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 28.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(0.8),
-                    ..vpl::Camera::default()
-                };
+            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::build(self, renderer),
+            ShowcaseMode::Isolines => showcase_14_isolines::build(self, renderer),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::build(self, renderer),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::build(self, renderer),
+            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::build(self, renderer),
+            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::build(self, renderer),
+            ShowcaseMode::CurveNetworkQuantities => {
+                showcase_28_curve_network_quantities::build(self, renderer)
             }
             ShowcaseMode::ExtendedQuantities => {
-                self.build_eq_scene(renderer);
-                self.camera = vpl::Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 18.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(0.8),
-                    ..vpl::Camera::default()
-                };
+                showcase_32_extended_quantities::build(self, renderer)
             }
-            ShowcaseMode::PickLevels => {
-                self.build_pl_scene(renderer);
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::build(self, renderer),
+            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::build(self, renderer),
+            ShowcaseMode::Volume => showcase_17_volume::build(self, renderer),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::build(self, renderer),
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::build(self, renderer),
+            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::build(self, renderer),
+            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::build(self, renderer),
+            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::build(self, renderer),
+            ShowcaseMode::Annotation => showcase_09_annotation::build(self, renderer),
+            ShowcaseMode::DepthCompositeImages => {
+                showcase_29_depth_composite_images::build(self, renderer)
             }
-            ShowcaseMode::Labels => {
-                self.build_labels_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 0.0),
-                    distance: 20.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Overlay => {
-                let (positions, scalars) = showcase_35_overlay::build_ovl_cloud();
-                self.ovl_state.cloud_positions = positions;
-                self.ovl_state.cloud_scalars = scalars;
-                self.ovl_state.cloud_built = true;
-                let (tw, th, tdata) = showcase_35_overlay::build_demo_texture();
-                self.ovl_state.tex_id = Some(
-                    renderer
-                        .resources_mut()
-                        .upload_overlay_texture(&rs.device, &rs.queue, tw, th, &tdata),
-                );
-                self.ovl_state.carlgauss_tex_id =
-                    Some(renderer.resources_mut().upload_overlay_texture(
-                        &rs.device,
-                        &rs.queue,
-                        showcase_35_overlay::CARLGAUSS_WIDTH,
-                        showcase_35_overlay::CARLGAUSS_HEIGHT,
-                        showcase_35_overlay::CARLGAUSS_RGBA,
-                    ));
-                let (nw, nh, ndata) = showcase_35_overlay::build_nine_slice_texture();
-                self.ovl_state.nine_slice_tex_id = Some(
-                    renderer
-                        .resources_mut()
-                        .upload_overlay_texture(&rs.device, &rs.queue, nw, nh, &ndata),
-                );
-                // Optional color-emoji font for the glyph-run row.
-                if let Some(bytes) = showcase_35_overlay::EMOJI_FONT_PATHS
-                    .iter()
-                    .find_map(|p| std::fs::read(p).ok())
-                {
-                    if let Ok(handle) = renderer.resources_mut().upload_font(&bytes) {
-                        let ids = showcase_35_overlay::emoji_glyph_ids(&bytes);
-                        if !ids.is_empty() {
-                            self.ovl_state.emoji_font = Some(handle);
-                            self.ovl_state.emoji_glyphs = ids;
-                        }
-                    }
-                }
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 1.57, 0.0),
-                    distance: 9.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::PlaybackRuntime => {
-                showcase_36_playback_runtime::build_pb_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 0.0),
-                    distance: 18.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::ProbeWidgets => {
-                self.build_probe_widgets_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 8.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::SurfaceLIC => {
-                showcase_38_surface_lic::build_lic_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 7.5),
-                    distance: 18.0,
-                    orientation: glam::Quat::from_rotation_x(0.45),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::build_tensor_glyph_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 0.0),
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_x(0.15),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::VertexWarp => {
-                showcase_40_vertex_warp::build_warp_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 0.0),
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_x(0.6),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Sprites => {
-                showcase_41_sprites::build_sprite_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 10.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::GaussianSplats => {
-                showcase_42_gaussian_splats::build_gaussian_splat_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_x(0.5),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::SceneRuntime => {
-                showcase_43_scene_runtime::build_rt_demo_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.6)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::DebugDraw => {
-                showcase_44_debug_draw::build_dbg_draw_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 4.0),
-                    distance: 18.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::SkinnedAnimation => {
-                showcase_45_skinned_animation::build_skin47_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 2.0),
-                    distance: 12.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Decals => {
-                showcase_46_decals::build_decal46_scene(self, renderer);
-            }
-            ShowcaseMode::LightingConsistency => {
-                self.build_lc_scene(renderer);
-            }
-            ShowcaseMode::ScatterVolumes => {
-                self.build_svol_scene(renderer);
-            }
-            ShowcaseMode::SceneLights => {
-                self.build_sl_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 1.0),
-                    distance: 20.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::AsyncUploads => {
-                self.build_async_uploads_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 9.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::GpuWave => {
-                self.build_wave_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Lod => {
-                self.build_lod_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 48.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.0),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::VertexColours => {
-                showcase_53_vertex_colours::build_vertex_colour_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 16.0,
-                    orientation: glam::Quat::from_rotation_z(0.4)
-                        * glam::Quat::from_rotation_x(1.15),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::CustomShading => {
-                self.build_custom_shading_scene(renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::new(0.0, 0.0, 1.0),
-                    distance: 15.0,
-                    orientation: glam::Quat::from_rotation_x(1.1),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::Foreground => {
-                self.build_foreground_scene(renderer);
-            }
-            ShowcaseMode::SubmeshMaterials => {
-                showcase_56_submesh_materials::build_submesh_scene(self, renderer);
-                self.camera = Camera {
-                    center: glam::Vec3::ZERO,
-                    distance: 14.0,
-                    orientation: glam::Quat::from_rotation_z(0.5)
-                        * glam::Quat::from_rotation_x(1.2),
-                    ..Camera::default()
-                };
-            }
-            ShowcaseMode::PhotometricLighting => {
-                // Builds the active sub-scene and frames the camera for it.
-                self.build_photometric_lighting_scene(renderer);
-            }
-            ShowcaseMode::PhysicallyBasedSurfaces => {
-                self.build_physically_based_surfaces_scene(renderer);
-            }
-            _ => {}
+            ShowcaseMode::Labels => showcase_34_labels::build(self, renderer),
+            ShowcaseMode::Overlay => showcase_35_overlay::build(self, renderer),
+            ShowcaseMode::VectorArt => showcase_59_vector_art::build(self, renderer),
+            ShowcaseMode::Sprites => showcase_41_sprites::build(self, renderer),
+            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::build(self, renderer),
+            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::build(self, renderer),
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::build(self, renderer),
+            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::build(self, renderer),
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::build(self, renderer),
+            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::build(self, renderer),
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::build(self, renderer),
+            ShowcaseMode::CustomShading => showcase_54_custom_shading::build(self, renderer),
+            ShowcaseMode::Performance => showcase_23_performance::build(self, renderer),
+            ShowcaseMode::PickLevels => showcase_33_picking_levels::build(self, renderer),
+            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::build(self, renderer),
+            ShowcaseMode::Lod => showcase_52_lod::build(self, renderer),
         }
     }
 }

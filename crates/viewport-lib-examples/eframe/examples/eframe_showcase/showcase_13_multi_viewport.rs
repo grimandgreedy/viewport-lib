@@ -827,3 +827,27 @@ fn mv_gizmo_orientation(
             .unwrap_or(glam::Quat::IDENTITY),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.mv_state.built || app.mv_state.viewports.is_none()
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    if app.mv_state.viewports.is_none() {
+        let vp0 = renderer.create_viewport(&app.device);
+        let vp1 = renderer.create_viewport(&app.device);
+        let vp2 = renderer.create_viewport(&app.device);
+        let vp3 = renderer.create_viewport(&app.device);
+        app.mv_state.viewports = Some([vp0, vp1, vp2, vp3]);
+    }
+    if !app.mv_state.built {
+        app.build_mv_scene(renderer);
+    }
+}

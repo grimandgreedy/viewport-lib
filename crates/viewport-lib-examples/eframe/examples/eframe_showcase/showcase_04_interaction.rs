@@ -386,3 +386,25 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
         .glyphs
         .push(app.interact_state.spline.handle_glyphs(9901, &spline_ctx));
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.interact_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_interact_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 12.0,
+        orientation: glam::Quat::from_rotation_z(0.6)
+            * glam::Quat::from_rotation_x(1.1),
+        ..vpl::Camera::default()
+    };
+}

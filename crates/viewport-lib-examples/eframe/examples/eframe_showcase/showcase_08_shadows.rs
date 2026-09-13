@@ -159,3 +159,25 @@ pub(crate) fn controls_shadows(app: &mut App, ui: &mut egui::Ui) {
     ui.separator();
     ui.checkbox(&mut app.shd_state.contact_on, "Contact Shadows");
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.shd_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_shadow_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::new(0.0, 0.0, 1.0),
+        distance: 14.0,
+        orientation: glam::Quat::from_rotation_z(0.4)
+            * glam::Quat::from_rotation_x(1.0),
+        ..vpl::Camera::default()
+    };
+}

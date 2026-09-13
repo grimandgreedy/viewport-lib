@@ -1758,3 +1758,61 @@ fn row_backdrop(app: &App, shapes: &mut Vec<OverlayShapeItem>, row1_right: f32) 
         .with_backdrop_filters(0.35, 0.9, 0.6 * t.sin()),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.ovl_state.cloud_built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    let (positions, scalars) = build_ovl_cloud();
+    app.ovl_state.cloud_positions = positions;
+    app.ovl_state.cloud_scalars = scalars;
+    app.ovl_state.cloud_built = true;
+    let (tw, th, tdata) = build_demo_texture();
+    app.ovl_state.tex_id = Some(
+        renderer
+            .resources_mut()
+            .upload_overlay_texture(&app.device, &app.queue, tw, th, &tdata),
+    );
+    app.ovl_state.carlgauss_tex_id =
+        Some(renderer.resources_mut().upload_overlay_texture(
+            &app.device,
+            &app.queue,
+            CARLGAUSS_WIDTH,
+            CARLGAUSS_HEIGHT,
+            CARLGAUSS_RGBA,
+        ));
+    let (nw, nh, ndata) = build_nine_slice_texture();
+    app.ovl_state.nine_slice_tex_id = Some(
+        renderer
+            .resources_mut()
+            .upload_overlay_texture(&app.device, &app.queue, nw, nh, &ndata),
+    );
+    // Optional color-emoji font for the glyph-run row.
+    if let Some(bytes) = EMOJI_FONT_PATHS
+        .iter()
+        .find_map(|p| std::fs::read(p).ok())
+    {
+        if let Ok(handle) = renderer.resources_mut().upload_font(&bytes) {
+            let ids = emoji_glyph_ids(&bytes);
+            if !ids.is_empty() {
+                app.ovl_state.emoji_font = Some(handle);
+                app.ovl_state.emoji_glyphs = ids;
+            }
+        }
+    }
+    app.camera = vpl::Camera {
+        center: glam::Vec3::new(0.0, 1.57, 0.0),
+        distance: 9.0,
+        orientation: glam::Quat::from_rotation_z(0.4)
+            * glam::Quat::from_rotation_x(1.0),
+        ..vpl::Camera::default()
+    };
+}

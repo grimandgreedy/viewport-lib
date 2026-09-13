@@ -231,3 +231,18 @@ fn heatmap_rgb(t: f32) -> (u8, u8, u8) {
     let lerp = |a: f32, b: f32| ((a + (b - a) * f).clamp(0.0, 1.0) * 255.0) as u8;
     (lerp(a.0, b.0), lerp(a.1, b.1), lerp(a.2, b.2))
 }
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.dc_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_dc_scene(renderer);
+}
