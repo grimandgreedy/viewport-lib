@@ -47,10 +47,11 @@ pub(crate) fn with_primitive_index_enable(src: &str) -> String {
 ///
 /// The block declares a 24-element array of candidate quantities. It sits under
 /// a uniform branch, so it does no work unless debug vis is on, but a lit
-/// shader carrying the allocation pays for it in registers on every draw. The
-/// lit pipelines therefore compile without the block by default and are rebuilt
-/// from the full source only while `DebugVis` is active (see
-/// `rebuild_mesh_pipelines`).
+/// shader carrying the allocation pays for it in registers on every draw:
+/// measured at about 5% of scene time on a fragment-bound scene, with identical
+/// pixels either way. The lit pipelines therefore compile without the block by
+/// default and are rebuilt from the full source only while `DebugVis` is active
+/// (see `rebuild_mesh_pipelines`).
 pub(crate) fn strip_debug_vis<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     keep: bool,
