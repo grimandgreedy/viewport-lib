@@ -2373,3 +2373,15 @@ pub(crate) fn overlay(app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+pub(crate) fn on_click(app: &mut crate::App, pos: glam::Vec2, w: f32, h: f32) {
+    // Per-type reference path; the unified path is handled against a dedicated
+    // pick frame in the viewport event section.
+    if !app.pl_state.unified_mode {
+        let shift = app.pl_state.shift_held;
+        app.handle_pl_click(pos, w, h, shift);
+    }
+}

@@ -690,3 +690,11 @@ pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+pub(crate) fn on_click(app: &mut crate::App, pos: glam::Vec2, w: f32, h: f32) {
+    // The click paints a voxel here rather than selecting anything.
+    app.handle_svg_paint_click(pos, w, h);
+}

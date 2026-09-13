@@ -314,132 +314,6 @@ impl App {
         };
     }
 
-    pub(crate) fn controls_probe_widgets(&mut self, ui: &mut egui::Ui) {
-        let state = &mut self.pw_state;
-
-        ui.label("Widget:");
-        ui.horizontal_wrapped(|ui| {
-            ui.radio_value(&mut state.sub_mode, PwSubMode::LineProbe, "Line Probe");
-            ui.radio_value(&mut state.sub_mode, PwSubMode::Sphere, "Sphere");
-            ui.radio_value(&mut state.sub_mode, PwSubMode::Box, "Box (OBB)");
-            ui.radio_value(&mut state.sub_mode, PwSubMode::Plane, "Plane");
-            ui.radio_value(&mut state.sub_mode, PwSubMode::Disk, "Disk");
-            ui.radio_value(&mut state.sub_mode, PwSubMode::Cylinder, "Cylinder");
-            ui.radio_value(&mut state.sub_mode, PwSubMode::Polyline, "Polyline");
-        });
-        ui.separator();
-
-        match state.sub_mode {
-            PwSubMode::LineProbe => {
-                let s = state.probe.start;
-                let e = state.probe.end;
-                ui.label(format!("Start:  [{:.2}, {:.2}, {:.2}]", s.x, s.y, s.z));
-                ui.label(format!("End:    [{:.2}, {:.2}, {:.2}]", e.x, e.y, e.z));
-                ui.label(format!("Length: {:.3}", (e - s).length()));
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Radius:");
-                    ui.add(egui::Slider::new(&mut state.line_threshold, 0.05..=3.0).step_by(0.05));
-                });
-                ui.label(format!(
-                    "Points within {:.2}: {}",
-                    state.line_threshold,
-                    state.points_near_line()
-                ));
-                ui.separator();
-                selection_buttons(ui, state, PwSubMode::LineProbe);
-            }
-            PwSubMode::Sphere => {
-                let c = state.sphere.center;
-                ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
-                ui.label(format!("Radius: {:.3}", state.sphere.radius));
-                ui.separator();
-                selection_buttons(ui, state, PwSubMode::Sphere);
-            }
-            PwSubMode::Box => {
-                let c = state.bw.center;
-                let h = state.bw.half_extents;
-                let (_, _, rot) = state.bw.obb();
-                let (axis, angle) = rot.to_axis_angle();
-                ui.label(format!(
-                    "Center:       [{:.2}, {:.2}, {:.2}]",
-                    c.x, c.y, c.z
-                ));
-                ui.label(format!(
-                    "Half-extents: [{:.2}, {:.2}, {:.2}]",
-                    h.x, h.y, h.z
-                ));
-                ui.label(format!(
-                    "Rotation:     {:.1} deg around [{:.2}, {:.2}, {:.2}]",
-                    angle.to_degrees(),
-                    axis.x,
-                    axis.y,
-                    axis.z
-                ));
-                ui.separator();
-                ui.label("Drag arc handles (outer circles) to rotate.");
-                ui.separator();
-                selection_buttons(ui, state, PwSubMode::Box);
-            }
-            PwSubMode::Plane => {
-                let c = state.plane.center;
-                let n = state.plane.normal;
-                ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
-                ui.label(format!("Normal: [{:.2}, {:.2}, {:.2}]", n.x, n.y, n.z));
-                ui.separator();
-                ui.label("Select: points on positive-normal side.");
-                ui.separator();
-                selection_buttons(ui, state, PwSubMode::Plane);
-            }
-            PwSubMode::Disk => {
-                let c = state.disk.center;
-                let n = state.disk.normal;
-                ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
-                ui.label(format!("Normal: [{:.2}, {:.2}, {:.2}]", n.x, n.y, n.z));
-                ui.label(format!("Radius: {:.3}", state.disk.radius));
-                ui.horizontal(|ui| {
-                    ui.label("Half-thickness:");
-                    ui.add(
-                        egui::Slider::new(&mut state.disk_half_thickness, 0.05..=2.0).step_by(0.05),
-                    );
-                });
-                ui.separator();
-                selection_buttons(ui, state, PwSubMode::Disk);
-            }
-            PwSubMode::Cylinder => {
-                let s = state.cylinder.start;
-                let e = state.cylinder.end;
-                ui.label(format!("Start:  [{:.2}, {:.2}, {:.2}]", s.x, s.y, s.z));
-                ui.label(format!("End:    [{:.2}, {:.2}, {:.2}]", e.x, e.y, e.z));
-                ui.label(format!("Radius: {:.3}", state.cylinder.radius));
-                ui.label(format!("Length: {:.3}", (e - s).length()));
-                ui.separator();
-                selection_buttons(ui, state, PwSubMode::Cylinder);
-            }
-            PwSubMode::Polyline => {
-                ui.label(format!("Points: {}", state.polyline.points.len()));
-                for (i, p) in state.polyline.points.iter().enumerate() {
-                    ui.label(format!("  [{}] [{:.2}, {:.2}, {:.2}]", i, p.x, p.y, p.z));
-                }
-                ui.horizontal(|ui| {
-                    ui.label("Near-path radius:");
-                    ui.add(
-                        egui::Slider::new(&mut state.polyline_threshold, 0.05..=3.0).step_by(0.05),
-                    );
-                });
-                ui.separator();
-                ui.label("Double-click a handle to remove it.");
-                ui.label("Double-click a segment to add a point.");
-                ui.separator();
-                selection_buttons(ui, state, PwSubMode::Polyline);
-            }
-        }
-
-        ui.separator();
-        if state.suppress_orbit {
-            ui.label("(Orbit suppressed: widget active)");
-        }
-    }
 }
 
 fn selection_buttons(ui: &mut egui::Ui, state: &mut ProbeWidgetState, mode: PwSubMode) {
@@ -668,3 +542,136 @@ pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
+
+/// Controls panel for this showcase.
+pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
+    let state = &mut app.pw_state;
+
+    ui.label("Widget:");
+    ui.horizontal_wrapped(|ui| {
+        ui.radio_value(&mut state.sub_mode, PwSubMode::LineProbe, "Line Probe");
+        ui.radio_value(&mut state.sub_mode, PwSubMode::Sphere, "Sphere");
+        ui.radio_value(&mut state.sub_mode, PwSubMode::Box, "Box (OBB)");
+        ui.radio_value(&mut state.sub_mode, PwSubMode::Plane, "Plane");
+        ui.radio_value(&mut state.sub_mode, PwSubMode::Disk, "Disk");
+        ui.radio_value(&mut state.sub_mode, PwSubMode::Cylinder, "Cylinder");
+        ui.radio_value(&mut state.sub_mode, PwSubMode::Polyline, "Polyline");
+    });
+    ui.separator();
+
+    match state.sub_mode {
+        PwSubMode::LineProbe => {
+            let s = state.probe.start;
+            let e = state.probe.end;
+            ui.label(format!("Start:  [{:.2}, {:.2}, {:.2}]", s.x, s.y, s.z));
+            ui.label(format!("End:    [{:.2}, {:.2}, {:.2}]", e.x, e.y, e.z));
+            ui.label(format!("Length: {:.3}", (e - s).length()));
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Radius:");
+                ui.add(egui::Slider::new(&mut state.line_threshold, 0.05..=3.0).step_by(0.05));
+            });
+            ui.label(format!(
+                "Points within {:.2}: {}",
+                state.line_threshold,
+                state.points_near_line()
+            ));
+            ui.separator();
+            selection_buttons(ui, state, PwSubMode::LineProbe);
+        }
+        PwSubMode::Sphere => {
+            let c = state.sphere.center;
+            ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
+            ui.label(format!("Radius: {:.3}", state.sphere.radius));
+            ui.separator();
+            selection_buttons(ui, state, PwSubMode::Sphere);
+        }
+        PwSubMode::Box => {
+            let c = state.bw.center;
+            let h = state.bw.half_extents;
+            let (_, _, rot) = state.bw.obb();
+            let (axis, angle) = rot.to_axis_angle();
+            ui.label(format!(
+                "Center:       [{:.2}, {:.2}, {:.2}]",
+                c.x, c.y, c.z
+            ));
+            ui.label(format!(
+                "Half-extents: [{:.2}, {:.2}, {:.2}]",
+                h.x, h.y, h.z
+            ));
+            ui.label(format!(
+                "Rotation:     {:.1} deg around [{:.2}, {:.2}, {:.2}]",
+                angle.to_degrees(),
+                axis.x,
+                axis.y,
+                axis.z
+            ));
+            ui.separator();
+            ui.label("Drag arc handles (outer circles) to rotate.");
+            ui.separator();
+            selection_buttons(ui, state, PwSubMode::Box);
+        }
+        PwSubMode::Plane => {
+            let c = state.plane.center;
+            let n = state.plane.normal;
+            ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
+            ui.label(format!("Normal: [{:.2}, {:.2}, {:.2}]", n.x, n.y, n.z));
+            ui.separator();
+            ui.label("Select: points on positive-normal side.");
+            ui.separator();
+            selection_buttons(ui, state, PwSubMode::Plane);
+        }
+        PwSubMode::Disk => {
+            let c = state.disk.center;
+            let n = state.disk.normal;
+            ui.label(format!("Center: [{:.2}, {:.2}, {:.2}]", c.x, c.y, c.z));
+            ui.label(format!("Normal: [{:.2}, {:.2}, {:.2}]", n.x, n.y, n.z));
+            ui.label(format!("Radius: {:.3}", state.disk.radius));
+            ui.horizontal(|ui| {
+                ui.label("Half-thickness:");
+                ui.add(
+                    egui::Slider::new(&mut state.disk_half_thickness, 0.05..=2.0).step_by(0.05),
+                );
+            });
+            ui.separator();
+            selection_buttons(ui, state, PwSubMode::Disk);
+        }
+        PwSubMode::Cylinder => {
+            let s = state.cylinder.start;
+            let e = state.cylinder.end;
+            ui.label(format!("Start:  [{:.2}, {:.2}, {:.2}]", s.x, s.y, s.z));
+            ui.label(format!("End:    [{:.2}, {:.2}, {:.2}]", e.x, e.y, e.z));
+            ui.label(format!("Radius: {:.3}", state.cylinder.radius));
+            ui.label(format!("Length: {:.3}", (e - s).length()));
+            ui.separator();
+            selection_buttons(ui, state, PwSubMode::Cylinder);
+        }
+        PwSubMode::Polyline => {
+            ui.label(format!("Points: {}", state.polyline.points.len()));
+            for (i, p) in state.polyline.points.iter().enumerate() {
+                ui.label(format!("  [{}] [{:.2}, {:.2}, {:.2}]", i, p.x, p.y, p.z));
+            }
+            ui.horizontal(|ui| {
+                ui.label("Near-path radius:");
+                ui.add(
+                    egui::Slider::new(&mut state.polyline_threshold, 0.05..=3.0).step_by(0.05),
+                );
+            });
+            ui.separator();
+            ui.label("Double-click a handle to remove it.");
+            ui.label("Double-click a segment to add a point.");
+            ui.separator();
+            selection_buttons(ui, state, PwSubMode::Polyline);
+        }
+    }
+
+    ui.separator();
+    if state.suppress_orbit {
+        ui.label("(Orbit suppressed: widget active)");
+    }
+    }
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+pub(crate) fn on_click(_app: &mut crate::App, _pos: glam::Vec2, _w: f32, _h: f32) {}

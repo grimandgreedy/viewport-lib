@@ -516,3 +516,13 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
         cx.egui.request_repaint();
     }
 }
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+pub(crate) fn on_click(app: &mut crate::App, pos: glam::Vec2, w: f32, h: f32) {
+    // Object-level selection: defer the pick to the render site, where the
+    // renderer and the on-screen `FrameData` are in scope, and resolve it with
+    // the unified GPU picker. See `apply_pending_pick`.
+    app.pending_pick = Some(pos);
+}
