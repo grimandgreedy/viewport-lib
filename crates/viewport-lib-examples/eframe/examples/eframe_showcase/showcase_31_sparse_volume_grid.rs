@@ -694,7 +694,7 @@ pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
-pub(crate) fn on_click(app: &mut crate::App, pos: glam::Vec2, w: f32, h: f32) {
+pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
     // The click paints a voxel here rather than selecting anything.
-    app.handle_svg_paint_click(pos, w, h);
+    app.handle_svg_paint_click(cx.pos, cx.w, cx.h);
 }

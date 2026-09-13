@@ -375,4 +375,4 @@ pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
-pub(crate) fn on_click(_app: &mut crate::App, _pos: glam::Vec2, _w: f32, _h: f32) {}
+pub(crate) fn on_click(_app: &mut crate::App, _cx: &crate::ClickCtx) {}

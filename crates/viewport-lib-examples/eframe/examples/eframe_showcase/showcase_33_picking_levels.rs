@@ -2312,8 +2312,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, sel_gen) =
-            pl_collect_scene_items(app);
+        let (items, lighting, sg, sel_gen) = pl_collect_scene_items(app);
         (items, None, lighting, sg, sel_gen)
     };
     crate::SceneContents {
@@ -2332,11 +2331,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     // Picking Levels (Showcase 33).
     submit_pl_items(app, &mut *fd);
 }
@@ -2347,13 +2342,16 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-pub(crate) fn overlay(app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+pub(crate) fn overlay(
+    app: &mut crate::App,
+    ui: &mut crate::eframe::egui::Ui,
+    cx: &crate::ViewportCtx,
+) {
     // ----- PickLevels: rubber-band drag rect overlay -----
     if let Some(drag_start) = app.pl_state.drag_start {
         let drag_end = app.cursor_viewport;
         if cx.response.dragged() && (drag_end - drag_start).length() > 4.0 {
-            let a =
-                egui::pos2(cx.rect.left() + drag_start.x, cx.rect.top() + drag_start.y);
+            let a = egui::pos2(cx.rect.left() + drag_start.x, cx.rect.top() + drag_start.y);
             let b = egui::pos2(cx.rect.left() + drag_end.x, cx.rect.top() + drag_end.y);
             let sel_rect = egui::Rect::from_two_pos(a, b);
             ui.painter().rect(
@@ -2377,11 +2375,20 @@ pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
-pub(crate) fn on_click(app: &mut crate::App, pos: glam::Vec2, w: f32, h: f32) {
-    // Per-type reference path; the unified path is handled against a dedicated
-    // pick frame in the viewport event section.
-    if !app.pl_state.unified_mode {
-        let shift = app.pl_state.shift_held;
-        app.handle_pl_click(pos, w, h, shift);
+pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
+    let shift = app.pl_state.shift_held;
+    if app.pl_state.unified_mode {
+        // The unified path resolves the pick straight away against a dedicated
+        // pick frame, so it needs the renderer rather than deferring.
+        let device = app.device.clone();
+        let queue = app.queue.clone();
+        let pick_frame = pl_build_pick_frame(app, cx.w, cx.h, cx.pixels_per_point);
+        let rs = cx.frame.wgpu_render_state().expect("wgpu required");
+        let mut guard = rs.renderer.write();
+        if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
+            app.handle_pl_unified_click(cx.pos, shift, renderer, &device, &queue, &pick_frame);
+        }
+    } else {
+        app.handle_pl_click(cx.pos, cx.w, cx.h, shift);
     }
 }

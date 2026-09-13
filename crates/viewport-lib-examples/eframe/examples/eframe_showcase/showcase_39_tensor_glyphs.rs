@@ -624,11 +624,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     // Tensor glyph items (Showcase 39) : submitted every frame when built.
     if app.tg_state.built {
         submit_tensor_glyphs(app, &mut *fd);
@@ -643,7 +639,12 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+pub(crate) fn overlay(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) {
+}
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -652,4 +653,9 @@ pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
-pub(crate) fn on_click(_app: &mut crate::App, _pos: glam::Vec2, _w: f32, _h: f32) {}
+pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
+    if app.tg_state.built {
+        // Resolved by the unified GPU picker at the render site.
+        app.pending_pick = Some(cx.pos);
+    }
+}

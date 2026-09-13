@@ -1119,7 +1119,14 @@ impl eframe::App for App {
                         // Click-to-select: only when no session is active.
                         if response.clicked() && !self.interact_state.manip.is_active() {
                             let pick_pos = self.cursor_viewport;
-                            self.handle_click_select(pick_pos, w, h);
+                            let click_cx = ClickCtx {
+                                frame,
+                                pos: pick_pos,
+                                w,
+                                h,
+                                pixels_per_point: ctx.pixels_per_point(),
+                            };
+                            self.handle_click_select(&click_cx);
                         }
                     } else {
                         self.controller.apply_to_camera(&mut self.camera);
@@ -1178,43 +1185,18 @@ impl eframe::App for App {
                     self.update_probe_widgets(widget_ctx);
                 }
 
-                // ----- Click-to-select (non-Interaction modes) -----
+                // ----- Click-to-select -----
+                // Showcase 4 routes its own clicks from the manipulation block
+                // above, so that a click ending a gizmo drag is not a selection.
                 if response.clicked() && self.mode != ShowcaseMode::Interaction {
-                    let pick_pos = self.cursor_viewport;
-                    // Unified pick for PickLevels showcase uses renderer.pick_object(),
-                    // which dispatches to the GPU or CPU backend per the UI toggle.
-                    if self.mode == ShowcaseMode::PickLevels && self.pl_state.unified_mode {
-                        let shift = self.pl_state.shift_held;
-                        let device = self.device.clone();
-                        let queue = self.queue.clone();
-                        let pick_frame = showcase_33_picking_levels::pl_build_pick_frame(
-                            self,
-                            rect.width(),
-                            rect.height(),
-                            ctx.pixels_per_point(),
-                        );
-                        let rs = frame.wgpu_render_state().expect("wgpu required");
-                        let mut guard = rs.renderer.write();
-                        if let Some(renderer) =
-                            guard.callback_resources.get_mut::<ViewportRenderer>()
-                        {
-                            self.handle_pl_unified_click(
-                                pick_pos,
-                                shift,
-                                renderer,
-                                &device,
-                                &queue,
-                                &pick_frame,
-                            );
-                        }
-                    } else if (self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built)
-                        || self.mode == ShowcaseMode::Decals
-                    {
-                        // Resolved by the unified GPU picker at the render site.
-                        self.pending_pick = Some(pick_pos);
-                    } else {
-                        self.handle_click_select(pick_pos, rect.width(), rect.height());
-                    }
+                    let click_cx = ClickCtx {
+                        frame,
+                        pos: self.cursor_viewport,
+                        w: rect.width(),
+                        h: rect.height(),
+                        pixels_per_point: ctx.pixels_per_point(),
+                    };
+                    self.handle_click_select(&click_cx);
                 }
 
                 // ----- Voxel paint: flush painted cell to GPU -----
@@ -1928,6 +1910,17 @@ pub(crate) struct FrameCtx<'a> {
     pub(crate) dt: f32,
 }
 
+/// What a viewport click carries, passed to a showcase's `on_click` hook.
+pub(crate) struct ClickCtx<'a> {
+    pub(crate) frame: &'a eframe::Frame,
+    /// Cursor position in viewport pixels.
+    pub(crate) pos: glam::Vec2,
+    /// Viewport size in logical points.
+    pub(crate) w: f32,
+    pub(crate) h: f32,
+    pub(crate) pixels_per_point: f32,
+}
+
 /// The viewport widget's per-frame egui handles, passed to a showcase's
 /// `overlay` and `tick` hooks.
 pub(crate) struct ViewportCtx<'a> {
@@ -2361,91 +2354,79 @@ impl App {
 
 impl App {
     /// Route a plain viewport click to the active showcase.
-    fn handle_click_select(&mut self, pos: glam::Vec2, w: f32, h: f32) {
+    fn handle_click_select(&mut self, cx: &ClickCtx) {
         match self.mode {
-            ShowcaseMode::Basic => showcase_01_basic::on_click(self, pos, w, h),
-            ShowcaseMode::SceneGraph => showcase_02_scene_graph::on_click(self, pos, w, h),
-            ShowcaseMode::GroundPlane => showcase_03_ground_plane::on_click(self, pos, w, h),
-            ShowcaseMode::Interaction => showcase_04_interaction::on_click(self, pos, w, h),
+            ShowcaseMode::Basic => showcase_01_basic::on_click(self, cx),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::on_click(self, cx),
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::on_click(self, cx),
+            ShowcaseMode::Interaction => showcase_04_interaction::on_click(self, cx),
             ShowcaseMode::MaterialsVisibility => {
-                showcase_05_materials_and_visibility::on_click(self, pos, w, h)
+                showcase_05_materials_and_visibility::on_click(self, cx)
             }
-            ShowcaseMode::PostProcess => showcase_06_post_process::on_click(self, pos, w, h),
-            ShowcaseMode::NormalMaps => showcase_07_normal_maps::on_click(self, pos, w, h),
-            ShowcaseMode::Shadows => showcase_08_shadows::on_click(self, pos, w, h),
-            ShowcaseMode::Annotation => showcase_09_annotation::on_click(self, pos, w, h),
-            ShowcaseMode::CameraTools => showcase_10_camera_tools::on_click(self, pos, w, h),
-            ShowcaseMode::Lights => showcase_11_lights::on_click(self, pos, w, h),
-            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::on_click(self, pos, w, h),
-            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::on_click(self, pos, w, h),
-            ShowcaseMode::Isolines => showcase_14_isolines::on_click(self, pos, w, h),
-            ShowcaseMode::PointClouds => showcase_15_point_clouds::on_click(self, pos, w, h),
-            ShowcaseMode::Streamlines => showcase_16_streamlines::on_click(self, pos, w, h),
-            ShowcaseMode::Volume => showcase_17_volume::on_click(self, pos, w, h),
-            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::on_click(self, pos, w, h),
-            ShowcaseMode::Matcap => showcase_19_matcap::on_click(self, pos, w, h),
-            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::on_click(self, pos, w, h),
-            ShowcaseMode::Textures => showcase_21_textures::on_click(self, pos, w, h),
-            ShowcaseMode::ParamVis => showcase_22_parameterization::on_click(self, pos, w, h),
-            ShowcaseMode::Performance => showcase_23_performance::on_click(self, pos, w, h),
-            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::on_click(self, pos, w, h),
-            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::on_click(self, pos, w, h),
-            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::on_click(self, pos, w, h),
-            ShowcaseMode::Auxiliary => showcase_27_camera_framing::on_click(self, pos, w, h),
+            ShowcaseMode::PostProcess => showcase_06_post_process::on_click(self, cx),
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::on_click(self, cx),
+            ShowcaseMode::Shadows => showcase_08_shadows::on_click(self, cx),
+            ShowcaseMode::Annotation => showcase_09_annotation::on_click(self, cx),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::on_click(self, cx),
+            ShowcaseMode::Lights => showcase_11_lights::on_click(self, cx),
+            ShowcaseMode::ScalarFields => showcase_12_scalar_fields::on_click(self, cx),
+            ShowcaseMode::MultiViewport => showcase_13_multi_viewport::on_click(self, cx),
+            ShowcaseMode::Isolines => showcase_14_isolines::on_click(self, cx),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::on_click(self, cx),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::on_click(self, cx),
+            ShowcaseMode::Volume => showcase_17_volume::on_click(self, cx),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::on_click(self, cx),
+            ShowcaseMode::Matcap => showcase_19_matcap::on_click(self, cx),
+            ShowcaseMode::FaceAttributes => showcase_20_face_attributes::on_click(self, cx),
+            ShowcaseMode::Textures => showcase_21_textures::on_click(self, cx),
+            ShowcaseMode::ParamVis => showcase_22_parameterization::on_click(self, cx),
+            ShowcaseMode::Performance => showcase_23_performance::on_click(self, cx),
+            ShowcaseMode::BackfacePolicy => showcase_24_backface_policy::on_click(self, cx),
+            ShowcaseMode::SurfaceVectors => showcase_25_surface_vectors::on_click(self, cx),
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::on_click(self, cx),
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::on_click(self, cx),
             ShowcaseMode::CurveNetworkQuantities => {
-                showcase_28_curve_network_quantities::on_click(self, pos, w, h)
+                showcase_28_curve_network_quantities::on_click(self, cx)
             }
             ShowcaseMode::DepthCompositeImages => {
-                showcase_29_depth_composite_images::on_click(self, pos, w, h)
+                showcase_29_depth_composite_images::on_click(self, cx)
             }
-            ShowcaseMode::ImplicitSurface => {
-                showcase_30_implicit_surface::on_click(self, pos, w, h)
-            }
-            ShowcaseMode::SparseVolumeGrid => {
-                showcase_31_sparse_volume_grid::on_click(self, pos, w, h)
-            }
-            ShowcaseMode::ExtendedQuantities => {
-                showcase_32_extended_quantities::on_click(self, pos, w, h)
-            }
-            ShowcaseMode::PickLevels => showcase_33_picking_levels::on_click(self, pos, w, h),
-            ShowcaseMode::Labels => showcase_34_labels::on_click(self, pos, w, h),
-            ShowcaseMode::Overlay => showcase_35_overlay::on_click(self, pos, w, h),
-            ShowcaseMode::PlaybackRuntime => {
-                showcase_36_playback_runtime::on_click(self, pos, w, h)
-            }
-            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::on_click(self, pos, w, h),
-            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::on_click(self, pos, w, h),
-            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::on_click(self, pos, w, h),
-            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::on_click(self, pos, w, h),
-            ShowcaseMode::Sprites => showcase_41_sprites::on_click(self, pos, w, h),
-            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::on_click(self, pos, w, h),
-            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::on_click(self, pos, w, h),
-            ShowcaseMode::DebugDraw => showcase_44_debug_draw::on_click(self, pos, w, h),
-            ShowcaseMode::SkinnedAnimation => {
-                showcase_45_skinned_animation::on_click(self, pos, w, h)
-            }
-            ShowcaseMode::Decals => showcase_46_decals::on_click(self, pos, w, h),
+            ShowcaseMode::ImplicitSurface => showcase_30_implicit_surface::on_click(self, cx),
+            ShowcaseMode::SparseVolumeGrid => showcase_31_sparse_volume_grid::on_click(self, cx),
+            ShowcaseMode::ExtendedQuantities => showcase_32_extended_quantities::on_click(self, cx),
+            ShowcaseMode::PickLevels => showcase_33_picking_levels::on_click(self, cx),
+            ShowcaseMode::Labels => showcase_34_labels::on_click(self, cx),
+            ShowcaseMode::Overlay => showcase_35_overlay::on_click(self, cx),
+            ShowcaseMode::PlaybackRuntime => showcase_36_playback_runtime::on_click(self, cx),
+            ShowcaseMode::ProbeWidgets => showcase_37_probe_widgets::on_click(self, cx),
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::on_click(self, cx),
+            ShowcaseMode::TensorGlyphs => showcase_39_tensor_glyphs::on_click(self, cx),
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::on_click(self, cx),
+            ShowcaseMode::Sprites => showcase_41_sprites::on_click(self, cx),
+            ShowcaseMode::GaussianSplats => showcase_42_gaussian_splats::on_click(self, cx),
+            ShowcaseMode::SceneRuntime => showcase_43_scene_runtime::on_click(self, cx),
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::on_click(self, cx),
+            ShowcaseMode::SkinnedAnimation => showcase_45_skinned_animation::on_click(self, cx),
+            ShowcaseMode::Decals => showcase_46_decals::on_click(self, cx),
             ShowcaseMode::LightingConsistency => {
-                showcase_47_lighting_consistency::on_click(self, pos, w, h)
+                showcase_47_lighting_consistency::on_click(self, cx)
             }
-            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::on_click(self, pos, w, h),
-            ShowcaseMode::SceneLights => showcase_49_scene_lights::on_click(self, pos, w, h),
-            ShowcaseMode::GpuWave => showcase_50_gpu_wave::on_click(self, pos, w, h),
-            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::on_click(self, pos, w, h),
-            ShowcaseMode::Lod => showcase_52_lod::on_click(self, pos, w, h),
-            ShowcaseMode::VertexColours => showcase_53_vertex_colours::on_click(self, pos, w, h),
-            ShowcaseMode::CustomShading => showcase_54_custom_shading::on_click(self, pos, w, h),
-            ShowcaseMode::Foreground => showcase_55_foreground_pass::on_click(self, pos, w, h),
-            ShowcaseMode::SubmeshMaterials => {
-                showcase_56_submesh_materials::on_click(self, pos, w, h)
-            }
+            ShowcaseMode::ScatterVolumes => showcase_48_scatter_volumes::on_click(self, cx),
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::on_click(self, cx),
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::on_click(self, cx),
+            ShowcaseMode::AsyncUploads => showcase_51_async_uploads::on_click(self, cx),
+            ShowcaseMode::Lod => showcase_52_lod::on_click(self, cx),
+            ShowcaseMode::VertexColours => showcase_53_vertex_colours::on_click(self, cx),
+            ShowcaseMode::CustomShading => showcase_54_custom_shading::on_click(self, cx),
+            ShowcaseMode::Foreground => showcase_55_foreground_pass::on_click(self, cx),
+            ShowcaseMode::SubmeshMaterials => showcase_56_submesh_materials::on_click(self, cx),
             ShowcaseMode::PhotometricLighting => {
-                showcase_57_photometric_lighting::on_click(self, pos, w, h)
+                showcase_57_photometric_lighting::on_click(self, cx)
             }
             ShowcaseMode::PhysicallyBasedSurfaces => {
-                showcase_58_physically_based_surfaces::on_click(self, pos, w, h)
+                showcase_58_physically_based_surfaces::on_click(self, cx)
             }
-            ShowcaseMode::VectorArt => showcase_59_vector_art::on_click(self, pos, w, h),
+            ShowcaseMode::VectorArt => showcase_59_vector_art::on_click(self, cx),
         }
     }
 
