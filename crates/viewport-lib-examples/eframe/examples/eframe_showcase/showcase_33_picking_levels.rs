@@ -2340,3 +2340,36 @@ pub(crate) fn frame(
     // Picking Levels (Showcase 33).
     submit_pl_items(app, &mut *fd);
 }
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+    // ----- PickLevels: rubber-band drag rect overlay -----
+    if let Some(drag_start) = app.pl_state.drag_start {
+        let drag_end = app.interact_state.last_cursor_viewport;
+        if cx.response.dragged() && (drag_end - drag_start).length() > 4.0 {
+            let a =
+                egui::pos2(cx.rect.left() + drag_start.x, cx.rect.top() + drag_start.y);
+            let b = egui::pos2(cx.rect.left() + drag_end.x, cx.rect.top() + drag_end.y);
+            let sel_rect = egui::Rect::from_two_pos(a, b);
+            ui.painter().rect(
+                sel_rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(255, 200, 50, 20),
+                egui::Stroke::new(
+                    1.5,
+                    egui::Color32::from_rgba_unmultiplied(255, 200, 50, 200),
+                ),
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}

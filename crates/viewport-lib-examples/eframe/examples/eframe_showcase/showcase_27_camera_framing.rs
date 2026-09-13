@@ -785,3 +785,19 @@ pub(crate) fn frame(
     rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
     fd.camera.render_camera = rc;
 }
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    if app.cam_animator.is_animating() {
+        cx.egui.request_repaint();
+    }
+}

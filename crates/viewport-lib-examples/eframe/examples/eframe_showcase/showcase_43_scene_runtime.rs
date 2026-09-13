@@ -647,3 +647,26 @@ pub(crate) fn frame(
     _fd: &mut vpl::FrameData,
     _ctx: &crate::FrameCtx,
 ) {}
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Scene runtime: step simulation -----
+    if app.rt_state.built {
+        let dt = cx.egui.input(|i| i.stable_dt.min(0.25));
+        update_rt_demo(app, dt);
+        if !app.rt_state.paused
+            || app.rt_state.demo == RuntimeDemo::Orbit
+        {
+            cx.egui.request_repaint();
+        }
+    }
+}

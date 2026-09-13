@@ -1941,3 +1941,31 @@ pub(crate) fn frame(
     _fd: &mut vpl::FrameData,
     _ctx: &crate::FrameCtx,
 ) {}
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Skinned animation: step runtime -----
+    if app.skin_state.built {
+        let dt = cx.egui.input(|i| i.stable_dt.min(0.25));
+        let cursor = app.interact_state.last_cursor_viewport;
+        let viewport_size = glam::Vec2::new(cx.rect.width(), cx.rect.height());
+        let clicked = cx.response.clicked();
+        update_skin47(
+            app,
+            dt,
+            cursor,
+            viewport_size,
+            clicked,
+        );
+        cx.egui.request_repaint();
+    }
+}

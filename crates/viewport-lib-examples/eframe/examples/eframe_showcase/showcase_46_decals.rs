@@ -1352,3 +1352,24 @@ pub(crate) fn frame(
 
     fd.effects.display.mode = vpl::PipelineMode::Hdr;
 }
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Decals: advance live decal ages (D4) -----
+    if app.decal46_state.built {
+        let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
+        update_decal46(app, dt);
+        if !app.decal46_state.scene.collect_decal_items().is_empty() {
+            cx.egui.request_repaint();
+        }
+    }
+}

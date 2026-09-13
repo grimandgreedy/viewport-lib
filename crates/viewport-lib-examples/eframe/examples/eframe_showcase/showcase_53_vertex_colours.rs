@@ -466,3 +466,67 @@ pub(crate) fn frame(
     _fd: &mut vpl::FrameData,
     _ctx: &crate::FrameCtx,
 ) {}
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Vertex colours (53): drive the animated grid and apply
+    // paint strokes. Both go through `update_vertex_colours`, an
+    // in-place GPU write, so nothing here re-uploads a mesh.
+    if app.vcol_state.built {
+        let dt = cx.egui.input(|i| i.stable_dt).min(0.1);
+        let cursor = app.interact_state.last_cursor_viewport;
+        let view_proj = app.camera.view_proj_matrix();
+        let vp_w = cx.rect.width();
+        let vp_h = cx.rect.height();
+        let queue = app.queue.clone();
+        let animate = app.vcol_state.animate;
+        let do_clear = std::mem::take(&mut app.vcol_state.clear_requested);
+        let do_paint = app.vcol_state.paint_mode
+            && cx.response.hovered()
+            && (cx.response.dragged() || cx.response.drag_started() || cx.response.clicked());
+
+        let rs = cx.frame.wgpu_render_state().expect("wgpu required");
+        let mut guard = rs.renderer.write();
+        if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
+            if do_clear {
+                vcol_clear_paint(
+                    &mut app.vcol_state,
+                    renderer,
+                    &queue,
+                );
+            }
+            if animate {
+                vcol_animate(
+                    &mut app.vcol_state,
+                    renderer,
+                    &queue,
+                    dt,
+                );
+            }
+            if do_paint {
+                vcol_paint(
+                    &mut app.vcol_state,
+                    renderer,
+                    &queue,
+                    cursor,
+                    vp_w,
+                    vp_h,
+                    view_proj,
+                );
+            }
+        }
+        drop(guard);
+        if animate {
+            cx.egui.request_repaint();
+        }
+    }
+}

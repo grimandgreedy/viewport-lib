@@ -449,3 +449,72 @@ pub(crate) fn frame(
     // Spline widget polyline + handles (Showcase 4) : submitted every frame.
     submit_interact_items(app, &mut *fd, ctx.w, ctx.h);
 }
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+    // ----- Manipulation mode overlay (Showcase 4) -----
+    if let Some(ms) = app.interact_state.manip.state() {
+        let kind_label = match ms.kind {
+            vpl::ManipulationKind::Move => "Move",
+            vpl::ManipulationKind::Rotate => "Rotate",
+            vpl::ManipulationKind::Scale => "Scale",
+        };
+        let axis_label = match ms.axis {
+            Some(vpl::GizmoAxis::X) => {
+                if ms.exclude_axis {
+                    " (YZ)"
+                } else {
+                    " (X)"
+                }
+            }
+            Some(vpl::GizmoAxis::Y) => {
+                if ms.exclude_axis {
+                    " (XZ)"
+                } else {
+                    " (Y)"
+                }
+            }
+            Some(vpl::GizmoAxis::Z) => {
+                if ms.exclude_axis {
+                    " (XY)"
+                } else {
+                    " (Z)"
+                }
+            }
+            _ => "",
+        };
+        let text = if let Some(ref numeric) = ms.numeric_display {
+            format!("{kind_label}{axis_label}: {numeric}")
+        } else {
+            format!("{kind_label}{axis_label}")
+        };
+        let font = egui::FontId::proportional(14.0);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text, font, egui::Color32::WHITE);
+        let pos =
+            egui::pos2(cx.rect.center().x - galley.size().x / 2.0, cx.rect.max.y - 30.0);
+        let bg = egui::Rect::from_min_size(
+            pos - egui::vec2(6.0, 3.0),
+            galley.size() + egui::vec2(12.0, 6.0),
+        );
+        ui.painter()
+            .rect_filled(bg, 3.0, egui::Color32::from_black_alpha(180));
+        ui.painter().galley(pos, galley, egui::Color32::WHITE);
+        cx.egui.request_repaint();
+    }
+}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Continuous repaint for animated camera -----
+    if app.interact_state.animator.is_animating() {
+        cx.egui.request_repaint();
+    }
+}

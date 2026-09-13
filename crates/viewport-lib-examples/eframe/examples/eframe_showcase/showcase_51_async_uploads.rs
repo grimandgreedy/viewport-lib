@@ -2572,3 +2572,30 @@ pub(crate) fn frame(
     // Pre-uploaded curve references for the async-uploads showcase.
     submit_async_uploads_items(app, &mut *fd);
 }
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Async uploads (51): advance per-asset state machines
+    // from upload_status, and keep repainting so the orbit camera
+    // animates even while no input is happening.
+    if app.async_uploads_state.built {
+        let rs = cx.frame.wgpu_render_state().expect("wgpu");
+        let mut guard = rs.renderer.write();
+        let renderer = guard
+            .callback_resources
+            .get_mut::<vpl::ViewportRenderer>()
+            .expect("renderer");
+        app.async_uploads_update(renderer);
+        drop(guard);
+        cx.egui.request_repaint();
+    }
+}

@@ -326,3 +326,15 @@ pub(crate) fn frame(
     // Isoline items (Showcase 14) : submitted every frame with current settings.
     submit_iso_items(app, &mut *fd);
 }
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(_app: &mut crate::App, _ui: &mut crate::eframe::egui::Ui, _cx: &crate::ViewportCtx) {}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(_app: &mut crate::App, _cx: &crate::ViewportCtx) {}
