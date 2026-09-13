@@ -50,6 +50,9 @@ pub enum SpriteBlend {
 pub struct SpriteItem {
     /// Texture ID from [`DeviceResources::upload_texture`].
     /// `None` renders solid-colour quads using `colours` / `default_colour` only.
+    ///
+    /// Colour, so upload it sRGB
+    /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
     pub texture_id: Option<crate::resources::TextureId>,
     /// World-space positions, one per sprite instance.
     pub positions: Vec<[f32; 3]>,
@@ -130,6 +133,9 @@ pub struct SpriteItem {
     /// Texture sampled as a tangent-space normal map when `lit_params.normal_mode`
     /// is [`SpriteNormalMode::NormalMap`]. `None` falls back to the spherical
     /// normal even when the mode requests a map.
+    ///
+    /// Directions, not colour, so upload it linear
+    /// ([`TextureData::normal_map`](crate::resources::TextureData::normal_map)).
     pub normal_texture_id: Option<crate::resources::TextureId>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,

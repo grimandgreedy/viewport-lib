@@ -92,7 +92,8 @@ pub enum ParticleRender {
     /// Draw each particle as a camera-facing billboard sprite.
     Sprite {
         /// Optional texture sampled per fragment. `None` renders solid quads
-        /// tinted by the particle colour.
+        /// tinted by the particle colour. Colour, so upload it sRGB
+        /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
         texture_id: Option<crate::resources::TextureId>,
         /// GPU blend state.
         blend: SpriteBlend,
@@ -107,6 +108,8 @@ pub enum ParticleRender {
         /// Lighting parameters used when `lit` is `true`.
         lit_params: SpriteLitParams,
         /// Optional tangent-space normal map for the `NormalMap` mode.
+        /// Directions, not colour, so upload it linear
+        /// ([`TextureData::normal_map`](crate::resources::TextureData::normal_map)).
         normal_texture_id: Option<crate::resources::TextureId>,
     },
     /// Draw each particle as an instance of an uploaded mesh. The vertex
@@ -116,7 +119,9 @@ pub enum ParticleRender {
     Mesh {
         /// Mesh handle returned by `DeviceResources::upload_mesh_data`.
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
-        /// Optional albedo texture handle. `None` renders flat-tinted.
+        /// Optional albedo texture handle. `None` renders flat-tinted. Colour,
+        /// so upload it sRGB
+        /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
         texture_id: Option<crate::resources::TextureId>,
         /// GPU blend state.
         blend: SpriteBlend,

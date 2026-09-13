@@ -24,6 +24,9 @@ pub struct MeshInstanceItem {
     pub mesh_id: crate::resources::mesh::mesh_store::MeshId,
     /// Optional albedo texture handle. `None` renders flat-shaded with the
     /// per-instance `colours` alone.
+    ///
+    /// Colour, so upload it sRGB
+    /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
     pub texture_id: Option<crate::resources::TextureId>,
     /// Per-instance world-space TRS matrices. Length defines the instance count.
     pub transforms: Vec<[[f32; 4]; 4]>,

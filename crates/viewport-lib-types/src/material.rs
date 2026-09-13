@@ -508,11 +508,19 @@ pub struct Material {
     /// Roughness factor for PBR microfacet distribution. 0=mirror, 1=fully rough. Default 0.5.
     pub roughness: f32,
     /// Optional albedo texture identifier. None = no texture applied. Default None.
+    ///
+    /// Colour, so the texture must be uploaded sRGB
+    /// ([`TextureData::srgb`](crate::data::texture::TextureData::srgb)).
     pub texture_id: Option<crate::ids::TextureId>,
     /// Optional normal map texture identifier. None = no normal mapping. Default None.
     ///
     /// The normal map must be in tangent-space with XY encoded as RG (0..1 -> -1..+1).
     /// Requires UVs and tangents on the mesh for correct TBN construction.
+    ///
+    /// Directions, not colour, so the texture must be uploaded linear
+    /// ([`TextureData::normal_map`](crate::data::texture::TextureData::normal_map)).
+    /// Uploading it sRGB decodes a neutral 128 to 0.216 instead of 0 and biases
+    /// every normal the same way.
     pub normal_map_id: Option<crate::ids::TextureId>,
     /// Scales the tangent-space normal's XY before the TBN transform, so a normal
     /// map can be dialled up or down without re-authoring the texture. Default 1.0
@@ -525,6 +533,9 @@ pub struct Material {
     ///
     /// The AO map R channel encodes cavity factor (0=fully occluded, 1=fully lit).
     /// Applied multiplicatively to ambient and diffuse terms.
+    ///
+    /// A factor, not colour, so the texture must be uploaded linear
+    /// ([`TextureData::linear`](crate::data::texture::TextureData::linear)).
     pub ao_map_id: Option<crate::ids::TextureId>,
     /// Optional combined metallic-roughness texture (ORM layout). Default None.
     ///
@@ -532,6 +543,9 @@ pub struct Material {
     /// B channel encodes metallic. Each channel is multiplied by the corresponding
     /// scalar factor (`roughness`, `metallic`). Only sampled when the material's
     /// `shading_model` is `ShadingModel::Pbr`.
+    ///
+    /// Factors, not colour, so the texture must be uploaded linear
+    /// ([`TextureData::linear`](crate::data::texture::TextureData::linear)).
     pub metallic_roughness_texture_id: Option<crate::ids::TextureId>,
     /// Self-illumination colour, added to outgoing radiance after lighting.
     /// Default [0.0, 0.0, 0.0].
@@ -554,6 +568,9 @@ pub struct Material {
     ///
     /// Matches glTF `emissiveTexture`. Sampled and multiplied by `emissive`
     /// (and hence by `emissive_strength`).
+    ///
+    /// Colour, so the texture must be uploaded sRGB
+    /// ([`TextureData::srgb`](crate::data::texture::TextureData::srgb)).
     pub emissive_texture_id: Option<crate::ids::TextureId>,
     /// Alpha handling mode. Default [`AlphaMode::Opaque`].
     ///

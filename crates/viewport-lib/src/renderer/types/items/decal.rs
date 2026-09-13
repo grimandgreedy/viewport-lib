@@ -169,12 +169,20 @@ pub struct DecalItem {
     /// Model matrix: local [-0.5, 0.5]^3 -> world space.
     pub transform: [[f32; 4]; 4],
     /// Texture handle from `resources.upload_texture()`.
+    ///
+    /// Colour, so upload it sRGB
+    /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
     pub texture_id: crate::resources::TextureId,
     /// How the decal colour blends with the receiver. Default: `Replace`.
     pub blend_mode: DecalBlendMode,
     /// Overall opacity multiplier applied on top of the texture alpha. Default: 1.0.
     pub alpha: f32,
-    /// Optional tangent-space normal map texture ID (D2). Default: `None`.
+    /// Optional tangent-space normal map texture ID. Default: `None`.
+    ///
+    /// Directions, not colour, so upload it linear
+    /// ([`TextureData::normal_map`](crate::resources::TextureData::normal_map)).
+    /// Uploading it sRGB biases every normal and reads as a flat disc with a
+    /// bright wedge rather than as relief.
     pub normal_texture_id: Option<crate::resources::TextureId>,
     /// How strongly the decal normal map overrides the receiver normal. Range [0, 1]. Default: 1.0.
     pub normal_blend_strength: f32,
@@ -184,10 +192,16 @@ pub struct DecalItem {
     /// Surface roughness in [0, 1]. 0 = mirror-smooth, 1 = fully matte. Default: 1.0.
     pub roughness: f32,
     /// Optional per-texel roughness map (single-channel, R component used). Default: `None`.
+    ///
+    /// A factor, not colour, so upload it linear
+    /// ([`TextureData::linear`](crate::resources::TextureData::linear)).
     pub roughness_texture_id: Option<crate::resources::TextureId>,
     /// Metallic factor in [0, 1]. 0 = dielectric, 1 = metal. Default: 0.0.
     pub metallic: f32,
     /// Optional per-texel metallic map (single-channel, R component used). Default: `None`.
+    ///
+    /// A factor, not colour, so upload it linear
+    /// ([`TextureData::linear`](crate::resources::TextureData::linear)).
     pub metallic_texture_id: Option<crate::resources::TextureId>,
     // -- D4 fields --
     /// UV offset applied before texture sampling. Modified by [`DecalAnimation`]. Default: [0, 0].
@@ -198,6 +212,9 @@ pub struct DecalItem {
     /// Emissive intensity multiplier. 0.0 = no emission. Default: 0.0.
     pub emissive: f32,
     /// Optional emissive texture. When `None`, the albedo colour is used as the emissive colour.
+    ///
+    /// Colour, so upload it sRGB
+    /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
     pub emissive_texture_id: Option<crate::resources::TextureId>,
     // -- D7 fields --
     /// Fraction of each local half-extent over which the alpha fades to zero at the box boundary.
