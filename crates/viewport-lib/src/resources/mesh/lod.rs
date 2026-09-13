@@ -219,6 +219,15 @@ impl LodGroupStore {
             .iter()
             .flat_map(|(_, g)| g.levels.iter().map(|l| l.mesh))
     }
+
+    /// The first live group holding `mesh` as one of its levels, or `None` when
+    /// no group references it.
+    pub fn group_of_mesh(&self, mesh: MeshId) -> Option<LodGroupId> {
+        self.store
+            .iter()
+            .find(|(_, g)| g.levels.iter().any(|l| l.mesh == mesh))
+            .map(|(id, _)| id)
+    }
 }
 
 impl crate::resources::DeviceResources {
@@ -291,6 +300,18 @@ impl crate::resources::DeviceResources {
     #[allow(dead_code)]
     pub(crate) fn lod_group(&self, id: LodGroupId) -> Option<&LodGroup> {
         self.lod_groups.get(id)
+    }
+
+    /// The LOD group holding `mesh` as one of its levels, or `None` when no
+    /// live group references it.
+    ///
+    /// A mesh owned by a group must be freed through
+    /// [`free_lod_group`](Self::free_lod_group) rather than
+    /// [`free_mesh`](Self::free_mesh), which refuses a group member. Use this to
+    /// route a handle to the right call when the owner is not known, and to
+    /// answer "what else still needs this mesh" before evicting it.
+    pub fn lod_group_of_mesh(&self, mesh: MeshId) -> Option<LodGroupId> {
+        self.lod_groups.group_of_mesh(mesh)
     }
 
     /// Free a LOD group and, composition-aware, its member meshes.

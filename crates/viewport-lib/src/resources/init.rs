@@ -2550,6 +2550,7 @@ impl DeviceResources {
             frame_upload_bytes: 0,
             frame_pipelines_built: 0,
             resource_free_epoch: 0,
+            retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
             decal: crate::resources::decal::DecalResources::default(),

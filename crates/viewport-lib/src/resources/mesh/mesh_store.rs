@@ -17,6 +17,10 @@ pub use viewport_lib_types::ids::MeshId;
 /// [`GpuMesh::gpu_byte_size`].
 pub(crate) struct MeshStore {
     store: SlotStore<GpuMesh, MeshId>,
+    /// Running total of the host memory held by the retained CPU geometry
+    /// copies, maintained alongside the store's GPU byte total so both are
+    /// cheap to poll. See [`GpuMesh::cpu_byte_size`].
+    cpu_bytes: u64,
 }
 
 impl MeshStore {
@@ -24,6 +28,7 @@ impl MeshStore {
     pub fn new() -> Self {
         Self {
             store: SlotStore::default(),
+            cpu_bytes: 0,
         }
     }
 
@@ -31,6 +36,7 @@ impl MeshStore {
     /// `MeshId` carrying the slot's current generation.
     pub fn insert(&mut self, mesh: GpuMesh) -> MeshId {
         let bytes = mesh.gpu_byte_size();
+        self.cpu_bytes += mesh.cpu_byte_size();
         self.store.insert(mesh, bytes)
     }
 
@@ -53,8 +59,12 @@ impl MeshStore {
     /// bounds, or the handle's generation is stale.
     pub fn replace(&mut self, id: MeshId, mesh: GpuMesh) -> crate::error::ViewportResult<()> {
         let bytes = mesh.gpu_byte_size();
+        let cpu_bytes = mesh.cpu_byte_size();
         match self.store.replace(id, mesh, bytes) {
-            Some(_) => Ok(()),
+            Some(old) => {
+                self.cpu_bytes = self.cpu_bytes.saturating_sub(old.cpu_byte_size()) + cpu_bytes;
+                Ok(())
+            }
             None => Err(crate::error::ViewportError::SlotEmpty { index: id.index() }),
         }
     }
@@ -65,7 +75,13 @@ impl MeshStore {
     /// Returns `true` if a mesh was actually removed, `false` if the slot was
     /// already empty, out of range, or the handle was stale.
     pub fn remove(&mut self, id: MeshId) -> bool {
-        self.store.remove(id).is_some()
+        match self.store.remove(id) {
+            Some(mesh) => {
+                self.cpu_bytes = self.cpu_bytes.saturating_sub(mesh.cpu_byte_size());
+                true
+            }
+            None => false,
+        }
     }
 
     /// Number of occupied (non-empty) slots.
@@ -81,6 +97,38 @@ impl MeshStore {
     /// Total GPU buffer bytes across every resident mesh.
     pub fn allocated_bytes(&self) -> u64 {
         self.store.allocated_bytes()
+    }
+
+    /// Total host memory bytes across every resident mesh's retained CPU
+    /// geometry copies.
+    pub fn cpu_allocated_bytes(&self) -> u64 {
+        self.cpu_bytes
+    }
+
+    /// Drop the CPU geometry copies retained on one mesh. Returns the host bytes
+    /// released, or `None` for a stale or empty handle.
+    pub fn release_cpu_geometry(&mut self, id: MeshId) -> Option<u64> {
+        let released = self.store.get_mut(id)?.release_cpu_geometry();
+        self.cpu_bytes = self.cpu_bytes.saturating_sub(released);
+        Some(released)
+    }
+
+    /// Drop the CPU geometry copies retained on every resident mesh. Returns the
+    /// total host bytes released.
+    pub fn release_all_cpu_geometry(&mut self) -> u64 {
+        let mut released = 0;
+        for (_, mesh) in self.store.iter_mut() {
+            released += mesh.release_cpu_geometry();
+        }
+        self.cpu_bytes = self.cpu_bytes.saturating_sub(released);
+        released
+    }
+
+    /// Re-derive the host byte charge for one slot after its CPU geometry
+    /// copies were replaced in place, given the charge they carried before.
+    pub fn recharge_cpu_bytes(&mut self, id: MeshId, previous: u64) {
+        let current = self.store.get(id).map_or(0, |m| m.cpu_byte_size());
+        self.cpu_bytes = self.cpu_bytes.saturating_sub(previous) + current;
     }
 
     /// Whether the slot for the given ID contains a live mesh.

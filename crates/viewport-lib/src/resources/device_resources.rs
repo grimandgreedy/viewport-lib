@@ -829,6 +829,10 @@ pub struct DeviceResources {
     /// this changes, the cache purges its stale entries so a freed resource's
     /// memory is actually reclaimed instead of pinned by an unused bind group.
     pub(crate) resource_free_epoch: u64,
+    /// Whether a mesh upload keeps a CPU-side copy of its positions, normals,
+    /// and indices. Default `true`. See
+    /// `DeviceResources::set_retain_mesh_cpu_geometry`.
+    pub(crate) retain_mesh_cpu_geometry: bool,
 
     // --- Screen-space decal pipelines (D1 + D5, lazily created) ---
     /// Decal render/exclude pipelines and their bind group layouts.

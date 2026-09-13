@@ -57,12 +57,16 @@ pub(crate) struct MeshPrep {
     /// zero-padded to the vertex count) for the parallel uv1 slab stream.
     /// `None` when the source `MeshData` carried no `uvs1`.
     pub uv1_bytes: Option<Vec<u8>>,
-    /// CPU copies retained on the mesh for picking. Cloned here rather
-    /// than in `assemble_mesh_data` so the async path pays the memcpy on
-    /// the worker thread instead of inside the apply step.
-    pub cpu_positions: Vec<[f32; 3]>,
-    pub cpu_normals: Vec<[f32; 3]>,
-    pub cpu_indices: Vec<u32>,
+    /// CPU copies retained on the mesh for picking, clip-plane cap geometry,
+    /// and the normal-line visualisation. Cloned here rather than in
+    /// `assemble_mesh_data` so the async path pays the memcpy on the worker
+    /// thread instead of inside the apply step. `None` throughout when the
+    /// caller turned retention off with
+    /// `DeviceResources::set_retain_mesh_cpu_geometry`, so the clone is never
+    /// paid at all.
+    pub cpu_positions: Option<Vec<[f32; 3]>>,
+    pub cpu_normals: Option<Vec<[f32; 3]>>,
+    pub cpu_indices: Option<Vec<u32>>,
 }
 
 impl DeviceResources {
@@ -156,7 +160,7 @@ impl DeviceResources {
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         mesh_ops::validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
-        let prep = Self::prep_mesh_data(data);
+        let prep = Self::prep_mesh_data(data, self.retain_mesh_cpu_geometry);
         Ok(self.assemble_mesh_data(device, data, prep))
     }
 
@@ -185,7 +189,7 @@ impl DeviceResources {
     /// `begin_upload_mesh_data`. Returns owned buffers; the caller hands
     /// them to `assemble_mesh_data` on the main thread to finish the
     /// upload.
-    pub(crate) fn prep_mesh_data(data: &MeshData) -> MeshPrep {
+    pub(crate) fn prep_mesh_data(data: &MeshData, retain_cpu: bool) -> MeshPrep {
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
             data.uvs.as_ref().map(|uvs| {
                 mesh_ops::compute_tangents(&data.positions, &data.normals, uvs, &data.indices)
@@ -243,9 +247,9 @@ impl DeviceResources {
             vertices,
             computed_tangents,
             uv1_bytes,
-            cpu_positions: data.positions.clone(),
-            cpu_normals: data.normals.clone(),
-            cpu_indices: data.indices.clone(),
+            cpu_positions: retain_cpu.then(|| data.positions.clone()),
+            cpu_normals: retain_cpu.then(|| data.normals.clone()),
+            cpu_indices: retain_cpu.then(|| data.indices.clone()),
         }
     }
 
@@ -294,9 +298,9 @@ impl DeviceResources {
             uv1_bytes,
             None,
         );
-        mesh.cpu_positions = Some(cpu_positions);
-        mesh.cpu_normals = Some(cpu_normals);
-        mesh.cpu_indices = Some(cpu_indices);
+        mesh.cpu_positions = cpu_positions;
+        mesh.cpu_normals = cpu_normals;
+        mesh.cpu_indices = cpu_indices;
         mesh.submeshes = data.submeshes.clone();
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
@@ -384,11 +388,12 @@ impl DeviceResources {
                 .enqueue_uv1(vertex_span, bytemuck::cast_slice(&packed).to_vec());
         }
 
+        let retain_cpu = self.retain_mesh_cpu_geometry;
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu_then_gpu_chunked(move |progress| {
                 progress.set(0.1);
-                let prep = DeviceResources::prep_mesh_data(&data);
+                let prep = DeviceResources::prep_mesh_data(&data, retain_cpu);
                 let aabb = crate::scene::aabb::Aabb::from_positions(&data.positions);
                 progress.set(0.5);
 
@@ -511,9 +516,9 @@ impl DeviceResources {
                                 aabb,
                                 data.uvs1.is_some(),
                             );
-                            mesh.cpu_positions = Some(cpu_positions);
-                            mesh.cpu_normals = Some(cpu_normals);
-                            mesh.cpu_indices = Some(cpu_indices);
+                            mesh.cpu_positions = cpu_positions;
+                            mesh.cpu_normals = cpu_normals;
+                            mesh.cpu_indices = cpu_indices;
                             mesh.submeshes = data.submeshes.clone();
                             let (
                                 attr_bufs,
@@ -638,11 +643,22 @@ impl DeviceResources {
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
         pickable: bool,
     ) {
-        if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
-            if !pickable {
+        if !pickable {
+            // Drops the positions and indices only, so the normal-line copy
+            // survives. Goes through the store so the host byte total stays in
+            // step; `release_mesh_cpu_geometry` is the whole-mesh version.
+            let previous = self
+                .mesh_store
+                .get(mesh_id)
+                .map_or(0, |mesh| mesh.cpu_byte_size());
+            if let Some(mesh) = self.mesh_store.get_mut(mesh_id) {
                 mesh.cpu_positions = None;
                 mesh.cpu_indices = None;
+                if let Ok(mut cache) = mesh.pick_trimesh_cache.lock() {
+                    *cache = None;
+                }
             }
+            self.mesh_store.recharge_cpu_bytes(mesh_id, previous);
         }
     }
 
@@ -1306,6 +1322,7 @@ impl DeviceResources {
         }
         mesh_ops::validate_mesh_data(data)?;
         Self::validate_mesh_size(device, data)?;
+        let retain_cpu = self.retain_mesh_cpu_geometry;
 
         let computed_tangents: Option<Vec<[f32; 4]>> = if data.tangents.is_none() {
             data.uvs.as_ref().map(|uvs| {
@@ -1394,11 +1411,20 @@ impl DeviceResources {
                     queue.write_buffer(nl_buf, 0, cast_slice(&normal_line_verts));
                 }
                 mesh.aabb = aabb;
-                mesh.cpu_positions = Some(data.positions.clone());
-                mesh.cpu_normals = Some(data.normals.clone());
-                mesh.cpu_indices = Some(data.indices.clone());
+                let previous_cpu_bytes = mesh.cpu_byte_size();
+                if retain_cpu {
+                    mesh.cpu_positions = Some(data.positions.clone());
+                    mesh.cpu_normals = Some(data.normals.clone());
+                    mesh.cpu_indices = Some(data.indices.clone());
+                } else {
+                    mesh.cpu_positions = None;
+                    mesh.cpu_normals = None;
+                    mesh.cpu_indices = None;
+                }
                 mesh.submeshes = data.submeshes.clone();
                 mesh.content_rev += 1;
+                self.mesh_store
+                    .recharge_cpu_bytes(mesh_id, previous_cpu_bytes);
 
                 self.frame_upload_bytes += (vertices.len() * std::mem::size_of::<Vertex>()
                     + data.indices.len() * std::mem::size_of::<u32>())
@@ -1451,9 +1477,11 @@ impl DeviceResources {
             }),
             None,
         );
-        new_mesh.cpu_positions = Some(data.positions.clone());
-        new_mesh.cpu_normals = Some(data.normals.clone());
-        new_mesh.cpu_indices = Some(data.indices.clone());
+        if retain_cpu {
+            new_mesh.cpu_positions = Some(data.positions.clone());
+            new_mesh.cpu_normals = Some(data.normals.clone());
+            new_mesh.cpu_indices = Some(data.indices.clone());
+        }
         new_mesh.submeshes = data.submeshes.clone();
         let (attr_bufs, attr_ranges, face_vbuf, face_attr_bufs, face_colour_bufs, vector_attr_bufs) =
             Self::upload_attributes(
@@ -1531,13 +1559,25 @@ impl DeviceResources {
     /// fallback rendering rather than aliasing the reused slot.
     ///
     /// Returns `true` if a mesh was freed, `false` if `id` did not resolve to a
-    /// live mesh. This is the residency-facing name for [`remove_mesh`]; the two
-    /// are equivalent. To free a mesh that is a member of a LOD group, free the
-    /// group with [`free_lod_group`](Self::free_lod_group) instead so shared
-    /// members are handled.
+    /// live mesh.
     ///
-    /// [`remove_mesh`]: Self::remove_mesh
+    /// A mesh that is a level of a live LOD group is refused: the call returns
+    /// `false`, frees nothing, and logs a warning. Freeing it would leave the
+    /// group pointing at a dead slot, which renders as a silently missing level
+    /// rather than an error, so the refusal surfaces the mistake instead.
+    /// Free the group with [`free_lod_group`](Self::free_lod_group), which drops
+    /// each member unless another live group still owns it, or ask
+    /// [`lod_group_of_mesh`](Self::lod_group_of_mesh) first.
     pub fn free_mesh(&mut self, id: crate::resources::mesh::mesh_store::MeshId) -> bool {
+        if let Some(group) = self.lod_groups.group_of_mesh(id) {
+            tracing::warn!(
+                mesh_index = id.index(),
+                lod_group_index = group.index(),
+                "free_mesh refused: the mesh is a level of a live LOD group. Free the group \
+                 with free_lod_group, which drops members no other group owns."
+            );
+            return false;
+        }
         // Return the mesh's slab windows to the free list before removing it.
         let spans = self
             .mesh_store
@@ -1824,6 +1864,7 @@ impl DeviceResources {
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
+        let retain_cpu = self.retain_mesh_cpu_geometry;
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
@@ -1832,7 +1873,7 @@ impl DeviceResources {
                     crate::resources::volume::volume_mesh::extract_boundary_faces(&data);
                 progress.set(0.5);
                 mesh_ops::validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data);
+                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
@@ -1897,6 +1938,7 @@ impl DeviceResources {
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
+        let retain_cpu = self.retain_mesh_cpu_geometry;
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
@@ -1908,7 +1950,7 @@ impl DeviceResources {
                     );
                 progress.set(0.5);
                 mesh_ops::validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data);
+                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
@@ -1968,6 +2010,7 @@ impl DeviceResources {
         let slot_for_apply = slot.clone();
         let device_for_apply = device.clone();
 
+        let retain_cpu = self.retain_mesh_cpu_geometry;
         let id = {
             let mut runner = self.jobs.lock().expect("upload job runner poisoned");
             runner.submit_cpu(move |progress| {
@@ -1976,7 +2019,7 @@ impl DeviceResources {
                     crate::resources::volume::sparse_volume::extract_sparse_boundary(&data);
                 progress.set(0.5);
                 mesh_ops::validate_mesh_data(&mesh_data)?;
-                let prep = DeviceResources::prep_mesh_data(&mesh_data);
+                let prep = DeviceResources::prep_mesh_data(&mesh_data, retain_cpu);
                 progress.set(0.95);
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
@@ -4161,6 +4204,116 @@ mod override_tests {
             "freeing the mesh must return resident bytes to the starting total"
         );
     }
+
+    #[test]
+    fn resident_bytes_track_cpu_geometry_and_its_release() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // Built-in meshes created with the device retain copies of their own, so
+        // measure this upload's charge as a delta from the starting total.
+        let start = resources.resident_bytes().cpu_geometry_bytes;
+        let id = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        let retained = resources.resident_bytes().cpu_geometry_bytes - start;
+        assert!(
+            retained > 0,
+            "an upload with retention on must charge host bytes for the CPU copies"
+        );
+        let bytes = resources.resident_bytes();
+        assert_eq!(
+            bytes.total(),
+            bytes.combined() - bytes.host_bytes(),
+            "host bytes must sit outside the GPU total and inside the combined figure"
+        );
+
+        let released = resources.release_mesh_cpu_geometry(id);
+        assert_eq!(released, Some(retained));
+        assert_eq!(
+            resources.resident_bytes().cpu_geometry_bytes,
+            start,
+            "releasing the copies must return the host charge to the starting total"
+        );
+
+        // Releasing twice is a no-op, not a double-decrement of the total.
+        assert_eq!(resources.release_mesh_cpu_geometry(id), Some(0));
+        assert_eq!(resources.resident_bytes().cpu_geometry_bytes, start);
+
+        assert!(resources.free_mesh(id));
+        assert_eq!(resources.resident_bytes().cpu_geometry_bytes, start);
+
+        // Every remaining copy, built-ins included, goes in one call.
+        assert_eq!(resources.release_all_mesh_cpu_geometry(), start);
+        assert_eq!(resources.resident_bytes().cpu_geometry_bytes, 0);
+    }
+
+    #[test]
+    fn retention_off_uploads_no_cpu_geometry() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        assert!(resources.retains_mesh_cpu_geometry());
+        resources.set_retain_mesh_cpu_geometry(false);
+        let start = resources.resident_bytes().cpu_geometry_bytes;
+        let id = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        assert_eq!(
+            resources.resident_bytes().cpu_geometry_bytes,
+            start,
+            "retention off must skip the CPU copies entirely"
+        );
+        assert!(
+            resources.resident_bytes().mesh_bytes > 0,
+            "the mesh itself must still be resident on the GPU"
+        );
+        assert!(resources.free_mesh(id));
+    }
+
+    #[test]
+    fn free_mesh_refuses_a_live_lod_group_member() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let lod0 = resources
+            .upload_mesh_data(&device, &primitives::cube(1.0))
+            .unwrap();
+        let lod1 = resources
+            .upload_mesh_data(&device, &primitives::cube(0.5))
+            .unwrap();
+        let group = resources
+            .register_lod_group(&[lod0, lod1], &[0.5, 0.1])
+            .unwrap();
+
+        assert_eq!(resources.lod_group_of_mesh(lod0), Some(group));
+        assert!(
+            !resources.free_mesh(lod0),
+            "freeing a level of a live group must be refused"
+        );
+        assert!(
+            resources.mesh_store.get(lod0).is_some(),
+            "the refused free must leave the mesh resident"
+        );
+
+        // The group is the composition-aware way out, and it takes its members.
+        assert!(resources.free_lod_group(group));
+        assert!(resources.mesh_store.get(lod0).is_none());
+        assert!(resources.mesh_store.get(lod1).is_none());
+        assert_eq!(resources.lod_group_of_mesh(lod0), None);
+    }
 }
 
 #[cfg(test)]
@@ -4178,7 +4331,7 @@ mod vertex_colour_tests {
 
     #[test]
     fn none_leaves_vertices_white() {
-        let prep = DeviceResources::prep_mesh_data(&tri());
+        let prep = DeviceResources::prep_mesh_data(&tri(), true);
         assert!(
             prep.vertices
                 .iter()
@@ -4194,7 +4347,7 @@ mod vertex_colour_tests {
             [0.0, 1.0, 0.0, 1.0],
             [0.0, 0.0, 1.0, 0.5],
         ]);
-        let prep = DeviceResources::prep_mesh_data(&data);
+        let prep = DeviceResources::prep_mesh_data(&data, true);
         assert_eq!(prep.vertices[0].colour, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(prep.vertices[1].colour, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(prep.vertices[2].colour, [0.0, 0.0, 1.0, 0.5]);
@@ -4204,7 +4357,7 @@ mod vertex_colour_tests {
     fn short_colour_slice_defaults_missing_entries_white() {
         let mut data = tri();
         data.vertex_colours = Some(vec![[0.2, 0.4, 0.6, 1.0]]);
-        let prep = DeviceResources::prep_mesh_data(&data);
+        let prep = DeviceResources::prep_mesh_data(&data, true);
         assert_eq!(prep.vertices[0].colour, [0.2, 0.4, 0.6, 1.0]);
         assert_eq!(prep.vertices[1].colour, [1.0, 1.0, 1.0, 1.0]);
         assert_eq!(prep.vertices[2].colour, [1.0, 1.0, 1.0, 1.0]);

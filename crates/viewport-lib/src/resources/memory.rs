@@ -26,6 +26,12 @@ pub struct TextureMemoryStats {
 /// Built-in resources are not counted: colourmap and matcap LUTs, IBL maps, the
 /// shadow atlas, and post-process render targets. They are created once (or
 /// resized with the viewport) and are not part of the evictable working set.
+///
+/// Every field except `cpu_geometry_bytes` counts GPU memory, and
+/// [`total`](Self::total) sums only those. `cpu_geometry_bytes` counts host
+/// memory and is reported by [`host_bytes`](Self::host_bytes), because on a
+/// discrete GPU the two come from different pools. On unified memory they come
+/// from the same one, so budget against [`combined`](Self::combined) there.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResidentBytes {
     /// GPU buffer bytes across every resident mesh (geometry, attributes,
@@ -56,10 +62,26 @@ pub struct ResidentBytes {
     /// (polylines, tubes, streamtubes, ribbons, point clouds, glyph sets,
     /// tensor glyph sets, and sprite sets).
     pub scivis_bytes: u64,
+    /// Host memory bytes across every resident mesh's retained CPU geometry
+    /// copies: the positions, normals, and indices kept for CPU picking,
+    /// clip-plane cap geometry, and the normal-line visualisation.
+    ///
+    /// This is host memory, not GPU memory, so it is excluded from
+    /// [`total`](Self::total). It is roughly 28 bytes per vertex plus 4 per
+    /// index and can exceed the mesh's GPU footprint, which matters on unified
+    /// memory where both draw from one pool. Turn it off for uploads with
+    /// [`set_retain_mesh_cpu_geometry`](crate::resources::DeviceResources::set_retain_mesh_cpu_geometry)
+    /// or drop what is already resident with
+    /// [`release_all_mesh_cpu_geometry`](crate::resources::DeviceResources::release_all_mesh_cpu_geometry).
+    ///
+    /// The `parry3d` triangle meshes the CPU picker builds lazily are not
+    /// counted; releasing the copies drops those too.
+    pub cpu_geometry_bytes: u64,
 }
 
 impl ResidentBytes {
-    /// Total resident bytes across every counted class.
+    /// Total resident GPU bytes across every counted class. Does not include
+    /// [`cpu_geometry_bytes`](Self::cpu_geometry_bytes), which is host memory.
     pub fn total(&self) -> u64 {
         self.mesh_bytes
             + self.texture_bytes
@@ -68,6 +90,20 @@ impl ResidentBytes {
             + self.scivis_bytes
             + self.volume_bytes
             + self.projected_tet_bytes
+    }
+
+    /// Host memory bytes counted here: currently the retained mesh CPU geometry
+    /// copies.
+    pub fn host_bytes(&self) -> u64 {
+        self.cpu_geometry_bytes
+    }
+
+    /// [`total`](Self::total) plus [`host_bytes`](Self::host_bytes).
+    ///
+    /// The figure to budget against on unified memory, where host and device
+    /// allocations come from one pool.
+    pub fn combined(&self) -> u64 {
+        self.total() + self.host_bytes()
     }
 }
 
@@ -120,7 +156,58 @@ impl crate::resources::DeviceResources {
             scivis_bytes,
             volume_bytes: self.volume_resident_bytes(),
             projected_tet_bytes: self.content.projected_tet_store.allocated_bytes(),
+            cpu_geometry_bytes: self.mesh_store.cpu_allocated_bytes(),
         }
+    }
+
+    /// Whether a mesh upload keeps a CPU-side copy of its positions, normals,
+    /// and indices. `true` unless
+    /// [`set_retain_mesh_cpu_geometry`](Self::set_retain_mesh_cpu_geometry)
+    /// turned it off.
+    pub fn retains_mesh_cpu_geometry(&self) -> bool {
+        self.retain_mesh_cpu_geometry
+    }
+
+    /// Choose whether later mesh uploads keep a CPU-side copy of their
+    /// geometry. Default `true`.
+    ///
+    /// The copies back CPU picking (`ViewportRenderer::pick`), clip-plane cap
+    /// geometry, and the normal-line visualisation. They cost roughly 28 bytes
+    /// per vertex plus 4 per index of host memory, reported as
+    /// [`ResidentBytes::cpu_geometry_bytes`], and for a large streamed working
+    /// set they can outweigh the GPU buffers they shadow. An application that
+    /// picks on the GPU and uses neither clip-plane caps nor normal lines can
+    /// set this to `false` and pay neither the memory nor the upload-time
+    /// memcpy.
+    ///
+    /// Only uploads made after this call are affected. Meshes already resident
+    /// keep their copies until
+    /// [`release_all_mesh_cpu_geometry`](Self::release_all_mesh_cpu_geometry)
+    /// drops them.
+    pub fn set_retain_mesh_cpu_geometry(&mut self, retain: bool) {
+        self.retain_mesh_cpu_geometry = retain;
+    }
+
+    /// Drop the CPU geometry copies retained on one mesh, returning the host
+    /// bytes released, or `None` if `id` does not resolve to a live mesh.
+    ///
+    /// The mesh keeps rendering unchanged; see
+    /// [`set_retain_mesh_cpu_geometry`](Self::set_retain_mesh_cpu_geometry) for
+    /// what stops working.
+    pub fn release_mesh_cpu_geometry(
+        &mut self,
+        id: crate::resources::mesh::mesh_store::MeshId,
+    ) -> Option<u64> {
+        self.mesh_store.release_cpu_geometry(id)
+    }
+
+    /// Drop the CPU geometry copies retained on every resident mesh, returning
+    /// the total host bytes released.
+    ///
+    /// Useful once after a bulk load: upload with retention on so the CPU-side
+    /// features work during setup, then release in one call.
+    pub fn release_all_mesh_cpu_geometry(&mut self) -> u64 {
+        self.mesh_store.release_all_cpu_geometry()
     }
 
     /// Total resident GPU bytes across every live direct-volume 3D texture
