@@ -2292,7 +2292,7 @@ impl ViewportRenderer {
         let resources = &self.resources;
         let vp_idx = ctx.vp_idx;
         // -----------------------------------------------------------------------
-        // Decal exclude pass (D5): stamp stencil = 0 on non-receiver surfaces.
+        // Decal exclude pass: stamp stencil = 0 on non-receiver surfaces.
         // Runs after the opaque pass, before the decal pass.
         // -----------------------------------------------------------------------
         if !self.decal_exclude_items.is_empty() {
@@ -2341,7 +2341,7 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // Decal pass (D1): projects each decal texture onto opaque surfaces.
+        // Decal pass: projects each decal texture onto opaque surfaces.
         // Reads scene depth as a texture; no depth attachment.
         // Runs after opaque geometry and SSAA resolve, before transparent passes.
         // -----------------------------------------------------------------------

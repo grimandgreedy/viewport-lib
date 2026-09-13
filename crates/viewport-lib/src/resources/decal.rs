@@ -1,4 +1,5 @@
-//! Screen-space decal pipeline (D1 + D2 + D5).
+//! Screen-space decal pipeline: the projection pass, its normal mapping, and
+//! the stencil pass that marks surfaces the decals must not land on.
 
 use crate::gpu::util::DeviceExt as _;
 use crate::resources::mesh::mesh_store::MeshId;
@@ -17,21 +18,21 @@ pub(crate) struct DecalUniformRaw {
     pub alpha: f32,                   //  4
     pub normal_blend_strength: f32,   //  4
     pub has_normal: u32,              //  4
-    // D3
+    // Surface response, driving the BRDF the lit blend mode evaluates.
     pub roughness: f32,         //  4
     pub metallic: f32,          //  4
     pub has_roughness_tex: u32, //  4
     pub has_metallic_tex: u32,  //  4
-    // D4 -- vec2 pairs, 8-byte aligned
+    // UV transform. vec2 pairs, 8-byte aligned.
     pub uv_offset: [f32; 2], //  8
     pub uv_scale: [f32; 2],  //  8
-    // D6
+    // Emission, added on top of whatever the blend mode produces.
     pub emissive: f32,         //  4
     pub has_emissive_tex: u32, //  4
-    // D7
+    // Edge fade and the ambient floor.
     pub edge_fade: f32, //  4
     pub ambient: f32,   //  4
-    // D8
+    // Projection mode.
     pub projection: u32,          //  4  (0 = Planar, 1 = TriPlanar)
     pub tri_blend_sharpness: f32, //  4
     pub _pad2: u32,               //  4  (pad to 144-byte struct size)
@@ -59,7 +60,7 @@ pub(crate) struct DecalGpuItem {
     pub selected: bool,
 }
 
-/// Per-draw GPU data for one non-receiver surface in the decal exclude pass (D5).
+/// Per-draw GPU data for one non-receiver surface in the decal exclude pass.
 pub(crate) struct DecalExcludeGpuItem {
     pub mesh_id: MeshId,
     pub _uniform_buf: crate::gpu::Buffer,
@@ -174,7 +175,7 @@ pub(crate) struct DecalResources {
     pub(crate) item_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Linear-clamp sampler used by the decal fragment shader.
     pub(crate) sampler: Option<crate::gpu::Sampler>,
-    /// Pipeline that writes stencil = 0 for non-receiver surfaces (D5).
+    /// Pipeline that writes stencil = 0 for non-receiver surfaces.
     pub(crate) exclude_pipeline: Option<crate::gpu::RenderPipeline>,
     /// BGL for group 1 of the decal exclude pass: one model matrix uniform buffer.
     pub(crate) exclude_obj_bgl: Option<crate::gpu::BindGroupLayout>,
@@ -295,10 +296,10 @@ impl DeviceResources {
         //  0: DecalUniform buffer
         //  1: albedo texture
         //  2: sampler (shared by all texture slots)
-        //  3: normal map    (D2; fallback_texture when absent)
-        //  4: roughness map (D3; fallback_texture when absent)
-        //  5: metallic map  (D3; fallback_texture when absent)
-        //  6: emissive map  (D6; fallback_texture when absent)
+        //  3: normal map    (fallback_texture when absent)
+        //  4: roughness map (fallback_texture when absent)
+        //  5: metallic map  (fallback_texture when absent)
+        //  6: emissive map  (fallback_texture when absent)
         let item_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("decal_item_bgl"),
             entries: &[
@@ -319,10 +320,10 @@ impl DeviceResources {
                     ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                tex2d_entry(3), // D2: normal map
-                tex2d_entry(4), // D3: roughness map
-                tex2d_entry(5), // D3: metallic map
-                tex2d_entry(6), // D6: emissive map
+                tex2d_entry(3), // normal map
+                tex2d_entry(4), // roughness map
+                tex2d_entry(5), // metallic map
+                tex2d_entry(6), // emissive map
             ],
         });
 
@@ -663,7 +664,7 @@ impl DeviceResources {
         }
     }
 
-    /// Lazily create the decal exclude pipeline and its object BGL (D5).
+    /// Lazily create the decal exclude pipeline and its object BGL.
     ///
     /// No-op if already created. Must be called after `camera_bind_group_layout` exists.
     pub(crate) fn ensure_decal_exclude_pipeline(&mut self, device: &crate::gpu::Device) {

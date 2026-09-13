@@ -101,7 +101,7 @@ pub enum DecalAnimation {
 /// `texture_id` must be a value returned by
 /// [`DeviceResources::upload_texture`].
 ///
-/// # Normal map (D2)
+/// # Normal map
 ///
 /// Set `normal_texture_id` to a tangent-space normal map (same UV space as
 /// `texture_id`). The renderer approximates the receiver surface normal from
@@ -109,7 +109,7 @@ pub enum DecalAnimation {
 /// uses the blended normal to modulate the shading. Set `normal_blend_strength`
 /// between 0.0 (no effect) and 1.0 (full decal normal).
 ///
-/// # Sorting (D3)
+/// # Sorting
 ///
 /// When multiple decals overlap, `sort_key` controls the composite order.
 /// Lower keys render first (underneath); higher keys render on top.
@@ -140,7 +140,7 @@ pub enum DecalAnimation {
 /// colour that already carries the lighting, and additive adds emitted light;
 /// lighting either would apply the scene's light twice.
 ///
-/// # UV animation (D4)
+/// # UV animation
 ///
 /// `uv_offset` and `uv_scale` shift and scale the final UV before texture
 /// sampling. For sprite-sheet and scroll animations, use
@@ -148,7 +148,7 @@ pub enum DecalAnimation {
 /// [`DecalAnimation`]: the scene updates `uv_offset` / `uv_scale` from the
 /// animation each frame.
 ///
-/// # Emissive (D6)
+/// # Emissive
 ///
 /// `emissive` adds a self-illumination contribution on top of whatever the
 /// blend mode produces. The emissive colour is sampled from `emissive_texture_id`
@@ -157,7 +157,7 @@ pub enum DecalAnimation {
 /// no visible effect. Values above 1.0 are meaningful in HDR: they bloom under
 /// tone-mapping when `display.mode = PipelineMode::Hdr`.
 ///
-/// # Soft edges (D7)
+/// # Soft edges
 ///
 /// `edge_fade` fades the decal alpha to zero near the boundary of its projection
 /// box, hiding the rectangular cutoff. Range [0.0, 0.5]; 0.0 (default) = hard
@@ -186,7 +186,6 @@ pub struct DecalItem {
     pub normal_texture_id: Option<crate::resources::TextureId>,
     /// How strongly the decal normal map overrides the receiver normal. Range [0, 1]. Default: 1.0.
     pub normal_blend_strength: f32,
-    // -- D3 fields --
     /// Draw order key. Lower = rendered first (underneath). Default: 0.
     pub sort_key: i32,
     /// Surface roughness in [0, 1]. 0 = mirror-smooth, 1 = fully matte. Default: 1.0.
@@ -203,12 +202,10 @@ pub struct DecalItem {
     /// A factor, not colour, so upload it linear
     /// ([`TextureData::linear`](crate::resources::TextureData::linear)).
     pub metallic_texture_id: Option<crate::resources::TextureId>,
-    // -- D4 fields --
     /// UV offset applied before texture sampling. Modified by [`DecalAnimation`]. Default: [0, 0].
     pub uv_offset: [f32; 2],
     /// UV scale applied before texture sampling. Modified by [`DecalAnimation`]. Default: [1, 1].
     pub uv_scale: [f32; 2],
-    // -- D6 fields --
     /// Emissive intensity multiplier. 0.0 = no emission. Default: 0.0.
     pub emissive: f32,
     /// Optional emissive texture. When `None`, the albedo colour is used as the emissive colour.
@@ -216,7 +213,6 @@ pub struct DecalItem {
     /// Colour, so upload it sRGB
     /// ([`TextureData::srgb`](crate::resources::TextureData::srgb)).
     pub emissive_texture_id: Option<crate::resources::TextureId>,
-    // -- D7 fields --
     /// Fraction of each local half-extent over which the alpha fades to zero at the box boundary.
     /// Range [0.0, 0.5]. Default: 0.0 (hard edge).
     pub edge_fade: f32,
@@ -226,7 +222,6 @@ pub struct DecalItem {
     /// surface picks up the same floor. Set it to the receiver material's `ambient` when
     /// that has been changed, or to 0.0 to rely on the hemisphere fill alone.
     pub ambient: f32,
-    // -- D8 fields --
     /// How the decal texture is projected onto the receiver surface. Default: `Planar`.
     ///
     /// `TriPlanar` samples the texture from three axes and blends by the surface normal,

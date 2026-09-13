@@ -145,7 +145,7 @@ pub(crate) struct ViewportHdrState {
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
 
-    // --- Decal pass depth binding (D1) ---
+    // --- Decal pass depth binding ---
     /// Bind group for group 1 of the decal pass: reads hdr_depth_only_view as a depth texture.
     /// Rebuilt on viewport resize alongside the other viewport-sized bind groups.
     pub decal_depth_bg: crate::gpu::BindGroup,
@@ -840,7 +840,7 @@ pub struct DeviceResources {
     /// `DeviceResources::set_retain_mesh_cpu_geometry`.
     pub(crate) retain_mesh_cpu_geometry: bool,
 
-    // --- Screen-space decal pipelines (D1 + D5, lazily created) ---
+    // --- Screen-space decal pipelines (lazily created) ---
     /// Decal render/exclude pipelines and their bind group layouts.
     pub(crate) decal: crate::resources::decal::DecalResources,
 

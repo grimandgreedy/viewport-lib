@@ -352,7 +352,7 @@ pub struct Scene {
     /// True after the first full octree build. Incremental updates apply from here.
     spatial_built: bool,
     last_scene_stats: SceneStats,
-    // D4: live decals with lifetime / animation.
+    // Live decals with lifetime / animation.
     live_decals: Vec<LiveDecal>,
     next_decal_id: u64,
 }
@@ -1409,7 +1409,7 @@ impl Default for Scene {
 }
 
 // ---------------------------------------------------------------------------
-// D4: Live decals with lifetime and animation.
+// Live decals with lifetime and animation.
 // ---------------------------------------------------------------------------
 
 /// Opaque handle returned by [`Scene::add_decal`].

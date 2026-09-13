@@ -1,4 +1,4 @@
-// Decal exclude pass (D5).
+// Decal exclude pass.
 //
 // Draws non-receiver geometry into the stencil buffer only, writing stencil = 0
 // so the subsequent decal pass skips those pixels.

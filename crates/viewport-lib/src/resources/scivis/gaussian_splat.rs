@@ -198,8 +198,8 @@ impl DeviceResources {
         // Render pipeline
         // ---------------------------------------------------------------
 
-        // Group 1 BGL: SplatUniform (b0), sorted_indices (b1), positions (b2),
-        //              scales (b3), rotations (b4), opacities (b5), sh_coefficients (b6).
+        // Group 1 BGL: SplatUniform, sorted_indices, positions,
+        //              scales, rotations, opacities, sh_coefficients.
         let splat_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("gaussian_splat_bgl"),
             entries: &[

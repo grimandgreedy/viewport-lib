@@ -611,7 +611,7 @@ impl ViewportRenderer {
             1
         };
 
-        // D8: cache shadow stats and log when cascade splits change.
+        // Cache shadow stats and log when cascade splits change.
         {
             if cascade_split_distances != shadow.last_logged_cascade_splits {
                 tracing::debug!(

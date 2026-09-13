@@ -252,7 +252,7 @@ fn ibl_ambient(
 }
 
 // ---------------------------------------------------------------------------
-// Per-layer variants for environment selection (F2). These sample a chosen
+// Per-layer variants for environment selection. These sample a chosen
 // array layer instead of the default layer 0, and are built on the explicit-LOD
 // (`_grad`) path so they are valid inside the per-fragment zone loop, where a
 // data-dependent weight test makes control flow non-uniform and `dpdx`/`dpdy`

@@ -1,4 +1,4 @@
-// Screen-space decal projection shader (D1 + D2 + D3 + D4 + D6 + D7 + D8).
+// Screen-space decal projection shader.
 //
 // Group 0: camera_bgl (CameraUniform)
 // Group 1: per-viewport scene depth texture (depth-only aspect view)
@@ -54,23 +54,23 @@ struct DecalUniform {
     inv_transform:         mat4x4<f32>,
     blend_mode:            u32,   // 0 = Replace, 1 = Multiply
     alpha:                 f32,
-    normal_blend_strength: f32,   // D2: [0, 1], 0 = no effect
-    has_normal:            u32,   // D2: 1 when a normal map is bound
-    // D3
+    normal_blend_strength: f32,   // [0, 1], 0 = no effect
+    has_normal:            u32,   // 1 when a normal map is bound
+    // Surface response.
     roughness:             f32,   // [0, 1]: 0 = mirror-smooth, 1 = fully matte
     metallic:              f32,   // [0, 1]: 0 = dielectric, 1 = metal
     has_roughness_tex:     u32,   // 1 when roughness_tex is bound
     has_metallic_tex:      u32,   // 1 when metallic_tex is bound
-    // D4
+    // UV transform.
     uv_offset:             vec2<f32>,  // added to final UV before sampling
     uv_scale:              vec2<f32>,  // scales final UV before offset (sprite sheet / scroll)
-    // D6
+    // Emission.
     emissive:              f32,   // emissive intensity multiplier
     has_emissive_tex:      u32,   // 1 when emissive_tex is bound
-    // D7
+    // Edge fade and the ambient floor.
     edge_fade:             f32,   // [0, 0.5]: fraction of half-extent over which alpha fades
     ambient:               f32,   // constant ambient coefficient, matching Material::ambient
-    // D8
+    // Projection mode.
     projection:            u32,   // 0 = Planar, 1 = TriPlanar
     tri_blend_sharpness:   f32,
     _pad2:                 u32,
@@ -80,10 +80,10 @@ struct DecalUniform {
 @group(2) @binding(0) var<uniform> u:             DecalUniform;
 @group(2) @binding(1) var          decal_tex:     texture_2d<f32>;
 @group(2) @binding(2) var          decal_samp:    sampler;
-@group(2) @binding(3) var          decal_normal:  texture_2d<f32>;  // D2
-@group(2) @binding(4) var          roughness_tex: texture_2d<f32>;  // D3
-@group(2) @binding(5) var          metallic_tex:  texture_2d<f32>;  // D3
-@group(2) @binding(6) var          emissive_tex:  texture_2d<f32>;  // D6
+@group(2) @binding(3) var          decal_normal:  texture_2d<f32>;
+@group(2) @binding(4) var          roughness_tex: texture_2d<f32>;
+@group(2) @binding(5) var          metallic_tex:  texture_2d<f32>;
+@group(2) @binding(6) var          emissive_tex:  texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) clip_pos: vec4<f32>,
@@ -120,7 +120,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pix   = vec2<i32>(i32(in.clip_pos.x), i32(in.clip_pos.y));
     let depth = textureLoad(scene_depth, pix, 0);
 
-    // D5: stencil 0 means this surface is marked non-receiver -- skip it.
+    // Stencil 0 means this surface is marked non-receiver -- skip it.
     let stencil = textureLoad(scene_stencil, pix, 0).r;
     if stencil == 0u { discard; }
 
@@ -150,7 +150,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // D7: compute edge fade from local-space coordinates.
+    // Compute edge fade from local-space coordinates.
     // Cylindrical: fade by radial distance and Z.
     // Planar / TriPlanar: fade by each box face.
     var edge_alpha = 1.0;
@@ -169,7 +169,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Estimate the receiver surface normal from world-position screen derivatives.
-    // Used for D2 normal-map shading and D3 specular -- not for the facing check.
+    // Used for normal-map shading and specular -- not for the facing check.
     let ddx_w    = dpdx(world);
     let ddy_w    = dpdy(world);
     let n_raw    = normalize(cross(ddx_w, ddy_w));
@@ -203,7 +203,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if dot(view_dir, decal_Z) < 0.05 { discard; }
     }
 
-    // D9: Cylindrical facing check.
+    // Cylindrical facing check.
     // Transform receiver normal into decal local space and test its XY radial
     // component against the surface position to verify the surface faces the
     // correct side of the cylinder.
@@ -223,7 +223,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // D8/D9: sample texture.
+    // Sample the texture, by projection mode.
     // Planar: standard XY projection.
     // TriPlanar: blend three orthogonal projections weighted by the surface normal.
     // Cylindrical: angle around Z axis -> UV.x; position along Z -> UV.y.
@@ -231,12 +231,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var tex_col: vec4<f32>;
 
     if u.projection == 0u {
-        // D4: apply UV scale + offset. Base UV maps local XY from [-0.5, 0.5] to [0, 1].
+        // Apply UV scale + offset. Base UV maps local XY from [-0.5, 0.5] to [0, 1].
         let base_uv = local.xy + vec2<f32>(0.5);
         uv      = u.uv_offset + u.uv_scale * base_uv;
         tex_col = textureSample(decal_tex, decal_samp, uv);
     } else if u.projection == 2u || u.projection == 3u {
-        // D9: cylindrical -- angle around local Z axis, length along local Z.
+        // Cylindrical: angle around local Z axis, length along local Z.
         let angle   = atan2(local.y, local.x);
         let base_uv = vec2<f32>(angle / (2.0 * 3.14159265) + 0.5, local.z + 0.5);
         uv      = u.uv_offset + u.uv_scale * base_uv;
@@ -361,7 +361,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         out_rgb = lo + ambient;
     }
 
-    // D6: emissive contribution -- always additive on top of the blend result.
+    // Emissive contribution: always additive on top of the blend result.
     if u.emissive > 0.0 {
         let emissive_col = select(out_rgb,
                                   textureSample(emissive_tex, decal_samp, uv).rgb,

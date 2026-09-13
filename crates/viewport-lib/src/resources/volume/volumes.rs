@@ -779,7 +779,7 @@ impl DeviceResources {
             self.volume.default_opacity_lut_view.as_ref().unwrap()
         };
 
-        // Trilinear sampling of the scalar field (A1): the volume texture is
+        // Trilinear sampling of the scalar field: the volume texture is
         // filterable (R16Float, or R32Float with FLOAT32_FILTERABLE), so a linear
         // clamp sampler reconstructs it smoothly instead of nearest-neighbor.
         let volume_sampler =
