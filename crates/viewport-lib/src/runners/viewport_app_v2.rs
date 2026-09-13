@@ -37,9 +37,9 @@ use ::winit::event_loop::{ActiveEventLoop, EventLoop};
 use ::winit::window::{Fullscreen, Window, WindowAttributes, WindowId as WinitWindowId};
 
 use crate::interaction::input::adapters::{from_winit, from_winit_device};
-use crate::interaction::input::{ViewportContext, ViewportEvent};
+use crate::interaction::input::{CursorShape, ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
-use crate::runners::viewport_app::RedrawMode;
+use crate::runners::viewport_app::{RedrawMode, cursor_icon};
 use crate::{
     BlitTexture, ExposureMode, FrameData, OrbitCameraController, OverlayFrame, ViewportRenderer,
 };
@@ -387,6 +387,13 @@ impl FrameCtxV2<'_> {
     /// Show or hide the cursor over this window.
     pub fn set_cursor_visible(&self, visible: bool) {
         self.window.set_cursor_visible(visible);
+    }
+
+    /// Set the shape the pointer takes over this window: a grab hand over a handle a
+    /// tool can pick up, a crosshair over a picker, a resize arrow over an edge. Set it
+    /// each frame from whatever the pointer is over; the shape persists until changed.
+    pub fn set_cursor(&self, shape: CursorShape) {
+        self.window.set_cursor(cursor_icon(shape));
     }
 
     /// Ask the OS to give this window keyboard focus.

@@ -10,10 +10,10 @@ use web_time::Instant;
 use ::winit::application::ApplicationHandler;
 use ::winit::event::WindowEvent;
 use ::winit::event_loop::{ActiveEventLoop, EventLoop};
-use ::winit::window::{Window, WindowAttributes, WindowId};
+use ::winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
 use crate::interaction::input::adapters::{from_winit, from_winit_device};
-use crate::interaction::input::{ViewportContext, ViewportEvent};
+use crate::interaction::input::{CursorShape, ViewportContext, ViewportEvent};
 use crate::runners::ViewportInstance;
 use crate::{ExposureMode, FrameData, OrbitCameraController, OverlayFrame};
 
@@ -130,6 +130,7 @@ impl AppConfig {
 /// runs.
 pub struct FrameCtx<'a> {
     session: &'a mut ViewportInstance,
+    window: &'a Window,
     /// Seconds since the previous frame.
     pub dt: f32,
     /// Seconds since the app started.
@@ -190,6 +191,18 @@ impl FrameCtx<'_> {
     /// The wgpu queue the runner created. See [`device`](Self::device).
     pub fn queue(&self) -> &crate::gpu::Queue {
         self.queue
+    }
+
+    /// Show or hide the cursor over the window.
+    pub fn set_cursor_visible(&self, visible: bool) {
+        self.window.set_cursor_visible(visible);
+    }
+
+    /// Set the shape the pointer takes over the window: a grab hand over a handle a tool
+    /// can pick up, a crosshair over a picker, a resize arrow over an edge. Set it each
+    /// frame from whatever the pointer is over; the shape persists until changed.
+    pub fn set_cursor(&self, shape: CursorShape) {
+        self.window.set_cursor(cursor_icon(shape));
     }
 
     /// Ask the runner to close the window and end the event loop after this
@@ -422,6 +435,30 @@ impl ViewportApp {
     }
 }
 
+/// The winit cursor for a [`CursorShape`]. Shared by both runners, so a host names the
+/// shape once and gets the same pointer whichever one it is on.
+pub(crate) fn cursor_icon(shape: CursorShape) -> CursorIcon {
+    match shape {
+        CursorShape::Default => CursorIcon::Default,
+        CursorShape::Pointer => CursorIcon::Pointer,
+        CursorShape::Text => CursorIcon::Text,
+        CursorShape::Crosshair => CursorIcon::Crosshair,
+        CursorShape::Move => CursorIcon::Move,
+        CursorShape::NotAllowed => CursorIcon::NotAllowed,
+        CursorShape::Grab => CursorIcon::Grab,
+        CursorShape::Grabbing => CursorIcon::Grabbing,
+        CursorShape::ResizeHorizontal => CursorIcon::EwResize,
+        CursorShape::ResizeVertical => CursorIcon::NsResize,
+        CursorShape::ResizeNeSw => CursorIcon::NeswResize,
+        CursorShape::ResizeNwSe => CursorIcon::NwseResize,
+        CursorShape::ResizeColumn => CursorIcon::ColResize,
+        CursorShape::ResizeRow => CursorIcon::RowResize,
+        // A shape this winit version does not name falls back to the arrow rather than
+        // leaving whatever was set before.
+        _ => CursorIcon::Default,
+    }
+}
+
 struct RunState {
     window: Arc<Window>,
     surface: crate::gpu::Surface<'static>,
@@ -629,6 +666,7 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
 
                 let mut ctx = FrameCtx {
                     session: &mut state.session,
+                    window: &state.window,
                     dt,
                     time,
                     device: &state.device,

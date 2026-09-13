@@ -258,9 +258,9 @@ pub use camera::controllers::{
     wish_xy_from_actions,
 };
 pub use interaction::input::{
-    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions, PointerFrame,
-    ResolvedActionState, ScrollUnits, Theme, ViewportBinding, ViewportContext, ViewportEvent,
-    ViewportGesture, ViewportInput, viewport_all_bindings,
+    ActionFrame, BindingPreset, ButtonState, CursorShape, ModifiersMatch, NavigationActions,
+    PointerFrame, ResolvedActionState, ScrollUnits, Theme, ViewportBinding, ViewportContext,
+    ViewportEvent, ViewportGesture, ViewportInput, viewport_all_bindings,
 };
 pub use interaction::manipulation::solvers::{
     angular_rotation_from_cursor, constrained_scale, constrained_translation,
