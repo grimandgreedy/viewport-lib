@@ -331,3 +331,27 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    ctx: &crate::FrameCtx,
+) {
+    // LOD instanced field (Showcase 52) : submitted every frame, plus the
+    // previous frame's LOD stats for the sidebar.
+    submit_lod_items(app, &mut *fd);
+    if let Some(rs) = ctx.frame.wgpu_render_state() {
+        let mut guard = rs.renderer.write();
+        if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
+            apply_lod_cull(&app.lod_state, renderer);
+            app.lod_state.last_stats = renderer.last_frame_stats();
+        }
+    }
+}

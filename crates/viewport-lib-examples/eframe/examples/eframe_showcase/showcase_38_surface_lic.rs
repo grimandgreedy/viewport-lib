@@ -523,3 +523,31 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Surface LIC render items (Showcase 38) : submitted every frame when built.
+    // LIC compositing happens inside the tone-map pass, so the HDR pipeline
+    // must be active (display.mode = PipelineMode::Hdr).
+    if app.lic_state.built {
+        submit_lic_items(app, &mut *fd);
+        let has_lic = if let vpl::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
+            items.iter().any(|i| i.lic.is_some())
+        } else {
+            false
+        };
+        if has_lic {
+            fd.effects.display.mode = vpl::PipelineMode::Hdr;
+        }
+    }
+}

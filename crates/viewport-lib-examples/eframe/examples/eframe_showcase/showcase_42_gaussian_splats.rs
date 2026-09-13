@@ -439,3 +439,19 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Gaussian splat items (Showcase 42) : submitted every frame when built.
+    submit_splat_items(app, &mut *fd);
+}

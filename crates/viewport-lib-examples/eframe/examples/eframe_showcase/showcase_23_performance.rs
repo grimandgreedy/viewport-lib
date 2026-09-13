@@ -530,3 +530,33 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    ctx: &crate::FrameCtx,
+) {
+    if app.perf_state.occlusion_culling {
+        fd.effects.display.mode = vpl::PipelineMode::Hdr;
+    }
+
+    // Update stats and apply GPU culling toggle (Performance mode).
+    let rs = ctx.frame.wgpu_render_state().unwrap();
+    let mut guard = rs.renderer.write();
+    if let Some(renderer) = guard.callback_resources.get_mut::<vpl::ViewportRenderer>() {
+        if app.perf_state.gpu_culling {
+            renderer.enable_gpu_driven_culling();
+        } else {
+            renderer.disable_gpu_driven_culling();
+        }
+        renderer.set_occlusion_culling(app.perf_state.occlusion_culling);
+        app.perf_state.last_stats = renderer.last_frame_stats();
+    }
+}

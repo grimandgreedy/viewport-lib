@@ -447,3 +447,19 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Point cloud / glyph items (Showcase 15) : submitted every frame.
+    submit_pc_items(app, &mut *fd);
+}

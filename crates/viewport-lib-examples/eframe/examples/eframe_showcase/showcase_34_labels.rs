@@ -514,3 +514,29 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    ctx: &crate::FrameCtx,
+) {
+    if app.lbl_state.built {
+        // World-anchored part labels (built once, filtered by toggle).
+        if app.lbl_state.show_part_labels {
+            fd.overlays
+                .labels
+                .extend(app.lbl_state.labels.iter().cloned());
+        }
+        // Screen-anchored labels (title, legend, feature demos) sized to viewport.
+        fd.overlays
+            .labels
+            .extend(app.build_label_screen_overlays(ctx.w, ctx.h));
+    }
+}

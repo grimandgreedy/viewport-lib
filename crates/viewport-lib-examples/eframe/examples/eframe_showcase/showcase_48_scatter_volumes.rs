@@ -741,3 +741,26 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Lighting consistency (Showcase 49): push all non-mesh items.
+    if app.svol_state.built {
+        fd.effects.scatter.quality = app.svol_state.quality;
+        fd.effects.scatter.blue_noise_jitter = app.svol_state.blue_noise_jitter;
+        fd.effects.scatter.downsample = app.svol_state.downsample;
+        fd.effects.scatter.temporal = app.svol_state.temporal;
+        fd.effects.scatter.temporal_blend = app.svol_state.temporal_blend;
+        app.submit_svol_volumes(&mut *fd);
+    }
+}

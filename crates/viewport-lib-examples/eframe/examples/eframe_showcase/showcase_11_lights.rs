@@ -419,3 +419,33 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Cap the far plane so depth values span a useful range for EDL.
+    // Without this, all scene geometry clusters near depth 0.99, making
+    // the log-space neighbor differences too small to see.
+    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
+    rc.far = (app.camera.distance * 3.0).max(30.0);
+    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+    fd.camera.render_camera = rc;
+    if app.lights_state.edl_enabled {
+        fd.effects.post_process = {
+            let mut _t = vpl::PostProcessSettings::default();
+            _t.edl.enabled = true;
+            _t.edl.radius = app.lights_state.edl_radius;
+            _t.edl.strength = app.lights_state.edl_strength;
+            _t
+        };
+    }
+}

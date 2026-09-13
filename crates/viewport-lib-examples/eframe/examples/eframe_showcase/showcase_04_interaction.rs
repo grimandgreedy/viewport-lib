@@ -433,3 +433,19 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    ctx: &crate::FrameCtx,
+) {
+    // Spline widget polyline + handles (Showcase 4) : submitted every frame.
+    submit_interact_items(app, &mut *fd, ctx.w, ctx.h);
+}

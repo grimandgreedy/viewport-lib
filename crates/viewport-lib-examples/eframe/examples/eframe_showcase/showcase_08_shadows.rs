@@ -228,3 +228,32 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    fd.effects.display.mode = vpl::PipelineMode::Direct;
+    fd.effects.post_process = {
+        let mut _t = vpl::PostProcessSettings::default();
+        _t.contact_shadows.enabled = app.shd_state.contact_on;
+        _t.contact_shadows.max_distance = 0.18;
+        _t.contact_shadows.steps = 32;
+        _t.contact_shadows.thickness = 0.04;
+        _t
+    };
+    // Cap far plane for better cascade distribution, but track orbit
+    // distance so the scene doesn't disappear when zooming out.
+    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
+    rc.far = (app.camera.distance * 3.0).max(60.0);
+    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+    fd.camera.render_camera = rc;
+}

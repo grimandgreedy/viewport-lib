@@ -1839,3 +1839,40 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    fd.overlays.time = app.ovl_state.start_time.elapsed().as_secs_f64();
+    let (shapes, labels, polylines) = build_overlay_frame(app);
+    fd.overlays.polylines = polylines;
+    // The dancing-As glyph run as a row above the emoji row.
+    let mut runs = build_glyph_run(app);
+    runs.extend(build_emoji_run(app));
+    fd.overlays.glyph_runs = runs;
+    // Enable HDR callback path so the renderer owns the encoder and can
+    // run backdrop blur passes.
+    if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
+        fd.effects.display.mode = vpl::PipelineMode::Hdr;
+    }
+    fd.overlays.shapes = shapes;
+    fd.overlays.labels = labels;
+    if app.ovl_state.cloud_built {
+        let mut pc = vpl::PointCloudItem::default();
+        pc.positions = app.ovl_state.cloud_positions.clone();
+        pc.scalars = app.ovl_state.cloud_scalars.clone();
+        pc.scalar_range = Some((-1.5, 1.5));
+        pc.colourmap_id = Some(vpl::ColourmapId(app.ovl_state.colourmap as usize));
+        pc.point_size = 4.0;
+        fd.scene.point_clouds.push(pc);
+    }
+}

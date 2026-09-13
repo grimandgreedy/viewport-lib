@@ -882,3 +882,25 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Drive the exposure model from the active sub's controls. The HDR
+    // pipeline stays enabled (default) so the tone map / exposure
+    // buffer path runs.
+    fd.effects.display.exposure = app.lighting_state.exposure_settings();
+    let mut rc = vpl::RenderCamera::from_camera(&app.camera);
+    rc.far = (app.camera.distance * 3.0).max(60.0);
+    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
+    fd.camera.render_camera = rc;
+}

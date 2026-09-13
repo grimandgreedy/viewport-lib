@@ -616,3 +616,23 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Tensor glyph items (Showcase 39) : submitted every frame when built.
+    if app.tg_state.built {
+        submit_tensor_glyphs(app, &mut *fd);
+        submit_beam_item(app, &mut *fd);
+        submit_tg_sub_selection(app, &mut *fd);
+    }
+}

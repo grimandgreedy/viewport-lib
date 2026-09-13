@@ -557,3 +557,21 @@ pub(crate) fn scene(
         sel_gen,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    ctx: &crate::FrameCtx,
+) {
+    // Implicit surface (Showcase 30) : CPU sphere-march, GPU implicit, or GPU MC  :  re-submitted every frame.
+    app.push_implicit_screen_image(&mut *fd, ctx.w as u32, ctx.h as u32);
+    app.push_gpu_implicit(&mut *fd);
+    app.push_gpu_mc_job(&mut *fd);
+}

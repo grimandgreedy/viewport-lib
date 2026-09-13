@@ -5,11 +5,11 @@ use viewport_lib as vpl;
 use viewport_lib::wgpu;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    Action, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, ColourmapId, FrameData,
-    GizmoAxis, GizmoInfo, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, ManipResult,
+    Action, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData, GizmoAxis,
+    GizmoInfo, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, ManipResult,
     ManipulationContext, MeshData, MeshId, OffscreenViewportTarget, OrbitCameraController,
-    PickBackend, PickMask, PointCloudItem, PostProcessSettings, RenderCamera, RuntimeMode,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
+    PickBackend, PickMask, RuntimeMode, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
+    ViewportEvent, ViewportRenderer,
     gizmo::{self, compute_gizmo_scale},
 };
 
@@ -2024,6 +2024,17 @@ impl Default for SceneOverrides {
     }
 }
 
+/// Per-frame inputs a showcase's `frame` hook may need, beyond the app state
+/// and the frame data it is filling in.
+pub(crate) struct FrameCtx<'a> {
+    pub(crate) frame: &'a eframe::Frame,
+    /// Viewport size in logical points.
+    pub(crate) w: f32,
+    pub(crate) h: f32,
+    /// Seconds since the previous frame.
+    pub(crate) dt: f32,
+}
+
 impl App {
     fn build_frame_data(
         &mut self,
@@ -2321,354 +2332,126 @@ impl App {
         fd.scene.generation = scene_gen;
         fd.interaction.selection_generation = sel_gen;
 
-        // Transparent volume mesh (Showcase 26) : submitted every frame when transparent mode is on.
-        if self.mode == ShowcaseMode::VolumeMesh {
-            showcase_26_volume_mesh::submit_vm_items(self, &mut fd);
-        }
-
-        // Volume items (Showcase 17) : submitted every frame.
-        if self.mode == ShowcaseMode::Volume {
-            showcase_17_volume::submit_vol_items(self, &mut fd);
-        }
-
-        // Clip volume (Showcase 18) : set every frame from current state.
-        if self.mode == ShowcaseMode::ClipVolumes {
-            showcase_18_clip_volumes::submit_clipvol_items(self, &mut fd);
-        }
-
-        // Streamline / tube items (Showcase 16) : submitted every frame.
-        if self.mode == ShowcaseMode::Streamlines {
-            showcase_16_streamlines::submit_stream_items(self, &mut fd);
-        }
-
-        // Pre-uploaded curve references for the async-uploads showcase.
-        if self.mode == ShowcaseMode::AsyncUploads {
-            showcase_51_async_uploads::submit_async_uploads_items(self, &mut fd);
-        }
-
-        // Spline widget polyline + handles (Showcase 4) : submitted every frame.
-        if self.mode == ShowcaseMode::Interaction {
-            showcase_04_interaction::submit_interact_items(self, &mut fd, w, h);
-        }
-
-        // Surface vector glyphs (Showcase 25) : submitted every frame.
-        if self.mode == ShowcaseMode::SurfaceVectors {
-            showcase_25_surface_vectors::submit_sv_items(self, &mut fd);
-        }
-
-        // Extended quantity glyphs and point clouds (Showcase 32) : submitted every frame.
-        if self.mode == ShowcaseMode::ExtendedQuantities {
-            showcase_32_extended_quantities::submit_eq_items(self, &mut fd);
-        }
-
-        // Picking Levels (Showcase 33).
-        if self.mode == ShowcaseMode::PickLevels {
-            showcase_33_picking_levels::submit_pl_items(self, &mut fd);
-        }
-
-        // Debug Draw (Showcase 44): polylines, points, and labels from DebugDraw resource.
-        if self.mode == ShowcaseMode::DebugDraw && self.dbg_draw_state.built {
-            showcase_44_debug_draw::submit_dbg_draw_items(self, &mut fd);
-        }
-
-        // Decals (Showcase 48): push placed decals into fd.scene.decals.
-        if self.mode == ShowcaseMode::Decals && self.decal46_state.built {
-            showcase_46_decals::submit_decal46_items(self, &mut fd);
-        }
-
-        // Lighting consistency (Showcase 49): push all non-mesh items.
-        if self.mode == ShowcaseMode::ScatterVolumes && self.svol_state.built {
-            fd.effects.scatter.quality = self.svol_state.quality;
-            fd.effects.scatter.blue_noise_jitter = self.svol_state.blue_noise_jitter;
-            fd.effects.scatter.downsample = self.svol_state.downsample;
-            fd.effects.scatter.temporal = self.svol_state.temporal;
-            fd.effects.scatter.temporal_blend = self.svol_state.temporal_blend;
-            self.submit_svol_volumes(&mut fd);
-        }
-
-        if self.mode == ShowcaseMode::LightingConsistency && self.lc_state.built {
-            showcase_47_lighting_consistency::submit_lc_items(self, &mut fd);
-        }
-
-        if self.mode == ShowcaseMode::SceneLights && self.sl_state.built {
-            showcase_49_scene_lights::submit_sl_items(self, &mut fd);
-        }
-
-        if self.mode == ShowcaseMode::GpuWave && self.wave_state.built {
-            let rs = frame.wgpu_render_state().expect("wgpu required");
-            let mut guard = rs.renderer.write();
-            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                showcase_50_gpu_wave::submit_wave_items(self, &mut fd, renderer);
-            }
-        }
-
-        // Curve network quantities (Showcase 28) : submitted every frame.
-        if self.mode == ShowcaseMode::CurveNetworkQuantities {
-            showcase_28_curve_network_quantities::submit_cnq_items(self, &mut fd);
-        }
-
-        // Depth-composite screen image (Showcase 29) : submitted every frame.
-        if self.mode == ShowcaseMode::DepthCompositeImages {
-            self.dc_push_screen_image(&mut fd);
-        }
-
-        // Implicit surface (Showcase 30) : CPU sphere-march, GPU implicit, or GPU MC  :  re-submitted every frame.
-        if self.mode == ShowcaseMode::ImplicitSurface {
-            self.push_implicit_screen_image(&mut fd, w as u32, h as u32);
-            self.push_gpu_implicit(&mut fd);
-            self.push_gpu_mc_job(&mut fd);
-        }
-
-        // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
-        if self.mode == ShowcaseMode::Auxiliary && self.aux_state.built {
-            for f in &self.aux_state.frustums {
-                fd.scene
-                    .polylines
-                    .push(showcase_27_camera_framing::frustum_to_polyline(f));
-            }
-            self.aux_push_screen_images(&mut fd);
-        }
-
-        // Point cloud / glyph items (Showcase 15) : submitted every frame.
-        if self.mode == ShowcaseMode::PointClouds {
-            showcase_15_point_clouds::submit_pc_items(self, &mut fd);
-        }
-
-        // Isoline items (Showcase 14) : submitted every frame with current settings.
-        if self.mode == ShowcaseMode::Isolines {
-            showcase_14_isolines::submit_iso_items(self, &mut fd);
-        }
-
-        // Post-process settings (Showcases 6-8).
-        // Note: the full HDR pipeline uses renderer.render() which requires direct
-        // surface access. In the eframe callback model we use prepare()+paint(),
-        // so the post-process pass is not applied. Settings are stored for reference.
+        // Everything a showcase re-submits per frame: extra render items,
+        // overlays, and effect settings that are not part of its scene.
+        let frame_ctx = FrameCtx { frame, w, h, dt };
         match self.mode {
-            ShowcaseMode::PostProcess => {
-                // Cap far plane for better cascade distribution, but track orbit
-                // distance so the scene doesn't disappear when zooming out.
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(60.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
-                if self.pp_state.dof_enabled {
-                    fd.effects.post_process = {
-                        let mut _t = PostProcessSettings::default();
-                        _t.dof.enabled = true;
-                        _t.dof.focal_distance = self.pp_state.dof_focal_dist;
-                        _t.dof.focal_range = self.pp_state.dof_focal_range;
-                        _t.dof.max_blur_radius = self.pp_state.dof_max_blur;
-                        _t
-                    };
-                }
+            ShowcaseMode::Basic => showcase_01_basic::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::SceneGraph => showcase_02_scene_graph::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::MaterialsVisibility => {
+                showcase_05_materials_and_visibility::frame(self, &mut fd, &frame_ctx)
             }
-            ShowcaseMode::Shadows => {
-                fd.effects.display.mode = vpl::PipelineMode::Direct;
-                fd.effects.post_process = {
-                    let mut _t = PostProcessSettings::default();
-                    _t.contact_shadows.enabled = self.shd_state.contact_on;
-                    _t.contact_shadows.max_distance = 0.18;
-                    _t.contact_shadows.steps = 32;
-                    _t.contact_shadows.thickness = 0.04;
-                    _t
-                };
-                // Cap far plane for better cascade distribution, but track orbit
-                // distance so the scene doesn't disappear when zooming out.
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(60.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
+            ShowcaseMode::ParamVis => {
+                showcase_22_parameterization::frame(self, &mut fd, &frame_ctx)
             }
-            ShowcaseMode::NormalMaps => {
-                fd.effects.display.mode = vpl::PipelineMode::Direct;
-                // Cap far plane for better cascade distribution, but track orbit
-                // distance so the scene doesn't disappear when zooming out.
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(60.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
+            ShowcaseMode::BackfacePolicy => {
+                showcase_24_backface_policy::frame(self, &mut fd, &frame_ctx)
             }
-            ShowcaseMode::Auxiliary => {
-                // Cap far plane for better cascade distribution, but track orbit
-                // distance so the scene doesn't disappear when zooming out.
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(60.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
+            ShowcaseMode::Interaction => showcase_04_interaction::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::CameraTools => showcase_10_camera_tools::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::MultiViewport => {
+                showcase_13_multi_viewport::frame(self, &mut fd, &frame_ctx)
             }
-            ShowcaseMode::Lights => {
-                // Cap the far plane so depth values span a useful range for EDL.
-                // Without this, all scene geometry clusters near depth 0.99, making
-                // the log-space neighbor differences too small to see.
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(30.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
-                if self.lights_state.edl_enabled {
-                    fd.effects.post_process = {
-                        let mut _t = PostProcessSettings::default();
-                        _t.edl.enabled = true;
-                        _t.edl.radius = self.lights_state.edl_radius;
-                        _t.edl.strength = self.lights_state.edl_strength;
-                        _t
-                    };
-                }
+            ShowcaseMode::Auxiliary => showcase_27_camera_framing::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::ProbeWidgets => {
+                showcase_37_probe_widgets::frame(self, &mut fd, &frame_ctx)
             }
+            ShowcaseMode::GroundPlane => showcase_03_ground_plane::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::PostProcess => showcase_06_post_process::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Foreground => {
+                showcase_55_foreground_pass::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::NormalMaps => showcase_07_normal_maps::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Shadows => showcase_08_shadows::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Lights => showcase_11_lights::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Matcap => showcase_19_matcap::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::LightingConsistency => {
+                showcase_47_lighting_consistency::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::SceneLights => showcase_49_scene_lights::frame(self, &mut fd, &frame_ctx),
             ShowcaseMode::PhotometricLighting => {
-                // Drive the exposure model from the active sub's controls. The HDR
-                // pipeline stays enabled (default) so the tone map / exposure
-                // buffer path runs.
-                fd.effects.display.exposure = self.lighting_state.exposure_settings();
-                let mut rc = RenderCamera::from_camera(&self.camera);
-                rc.far = (self.camera.distance * 3.0).max(60.0);
-                rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                fd.camera.render_camera = rc;
+                showcase_57_photometric_lighting::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::Textures => showcase_21_textures::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Decals => showcase_46_decals::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::VertexColours => {
+                showcase_53_vertex_colours::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::SubmeshMaterials => {
+                showcase_56_submesh_materials::frame(self, &mut fd, &frame_ctx)
             }
             ShowcaseMode::PhysicallyBasedSurfaces => {
-                // The Emissive & IBL sub drives exposure and an environment; the
-                // Parity sub leaves the frame default.
-                if let Some(exp) = self.surfaces_state.exposure_override() {
-                    fd.effects.display.exposure = exp;
-                }
-                if let Some(env) = self.surfaces_state.environment() {
-                    fd.effects.environment = Some(env);
-                    let mut rc = RenderCamera::from_camera(&self.camera);
-                    rc.far = (self.camera.distance * 3.0).max(60.0);
-                    rc.projection = glam::Mat4::perspective_rh(rc.fov, rc.aspect, rc.near, rc.far);
-                    fd.camera.render_camera = rc;
-                }
+                showcase_58_physically_based_surfaces::frame(self, &mut fd, &frame_ctx)
             }
-            ShowcaseMode::BackfacePolicy => {}
-            // Decals require the full HDR pipeline so the decal pass (which reads
-            // scene depth as a texture) runs via render_frame_internal.
-            ShowcaseMode::Decals => {
-                fd.effects.display.mode = vpl::PipelineMode::Hdr;
+            ShowcaseMode::ScalarFields => {
+                showcase_12_scalar_fields::frame(self, &mut fd, &frame_ctx)
             }
-            // HiZ occlusion culling builds its depth pyramid in the HDR scene
-            // pass, so the HDR pipeline must be active when occlusion is on.
-            ShowcaseMode::Performance => {
-                if self.perf_state.occlusion_culling {
-                    fd.effects.display.mode = vpl::PipelineMode::Hdr;
-                }
+            ShowcaseMode::Isolines => showcase_14_isolines::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::PointClouds => showcase_15_point_clouds::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Streamlines => showcase_16_streamlines::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::FaceAttributes => {
+                showcase_20_face_attributes::frame(self, &mut fd, &frame_ctx)
             }
-            ShowcaseMode::Foreground => {
-                showcase_55_foreground_pass::configure_frame(self, &mut fd);
+            ShowcaseMode::SurfaceVectors => {
+                showcase_25_surface_vectors::frame(self, &mut fd, &frame_ctx)
             }
-            _ => {}
-        }
-
-        // Overlay labels (Showcase 9 and 34): populate OverlayFrame.
-        if self.mode == ShowcaseMode::Annotation && self.ann_state.built {
-            fd.overlays.labels = self.ann_state.labels.clone();
-        }
-        if self.mode == ShowcaseMode::Overlay {
-            fd.overlays.time = self.ovl_state.start_time.elapsed().as_secs_f64();
-            let (shapes, labels, polylines) = showcase_35_overlay::build_overlay_frame(self);
-            fd.overlays.polylines = polylines;
-            // The dancing-As glyph run as a row above the emoji row.
-            let mut runs = showcase_35_overlay::build_glyph_run(self);
-            runs.extend(showcase_35_overlay::build_emoji_run(self));
-            fd.overlays.glyph_runs = runs;
-            // Enable HDR callback path so the renderer owns the encoder and can
-            // run backdrop blur passes.
-            if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
-                fd.effects.display.mode = vpl::PipelineMode::Hdr;
+            ShowcaseMode::CurveNetworkQuantities => {
+                showcase_28_curve_network_quantities::frame(self, &mut fd, &frame_ctx)
             }
-            fd.overlays.shapes = shapes;
-            fd.overlays.labels = labels;
-            if self.ovl_state.cloud_built {
-                let mut pc = PointCloudItem::default();
-                pc.positions = self.ovl_state.cloud_positions.clone();
-                pc.scalars = self.ovl_state.cloud_scalars.clone();
-                pc.scalar_range = Some((-1.5, 1.5));
-                pc.colourmap_id = Some(ColourmapId(self.ovl_state.colourmap as usize));
-                pc.point_size = 4.0;
-                fd.scene.point_clouds.push(pc);
+            ShowcaseMode::ExtendedQuantities => {
+                showcase_32_extended_quantities::frame(self, &mut fd, &frame_ctx)
             }
-        }
-        if self.mode == ShowcaseMode::VectorArt {
-            let vw = fd.camera.viewport_size[0];
-            let vh = fd.camera.viewport_size[1];
-            fd.overlays.shapes = showcase_59_vector_art::build_overlay_shapes(self, vw, vh);
-        }
-        if self.mode == ShowcaseMode::Labels && self.lbl_state.built {
-            // World-anchored part labels (built once, filtered by toggle).
-            if self.lbl_state.show_part_labels {
-                fd.overlays
-                    .labels
-                    .extend(self.lbl_state.labels.iter().cloned());
+            ShowcaseMode::SurfaceLIC => showcase_38_surface_lic::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::TensorGlyphs => {
+                showcase_39_tensor_glyphs::frame(self, &mut fd, &frame_ctx)
             }
-            // Screen-anchored labels (title, legend, feature demos) sized to viewport.
-            fd.overlays
-                .labels
-                .extend(self.build_label_screen_overlays(w, h));
-        }
-
-        // Update stats and apply GPU culling toggle (Performance mode).
-        if self.mode == ShowcaseMode::Performance {
-            let rs = frame.wgpu_render_state().unwrap();
-            let mut guard = rs.renderer.write();
-            if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                if self.perf_state.gpu_culling {
-                    renderer.enable_gpu_driven_culling();
-                } else {
-                    renderer.disable_gpu_driven_culling();
-                }
-                renderer.set_occlusion_culling(self.perf_state.occlusion_culling);
-                self.perf_state.last_stats = renderer.last_frame_stats();
+            ShowcaseMode::Volume => showcase_17_volume::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::ClipVolumes => showcase_18_clip_volumes::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::VolumeMesh => showcase_26_volume_mesh::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::ImplicitSurface => {
+                showcase_30_implicit_surface::frame(self, &mut fd, &frame_ctx)
             }
-        }
-        // Probe widget render items (Showcase 37) : submitted every frame.
-        if self.mode == ShowcaseMode::ProbeWidgets {
-            showcase_37_probe_widgets::submit_pw_items(self, &mut fd, w, h);
-        }
-
-        // Surface LIC render items (Showcase 38) : submitted every frame when built.
-        // LIC compositing happens inside the tone-map pass, so the HDR pipeline
-        // must be active (display.mode = PipelineMode::Hdr).
-        if self.mode == ShowcaseMode::SurfaceLIC && self.lic_state.built {
-            showcase_38_surface_lic::submit_lic_items(self, &mut fd);
-            let has_lic = if let vpl::SurfaceSubmission::Flat(ref items) = fd.scene.surfaces {
-                items.iter().any(|i| i.lic.is_some())
-            } else {
-                false
-            };
-            if has_lic {
-                fd.effects.display.mode = vpl::PipelineMode::Hdr;
+            ShowcaseMode::SparseVolumeGrid => {
+                showcase_31_sparse_volume_grid::frame(self, &mut fd, &frame_ctx)
             }
-        }
-
-        // Tensor glyph items (Showcase 39) : submitted every frame when built.
-        if self.mode == ShowcaseMode::TensorGlyphs && self.tg_state.built {
-            showcase_39_tensor_glyphs::submit_tensor_glyphs(self, &mut fd);
-            showcase_39_tensor_glyphs::submit_beam_item(self, &mut fd);
-            showcase_39_tensor_glyphs::submit_tg_sub_selection(self, &mut fd);
-        }
-
-        // Sprite items and ring polylines (Showcase 41) : submitted every frame when built.
-        if self.mode == ShowcaseMode::Sprites {
-            showcase_41_sprites::submit_sprite_items(self, &mut fd, dt);
-        }
-
-        // LOD instanced field (Showcase 52) : submitted every frame, plus the
-        // previous frame's LOD stats for the sidebar.
-        if self.mode == ShowcaseMode::Lod {
-            showcase_52_lod::submit_lod_items(self, &mut fd);
-            if let Some(rs) = frame.wgpu_render_state() {
-                let mut guard = rs.renderer.write();
-                if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
-                    showcase_52_lod::apply_lod_cull(&self.lod_state, renderer);
-                    self.lod_state.last_stats = renderer.last_frame_stats();
-                }
+            ShowcaseMode::ScatterVolumes => {
+                showcase_48_scatter_volumes::frame(self, &mut fd, &frame_ctx)
             }
+            ShowcaseMode::Annotation => showcase_09_annotation::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::DepthCompositeImages => {
+                showcase_29_depth_composite_images::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::Labels => showcase_34_labels::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Overlay => showcase_35_overlay::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::VectorArt => showcase_59_vector_art::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::Sprites => showcase_41_sprites::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::GaussianSplats => {
+                showcase_42_gaussian_splats::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::PlaybackRuntime => {
+                showcase_36_playback_runtime::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::VertexWarp => showcase_40_vertex_warp::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::SceneRuntime => {
+                showcase_43_scene_runtime::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::DebugDraw => showcase_44_debug_draw::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::SkinnedAnimation => {
+                showcase_45_skinned_animation::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::GpuWave => showcase_50_gpu_wave::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::CustomShading => {
+                showcase_54_custom_shading::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::Performance => showcase_23_performance::frame(self, &mut fd, &frame_ctx),
+            ShowcaseMode::PickLevels => {
+                showcase_33_picking_levels::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::AsyncUploads => {
+                showcase_51_async_uploads::frame(self, &mut fd, &frame_ctx)
+            }
+            ShowcaseMode::Lod => showcase_52_lod::frame(self, &mut fd, &frame_ctx),
         }
-
-        // Gaussian splat items (Showcase 42) : submitted every frame when built.
-        if self.mode == ShowcaseMode::GaussianSplats {
-            showcase_42_gaussian_splats::submit_splat_items(self, &mut fd);
-        }
-
-        // PlaybackRuntime stats are updated inside the build_frame_data PlaybackRuntime arm.
 
         fd
     }
