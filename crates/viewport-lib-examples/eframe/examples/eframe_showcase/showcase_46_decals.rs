@@ -181,6 +181,8 @@ fn make_blood_texture(size: u32) -> Vec<u8> {
 }
 
 /// D6: Glowing rune -- a five-pointed star outline on a transparent background.
+/// Red rather than gold: the wall it sits on is near-white, and a warm light
+/// colour there has almost no contrast left to work with.
 fn make_rune_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let s = size as f32;
@@ -191,19 +193,21 @@ fn make_rune_texture(size: u32) -> Vec<u8> {
             let dy = y as f32 - c;
             let d = (dx * dx + dy * dy).sqrt();
             let angle = dy.atan2(dx);
-            // Star: 5 outer points, 5 inner indents.
-            let spoke_angle = (angle * 5.0 / 2.0).cos().abs();
+            // Star: 5 outer points, 5 inner indents. Raising the lobe to a
+            // power narrows the peaks, so the points come to a point instead of
+            // rounding off into petals.
+            let spoke_angle = (angle * 5.0 / 2.0).cos().abs().powf(2.5);
             let outer = c * 0.45;
             let inner = c * 0.20;
             let star_r = inner + (outer - inner) * spoke_angle;
-            let edge_w = c * 0.07;
+            let edge_w = c * 0.11;
             let rim_dist = (d - star_r).abs();
             let alpha = ((edge_w - rim_dist) / edge_w).clamp(0.0, 1.0);
             if alpha > 0.0 {
                 let idx = ((y * size + x) * 4) as usize;
                 buf[idx] = 255;
-                buf[idx + 1] = 200;
-                buf[idx + 2] = 80;
+                buf[idx + 1] = 40;
+                buf[idx + 2] = 25;
                 buf[idx + 3] = (alpha * 255.0) as u8;
             }
         }
@@ -212,6 +216,8 @@ fn make_rune_texture(size: u32) -> Vec<u8> {
 }
 
 /// D6: Spark-impact -- a bright central burst with 8 radiating streaks.
+/// Red-shifted for the same reason as the rune: on a near-white wall only the
+/// red channel has headroom to read as a mark.
 fn make_spark_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let s = size as f32;
@@ -227,8 +233,8 @@ fn make_spark_texture(size: u32) -> Vec<u8> {
             let alpha = (radial * 0.5 + spoke * radial * 0.7).clamp(0.0, 1.0);
             if alpha > 0.005 {
                 let idx = ((y * size + x) * 4) as usize;
-                let g = (0.7 + 0.3 * radial).clamp(0.0, 1.0);
-                let b = (0.2 * radial).clamp(0.0, 1.0);
+                let g = (0.18 + 0.5 * radial).clamp(0.0, 1.0);
+                let b = (0.08 * radial).clamp(0.0, 1.0);
                 buf[idx] = 255;
                 buf[idx + 1] = (g * 255.0) as u8;
                 buf[idx + 2] = (b * 255.0) as u8;
@@ -286,6 +292,8 @@ fn make_fire_texture(size: u32) -> Vec<u8> {
 }
 
 /// D8: Checkerboard -- contrasting tiles that show UV stretching vs. tri-planar wrapping clearly.
+/// Both tiles are darker than the wall and floor it spans. A near-white tile
+/// disappears into either one, which breaks up the grid the demo is there to show.
 fn make_checker_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![255u8; (size * size * 4) as usize];
     let tiles = 8u32;
@@ -296,13 +304,13 @@ fn make_checker_texture(size: u32) -> Vec<u8> {
             let dark = (tx + ty) % 2 == 0;
             let idx = ((y * size + x) * 4) as usize;
             if dark {
-                buf[idx] = 30;
-                buf[idx + 1] = 30;
-                buf[idx + 2] = 175;
+                buf[idx] = 18;
+                buf[idx + 1] = 20;
+                buf[idx + 2] = 32;
             } else {
-                buf[idx] = 225;
-                buf[idx + 1] = 210;
-                buf[idx + 2] = 245;
+                buf[idx] = 150;
+                buf[idx + 1] = 165;
+                buf[idx + 2] = 195;
             }
             buf[idx + 3] = 255;
         }
@@ -946,7 +954,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
     if st.show_rune {
         if let Some(rune) = st.rune_tex {
             let transform =
-                decal_transform(glam::Vec3::new(1.5, 0.0, 2.0), glam::Vec3::Y, 0.5, 1.0);
+                decal_transform(glam::Vec3::new(-0.5, 0.0, 2.0), glam::Vec3::Y, 0.5, 1.0);
             let mut item = DecalItem::default();
             item.transform = transform;
             item.texture_id = rune;
@@ -1009,7 +1017,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
     if st.show_spark {
         if let Some(spark) = st.spark_tex {
             let transform =
-                decal_transform(glam::Vec3::new(2.2, 0.0, 2.0), glam::Vec3::Y, 0.4, 1.0);
+                decal_transform(glam::Vec3::new(0.5, 0.0, 2.0), glam::Vec3::Y, 0.4, 1.0);
             let mut item = DecalItem::default();
             item.transform = transform;
             item.texture_id = spark;
@@ -1182,7 +1190,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         ui.checkbox(
             &mut app.decal46_state.show_rune,
-            "Glowing rune (wall right)",
+            "Glowing rune (wall centre)",
         );
         if app.decal46_state.show_rune {
             ui.add(
@@ -1192,7 +1200,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.checkbox(
             &mut app.decal46_state.show_spark,
-            "Spark impact (ground right)",
+            "Spark impact (wall centre)",
         );
         if app.decal46_state.show_spark {
             ui.add(
@@ -1284,7 +1292,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.separator();
         ui.label("Surface guide:");
-        ui.small("Wall (y = 0):       gunshot craters, glowing rune, spark impact, fire overlay.");
+        ui.small("Wall (y = 0):       gunshot craters, fire overlay (left), rune and spark (centre).");
         ui.small("Ground left  (x<0): muddy footprints (static).");
         ui.small("Ground right (x>=0): blood splatter.");
     });
