@@ -240,19 +240,6 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // Binding 12: per-fragment debug storage buffer (written in debug_vis.wgsl).
-                // Sized to viewport_width * viewport_height * 16 bytes when debug is active;
-                // a 16-byte sentinel buffer is used otherwise.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
                 // Binding 13: read-only storage buffer of `SingleLightUniform`
                 // entries. Indexed against the `count` field of the lights
                 // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
@@ -990,14 +977,6 @@ impl DeviceResources {
 
         let ibl_sampler = crate::resources::builders::env_sampler(device, "ibl_sampler");
 
-        // 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
-        let debug_frag_sentinel_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("debug_frag_sentinel_buf"),
-            size: 16,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         let clustered = crate::resources::gpu::clustered::ClusteredResources::new(device);
 
         mark("clustered");
@@ -1058,10 +1037,6 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 11,
                     resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 12,
-                    resource: debug_frag_sentinel_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 13,
@@ -2370,7 +2345,6 @@ impl DeviceResources {
                 object_bgl,
                 clip_planes_buf: clip_planes_uniform_buf,
                 clip_volume_buf: clip_volume_uniform_buf,
-                debug_frag_sentinel_buf,
             },
             lighting: crate::resources::lighting::LightingResources {
                 uniform_buf: light_uniform_buf,

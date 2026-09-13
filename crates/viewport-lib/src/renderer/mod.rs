@@ -2930,7 +2930,6 @@ impl ViewportRenderer {
             &self.resources.binds.clip_planes_buf,
             &self.resources.shadow.info_buf,
             &self.resources.binds.clip_volume_buf,
-            &self.resources.binds.debug_frag_sentinel_buf,
             "camera_bind_group",
         );
 
@@ -2941,7 +2940,6 @@ impl ViewportRenderer {
                 &slot.clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
             );
             slot.foreground_camera_bind_group = self.resources.create_camera_bind_group(
@@ -2950,7 +2948,6 @@ impl ViewportRenderer {
                 &slot.foreground_clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.foreground_clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_foreground_camera_bg",
             );
         }
@@ -3011,7 +3008,6 @@ impl ViewportRenderer {
                 &clip_planes_buf,
                 &shadow_info_buf,
                 &clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
             );
 
@@ -3041,7 +3037,6 @@ impl ViewportRenderer {
                 &foreground_clip_planes_buf,
                 &shadow_info_buf,
                 &foreground_clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_foreground_camera_bg",
             );
 

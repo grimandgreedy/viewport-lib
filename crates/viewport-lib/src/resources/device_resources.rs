@@ -1219,7 +1219,6 @@ impl DeviceResources {
         clip_planes_buf: &crate::gpu::Buffer,
         shadow_info_buf: &crate::gpu::Buffer,
         clip_volume_buf: &crate::gpu::Buffer,
-        debug_frag_buf: &crate::gpu::Buffer,
         label: &str,
     ) -> crate::gpu::BindGroup {
         let irr = self
@@ -1294,10 +1293,6 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 11,
                     resource: crate::gpu::BindingResource::TextureView(skybox),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 12,
-                    resource: debug_frag_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 13,

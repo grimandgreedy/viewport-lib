@@ -186,7 +186,6 @@ struct ClipVolumeUB {
 @group(0) @binding(9) var ibl_brdf_lut: texture_2d<f32>;
 @group(0) @binding(10) var ibl_sampler: sampler;
 @group(0) @binding(11) var ibl_skybox: texture_2d<f32>;
-@group(0) @binding(12) var<storage, read_write> debug_frag_buf: array<vec4<f32>>;
 
 // #include "helpers/clip_volume_test.wgsl"
 @group(1) @binding(0) var<storage, read> instances:          array<InstanceData>;

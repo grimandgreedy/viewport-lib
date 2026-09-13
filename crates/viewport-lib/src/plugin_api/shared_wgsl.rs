@@ -54,7 +54,6 @@ pub const WGSL_VERSION: u32 = 6;
 /// | 9  | BRDF integration LUT | `ibl_brdf_lut` |
 /// | 10 | IBL sampler | `ibl_sampler` |
 /// | 11 | Skybox equirect | `skybox_tex` |
-/// | 12 | debug fragment storage buffer | `debug_frag` |
 /// | 13 | per-light array | `lights_storage` |
 /// | 17 | point-light shadow cubemap array | `point_shadow_cube` |
 pub const SHARED_BINDINGS_WGSL: &str = r#"
