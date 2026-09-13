@@ -148,14 +148,17 @@ const LIGHTMAP_MODES: [&str; 4] = ["Off", "Replace", "Add", "AO"];
 /// Paint a baked-radiance lightmap: soft coloured light pools over a dark base,
 /// darkened toward the edges. This is the kind of indirect light a bake captures
 /// and a single realtime light cannot cheaply reproduce.
-fn bake_radiance(w: u32, h: u32) -> Vec<u8> {
+///
+/// Radiance, so the values are linear and go up through `TextureData::hdr`: a
+/// lightmap slot reads what it samples as light, with nothing to decode.
+fn bake_radiance(w: u32, h: u32) -> Vec<f32> {
     // (centre uv, radius, colour).
     let pools: [([f32; 2], f32, [f32; 3]); 3] = [
         ([0.28, 0.32], 0.34, [0.75, 0.28, 0.05]), // warm
         ([0.72, 0.68], 0.32, [0.10, 0.26, 0.68]), // cool
         ([0.5, 0.5], 0.24, [0.10, 0.52, 0.18]),   // green
     ];
-    let mut px = vec![0u8; (w * h * 4) as usize];
+    let mut px = vec![0.0f32; (w * h * 4) as usize];
     for y in 0..h {
         let v = y as f32 / (h - 1).max(1) as f32;
         for x in 0..w {
@@ -173,10 +176,10 @@ fn bake_radiance(w: u32, h: u32) -> Vec<u8> {
             let edge = 1.0 - (2.0 * u - 1.0).abs().max((2.0 * v - 1.0).abs());
             let vign = 0.3 + 0.7 * edge.clamp(0.0, 1.0);
             let i = ((y * w + x) * 4) as usize;
-            px[i] = ((c[0] * vign).clamp(0.0, 1.0) * 255.0) as u8;
-            px[i + 1] = ((c[1] * vign).clamp(0.0, 1.0) * 255.0) as u8;
-            px[i + 2] = ((c[2] * vign).clamp(0.0, 1.0) * 255.0) as u8;
-            px[i + 3] = 255;
+            px[i] = c[0] * vign;
+            px[i + 1] = c[1] * vign;
+            px[i + 2] = c[2] * vign;
+            px[i + 3] = 1.0;
         }
     }
     px
@@ -185,6 +188,10 @@ fn bake_radiance(w: u32, h: u32) -> Vec<u8> {
 /// Paint a grayscale ambient-occlusion lightmap: bright where light reaches,
 /// dark pools where geometry would trap it. The shader reads the red channel as
 /// the occlusion factor.
+///
+/// An occlusion factor is not colour, so it goes up through
+/// `TextureData::linear`. Eight bits is plenty for a value clamped to
+/// [0.05, 1.0].
 fn bake_ao(w: u32, h: u32) -> Vec<u8> {
     let occ: [([f32; 2], f32); 3] = [
         ([0.3, 0.32], 0.3),
@@ -331,24 +338,28 @@ fn add_world_mesh(scene: &mut RtScene, geo: &Geo, xf: Mat4, albedo: [f32; 3]) {
     );
 }
 
-/// Pack a baked irradiance atlas into an sRGB RGBA8 lightmap texture. Incident
-/// irradiance is turned into diffuse radiosity (`albedo * E / pi`), tonemapped,
-/// and gamma-encoded; empty texels go black.
-fn irradiance_to_texture(img: &vpl::raytrace::RtImage, albedo: [f32; 3]) -> Vec<u8> {
+/// Pack a baked irradiance atlas into a linear RGBA lightmap texture. Incident
+/// irradiance is turned into diffuse radiosity (`albedo * E / pi`) and
+/// tonemapped; empty texels go black.
+///
+/// The result stays linear and goes up through `TextureData::hdr`, like the two
+/// painted lightmaps above. Gamma-encoding it and uploading sRGB lands in the
+/// same place for the display range, but a lightmap slot is sampled as light, so
+/// encoding it only means undoing the encode to get the value back.
+fn irradiance_to_texture(img: &vpl::raytrace::RtImage, albedo: [f32; 3]) -> Vec<f32> {
     const EXPOSURE: f32 = 1.25;
     let inv_pi = 1.0 / std::f32::consts::PI;
-    let mut out = vec![0u8; (img.width * img.height * 4) as usize];
+    let mut out = vec![0.0f32; (img.width * img.height * 4) as usize];
     for (i, px) in img.rgba.chunks_exact(4).enumerate() {
         if px[3] <= 0.5 {
-            out[i * 4 + 3] = 255;
+            out[i * 4 + 3] = 1.0;
             continue;
         }
         for c in 0..3 {
             let lin = px[c] * albedo[c] * inv_pi * EXPOSURE;
-            let tone = lin / (1.0 + lin);
-            out[i * 4 + c] = (tone.powf(1.0 / 2.2).clamp(0.0, 1.0) * 255.0) as u8;
+            out[i * 4 + c] = lin / (1.0 + lin);
         }
-        out[i * 4 + 3] = 255;
+        out[i * 4 + 3] = 1.0;
     }
     out
 }
@@ -524,7 +535,7 @@ impl IndirectLightingShowcase {
             .upload_texture(
                 device,
                 queue,
-                vpl::TextureData::srgb(img.width, img.height, texels.to_vec()),
+                vpl::TextureData::hdr(img.width, img.height, texels.to_vec()),
             )
             .unwrap();
         self.gi_baked_tex = Some(tex);
@@ -745,7 +756,7 @@ impl Showcase for IndirectLightingShowcase {
                 .upload_texture(
                     ctx.device,
                     ctx.queue,
-                    vpl::TextureData::srgb(
+                    vpl::TextureData::hdr(
                         LIGHTMAP_TEX,
                         LIGHTMAP_TEX,
                         bake_radiance(LIGHTMAP_TEX, LIGHTMAP_TEX),
@@ -759,7 +770,7 @@ impl Showcase for IndirectLightingShowcase {
                 .upload_texture(
                     ctx.device,
                     ctx.queue,
-                    vpl::TextureData::srgb(
+                    vpl::TextureData::linear(
                         LIGHTMAP_TEX,
                         LIGHTMAP_TEX,
                         bake_ao(LIGHTMAP_TEX, LIGHTMAP_TEX),
