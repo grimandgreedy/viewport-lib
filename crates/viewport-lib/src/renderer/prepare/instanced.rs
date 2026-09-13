@@ -328,6 +328,10 @@ impl ViewportRenderer {
             && frame.viewport.wireframe_mode == instancing.last_wireframe_mode;
 
         if !cache_valid {
+            // TEMPORARY rebuild attribution. Set VPL_REBUILD_ATTRIB=1 to print
+            // the per-phase split of a batch rebuild. Remove before landing.
+            let attrib = std::env::var_os("VPL_REBUILD_ATTRIB").is_some();
+            let t_start = std::time::Instant::now();
             // Cache miss : rebuild batches and upload instance data.
             // Each entry keeps its original scene-item index alongside the item
             // reference so the light-probe SH block (keyed by that index) can be
@@ -337,6 +341,7 @@ impl ViewportRenderer {
                 .enumerate()
                 .filter(|(idx, _)| instanceable[*idx])
                 .collect();
+            let t_filter = std::time::Instant::now();
 
             let binding = resources.instancing.material_texture_binding;
             sorted_items.sort_unstable_by(|(_, a), (_, b)| {
@@ -371,6 +376,7 @@ impl ViewportRenderer {
                 // appear in the caller's scene_items slice.
                 a.settings.pick_id.0.cmp(&b.settings.pick_id.0)
             });
+            let t_sort = std::time::Instant::now();
 
             let mut all_instances: Vec<InstanceData> = Vec::with_capacity(sorted_items.len());
             let mut all_aabbs: Vec<InstanceAabb> = Vec::with_capacity(sorted_items.len());
@@ -540,6 +546,18 @@ impl ViewportRenderer {
                         batch_start = i;
                     }
                 }
+            }
+            if attrib {
+                let t_pack = std::time::Instant::now();
+                eprintln!(
+                    "REBUILD items={} batches={} filter={:.3}ms sort={:.3}ms split_pack={:.3}ms total={:.3}ms",
+                    sorted_items.len(),
+                    instanced_batches.len(),
+                    (t_filter - t_start).as_secs_f64() * 1000.0,
+                    (t_sort - t_filter).as_secs_f64() * 1000.0,
+                    (t_pack - t_sort).as_secs_f64() * 1000.0,
+                    (t_pack - t_start).as_secs_f64() * 1000.0,
+                );
             }
 
             // Partial upload: when the batch structure is unchanged (same
