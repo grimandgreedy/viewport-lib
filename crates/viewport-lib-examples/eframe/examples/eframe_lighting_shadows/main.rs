@@ -337,7 +337,7 @@ struct App {
     atlas_viewer_corner: AtlasViewerCorner,
     atlas_viewer_scale: f32,
 
-    // Pixel inspector (D7)
+    // Pixel inspector
     pixel_inspector_active: bool,
     // Pixel to read back after the next render (set on click).
     pixel_read_req: Option<(u32, u32)>,
@@ -1408,7 +1408,7 @@ impl App {
 
         ui.add_space(4.0);
 
-        // D8: Frame stats footer.
+        // Frame stats footer.
         egui::CollapsingHeader::new("Frame Stats")
             .default_open(false)
             .show(ui, |ui| {
@@ -1451,7 +1451,7 @@ impl App {
 
         ui.add_space(4.0);
 
-        // D9: Diagnostic presets.
+        // Diagnostic presets.
         egui::CollapsingHeader::new("Diagnostic Presets")
             .default_open(false)
             .show(ui, |ui| {

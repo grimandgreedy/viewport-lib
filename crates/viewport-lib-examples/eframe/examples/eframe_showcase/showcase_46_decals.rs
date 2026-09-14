@@ -1,6 +1,7 @@
 //! Showcase 46: Screen-Space Decals
 //!
-//! Demonstrates the full decal pipeline (D1 through D5).
+//! Demonstrates the whole decal pipeline: projection, normal mapping, sorting,
+//! animation, and the stencil pass that keeps decals off chosen surfaces.
 //!
 //! Scene: a vertical wall (XZ plane, +Y normal) meets a ground floor (XY
 //! plane, +Z normal). Click any visible surface to stamp a gunshot decal.
@@ -110,7 +111,7 @@ fn make_crater_normal_map(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D3: Glossy "wet" disc for the standing-water patch demo.
+/// Glossy "wet" disc for the standing-water patch demo.
 fn make_wet_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let c = size as f32 * 0.5;
@@ -131,7 +132,7 @@ fn make_wet_texture(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D4: Diagonal black/white stripe pattern for UV-scroll animation demo.
+/// Diagonal black/white stripe pattern for UV-scroll animation demo.
 fn make_stripe_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     const GAP: f32 = 0.03;
@@ -220,7 +221,7 @@ fn make_blood_texture(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D6: Glowing rune -- a five-pointed star outline on a transparent background.
+/// Glowing rune -- a five-pointed star outline on a transparent background.
 /// Red rather than gold: the wall it sits on is near-white, and a warm light
 /// colour there has almost no contrast left to work with.
 fn make_rune_texture(size: u32) -> Vec<u8> {
@@ -255,7 +256,7 @@ fn make_rune_texture(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D6: Spark-impact -- a bright central burst with 8 radiating streaks.
+/// Spark-impact -- a bright central burst with 8 radiating streaks.
 /// Red-shifted for the same reason as the rune: on a near-white wall only the
 /// red channel has headroom to read as a mark.
 fn make_spark_texture(size: u32) -> Vec<u8> {
@@ -285,7 +286,7 @@ fn make_spark_texture(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D10: Fire overlay -- tall flame shape with orange/yellow core; designed for additive blending.
+/// Fire overlay -- tall flame shape with orange/yellow core; designed for additive blending.
 fn make_fire_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let s = size as f32;
@@ -331,7 +332,7 @@ fn make_fire_texture(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D8: Checkerboard -- contrasting tiles that show UV stretching vs. tri-planar wrapping clearly.
+/// Checkerboard -- contrasting tiles that show UV stretching vs. tri-planar wrapping clearly.
 /// Both tiles are darker than the wall and floor it spans. A near-white tile
 /// disappears into either one, which breaks up the grid the demo is there to show.
 fn make_checker_texture(size: u32) -> Vec<u8> {
@@ -358,7 +359,7 @@ fn make_checker_texture(size: u32) -> Vec<u8> {
     buf
 }
 
-/// D9: Cylindrical label -- a horizontal warning band with repeating chevrons.
+/// Cylindrical label -- a horizontal warning band with repeating chevrons.
 fn make_label_texture(size: u32) -> Vec<u8> {
     let mut buf = vec![0u8; (size * size * 4) as usize];
     let w = size as f32;
@@ -467,7 +468,7 @@ pub(crate) struct Decal46State {
     pub footprint_tex: Option<vpl::TextureId>,
     pub blood_tex: Option<vpl::TextureId>,
 
-    // D1/D2/D3: manually placed gunshot decals
+    // manually placed gunshot decals
     pub decals: Vec<PlacedDecal>,
     pub next_id: u64,
     pub decal_size: f32,
@@ -477,22 +478,22 @@ pub(crate) struct Decal46State {
     pub blend_mode: DecalBlendMode,
     pub alpha: f32,
 
-    // D3
+    // Surface response, and the wet patch that shows it off.
     pub decal_roughness: f32,
     pub decal_metallic: f32,
     pub show_wet_patch: bool,
 
-    // D4
+    // Lifetime fading and UV animation.
     pub fading_mode: bool,
     pub fade_lifetime: f32,
     pub fade_out: f32,
     pub scroll_handle: Option<DecalHandle>,
 
-    // D5
+    // The non-receiver obstacle decals must not land on.
     pub wall_obstacle_node: Option<vpl::interaction::select::selection::NodeId>,
     pub show_obstacle: bool,
 
-    // D6
+    // Emissive decals.
     pub rune_tex: Option<vpl::TextureId>,
     pub spark_tex: Option<vpl::TextureId>,
     pub show_rune: bool,
@@ -500,23 +501,23 @@ pub(crate) struct Decal46State {
     pub show_spark: bool,
     pub spark_emissive: f32,
 
-    // D7
+    // Soft edges.
     pub edge_fade: f32,
     pub apply_edge_fade: bool,
 
-    // D8
+    // Tri-planar projection across a corner.
     pub checker_tex: Option<vpl::TextureId>,
     pub show_corner_decal: bool,
     pub use_tri_planar: bool,
     pub tri_blend_sharpness: f32,
 
-    // D9
+    // Cylindrical projection around the column.
     pub column_mesh: Option<MeshId>,
     pub column_node: Option<vpl::interaction::select::selection::NodeId>,
     pub label_tex: Option<vpl::TextureId>,
     pub cyl_facing: CylindricalFacing,
 
-    // D10
+    // Additive fire overlay.
     pub fire_tex: Option<vpl::TextureId>,
     pub show_fire: bool,
     pub fire_alpha: f32,
@@ -699,7 +700,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
         .expect("ground mesh upload");
     app.decal46_state.ground_mesh = Some(ground_id);
 
-    // D9: column (cylinder) standing on the ground, right side.
+    // column (cylinder) standing on the ground, right side.
     // radius=0.3, height=3.0, center at (2.5, 0.5, 1.5).
     res.ensure_matcaps_initialized(&app.device, &app.queue);
     let column_data = vpl::primitives::cylinder(0.3, 3.0, 24);
@@ -710,7 +711,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
         .expect("column mesh upload");
     app.decal46_state.column_mesh = Some(column_id);
 
-    // D5: non-receiver box mounted on the wall face.
+    // non-receiver box mounted on the wall face.
     // cuboid(0.6, 0.25, 0.6): sticks 0.25 out from the wall, center y = 0.125.
     let wall_obstacle_data = vpl::primitives::cuboid(0.6, 0.25, 0.6);
     let wall_obstacle_id = res
@@ -733,7 +734,7 @@ pub(crate) fn build_decal46_scene(app: &mut App, renderer: &mut vpl::ViewportRen
         ground_mat,
     );
 
-    // D9: column standing on the ground, right side. Wax matcap with black base colour.
+    // column standing on the ground, right side. Wax matcap with black base colour.
     let column_mat = {
         let mut m = Material::from_colour([0.0, 0.0, 0.0]);
         m.shading_model = vpl::ShadingModel::Matcap(res.builtin_matcap_id(BuiltinMatcap::Wax));
@@ -835,7 +836,7 @@ pub(crate) fn decal46_place(app: &mut App, pick: &vpl::PickHit) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-frame update (D4)
+// Per-frame update
 // ---------------------------------------------------------------------------
 
 pub(crate) fn update_decal46(app: &mut App, dt: f32) {
@@ -845,7 +846,7 @@ pub(crate) fn update_decal46(app: &mut App, dt: f32) {
 
     app.decal46_state.scene.update_decals(dt);
 
-    // D5: sync obstacle visibility.
+    // sync obstacle visibility.
     let show = app.decal46_state.show_obstacle;
     if let Some(node) = app.decal46_state.wall_obstacle_node {
         app.decal46_state.scene.set_visible(node, show);
@@ -895,7 +896,7 @@ pub(crate) fn decal46_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
 pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
     let st = &app.decal46_state;
 
-    // D3: wet patch on the left side of the ground floor.
+    // wet patch on the left side of the ground floor.
     if st.show_wet_patch {
         if let Some(wet) = st.wet_tex {
             // Ground: normal = +Z, placed at z = 0.
@@ -968,7 +969,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         }
     }
 
-    // D1-D3: permanently placed gunshot decals.
+    // permanently placed gunshot decals.
     for placed in &st.decals {
         let Some(tex) = st.albedo_tex else { continue };
         let (transform, projection) = if placed.on_column {
@@ -1013,10 +1014,10 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         fd.scene.decals.push(item);
     }
 
-    // D4: live decals (fading + animation) from the scene.
+    // live decals (fading + animation) from the scene.
     fd.scene.decals.extend(st.scene.collect_decal_items());
 
-    // D6: glowing rune on the wall, center-right.
+    // glowing rune on the wall, center-right.
     if st.show_rune {
         if let Some(rune) = st.rune_tex {
             let transform =
@@ -1031,7 +1032,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         }
     }
 
-    // D8: corner-spanning checkerboard decal at the wall/floor junction.
+    // corner-spanning checkerboard decal at the wall/floor junction.
     // Planar mode stretches visibly across the 90-degree corner; tri-planar wraps cleanly.
     if st.show_corner_decal {
         if let Some(checker) = st.checker_tex {
@@ -1056,7 +1057,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         }
     }
 
-    // D9: cylindrical label decal wrapped around the column.
+    // cylindrical label decal wrapped around the column.
     // The decal's local Z axis = world Z (column axis). Scale XY just outside
     // the column radius (0.3 -> 0.65 world units = 0.5 in local), Z covers the
     // middle section of the column (world z = [0.5, 2.5]).
@@ -1079,7 +1080,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         fd.scene.decals.push(item);
     }
 
-    // D6: spark-impact on the wall, alongside the rune.
+    // spark-impact on the wall, alongside the rune.
     if st.show_spark {
         if let Some(spark) = st.spark_tex {
             let transform =
@@ -1093,7 +1094,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         }
     }
 
-    // D10: fire overlay on the wall, additive blend.
+    // fire overlay on the wall, additive blend.
     // Non-square: 1.2 wide, 2.4 tall (flame shape). Wall +Y normal -> tangent=-X, bitangent=+Z.
     if st.show_fire {
         if let Some(fire) = st.fire_tex {
@@ -1341,7 +1342,7 @@ pub(crate) fn controls_decal46(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
         ui.separator();
-        ui.label("Additive blend (D10):");
+        ui.label("Additive blend:");
         ui.small("Additive decals brighten the receiver instead of replacing its colour.");
         ui.small("Stack multiple additive decals to accumulate brightness.");
         ui.add_space(2.0);
@@ -1443,7 +1444,7 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
-    // ----- Decals: advance live decal ages (D4) -----
+    // ----- Decals: advance live decal ages -----
     if app.decal46_state.built {
         let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
         update_decal46(app, dt);
