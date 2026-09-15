@@ -269,6 +269,35 @@ fn batch_group_key(item: &SceneRenderItem, binding: MaterialTextureBinding) -> B
     )
 }
 
+/// Whether every resource a cached batch list names is still resident.
+///
+/// The batch list holds ids, not views, so a free is the only thing that can
+/// invalidate it: if every `mesh_id` and every texture id still resolves, the
+/// cached batches describe exactly the same draws they did last frame and the
+/// rebuild can be skipped. Ids are generational, so a slot that was freed and
+/// reused since resolves through a different id and is correctly seen as gone.
+///
+/// O(batches), against a rebuild measured at O(items) or worse, and batches are
+/// one to two orders of magnitude fewer than items in the scenes this matters for.
+pub(crate) fn cached_batches_resolve(
+    resources: &DeviceResources,
+    batches: &[InstancedBatch],
+) -> bool {
+    batches.iter().all(|b| {
+        resources.mesh_store.contains(b.mesh_id)
+            && [
+                b.texture_id,
+                b.normal_map_id,
+                b.ao_map_id,
+                b.metallic_roughness_id,
+                b.emissive_id,
+            ]
+            .iter()
+            .flatten()
+            .all(|id| resources.content.textures.get(*id).is_some())
+    })
+}
+
 impl ViewportRenderer {
     /// Build instanced batches for the current frame: filter eligible items,
     /// pack instance/AABB/batch-meta buffers (partial upload when the structure
@@ -318,10 +347,19 @@ impl ViewportRenderer {
             && frame.scene.generation == instancing.last_scene_generation
             && frame.interaction.selection_generation == instancing.last_selection_generation
             && scene_items.len() == instancing.last_scene_items_count
-            // Cached batches reference mesh ids by slot; a free (which bumps this
-            // epoch) can leave them pointing at freed meshes, so every instanced
-            // draw is skipped. Rebuild when it moves, as the per-object path does.
-            && resources.resource_free_epoch == instancing.last_resource_free_epoch
+            // Cached batches reference mesh and texture ids by slot, so a free can
+            // leave them naming resources that are gone. The epoch says something
+            // was freed but not what, and under a streaming eviction budget that is
+            // true on most frames while the batches themselves are almost always
+            // untouched. So when it moves, check rather than discard: if every id
+            // the cached batches name still resolves, they are still correct.
+            //
+            // A replace is excluded from the check deliberately. It swaps the view
+            // behind a live id, which no liveness test can see, so the view epoch
+            // keeps its unconditional rebuild.
+            && resources.resource_view_epoch == instancing.last_resource_view_epoch
+            && (resources.resource_free_epoch == instancing.last_resource_free_epoch
+                || cached_batches_resolve(resources, &instancing.cached_batches))
             // The global wireframe toggle is baked into each instance's
             // per-instance wireframe flag (see the `InstanceData` push below), so
             // flipping it with no other scene change must still force a rebuild.
@@ -663,6 +701,7 @@ impl ViewportRenderer {
             instancing.last_scene_items_count = scene_items.len();
             instancing.last_instancable_count = sorted_items.len();
             instancing.last_resource_free_epoch = resources.resource_free_epoch;
+            instancing.last_resource_view_epoch = resources.resource_view_epoch;
 
             for batch in &instancing.batches {
                 let uv1_chunk = resources
@@ -756,19 +795,24 @@ impl ViewportRenderer {
         cull_state.ensure_outputs(device, instance_count, batch_count);
         // Drop cull bind groups whose binding-0 instance storage buffer was
         // rebuilt this frame; `ensure_outputs` already handles a resized vis
-        // buffer. Also drop them when the free epoch moved: these bind groups
-        // sample the albedo/normal/ao views (bindings 1/3/4) and double as the
-        // indirect draw's group-1, and `replace_texture` swaps the view under a
-        // stable id without changing the cache key, so a texture update would
-        // otherwise keep drawing the old pixels. Mirrors the eviction
-        // `replace_texture` already does for the non-culled instance bind groups.
-        if cull_state.built_gen != instancing.instance_gen
-            || cull_state.built_free_epoch != resources.resource_free_epoch
-        {
+        // buffer. These bind groups also sample the albedo/normal/ao views
+        // (bindings 1/3/4) and double as the indirect draw's group-1, so they
+        // must drop whenever a texture they name stops being the one they were
+        // built against. Two ways that happens, and they need different tests:
+        // a replace swaps the view under a live id and is invisible to any
+        // liveness check, so the view epoch drops them unconditionally; a free
+        // removes the id, which the same validation the batch list uses detects.
+        // When neither applies the bind groups are still correct, which under a
+        // streaming eviction budget is almost every frame.
+        let cull_bgs_stale = cull_state.built_view_epoch != resources.resource_view_epoch
+            || (cull_state.built_free_epoch != resources.resource_free_epoch
+                && !cached_batches_resolve(resources, &instancing.batches));
+        if cull_state.built_gen != instancing.instance_gen || cull_bgs_stale {
             cull_state.instance_cull_bind_groups.clear();
             cull_state.bindless_cull_bind_groups.clear();
             cull_state.built_gen = instancing.instance_gen;
             cull_state.built_free_epoch = resources.resource_free_epoch;
+            cull_state.built_view_epoch = resources.resource_view_epoch;
         }
         for batch in &instancing.batches.clone() {
             let uv1_chunk = resources

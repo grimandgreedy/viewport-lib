@@ -835,6 +835,12 @@ pub struct DeviceResources {
     /// this changes, the cache purges its stale entries so a freed resource's
     /// memory is actually reclaimed instead of pinned by an unused bind group.
     pub(crate) resource_free_epoch: u64,
+    /// Bumped by `replace_texture` and `replace_external_texture`, which swap the
+    /// view behind a texture id that stays live. A cache holding views must
+    /// rebuild when this moves; a cache holding only ids need not, because the
+    /// ids did not change. `resource_free_epoch` moves for these too, so a
+    /// consumer that checks only the free epoch keeps its old behaviour.
+    pub(crate) resource_view_epoch: u64,
     /// Whether a mesh upload keeps a CPU-side copy of its positions, normals,
     /// and indices. Default `true`. See
     /// `DeviceResources::set_retain_mesh_cpu_geometry`.
@@ -918,6 +924,10 @@ pub(crate) struct ViewportCullState {
     /// keyed by that texture's id now samples the old view (the id is unchanged)
     /// and must be rebuilt. Keying alone cannot catch this, so it is tracked here.
     pub(crate) built_free_epoch: u64,
+    /// `DeviceResources::resource_view_epoch` these bind groups were built at.
+    /// A replace swaps the view behind a live id, which no liveness check can
+    /// see, so this always forces a rebuild where the free epoch no longer does.
+    pub(crate) built_view_epoch: u64,
     /// Hierarchical-Z max-depth pyramid for this viewport's occlusion test.
     /// Lazily created the first frame occlusion culling stores depth here, and
     /// rebuilt when the depth target changes size. Per-viewport so two viewports
@@ -941,6 +951,7 @@ impl ViewportCullState {
             compact_capacity: 0,
             built_gen: u64::MAX,
             built_free_epoch: u64::MAX,
+            built_view_epoch: u64::MAX,
             hiz: None,
         }
     }
@@ -1048,6 +1059,10 @@ pub(crate) struct ShadowCullState {
     /// under a stable id. Mirrors `ViewportCullState::built_free_epoch`: when it falls
     /// behind, the cutout bind groups (and any bundle that baked them) are stale.
     pub(crate) built_free_epoch: u64,
+    /// `DeviceResources::resource_view_epoch` these bind groups were built at.
+    /// A replace swaps the view behind a live id, which no liveness check can
+    /// see, so this always forces a rebuild where the free epoch no longer does.
+    pub(crate) built_view_epoch: u64,
     /// Per-cascade render bundles replaying the indirect shadow draw sequence.
     /// The batch loop encodes hundreds of set/draw calls per cascade; for a
     /// stable batch list that sequence is identical every frame (per-frame
@@ -1083,6 +1098,7 @@ impl ShadowCullState {
             batch_output_capacity: 0,
             built_gen: u64::MAX,
             built_free_epoch: u64::MAX,
+            built_view_epoch: u64::MAX,
             shadow_bundles: [None, None, None, None],
             bundle_key: None,
             bundle_draws: 0,

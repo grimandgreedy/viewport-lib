@@ -883,3 +883,116 @@ fn bindless_plugin_instances_and_matches_per_batch() {
         "bindless and per-batch plugin shading must render the same image",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Free-epoch validation: a free that touches nothing the batches name must not
+// rebuild them, and a free that does touch them must.
+// ---------------------------------------------------------------------------
+
+/// Whether the last frame rebuilt the instanced batch list.
+///
+/// A rebuild reports every batch as either re-uploaded or skipped; a cache hit
+/// reports neither, because no upload is attempted at all. Reading only
+/// `batches_reuploaded` would miss a rebuild on a static scene, where every
+/// batch compares equal and the whole rebuild lands in `batches_skipped`.
+fn batches_rebuilt(renderer: &ViewportRenderer) -> bool {
+    let s = renderer.last_frame_stats();
+    s.batches_reuploaded + s.batches_skipped > 0
+}
+
+#[test]
+fn freeing_an_unreferenced_texture_keeps_the_batch_cache() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping freeing_an_unreferenced_texture_keeps_the_batch_cache: no GPU adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let (item_a, item_b, _tex_b) = two_textured_planes(&mut renderer, &device, &queue);
+    let items = vec![item_a, item_b];
+
+    // A spare no render item names: the shape of a streaming eviction freeing a
+    // resource belonging to some other part of the world.
+    let spare = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
+        .unwrap();
+
+    renderer.render_offscreen(&device, &queue, &frame_for(items.clone()), W, H);
+    assert!(renderer.is_using_instanced_path());
+    // Second frame settles the cache: the first is always a build.
+    renderer.render_offscreen(&device, &queue, &frame_for(items.clone()), W, H);
+    assert!(
+        !batches_rebuilt(&renderer),
+        "an unchanged scene must hit the batch cache before the free is tested"
+    );
+
+    assert!(renderer.resources_mut().free_texture(spare));
+    renderer.render_offscreen(&device, &queue, &frame_for(items), W, H);
+
+    assert!(
+        !batches_rebuilt(&renderer),
+        "freeing a texture no batch references must not rebuild the batch list"
+    );
+}
+
+#[test]
+fn freeing_a_referenced_texture_rebuilds_the_batch_cache() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping freeing_a_referenced_texture_rebuilds_the_batch_cache: no GPU adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let (item_a, item_b, tex_b) = two_textured_planes(&mut renderer, &device, &queue);
+    let items = vec![item_a, item_b];
+
+    renderer.render_offscreen(&device, &queue, &frame_for(items.clone()), W, H);
+    renderer.render_offscreen(&device, &queue, &frame_for(items.clone()), W, H);
+    assert!(!batches_rebuilt(&renderer));
+
+    // This one a batch does name, so the validation must fail and force a rebuild.
+    assert!(renderer.resources_mut().free_texture(tex_b));
+    renderer.render_offscreen(&device, &queue, &frame_for(items), W, H);
+
+    assert!(
+        batches_rebuilt(&renderer),
+        "freeing a texture a batch references must rebuild the batch list"
+    );
+}
+
+#[test]
+fn replacing_a_texture_rebuilds_the_batch_cache() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping replacing_a_texture_rebuilds_the_batch_cache: no GPU adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let (item_a, item_b, tex_b) = two_textured_planes(&mut renderer, &device, &queue);
+    let items = vec![item_a, item_b];
+
+    renderer.render_offscreen(&device, &queue, &frame_for(items.clone()), W, H);
+    renderer.render_offscreen(&device, &queue, &frame_for(items.clone()), W, H);
+    assert!(!batches_rebuilt(&renderer));
+
+    // A replace keeps the id live, so no liveness check can see it. The view
+    // epoch is what must force the rebuild here; the sibling tests in this file
+    // check the pixels actually change.
+    renderer
+        .resources_mut()
+        .replace_texture(
+            &device,
+            &queue,
+            tex_b,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
+        .unwrap();
+    renderer.render_offscreen(&device, &queue, &frame_for(items), W, H);
+
+    assert!(
+        batches_rebuilt(&renderer),
+        "a replaced texture keeps its id, so only the view epoch can force the rebuild"
+    );
+}

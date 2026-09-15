@@ -81,6 +81,10 @@ pub(crate) struct InstancingState {
     /// freed meshes and skip every draw. Mirrors the per-object path, which
     /// already rebuilds on this epoch.
     pub(crate) last_resource_free_epoch: u64,
+    /// `DeviceResources::resource_view_epoch` at the last rebuild. Unlike the
+    /// free epoch this is never validated away: a replaced texture keeps its id,
+    /// so nothing the cached batches hold can reveal that its pixels changed.
+    pub(crate) last_resource_view_epoch: u64,
     /// Total instance count from the last rebuild. Fast length check in
     /// `structure_preserved` and `instance_count` for GPU cull dispatches.
     pub(crate) cached_instance_count: usize,
@@ -170,6 +174,7 @@ impl InstancingState {
             last_scene_items_count: usize::MAX,
             last_instancable_count: usize::MAX,
             last_resource_free_epoch: u64::MAX,
+            last_resource_view_epoch: u64::MAX,
             cached_instance_count: 0,
             cached_instance_hashes: Vec::new(),
             cached_batches: Vec::new(),

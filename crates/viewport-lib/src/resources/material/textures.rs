@@ -796,6 +796,9 @@ impl DeviceResources {
         // item set (same mesh and texture id) never rebuilds those bind groups or the
         // cached render bundle, so a replaced texture keeps showing its old pixels.
         self.resource_free_epoch += 1;
+        // The view moved under a live id, so a cache that validates ids cannot tell
+        // anything changed. This is the counter that says it did.
+        self.resource_view_epoch += 1;
         Ok(())
     }
 
@@ -870,6 +873,7 @@ impl DeviceResources {
         // cached render bundle rebuild against the new view, exactly as for
         // `replace_texture`; without it a stable item set keeps sampling the old view.
         self.resource_free_epoch += 1;
+        self.resource_view_epoch += 1;
         true
     }
 
