@@ -92,7 +92,7 @@ pub(crate) use self::scivis::curve_store::{
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
 pub use self::scivis::gaussian_splat::{GaussianSplatData, GaussianSplatId, ShDegree};
-pub(crate) use self::scivis::polyline::PolylineKey;
+pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub(crate) use self::scivis::sprite::SpriteKey;
 pub(crate) use self::scivis::tube::RibbonKey;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the

@@ -1,5 +1,4 @@
 use super::*;
-use crate::resources::VertexBufferLayoutExt;
 
 /// The glyph bind group layouts and the cached arrow / sphere / cube base
 /// meshes. Uploads build their bind groups against the layouts, so they live
@@ -8,13 +7,6 @@ use crate::resources::VertexBufferLayoutExt;
 /// still built on first use, but through a shared reference, so an item-type
 /// plugin can reach them from `prepare`, which holds `&DeviceResources`.
 pub(crate) struct GlyphResources {
-    /// Render pipeline for the polyline vector decoration, built on the first
-    /// frame that carries one. The glyph item type has its own copy of this
-    /// pipeline; the two collapse into one when the polyline item type moves
-    /// onto the plugin seam and takes the decoration with it.
-    pub(crate) decoration_pipeline: Option<DualPipeline>,
-    /// Wireframe variant of `decoration_pipeline`.
-    pub(crate) decoration_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for glyph uniforms (group 1).
     pub(crate) bgl: crate::gpu::BindGroupLayout,
     /// Bind group layout for glyph instance storage (group 2).
@@ -87,8 +79,6 @@ impl GlyphResources {
                 }],
             });
         Self {
-            decoration_pipeline: None,
-            decoration_wireframe_pipeline: None,
             bgl,
             instance_bgl,
             arrow_mesh: std::sync::OnceLock::new(),
@@ -99,72 +89,6 @@ impl GlyphResources {
 }
 
 impl DeviceResources {
-    /// Build the glyph pipelines used to draw the polyline vector decoration.
-    ///
-    /// The glyph item type owns an identical pair inside its plugin. This copy
-    /// exists only because the decoration is produced while uploading polyline
-    /// items, which have not moved onto the plugin seam yet; it goes when they
-    /// do.
-    pub(crate) fn ensure_decoration_glyph_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.glyph.decoration_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "glyph_shader",
-            crate::resources::builders::wgsl_source!("glyph"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "glyph_pipeline_layout",
-            &[
-                &self.binds.camera_bgl,
-                &self.glyph.bgl,
-                &self.glyph.instance_bgl,
-            ],
-        );
-        let vertex_buffers = [Vertex::buffer_layout()];
-        let pipeline = crate::resources::builders::build_dual_pipeline(
-            device,
-            &crate::resources::builders::DualPipelineDesc {
-                label: "glyph_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &vertex_buffers,
-                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(crate::gpu::Face::Back),
-                depth_write: true,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        );
-        let wireframe = crate::resources::builders::build_dual_pipeline(
-            device,
-            &crate::resources::builders::DualPipelineDesc {
-                label: "glyph_wireframe_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &vertex_buffers,
-                blend: None,
-                topology: crate::gpu::PrimitiveTopology::LineList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        );
-        self.glyph.decoration_pipeline = Some(pipeline);
-        self.glyph.decoration_wireframe_pipeline = Some(wireframe);
-    }
-
     /// Upload one [`GlyphItem`] to the GPU and return draw data.
     ///
     /// Shared by the per-frame item upload and the pre-upload store. The base

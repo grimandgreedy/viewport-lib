@@ -276,93 +276,10 @@ impl ViewportRenderer {
             }
         }
 
-        // 7. Polyline node / segment / strip / object rect picks.
+        // 8. Streamtube / tube / ribbon segment / strip / object rect picks.
         let wants_poly_node = mask.intersects(PickMask::POLY_NODE);
         let wants_segment = mask.intersects(PickMask::SEGMENT);
         let wants_strip = mask.intersects(PickMask::STRIP);
-        if wants_poly_node || wants_segment || wants_strip || wants_object {
-            for item in &self.pick_polyline_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                let id = item.settings.pick_id.0;
-                let mut item_hit = false;
-                let mut strips_hit = std::collections::HashSet::<u32>::new();
-
-                // Node pass (POLY_NODE or STRIP or OBJECT).
-                if wants_poly_node || wants_strip || wants_object {
-                    for (node_idx, pos) in item.positions.iter().enumerate() {
-                        if let Some((sx, sy)) = project(view_proj, glam::Vec3::from(*pos)) {
-                            if in_rect(sx, sy) {
-                                item_hit = true;
-                                if wants_poly_node {
-                                    result
-                                        .elements
-                                        .push((id, SubObjectRef::Point(node_idx as u32)));
-                                } else if wants_strip {
-                                    let s = strip_for_node(node_idx as u32, &item.strip_lengths);
-                                    strips_hit.insert(s);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Segment pass (SEGMENT or STRIP or OBJECT) -- full segment/rect intersection.
-                if wants_segment || (wants_strip && !wants_poly_node) || wants_object {
-                    let mut node_off = 0usize;
-                    let mut seg_off = 0u32;
-                    macro_rules! try_seg_rect {
-                        ($ai:expr, $bi:expr, $seg:expr) => {{
-                            if let (Some((sax, say)), Some((sbx, sby))) = (
-                                project(view_proj, glam::Vec3::from(item.positions[$ai])),
-                                project(view_proj, glam::Vec3::from(item.positions[$bi])),
-                            ) {
-                                if segment_in_rect(
-                                    glam::Vec2::new(sax, say),
-                                    glam::Vec2::new(sbx, sby),
-                                    rect_min,
-                                    rect_max,
-                                ) {
-                                    item_hit = true;
-                                    if wants_segment {
-                                        result.elements.push((id, SubObjectRef::Segment($seg)));
-                                    } else if wants_strip {
-                                        let s = strip_for_segment($seg, &item.strip_lengths);
-                                        strips_hit.insert(s);
-                                    }
-                                }
-                            }
-                        }};
-                    }
-                    if item.strip_lengths.is_empty() {
-                        for j in 0..item.positions.len().saturating_sub(1) {
-                            try_seg_rect!(j, j + 1, j as u32);
-                        }
-                    } else {
-                        for &slen in &item.strip_lengths {
-                            let slen = slen as usize;
-                            for j in 0..slen.saturating_sub(1) {
-                                try_seg_rect!(node_off + j, node_off + j + 1, seg_off + j as u32);
-                            }
-                            seg_off += slen.saturating_sub(1) as u32;
-                            node_off += slen;
-                        }
-                    }
-                }
-
-                if wants_strip {
-                    for s in strips_hit {
-                        result.elements.push((id, SubObjectRef::Strip(s)));
-                    }
-                }
-                if wants_object && item_hit {
-                    result.objects.push(id);
-                }
-            }
-        }
-
-        // 8. Streamtube / tube / ribbon segment / strip / object rect picks.
         if wants_poly_node || wants_segment || wants_strip || wants_object {
             // Streamtube and tube: test both projected endpoints of each segment
             // with segment_in_rect instead of the midpoint projection heuristic.

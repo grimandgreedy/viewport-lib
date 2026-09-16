@@ -434,20 +434,11 @@ impl ViewportRenderer {
         let mut streamtube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
         let mut tube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
         let mut ribbon_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
-        // Polyline outline indices: indices into polyline_gpu_data for selected polylines.
-        let mut polyline_outline_indices: Vec<usize> = Vec::new();
         // Each entry is (gpu_data_index, instance_ranges).
         // None = draw all instances (object-level selection).
         // Some(vec) = draw only these specific instance indices (sub-object Instance selection).
         let mut sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
         if frame.interaction.outline_selected {
-            // Polyline outlines: collect indices of selected polylines so the mask
-            // pass can draw their segment quads via the polyline_outline_mask_pipeline.
-            if !self.polyline_selected_gpu_indices.is_empty() {
-                self.resources.ensure_polyline_outline_mask_pipeline(device);
-                polyline_outline_indices = self.polyline_selected_gpu_indices.clone();
-            }
-
             // Sprite outline indices: record which sprite GPU data entries are selected
             // so the mask pass can render the actual billboard quads.
             {
@@ -713,7 +704,6 @@ impl ViewportRenderer {
             slot.selection_outlines.streamtube_outline_items = streamtube_outline_items;
             slot.selection_outlines.tube_outline_items = tube_outline_items;
             slot.selection_outlines.ribbon_outline_items = ribbon_outline_items;
-            slot.selection_outlines.polyline_outline_indices = polyline_outline_indices;
             slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
             slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
             slot.xray_object_buffers = xray_object_buffers;
@@ -769,10 +759,6 @@ impl ViewportRenderer {
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
-                    .polyline_outline_indices
-                    .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
                     .sprite_outline_indices
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
@@ -825,8 +811,6 @@ impl ViewportRenderer {
                 &slot_ref.selection_outlines.tube_outline_items as *const Vec<CurveMeshOutlineItem>;
             let ribbon_outline_items_ptr = &slot_ref.selection_outlines.ribbon_outline_items
                 as *const Vec<CurveMeshOutlineItem>;
-            let polyline_outline_idx_ptr =
-                &slot_ref.selection_outlines.polyline_outline_indices as *const Vec<usize>;
             let sprite_outline_idx_ptr = &slot_ref.selection_outlines.sprite_outline_indices
                 as *const Vec<(usize, Option<Vec<u32>>)>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
@@ -839,8 +823,6 @@ impl ViewportRenderer {
                 &self.tube_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
             let ribbon_gpu_ptr =
                 &self.ribbon_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
-            let polyline_gpu_ptr =
-                &self.polyline_gpu_data as *const Vec<crate::resources::PolylineGpuData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const crate::gpu::TextureView;
@@ -854,14 +836,12 @@ impl ViewportRenderer {
                 streamtube_outline_items,
                 tube_outline_items,
                 ribbon_outline_items,
-                polyline_outline_idxs,
                 sprite_outline_indices,
                 screen_rect_outlines,
                 sprite_gpu_data,
                 streamtube_gpu_data,
                 tube_gpu_data,
                 ribbon_gpu_data,
-                polyline_gpu_data,
                 camera_bg,
                 mask_view,
                 colour_view,
@@ -873,14 +853,12 @@ impl ViewportRenderer {
                     &*streamtube_outline_items_ptr,
                     &*tube_outline_items_ptr,
                     &*ribbon_outline_items_ptr,
-                    &*polyline_outline_idx_ptr,
                     &*sprite_outline_idx_ptr,
                     &*screen_rect_outlines_ptr,
                     &*sprite_gpu_ptr,
                     &*streamtube_gpu_ptr,
                     &*tube_gpu_ptr,
                     &*ribbon_gpu_ptr,
-                    &*polyline_gpu_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*colour_view_ptr,
@@ -1048,18 +1026,80 @@ impl ViewportRenderer {
                     }
                 }
 
-                // Draw polyline segment quads into the mask using the dedicated
-                // polyline_outline_mask_pipeline (instance-expanded quads).
-                if !polyline_outline_idxs.is_empty() {
-                    if let Some(pipeline) = self.resources.polyline.outline_mask_pipeline.as_ref() {
+                // Draw sprite billboards into the mask so the outline matches
+                // each sprite's actual quad shape and per-instance size.
+                if !sprite_outline_indices.is_empty() {
+                    if let Some(pipeline) = self.resources.sprite.outline_mask_pipeline.as_ref() {
                         pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, camera_bg, &[]);
-                        for &idx in polyline_outline_idxs {
-                            if let Some(pline) = polyline_gpu_data.get(idx) {
-                                pass.set_bind_group(1, &pline.bind_group, &[]);
-                                pass.set_vertex_buffer(0, pline.vertex_buffer.slice(..));
-                                pass.draw(0..6, 0..pline.segment_count);
+                        for (idx, instance_filter) in sprite_outline_indices {
+                            if let Some(sprite) = sprite_gpu_data.get(*idx) {
+                                pass.set_bind_group(0, camera_bg, &[]);
+                                pass.set_bind_group(1, &sprite.bind_group, &[]);
+                                pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
+                                match instance_filter {
+                                    None => {
+                                        pass.draw(0..6, 0..sprite.sprite_count);
+                                    }
+                                    Some(indices) => {
+                                        for &i in indices {
+                                            pass.draw(0..6, i..i + 1);
+                                        }
+                                    }
+                                }
                             }
+                        }
+                    }
+                }
+
+                // Draw screen-space rect outlines for screen images.
+                if !screen_rect_outlines.is_empty() {
+                    if let Some(pipeline) = self
+                        .resources
+                        .screen_image
+                        .rect_outline_mask_pipeline
+                        .as_ref()
+                    {
+                        pass.set_pipeline(pipeline);
+                        for sr in screen_rect_outlines {
+                            pass.set_bind_group(0, &sr.bind_group, &[]);
+                            pass.draw(0..6, 0..1);
+                        }
+                    }
+                }
+
+                // Draw streamtube, tube, and ribbon mesh outlines. Streamtubes and
+                // tubes use the back-face-culled pipeline; ribbons use the two-sided
+                // pipeline because they are flat surfaces with no clear front face.
+                pass.set_bind_group(0, camera_bg, &[]);
+                bind_deform_group!(
+                    pass,
+                    self.resources,
+                    &self.resources.deform.dummy_bind_group
+                );
+                let curve_draw_groups = [
+                    (
+                        streamtube_outline_items as &[CurveMeshOutlineItem],
+                        streamtube_gpu_data as &[crate::resources::StreamtubeGpuData],
+                    ),
+                    (tube_outline_items, tube_gpu_data),
+                    (ribbon_outline_items, ribbon_gpu_data),
+                ];
+                for (items, gpu_data_slice) in &curve_draw_groups {
+                    for item in *items {
+                        let pipeline = if item.two_sided {
+                            &self.resources.outline.mask_two_sided_pipeline
+                        } else {
+                            &self.resources.outline.mask_pipeline
+                        };
+                        pass.set_pipeline(pipeline);
+                        if let Some(gpu) = gpu_data_slice.get(item.index) {
+                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
+                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                gpu.index_buffer.slice(..),
+                                crate::gpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
                         }
                     }
                 }

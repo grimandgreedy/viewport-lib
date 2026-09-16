@@ -373,11 +373,6 @@ pub struct ViewportRenderer {
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
-    /// Per-frame glyph GPU data for the polyline vector decoration only.
-    /// Submitted glyph sets are prepared and drawn by the glyph item-type
-    /// plugin; this goes when the polyline item type moves and takes the
-    /// decoration with it.
-    glyph_gpu_data: Vec<crate::resources::GlyphGpuData>,
     /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
@@ -393,8 +388,6 @@ pub struct ViewportRenderer {
     tube_selected_gpu_indices: Vec<usize>,
     /// Indices into ribbon_gpu_data for selected ribbons (set in prepare_scene, consumed in prepare_viewport).
     ribbon_selected_gpu_indices: Vec<usize>,
-    /// Indices into polyline_gpu_data for selected user polylines (set in prepare_scene, consumed in prepare_viewport).
-    polyline_selected_gpu_indices: Vec<usize>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
@@ -577,7 +570,6 @@ pub struct ViewportRenderer {
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_polyline_items: Vec<PolylineItem>,
     /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -1001,7 +993,6 @@ impl ViewportRenderer {
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
-            glyph_gpu_data: Vec::new(),
             polyline_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
             tube_gpu_data: Vec::new(),
@@ -1009,7 +1000,6 @@ impl ViewportRenderer {
             streamtube_selected_gpu_indices: Vec::new(),
             tube_selected_gpu_indices: Vec::new(),
             ribbon_selected_gpu_indices: Vec::new(),
-            polyline_selected_gpu_indices: Vec::new(),
             sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             particle_gpu_data: Vec::new(),
@@ -1061,7 +1051,6 @@ impl ViewportRenderer {
             prepared_refraction_volumes: Vec::new(),
             scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
-            pick_polyline_items: Vec::new(),
             pick_sprite_items: Vec::new(),
             pick_streamtube_items: Vec::new(),
             pick_tube_items: Vec::new(),
@@ -3244,7 +3233,6 @@ impl ViewportRenderer {
         emit_scivis_draw_calls!(
             &self.resources,
             &mut *render_pass,
-            &self.glyph_gpu_data,
             &self.polyline_gpu_data,
             &self.streamtube_gpu_data,
             camera_bg,

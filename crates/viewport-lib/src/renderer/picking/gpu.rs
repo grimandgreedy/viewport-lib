@@ -22,9 +22,6 @@ enum PickItemType {
     /// Sprite sets: camera-facing quads expanded in the vertex shader, drawn with
     /// a dedicated pick pipeline that reuses the render expansion. Object-level.
     Sprite,
-    /// Polylines: screen-space thick lines expanded per segment in the vertex
-    /// shader, drawn with a dedicated pick pipeline. Object-level.
-    Polyline,
 }
 
 /// Test the screen-space overlay images against a single click position and
@@ -138,11 +135,6 @@ impl PickItemType {
             ),
             // Sprite sets answer the object mask plus the per-instance level.
             PickItemType::Sprite => mask.intersects(PickMask::OBJECT | PickMask::INSTANCE),
-            // Polylines are object-level; they answer the whole object mask plus
-            // the node/segment/strip levels a curve query may ask.
-            PickItemType::Polyline => mask.intersects(
-                PickMask::OBJECT | PickMask::POLY_NODE | PickMask::SEGMENT | PickMask::STRIP,
-            ),
         }
     }
 }
@@ -170,9 +162,6 @@ enum PickSubKind {
     Plugin(&'static str),
     /// Glyph, tensor-glyph, or sprite set: `instance_index` is the instance.
     Instance,
-    /// Polyline: `instance_index` is the segment; strip is resolved against the
-    /// retained polyline items.
-    Polyline,
     /// Streamtube, tube, or ribbon: `primitive_index` is a connected-mesh
     /// triangle, mapped to a segment / strip through the item's `tri_segment` /
     /// `tri_strip` tables.
@@ -187,17 +176,6 @@ struct SpritePickDraw<'a> {
     sprite_bind_group: &'a crate::gpu::BindGroup,
     vertex_buffer: &'a crate::gpu::Buffer,
     sprite_count: u32,
-}
-
-/// One polyline to draw into the pick pass. Same shape as [`SpritePickDraw`]:
-/// the group-2 pick-id bind group is owned, the render bind group and segment
-/// buffer are borrowed. The pipeline and group-0 pick camera bind group are
-/// shared across polylines.
-struct PolylinePickDraw<'a> {
-    id_bind_group: crate::gpu::BindGroup,
-    render_bind_group: &'a crate::gpu::BindGroup,
-    vertex_buffer: &'a crate::gpu::Buffer,
-    segment_count: u32,
 }
 
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
@@ -228,7 +206,6 @@ enum PickGeom<'a> {
 /// `PickDrawSet` is still alive.
 struct PickPipelineFlags {
     has_pickable_sprites: bool,
-    has_pickable_polylines: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -313,7 +290,6 @@ fn build_surface_pick_meta(frame: &FrameData) -> SurfacePickMeta {
 struct PickDrawSet<'a> {
     draws: Vec<(PickGeom<'a>, PickInstance)>,
     sprite_draws: Vec<SpritePickDraw<'a>>,
-    polyline_draws: Vec<PolylinePickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -336,10 +312,7 @@ impl PickDrawSet<'_> {
     /// `true` when nothing would be drawn: the pass has nothing to submit, so
     /// the caller can report a miss without touching the GPU.
     fn is_empty(&self) -> bool {
-        self.draws.is_empty()
-            && self.sprite_draws.is_empty()
-            && self.polyline_draws.is_empty()
-            && !self.has_plugin_pick
+        self.draws.is_empty() && self.sprite_draws.is_empty() && !self.has_plugin_pick
     }
 }
 
@@ -898,14 +871,6 @@ impl ViewportRenderer {
         if has_pickable_sprites {
             self.resources.ensure_sprite_pick_pipeline(device);
         }
-        let has_pickable_polylines = PickItemType::Polyline.satisfies(mask)
-            && self
-                .polyline_gpu_data
-                .iter()
-                .any(|g| g.pick_id != PickId::NONE && g.segment_count > 0);
-        if has_pickable_polylines {
-            self.resources.ensure_polyline_pick_pipeline(device);
-        }
 
         // Decals rasterise their projection box (the unit cube mapped by
         // `transform`) as an object-level proxy. Ensure the shared cube mesh
@@ -958,7 +923,6 @@ impl ViewportRenderer {
 
         PickPipelineFlags {
             has_pickable_sprites,
-            has_pickable_polylines,
             decal_cube,
             scatter_cube,
             scatter_sphere,
@@ -985,7 +949,6 @@ impl ViewportRenderer {
         flags: &PickPipelineFlags,
     ) -> PickDrawSet<'a> {
         let has_pickable_sprites = flags.has_pickable_sprites;
-        let has_pickable_polylines = flags.has_pickable_polylines;
         let decal_cube = flags.decal_cube;
         let scatter_cube = flags.scatter_cube;
         let scatter_sphere = flags.scatter_sphere;
@@ -1180,47 +1143,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Polylines draw with their own pipeline: group 0 is the shared minimal
-        // pick camera, group 1 is the polyline render bind group (uniform + LUT),
-        // group 2 is the per-draw object id.
-        let mut polyline_draws: Vec<PolylinePickDraw> = Vec::new();
-        if has_pickable_polylines {
-            let id_bgl = self
-                .resources
-                .pick
-                .polyline_pick_id_bgl
-                .as_ref()
-                .expect("polyline pick id bgl");
-            for gpu in self
-                .polyline_gpu_data
-                .iter()
-                .filter(|g| g.pick_id != PickId::NONE && g.segment_count > 0)
-            {
-                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("polyline_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("polyline_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: id_buf.as_entire_binding(),
-                    }],
-                });
-                polyline_draws.push(PolylinePickDraw {
-                    id_bind_group,
-                    render_bind_group: &gpu.bind_group,
-                    vertex_buffer: &gpu.vertex_buffer,
-                    segment_count: gpu.segment_count,
-                });
-            }
-        }
-
         // Registered plugins draw their own pick-ids into the pass. They answer
         // the same level set as built-in surfaces (object plus the mesh
         // sub-object levels, refined through `ItemTypePlugin::resolve_sub_object`
@@ -1239,7 +1161,10 @@ impl ViewportRenderer {
                 | PickMask::INSTANCE
                 | PickMask::SPLAT
                 | PickMask::CLOUD_POINT
-                | PickMask::VOXEL,
+                | PickMask::VOXEL
+                | PickMask::POLY_NODE
+                | PickMask::SEGMENT
+                | PickMask::STRIP,
         ) && self.any_plugin_items_submitted(frame);
 
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
@@ -1251,7 +1176,6 @@ impl ViewportRenderer {
         PickDrawSet {
             draws,
             sprite_draws,
-            polyline_draws,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -1514,21 +1438,6 @@ impl ViewportRenderer {
                     pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
                     pick_pass.set_vertex_buffer(0, sd.vertex_buffer.slice(..));
                     pick_pass.draw(0..6, 0..sd.sprite_count);
-                }
-            }
-        }
-
-        // Polylines: screen-space thick lines, one draw per polyline of its
-        // segment quads. Group 0 is the shared minimal pick camera.
-        if let Some(polyline_pipeline) = self.resources.pick.polyline_pipeline.as_ref() {
-            if !draw_set.polyline_draws.is_empty() {
-                pick_pass.set_pipeline(polyline_pipeline);
-                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                for pd in &draw_set.polyline_draws {
-                    pick_pass.set_bind_group(1, pd.render_bind_group, &[]);
-                    pick_pass.set_bind_group(2, &pd.id_bind_group, &[]);
-                    pick_pass.set_vertex_buffer(0, pd.vertex_buffer.slice(..));
-                    pick_pass.draw(0..6, 0..pd.segment_count);
                 }
             }
         }
@@ -2208,21 +2117,6 @@ impl ViewportRenderer {
                     None
                 }
             }
-            PickSubKind::Polyline => {
-                if mask.intersects(PickMask::STRIP) {
-                    let strip = self
-                        .polyline_gpu_data
-                        .iter()
-                        .find(|g| g.pick_id.0 == object_id)
-                        .map(|g| strip_for_segment(sub_primitive, &g.strip_lengths))
-                        .unwrap_or(0);
-                    Some(SubObjectRef::Strip(strip))
-                } else if mask.intersects(PickMask::SEGMENT | PickMask::POLY_NODE) {
-                    Some(SubObjectRef::Segment(sub_primitive))
-                } else {
-                    None
-                }
-            }
             PickSubKind::Curve => {
                 // Curve sub-object picking needs the primitive index. Without the
                 // feature the GPU path stays object-level: no silent per-click CPU
@@ -2297,8 +2191,13 @@ impl ViewportRenderer {
         world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
         let mesh_sub = PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL;
-        let shader_written =
-            PickMask::INSTANCE | PickMask::SPLAT | PickMask::CLOUD_POINT | PickMask::VOXEL;
+        let shader_written = PickMask::INSTANCE
+            | PickMask::SPLAT
+            | PickMask::CLOUD_POINT
+            | PickMask::VOXEL
+            | PickMask::POLY_NODE
+            | PickMask::SEGMENT
+            | PickMask::STRIP;
         let effective_mask = if primitive_index_supported {
             mask
         } else {
@@ -2339,21 +2238,6 @@ impl ViewportRenderer {
             PickSubKind::Instance => mask
                 .intersects(PickMask::INSTANCE)
                 .then_some(SubObjectRef::Instance(sub_primitive)),
-            PickSubKind::Polyline => {
-                if mask.intersects(PickMask::STRIP) {
-                    let strip = self
-                        .polyline_gpu_data
-                        .iter()
-                        .find(|g| g.pick_id.0 == object_id)
-                        .map(|g| strip_for_segment(sub_primitive, &g.strip_lengths))
-                        .unwrap_or(0);
-                    Some(SubObjectRef::Strip(strip))
-                } else if mask.intersects(PickMask::SEGMENT | PickMask::POLY_NODE) {
-                    Some(SubObjectRef::Segment(sub_primitive))
-                } else {
-                    None
-                }
-            }
             PickSubKind::Curve => {
                 if !primitive_index_supported {
                     return None;
@@ -2530,15 +2414,6 @@ impl ViewportRenderer {
             .filter(|g| g.pick_id != PickId::NONE && g.sprite_count > 0)
         {
             kinds.insert(gpu.pick_id.0, PickSubKind::Instance);
-        }
-
-        // Polylines.
-        for gpu in self
-            .polyline_gpu_data
-            .iter()
-            .filter(|g| g.pick_id != PickId::NONE && g.segment_count > 0)
-        {
-            kinds.insert(gpu.pick_id.0, PickSubKind::Polyline);
         }
 
         kinds

@@ -219,6 +219,7 @@ pub(crate) struct ScatterViewportState {
 /// intermediate format (`Rgba16Float`). Used for pipelines that draw into the
 /// primary scene colour attachment, which may be either format depending on
 /// whether post-processing is active.
+#[derive(Clone)]
 pub(crate) struct DualPipeline {
     pub ldr: crate::gpu::RenderPipeline,
     pub hdr: crate::gpu::RenderPipeline,
@@ -262,11 +263,6 @@ pub(crate) struct PickResources {
     /// Group 2 layout for `node_pipeline`: the per-triangle node payload buffer
     /// (read-only storage).
     pub(crate) node_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for polylines. Reuses the polyline render vertex expansion
-    /// and writes the item's object id.
-    pub(crate) polyline_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the polyline pick pipeline (per-draw object-id uniform).
-    pub(crate) polyline_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Screen-space image quad pipelines (plain + depth-composite) and the rect
@@ -747,7 +743,10 @@ pub struct DeviceResources {
     /// Incremented by the `ensure_*` pipeline builders when they actually
     /// create pipelines (not on their no-op early returns). Read and reset
     /// each `prepare()` call to populate `FrameStats::pipelines_built_this_frame`.
-    pub(crate) frame_pipelines_built: u32,
+    ///
+    /// Atomic because some builders run behind a shared reference, so an item
+    /// type's plugin can trigger them from `prepare`.
+    pub(crate) frame_pipelines_built: std::sync::atomic::AtomicU32,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
     /// holds bind groups that keep their referenced GPU resources alive; when
     /// this changes, the cache purges its stale entries so a freed resource's
@@ -1297,8 +1296,9 @@ impl DeviceResources {
     /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
     /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
     /// compile can be attributed to the exact builder.
-    pub(crate) fn note_pipeline_built(&mut self, site: &'static str) {
-        self.frame_pipelines_built += 1;
+    pub(crate) fn note_pipeline_built(&self, site: &'static str) {
+        self.frame_pipelines_built
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         tracing::debug!(target: "viewport_lib::pipelines", site, "lazy pipeline build");
     }
 }

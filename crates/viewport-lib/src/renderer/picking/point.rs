@@ -375,88 +375,10 @@ impl ViewportRenderer {
             }
         }
 
-        // 7. Polyline node picks (POLY_NODE, STRIP, or OBJECT fallback).
-        let wants_poly_node = mask.intersects(PickMask::POLY_NODE);
-        let wants_strip = mask.intersects(PickMask::STRIP);
-        if wants_poly_node || wants_strip || wants_object {
-            for item in &self.pick_polyline_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                let radius_px = (item.line_width + 4.0).max(8.0);
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos,
-                    item.settings.pick_id.0,
-                    &item.positions,
-                    glam::Mat4::IDENTITY,
-                    view_proj,
-                    viewport_size,
-                    radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_poly_node {
-                        // sub_object is already SubObjectRef::Point(node_index)
-                    } else if wants_strip {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Strip(strip_for_node(
-                                idx,
-                                &item.strip_lengths,
-                            )));
-                        }
-                    } else {
-                        hit.sub_object = None;
-                    }
-                    consider(toi, hit);
-                }
-            }
-        }
-
-        // 8. Polyline segment picks (SEGMENT, STRIP, or OBJECT fallback).
-        // Uses screen-space distance from the click to the full segment line so
-        // clicking anywhere along a segment registers, not just near the midpoint.
-        let wants_segment = mask.intersects(PickMask::SEGMENT);
-        if wants_segment || wants_strip || wants_object {
-            for item in &self.pick_polyline_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                // Half the visual line width plus a few pixels of slack.
-                let threshold_px = (item.line_width / 2.0 + 4.0).max(4.0);
-                let Some((seg_idx, world_pos)) = pick_closest_polyline_segment(
-                    click_pos,
-                    viewport_size,
-                    view_proj,
-                    &item.positions,
-                    &item.strip_lengths,
-                    threshold_px,
-                ) else {
-                    continue;
-                };
-                let toi = (world_pos - ray_origin).dot(ray_dir).max(0.0);
-                let sub_object = if wants_segment {
-                    Some(SubObjectRef::Segment(seg_idx))
-                } else if wants_strip {
-                    Some(SubObjectRef::Strip(strip_for_segment(
-                        seg_idx,
-                        &item.strip_lengths,
-                    )))
-                } else {
-                    None
-                };
-                #[allow(deprecated)]
-                let hit = PickHit {
-                    id: item.settings.pick_id.0,
-                    sub_object,
-                    world_pos,
-                    normal: glam::Vec3::Z,
-                    scalar_value: None,
-                    sub_object_world_pos: None,
-                };
-                consider(toi, hit);
-            }
-        }
-
         // 9. Streamtube / tube / ribbon picks (POLY_NODE, SEGMENT, STRIP, or OBJECT).
+        let wants_poly_node = mask.intersects(PickMask::POLY_NODE);
+        let wants_segment = mask.intersects(PickMask::SEGMENT);
+        let wants_strip = mask.intersects(PickMask::STRIP);
         // Streamtube / tube: screen-space closest-segment test against each cylinder
         //     axis (both endpoints projected), not just the midpoint.
         //   Ribbon: ray-triangle intersection against the reconstructed swept quad

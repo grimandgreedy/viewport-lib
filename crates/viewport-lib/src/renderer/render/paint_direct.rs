@@ -50,7 +50,6 @@ impl ViewportRenderer {
         emit_scivis_draw_calls!(
             &self.resources,
             &mut *render_pass,
-            &self.glyph_gpu_data,
             &self.polyline_gpu_data,
             &self.streamtube_gpu_data,
             camera_bg,

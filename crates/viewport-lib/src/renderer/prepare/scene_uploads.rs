@@ -226,91 +226,17 @@ impl ViewportRenderer {
     pub(super) fn upload_polylines(
         resources: &mut DeviceResources,
         polyline_gpu_data: &mut Vec<crate::resources::PolylineGpuData>,
-        polyline_selected_gpu_indices: &mut Vec<usize>,
-        glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
         // ------------------------------------------------------------------
-        // polyline GPU data upload.
+        // The shared line substrate: everything that renders through the
+        // polyline pipelines without being a polyline item. The polyline item
+        // type prepares its own draws in its plugin.
         // ------------------------------------------------------------------
         polyline_gpu_data.clear();
-        polyline_selected_gpu_indices.clear();
         let vp_size = frame.camera.viewport_size;
-        if !frame.scene.polylines.is_empty() {
-            resources.ensure_polyline_pipeline(device);
-            // Clip-exempt polylines (ItemSettings::ignore_clip, e.g. clip-object
-            // outlines) draw through the no-clip pipeline; create it on demand.
-            if frame.scene.polylines.iter().any(|p| p.settings.ignore_clip) {
-                resources.ensure_polyline_no_clip_pipeline(device);
-            }
-            for item in &frame.scene.polylines {
-                if item.settings.hidden || item.positions.is_empty() {
-                    continue;
-                }
-                let mut gpu_data =
-                    resources.upload_polyline_per_frame(device, queue, item, vp_size);
-                gpu_data.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                gpu_data.skip_clip = item.settings.ignore_clip;
-                if frame.interaction.outline_selected && item.settings.selected {
-                    polyline_selected_gpu_indices.push(polyline_gpu_data.len());
-                }
-                polyline_gpu_data.push(gpu_data);
-
-                // Auto-generate GlyphItems for node/edge vector quantities.
-                if !item.node_vectors.is_empty() {
-                    resources.ensure_decoration_glyph_pipeline(device);
-                    let g = crate::quantities::polyline_node_vectors_to_glyphs(item);
-                    if !g.positions.is_empty() {
-                        let wf = frame.viewport.wireframe_mode || item.settings.wireframe;
-                        let gd = resources.upload_glyph_set_per_frame(device, queue, &g, wf);
-                        glyph_gpu_data.push(gd);
-                    }
-                }
-                if !item.edge_vectors.is_empty() {
-                    resources.ensure_decoration_glyph_pipeline(device);
-                    let g = crate::quantities::polyline_edge_vectors_to_glyphs(item);
-                    if !g.positions.is_empty() {
-                        let wf = frame.viewport.wireframe_mode || item.settings.wireframe;
-                        let gd = resources.upload_glyph_set_per_frame(device, queue, &g, wf);
-                        glyph_gpu_data.push(gd);
-                    }
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // Pre-uploaded polyline references.
-        // ------------------------------------------------------------------
-        if !frame.scene.polyline_refs.is_empty() {
-            resources.ensure_polyline_pipeline(device);
-            // viewport_width/height live at offset 96 of PolylineUniform;
-            // they drive the screen-space miter expansion and must reflect
-            // the current viewport size, not the placeholder used at upload.
-            let vp = [
-                frame.camera.viewport_size[0].max(1.0),
-                frame.camera.viewport_size[1].max(1.0),
-            ];
-            for ref_item in &frame.scene.polyline_refs {
-                if ref_item.settings.hidden {
-                    continue;
-                }
-                let entry = match resources.content.polyline_store.get(ref_item.source) {
-                    Some(e) => e.clone(),
-                    None => continue,
-                };
-                // Model matrix at offset 0.
-                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
-                queue.write_buffer(&entry._uniform_buf, 96, bytemuck::bytes_of(&vp));
-                let mut gpu_data = entry;
-                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
-                if frame.interaction.outline_selected && ref_item.settings.selected {
-                    polyline_selected_gpu_indices.push(polyline_gpu_data.len());
-                }
-                polyline_gpu_data.push(gpu_data);
-            }
-        }
 
         // ------------------------------------------------------------------
         // Scatter-volume bounds outlines: emit a polyline of the volume

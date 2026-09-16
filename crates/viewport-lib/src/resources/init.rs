@@ -2427,7 +2427,7 @@ impl DeviceResources {
             point_cloud: crate::resources::scivis::point_cloud::PointCloudResources::new(device),
             glyph: crate::resources::scivis::glyph::GlyphResources::new(device),
             tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::new(device),
-            polyline: crate::resources::scivis::polyline::PolylineResources::default(),
+            polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
             streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
             ribbon: crate::resources::scivis::tube::RibbonResources::default(),
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
@@ -2477,7 +2477,7 @@ impl DeviceResources {
             instance_custom_data_buf,
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
-            frame_pipelines_built: 0,
+            frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
             resource_free_epoch: 0,
             resource_view_epoch: 0,
             retain_mesh_cpu_geometry: true,
@@ -2494,7 +2494,9 @@ impl DeviceResources {
         mark("decal_pipelines");
         // Pipelines built during construction are load-time cost, not a frame
         // hitch; keep them out of the first frame's stats.
-        resources.frame_pipelines_built = 0;
+        resources
+            .frame_pipelines_built
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         // GPU skinning is opt-in: hosts call
         // `viewport_lib::plugins::skinning::SkinningPlugin::install(&mut resources, &device)`
         // before uploading any skin data. The renderer otherwise carries no

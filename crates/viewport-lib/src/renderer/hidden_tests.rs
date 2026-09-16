@@ -24,6 +24,7 @@ use crate::renderer::PickId;
 use crate::renderer::item_plugins::glyph::GlyphPlugin;
 use crate::renderer::item_plugins::gpu_implicit::GpuImplicitPlugin;
 use crate::renderer::item_plugins::point_cloud::PointCloudPlugin;
+use crate::renderer::item_plugins::polyline::PolylinePlugin;
 use crate::renderer::item_plugins::tensor_glyph::TensorGlyphPlugin;
 use crate::resources::GpuImplicitItem;
 use crate::scene::material::ItemSettings;
@@ -215,8 +216,10 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
     // -----------------------------------------------------------------
     // Polyline
     // -----------------------------------------------------------------
+    //
+    // The polyline item type is an `ItemTypePlugin`, so the check drives the
+    // plugin's prepare directly instead of reading a renderer field.
     {
-        let mut fd = empty_frame();
         let mut vis = PolylineItem::default();
         vis.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         vis.strip_lengths = vec![2];
@@ -225,11 +228,28 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
-        fd.scene.polylines.push(vis);
-        fd.scene.polylines.push(hid);
-        let _ = renderer.prepare_callback(&device, &queue, &fd);
+        let items: Vec<PolylineItem> = vec![vis, hid];
+
+        let fd = empty_frame();
+        let resources = renderer.resources();
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &fd.camera.render_camera,
+            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
+            viewport_index: 0,
+            frame_index: 0,
+            jobs: crate::resources::Jobs::new(resources),
+            resources,
+            wireframe_mode: false,
+            outline_selected: false,
+            sub_selection: None,
+            clip_objects: &[],
+            quality_reduced: false,
+            ref_items: None,
+        };
+        let mut plugin = PolylinePlugin::default();
+        let _ = plugin.prepare(&device, &queue, &ctx, &items);
         assert_eq!(
-            renderer.polyline_gpu_data.len(),
+            plugin.drawn_count(),
             1,
             "polyline: hidden item must not produce gpu data"
         );

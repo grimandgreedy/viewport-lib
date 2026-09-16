@@ -435,15 +435,7 @@ impl ViewportRenderer {
         lod_switches += inst_switches;
         lod_culled += inst_culled;
         lod_items_reduced += inst_reduced;
-        Self::upload_polylines(
-            resources,
-            &mut self.polyline_gpu_data,
-            &mut self.polyline_selected_gpu_indices,
-            &mut self.glyph_gpu_data,
-            device,
-            queue,
-            frame,
-        );
+        Self::upload_polylines(resources, &mut self.polyline_gpu_data, device, queue, frame);
         let decal_cache_stats = Self::upload_decals(
             resources,
             &mut self.decal_gpu_data,
@@ -1208,8 +1200,10 @@ impl ViewportRenderer {
         // Snapshot geometry upload bytes accumulated since the last frame, then reset.
         let upload_bytes = self.resources.frame_upload_bytes;
         self.resources.frame_upload_bytes = 0;
-        let pipelines_built_this_frame = self.resources.frame_pipelines_built;
-        self.resources.frame_pipelines_built = 0;
+        let pipelines_built_this_frame = self
+            .resources
+            .frame_pipelines_built
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
 
         // Resolve effective scale bounds and degradation flags.
         // When a preset is set it overrides the individual fields; the individual

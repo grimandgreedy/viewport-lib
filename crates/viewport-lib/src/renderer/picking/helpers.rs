@@ -108,7 +108,7 @@ pub fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f32> {
 // ---------------------------------------------------------------------------
 
 /// Map a global node index to its strip index by walking `strip_lengths`.
-pub(super) fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
+pub(crate) fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
     let mut offset = 0u32;
     for (i, &len) in strip_lengths.iter().enumerate() {
         offset += len;
@@ -224,7 +224,7 @@ pub fn segment_in_rect(
 }
 
 /// Map a global segment index to its strip index by walking `strip_lengths`.
-pub(super) fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
+pub(crate) fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
     let mut offset = 0u32;
     for (i, &len) in strip_lengths.iter().enumerate() {
         let segs = len.saturating_sub(1);

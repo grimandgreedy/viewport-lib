@@ -1089,59 +1089,11 @@ macro_rules! emit_outline_composite {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
         let _is_hdr: bool = $is_hdr;
-
-        // Glyph pass: the polyline vector decoration only. Submitted glyph
-        // sets draw through the glyph item-type plugin.
-        if !$glyph_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for glyph in $glyph_gpu_data.iter() {
-                let pipeline = if glyph.wireframe {
-                    resources
-                        .glyph
-                        .decoration_wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .glyph
-                        .decoration_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &glyph.uniform_bind_group, &[]);
-                    render_pass.set_bind_group(2, &glyph.instance_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, glyph.mesh_vertex_buffer.slice(..));
-                    if glyph.wireframe {
-                        render_pass.set_index_buffer(
-                            glyph.mesh_edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(
-                            0..glyph.mesh_edge_index_count,
-                            0,
-                            0..glyph.instance_count,
-                        );
-                    } else {
-                        render_pass.set_index_buffer(
-                            glyph.mesh_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(
-                            0..glyph.mesh_index_count,
-                            0,
-                            0..glyph.instance_count,
-                        );
-                    }
-                }
-            }
-        }
 
         // Polyline pass : screen-space thick lines via instanced quad expansion.
         // Each segment instance is drawn as 6 vertices (2 triangles).
@@ -1149,8 +1101,8 @@ macro_rules! emit_scivis_draw_calls {
         // pipeline so they are always fully visible regardless of active clip volumes.
         // Items with wireframe=true use the thin 1px LineList pipeline instead, still
         // honouring skip_clip (see `PolylineKey`).
-        if !$polyline_gpu_data.is_empty() && resources.polyline.pipelines.is_some() {
-            let polyline_pipelines = resources.polyline.pipelines.as_ref();
+        if !$polyline_gpu_data.is_empty() && resources.polyline.pipelines.get().is_some() {
+            let polyline_pipelines = resources.polyline.pipelines.get();
             for pl in $polyline_gpu_data.iter() {
                 if pl.segment_count == 0 {
                     continue;

@@ -319,7 +319,6 @@ impl ViewportRenderer {
             emit_scivis_draw_calls!(
                 &self.resources,
                 &mut render_pass,
-                &self.glyph_gpu_data,
                 &self.polyline_gpu_data,
                 &self.streamtube_gpu_data,
                 camera_bg,
@@ -884,8 +883,10 @@ impl ViewportRenderer {
         // Pipelines compiled during the render phase (e.g. the shared HDR set on
         // the first HDR frame) land after prepare() snapshotted the counter; fold
         // them into this frame's stats rather than the next frame's.
-        self.last_stats.pipelines_built_this_frame += self.resources.frame_pipelines_built;
-        self.resources.frame_pipelines_built = 0;
+        self.last_stats.pipelines_built_this_frame += self
+            .resources
+            .frame_pipelines_built
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
         cmd_buf
     }
 
