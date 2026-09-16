@@ -15,6 +15,7 @@
 - **`ItemTypePlugin::pick` takes a `PickContext`** - the click position, viewport size, view-projection, and the query's `PickMask` now arrive alongside the ray, so an item type with a screen-space pick tolerance can test in pixels the way the built-in types do.
 
 ### Features
+- **Gaussian splats composite over the skybox** - splats drew before the sky pass and, writing no depth, were overwritten by it wherever no opaque geometry covered the pixel; they now draw after it, so a splat cloud against open sky renders instead of vanishing.
 - **Item-type plugins draw on the LDR pipeline** - opt in with `ItemTypePlugin::draws_ldr`, build a second pipeline against `ldr_opaque_target_desc()`, and pick the variant by `PaintContext::target_format`; `paint` then runs under `PipelineMode::Direct` and in `paint()` / `paint_viewport()`. Plugins that stay HDR-only are skipped there with a one-time warning, as before.
 - **Item-type plugins render in captures and bakes** - light-probe bakes and snapshot renders now dispatch plugin prepare, cull, and the draw hooks the same as built-in item types, so plugin geometry shows up in reflections and probes instead of vanishing.
 - **`ItemTypePlugin::pick_rect`** - CPU box select now reaches plugin items: return a `PickRectResult` (object ids plus per-element `(id, SubObjectRef)` pairs) for items inside the rectangle, from state cached in `prepare`.
