@@ -452,10 +452,7 @@ impl ViewportRenderer {
                             .unwrap_or((0, 0));
 
                         for (orig_idx, item) in batch_items {
-                            let resolved = crate::resources::material_gpu::MaterialSlots::resolve(
-                                &item.material,
-                                &resources.content.textures,
-                            );
+                            let resolved = resources.resolve_material_slots(&item.material);
                             let cm = common_material(item, resolved);
                             let material_id = resources
                                 .material_gpu_builder

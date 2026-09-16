@@ -8,8 +8,8 @@
 //! For a texture that is never freed the generation is 0, so its id equals its
 //! slot index and behaves exactly like the old dense index. Once a slot is freed
 //! and reused, a handle to the old texture carries a stale generation and
-//! resolves to `None`, falling back to the fallback texture instead of aliasing
-//! whatever now occupies the slot.
+//! resolves to `None`, so the slot it names reads as unset rather than aliasing
+//! whatever now occupies it.
 
 use crate::resources::GpuTexture;
 

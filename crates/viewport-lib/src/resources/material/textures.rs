@@ -714,8 +714,13 @@ impl DeviceResources {
     ///
     /// Returns `true` if a texture was released, `false` if `id` did not resolve
     /// to a live texture (already freed, never uploaded, or a stale handle).
-    /// Materials still holding `id` are not rewritten; they fall back to the
-    /// fallback texture until reassigned.
+    ///
+    /// Materials still holding `id` are not rewritten. They render as though that
+    /// slot had never been set: the material's own scalar values are used, so a
+    /// freed metallic-roughness map leaves `metallic` and `roughness` in charge
+    /// and a freed emissive map leaves the emissive colour in charge. The slot
+    /// binds a neutral fallback view to satisfy the layout, but nothing samples
+    /// it. Reassign the slot to a live texture to get it back.
     pub fn free_texture(&mut self, id: crate::resources::TextureId) -> bool {
         if !self.content.textures.remove(id) {
             return false;

@@ -157,6 +157,54 @@ impl MaterialSlots {
     pub(crate) fn live(self, slot: crate::scene::material::TextureSlot) -> bool {
         self.index(slot).is_some()
     }
+
+    /// Drop any slot whose index the bindless texture array cannot address.
+    ///
+    /// The array is declared with a fixed element count, so an index at or above
+    /// it is out of bounds rather than merely wrong. A slot dropped here reads as
+    /// unset: the material loses that texture and takes the scalar path, which is
+    /// wrong but defined, and is logged once. Only applied on the bindless path,
+    /// because the per-batch binding binds views directly and has no such ceiling.
+    fn capped_to(mut self, capacity: u32) -> Self {
+        for slot in self.0.iter_mut() {
+            if slot.is_some_and(|i| i >= capacity) {
+                let index = slot.take();
+                static WARNED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::warn!(
+                        texture_index = index,
+                        capacity,
+                        "material texture dropped: its slot index is past the bindless texture \
+                         array's capacity, so it cannot be addressed. The material renders \
+                         without that map. Free textures you no longer need, or use the \
+                         per-batch binding, which has no such limit."
+                    );
+                }
+            }
+        }
+        self
+    }
+}
+
+impl crate::resources::DeviceResources {
+    /// Resolve a material's texture slots for this device's binding mode.
+    ///
+    /// One call feeds both the material block's array indices and the per-item
+    /// flags that say whether to sample them, so the two cannot be built from
+    /// different lookups. Under the bindless binding it also drops slots the
+    /// texture array cannot address.
+    pub(crate) fn resolve_material_slots(&self, m: &Material) -> MaterialSlots {
+        let resolved = MaterialSlots::resolve(m, &self.content.textures);
+        match self.instancing.material_texture_binding {
+            crate::resources::mesh::instanced_bindless::MaterialTextureBinding::Bindless => {
+                resolved.capped_to(
+                    crate::resources::mesh::instanced_bindless::BINDLESS_TEXTURE_CAPACITY,
+                )
+            }
+            _ => resolved,
+        }
+    }
 }
 
 impl MaterialGpu {

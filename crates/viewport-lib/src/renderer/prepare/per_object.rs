@@ -57,13 +57,7 @@ pub(super) fn build_object_uniform(
     } else {
         (0u32, 0.0, 1.0)
     };
-    let cm = common_material(
-        item,
-        crate::resources::material_gpu::MaterialSlots::resolve(
-            &item.material,
-            &resources.content.textures,
-        ),
-    );
+    let cm = common_material(item, resources.resolve_material_slots(&item.material));
     ObjectUniform {
         model: cm.model,
         colour: cm.colour,
@@ -443,10 +437,7 @@ impl ViewportRenderer {
                     );
                     continue;
                 };
-                let resolved = crate::resources::material_gpu::MaterialSlots::resolve(
-                    &item.material,
-                    &resources.content.textures,
-                );
+                let resolved = resources.resolve_material_slots(&item.material);
                 let material_id = resources
                     .material_gpu_builder
                     .intern(&item.material, resolved);
@@ -590,10 +581,7 @@ impl ViewportRenderer {
                         range_item.material = mat.clone();
                         let range_material_id = resources.material_gpu_builder.intern(
                             &range_item.material,
-                            crate::resources::material_gpu::MaterialSlots::resolve(
-                                &range_item.material,
-                                &resources.content.textures,
-                            ),
+                            resources.resolve_material_slots(&range_item.material),
                         );
                         let range_uniform = build_object_uniform(
                             resources,
@@ -949,10 +937,7 @@ impl ViewportRenderer {
 
             let material_id = resources.material_gpu_builder.intern(
                 &item.material,
-                crate::resources::material_gpu::MaterialSlots::resolve(
-                    &item.material,
-                    &resources.content.textures,
-                ),
+                resources.resolve_material_slots(&item.material),
             );
             let obj_uniform = build_object_uniform(resources, item, false, None, material_id);
             let entry = &mut entries[idx];
