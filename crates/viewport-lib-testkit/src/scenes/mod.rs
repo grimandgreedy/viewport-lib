@@ -199,6 +199,10 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     }
     fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
     fd.viewport.show_axes_indicator = false;
+    // Scenes mark an item selected to put the selection outline in the
+    // reference image; without this the flag is off and the outline pass never
+    // runs, so those marks render nothing.
+    fd.interaction.outline_selected = true;
     fd
 }
 

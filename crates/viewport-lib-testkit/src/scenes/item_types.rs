@@ -13,8 +13,8 @@ use viewport_lib::{
     GaussianSplatItem, GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, ImplicitBlendMode,
     ImplicitPrimitive, Material, MeshInstanceItem, PickId, RibbonItem, ScatterQuality,
     ScatterSettings, ScatterVolume, ScatterVolumeItem, ScreenImageItem, ShDegree, SliceAxis,
-    SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData, TubeItem,
-    VolumeData, VolumeItem, VolumeSurfaceSliceItem, primitives,
+    SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData, TubeItem, VolumeData,
+    VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedScene, rigs, standard_cameras};
@@ -319,6 +319,7 @@ fn build_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     v.bbox_max = [1.2, 1.2, 1.2];
     v.enable_shading = true;
     v.settings.pick_id = PickId(1606);
+    v.settings.selected = true;
     BuiltScene {
         volumes: vec![v],
         lighting: rigs::from_above(),
@@ -531,6 +532,7 @@ fn build_gpu_marching_cubes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     material.roughness = 0.4;
     let mut settings = viewport_lib::ItemSettings::default();
     settings.pick_id = PickId(1612);
+    settings.selected = true;
     BuiltScene {
         gpu_mc_items: vec![GpuMarchingCubesItem {
             volume_id,
@@ -659,11 +661,8 @@ fn build_mesh_instances(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             let t = i as f32 / (n - 1) as f32;
             let theta = t * std::f32::consts::TAU * 2.0;
             let r = 0.6 + 1.6 * t;
-            (Mat4::from_translation(Vec3::new(
-                r * theta.cos(),
-                r * theta.sin(),
-                (t - 0.5) * 1.6,
-            )) * Mat4::from_rotation_z(theta))
+            (Mat4::from_translation(Vec3::new(r * theta.cos(), r * theta.sin(), (t - 0.5) * 1.6))
+                * Mat4::from_rotation_z(theta))
             .to_cols_array_2d()
         })
         .collect();
