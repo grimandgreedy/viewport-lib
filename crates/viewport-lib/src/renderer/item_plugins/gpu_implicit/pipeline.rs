@@ -1,8 +1,8 @@
 //! GPU state for the GPU implicit surface item type: the render, pick, and
 //! outline-mask pipelines and the per-frame per-item uniform bind groups.
 
-use crate::renderer::{GpuImplicitItem, PickId};
-use crate::resources::{DeviceResources, ImplicitBlendMode, ImplicitPrimitive};
+use crate::renderer::{GpuImplicitItem, ImplicitBlendMode, ImplicitPrimitive, PickId};
+use crate::resources::DeviceResources;
 
 /// Pipelines and layouts, built lazily on the first prepare with items.
 pub(super) struct GpuImplicitGpu {

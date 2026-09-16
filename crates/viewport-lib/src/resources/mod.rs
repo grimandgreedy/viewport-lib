@@ -44,7 +44,7 @@ mod test_support;
 mod types;
 /// Background runner for long-running uploads.
 pub mod upload_jobs;
-/// Volume, implicit-surface, marching-cubes, and unstructured volume-mesh resources.
+/// Volume, marching-cubes, and unstructured volume-mesh resources.
 pub mod volume;
 
 pub use self::gpu::compute_filter::ComputeFilterResult;
@@ -138,10 +138,11 @@ pub(crate) use self::types::{
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
 pub use self::volume::gpu_marching_cubes::McVolumeId;
-pub use self::volume::implicit::{GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive};
 pub use self::volume::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
-pub use crate::renderer::GpuImplicitItem;
 pub use crate::renderer::GpuMarchingCubesItem;
+pub use crate::renderer::{
+    GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
+};

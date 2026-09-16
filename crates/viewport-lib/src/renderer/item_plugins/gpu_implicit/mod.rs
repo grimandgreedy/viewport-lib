@@ -9,8 +9,10 @@ use crate::plugin_api::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
     PickPassContext, PickRay, PluginItemCollection, RectPickContext,
 };
-use crate::renderer::{GpuImplicitItem, PickHit, PickId, PickMask};
-use crate::resources::{HDR_COLOR_FORMAT, ImplicitBlendMode, ImplicitPrimitive};
+use crate::renderer::{
+    GpuImplicitItem, ImplicitBlendMode, ImplicitPrimitive, PickHit, PickId, PickMask,
+};
+use crate::resources::HDR_COLOR_FORMAT;
 
 pub(crate) const TYPE_NAME: &str = "viewport.gpu_implicit";
 

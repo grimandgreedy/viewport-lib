@@ -19,9 +19,10 @@ use super::{
 };
 use crate::camera::Camera;
 use crate::plugin_api::ItemTypePlugin as _;
+use crate::renderer::ImplicitPrimitive;
 use crate::renderer::PickId;
 use crate::renderer::item_plugins::gpu_implicit::GpuImplicitPlugin;
-use crate::resources::{GpuImplicitItem, ImplicitPrimitive};
+use crate::resources::GpuImplicitItem;
 use crate::scene::material::ItemSettings;
 
 fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
