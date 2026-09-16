@@ -9,6 +9,8 @@
 //! the dispatchers route it to the plugin as if it had been submitted under
 //! the plugin's name.
 
+pub(crate) mod registry;
+
 pub(crate) mod gaussian_splat;
 pub(crate) mod gpu_implicit;
 pub(crate) mod gpu_marching_cubes;

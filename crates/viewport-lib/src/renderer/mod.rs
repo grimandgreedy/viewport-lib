@@ -357,8 +357,7 @@ pub struct ViewportRenderer {
     /// [`ItemTypePlugin::type_name`](crate::plugin_api::ItemTypePlugin::type_name).
     /// `init_gpu` is invoked once on registration; per-frame `prepare` and
     /// `paint` fire when a matching collection is on `SceneFrame`.
-    item_type_plugins:
-        std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::ItemTypePlugin>>,
+    item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry,
     /// Externally registered post-effect producers, in registration order.
     /// `init_gpu` is deferred to the first render with the device; per-frame
     /// `prepare` / `encode` run on the HDR path, per viewport.
@@ -1002,7 +1001,7 @@ impl ViewportRenderer {
         let mut renderer = Self {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
-            item_type_plugins: std::collections::HashMap::new(),
+            item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
             post_effect_producers: Vec::new(),
             next_post_effect_producer_id: 0,
             post_effect_stages: Vec::new(),

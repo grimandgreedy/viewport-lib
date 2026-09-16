@@ -2734,7 +2734,7 @@ impl ViewportRenderer {
         // Registered plugin items. Inserted first so a pick-id collision with a
         // built-in item resolves to the built-in kind (ids are consumer-assigned
         // and expected unique; this just makes the overlap deterministic).
-        for (&name, _) in self.item_type_plugins.iter() {
+        for (name, _) in self.item_type_plugins.iter() {
             let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) else {
                 continue;
             };

@@ -33,10 +33,7 @@ impl ViewportRenderer {
         instancing: &mut InstancingState,
         shadow: &mut crate::renderer::shadow_state::ShadowState,
         compute_filter_results: &[crate::resources::ComputeFilterResult],
-        plugins: &std::collections::HashMap<
-            &'static str,
-            Box<dyn crate::plugin_api::ItemTypePlugin>,
-        >,
+        plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
         scene_items: &[SceneRenderItem],
