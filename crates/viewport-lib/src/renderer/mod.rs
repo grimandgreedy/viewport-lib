@@ -441,11 +441,20 @@ pub struct ViewportRenderer {
     /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
     /// Entries are cheap clones of cached GPU handles from `decal_cache`.
     decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
-    /// Decal GPU resources cached across frames, keyed by decal content hash.
-    /// Decals are static per submission, so this skips rebuilding a uniform
-    /// buffer and bind group for each decal every frame. Entries not seen in a
-    /// frame are evicted so removed decals do not leak.
-    decal_cache: std::collections::HashMap<u64, crate::resources::decal::DecalGpuItem>,
+    /// Decal GPU resources cached across frames, keyed by decal content hash
+    /// and validated against the resources each entry names. Decals are static
+    /// per submission, so this skips rebuilding a uniform buffer and bind
+    /// group for each decal every frame. Entries not seen in a frame are
+    /// evicted so removed decals do not leak.
+    decal_cache: std::collections::HashMap<
+        u64,
+        (
+            crate::resources::decal::DecalGpuItem,
+            crate::resources::resource_deps::ResourceDeps,
+        ),
+    >,
+    /// Resource epochs the decal cache was last validated against.
+    decal_deps_gate: crate::resources::resource_deps::DepsGate,
     /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint().
     decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
     /// Per-frame GPU marching cubes render data, rebuilt in prepare(), consumed in paint().
@@ -1075,6 +1084,7 @@ impl ViewportRenderer {
             implicit_gpu_data: Vec::new(),
             decal_gpu_data: Vec::new(),
             decal_cache: std::collections::HashMap::new(),
+            decal_deps_gate: crate::resources::resource_deps::DepsGate::default(),
             decal_exclude_items: Vec::new(),
             mc_gpu_data: Vec::new(),
             screen_image_gpu_data: Vec::new(),

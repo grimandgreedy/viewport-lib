@@ -27,6 +27,7 @@ mod memory;
 pub mod mesh;
 pub(crate) mod mesh_sidecar;
 pub(crate) mod overlay;
+pub(crate) mod resource_deps;
 /// Lazy GPU pick-pipeline construction (`ensure_*_pick_pipeline` methods).
 mod pick_pipelines;
 mod plugin_builders;

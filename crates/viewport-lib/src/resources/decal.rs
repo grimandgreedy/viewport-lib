@@ -154,11 +154,10 @@ pub(crate) fn hash_decal_item(
     h.write(bytemuck::bytes_of(&raw));
     h.write_u8(item.blend_mode as u8);
     h.write_u64(item.texture_id.raw());
-    // Whether the albedo still resolves is part of the key. The ids alone do not
-    // change when a texture is freed, so without this a cached bind group would
-    // keep drawing (and keep alive) a texture the consumer has released. The
-    // other four slots ride the uniform bytes above, which now carry liveness.
-    h.write_u8(textures.get(item.texture_id).is_some() as u8);
+    // The key is content identity only. Whether the textures a cached entry
+    // names are still resident is the cache's job, answered per entry through
+    // `ResourceDeps` when the free epoch moves, so a freed albedo drops the
+    // entry and the rebuild binds the fallback under the same key.
     for id in [
         item.normal_texture_id,
         item.roughness_texture_id,

@@ -495,7 +495,14 @@ impl ViewportRenderer {
         implicit_gpu_data: &mut Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
         pick_implicit_items: &mut Vec<GpuImplicitPickItem>,
         decal_gpu_data: &mut Vec<crate::resources::decal::DecalGpuItem>,
-        decal_cache: &mut std::collections::HashMap<u64, crate::resources::decal::DecalGpuItem>,
+        decal_cache: &mut std::collections::HashMap<
+            u64,
+            (
+                crate::resources::decal::DecalGpuItem,
+                crate::resources::resource_deps::ResourceDeps,
+            ),
+        >,
+        decal_deps_gate: &mut crate::resources::resource_deps::DepsGate,
         decal_exclude_items: &mut Vec<crate::resources::decal::DecalExcludeGpuItem>,
         mc_gpu_data: &mut Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>,
         pick_mc_items: &mut Vec<GpuMcPickItem>,
@@ -541,6 +548,18 @@ impl ViewportRenderer {
             decal_cache.clear();
         } else {
             resources.ensure_decal_pipeline(device);
+            // Cached entries hold bind groups over texture views, so a free or
+            // a replace since the last frame invalidates them: a free drops
+            // only the entries whose deps no longer resolve (they rebuild
+            // against the fallback below), a replace drops everything, since a
+            // view swapped behind a live id cannot be detected per entry.
+            match decal_deps_gate.poll(resources) {
+                crate::resources::resource_deps::Revalidate::RebuildAll => decal_cache.clear(),
+                crate::resources::resource_deps::Revalidate::CheckEach => {
+                    decal_cache.retain(|_, (_, deps)| deps.resolves(resources));
+                }
+                crate::resources::resource_deps::Revalidate::Valid => {}
+            }
             // Stable sort so equal-key decals stay in submission order.
             let mut sorted: Vec<&crate::renderer::DecalItem> = frame.scene.decals.iter().collect();
             sorted.sort_by_key(|d| d.sort_key);
@@ -567,7 +586,7 @@ impl ViewportRenderer {
                     std::collections::hash_map::Entry::Occupied(e) => {
                         // `selected` is not part of the cache key, so refresh it
                         // on the reused clone to reflect this frame's selection.
-                        let mut gpu = e.get().clone();
+                        let mut gpu = e.get().0.clone();
                         gpu.selected = effective.settings.selected;
                         decal_gpu_data.push(gpu);
                         decal_stats.reused += 1;
@@ -595,8 +614,15 @@ impl ViewportRenderer {
                             TextureSlot::DecalEmissive,
                         );
                         let gpu = resources.upload_decal_item(device, &effective);
+                        let deps = crate::resources::resource_deps::ResourceDeps::textures([
+                            Some(effective.texture_id),
+                            effective.normal_texture_id,
+                            effective.roughness_texture_id,
+                            effective.metallic_texture_id,
+                            effective.emissive_texture_id,
+                        ]);
                         decal_gpu_data.push(gpu.clone());
-                        e.insert(gpu);
+                        e.insert((gpu, deps));
                         decal_stats.uploads += 1;
                     }
                 }

@@ -284,17 +284,17 @@ pub(crate) fn cached_batches_resolve(
     batches: &[InstancedBatch],
 ) -> bool {
     batches.iter().all(|b| {
-        resources.mesh_store.contains(b.mesh_id)
-            && [
+        crate::resources::resource_deps::ResourceDeps {
+            mesh_id: Some(b.mesh_id),
+            texture_ids: [
                 b.texture_id,
                 b.normal_map_id,
                 b.ao_map_id,
                 b.metallic_roughness_id,
                 b.emissive_id,
-            ]
-            .iter()
-            .flatten()
-            .all(|id| resources.content.textures.get(*id).is_some())
+            ],
+        }
+        .resolves(resources)
     })
 }
 

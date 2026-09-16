@@ -13,6 +13,8 @@
 - **`ViewportPlugin` is now `PluginInstaller`** - the installer trait's old name read as "a plugin for a viewport" rather than what it does; rename the trait in your `impl` and in any import. `PluginInstallCtx`, `install_plugin`, and `install` are unchanged.
 
 ### Features
+- **Freeing a texture now reaches GPU particle systems** - a system created with `ParticleRender::Sprite`/`Mesh` texture kept drawing (and keeping alive) a freed texture for its whole lifetime; it now falls back to the untextured look on the next frame, like every other consumer of a freed handle.
+- **`replace_texture` now reaches cached decals** - a decal whose texture was replaced in place kept drawing the old pixels from its cached bind group; the cache now rebuilds on a replace.
 - **`GpuImplicitItem` and `GpuMarchingCubesItem` are `Clone`** - the last two scene item types without it; a frame driver that clones its retained item lists no longer has to special-case them.
 - **Every texture slot names the colour space it needs** - all twenty-two of them, across `Material`, `DecalItem`, `SpriteItem`, `RibbonItem`, `MeshInstanceItem`, `ParticleRender`, and `LightmapData`, along with the `TextureData` constructor that produces it. Eight require linear, so the default-sounding path was wrong for nearly half the surface.
 - **`texture_colour_space` and `texture_slot_mismatches`** - ask what space a texture was uploaded in, and what has been bound somewhere that wants the other one. `clear_texture_slot_mismatches` forgets them after a re-upload.

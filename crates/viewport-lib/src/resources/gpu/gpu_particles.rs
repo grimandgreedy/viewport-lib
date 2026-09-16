@@ -31,6 +31,14 @@ use crate::renderer::{ParticleMeshAlign, SpriteBlend, SpriteLitParams, SpriteSiz
 pub(crate) struct ParticleResources {
     /// Live particle systems. Slots can be reused after `drop_gpu_particle_system`.
     pub(crate) systems: Vec<Option<ParticleSystem>>,
+    /// Resource epochs the systems' draw bind groups were last validated
+    /// against. A system's draw bind group bakes a texture view in at
+    /// creation; without this a freed texture stays pinned (and sampled) for
+    /// the system's whole lifetime.
+    pub(crate) deps_gate: crate::resources::resource_deps::DepsGate,
+    /// Draw bind groups rebuilt by revalidation since startup, for tests and
+    /// diagnostics.
+    pub(crate) draw_bg_rebuilds: u64,
     /// Layout for the emit + sim compute pipelines (group 1).
     pub(crate) sim_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Layout for emit/sim params (group 0).
@@ -219,13 +227,25 @@ pub(crate) struct SimParamsGpu {
     pub forces: [GpuForce; MAX_FORCES],
 }
 
+/// The draw-side bind groups for one particle system, plus the uniform
+/// buffer behind them and the texture deps they bake in. Exactly one of
+/// `draw_bg` and `draw_bg_mesh` is populated, per the system's render route.
+#[derive(Default)]
+struct ParticleDrawBindings {
+    draw_bg: Option<crate::gpu::BindGroup>,
+    draw_bg_mesh: Option<crate::gpu::BindGroup>,
+    draw_lit_normal_bg: Option<crate::gpu::BindGroup>,
+    draw_uniform_buf: Option<crate::gpu::Buffer>,
+    draw_deps: crate::resources::resource_deps::ResourceDeps,
+}
+
 /// Per-system persistent GPU state.
 pub(crate) struct ParticleSystem {
     pub capacity: u32,
     pub render: ParticleRender,
     /// `capacity` particles in `GpuParticle` layout. STORAGE + VERTEX usage;
     /// bound through `sim_bg` and the draw bind groups, which keep it alive.
-    pub _particle_buf: crate::gpu::Buffer,
+    pub particle_buf: crate::gpu::Buffer,
     /// Single atomic u32 counter rewritten by the host before each emit
     /// dispatch and decremented by emit threads as they claim slots. Reused
     /// across frames; nothing is preserved between dispatches.
@@ -253,7 +273,10 @@ pub(crate) struct ParticleSystem {
     /// `None` when the system's render route is not lit.
     pub draw_lit_normal_bg: Option<crate::gpu::BindGroup>,
     /// Uniform buffers backing whichever draw bind group is populated.
-    pub _draw_uniform_buf: Option<crate::gpu::Buffer>,
+    pub draw_uniform_buf: Option<crate::gpu::Buffer>,
+    /// The texture ids baked into the draw bind groups, revalidated when the
+    /// resource epochs move so a freed texture is neither pinned nor sampled.
+    pub draw_deps: crate::resources::resource_deps::ResourceDeps,
     /// Whether the slot is in use. The slot is reused lazily by future creates.
     pub alive: bool,
     /// Frame count since creation; used to seed the emit RNG so a freshly
@@ -341,49 +364,6 @@ impl crate::resources::DeviceResources {
             usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
         });
 
-        // Draw-side state. The sprite route uses the existing sprite-style
-        // uniform; the mesh route uses a smaller uniform with the align mode
-        // and a `has_texture` flag.
-        enum DrawState {
-            Sprite {
-                texture_id: Option<crate::resources::TextureId>,
-                size_mode: SpriteSizeMode,
-                lit: bool,
-                lit_params: SpriteLitParams,
-                normal_texture_id: Option<crate::resources::TextureId>,
-            },
-            Mesh {
-                texture_id: Option<crate::resources::TextureId>,
-                align: ParticleMeshAlign,
-            },
-        }
-        let draw_state = match &config.render {
-            ParticleRender::Sprite {
-                texture_id,
-                blend: _,
-                size_mode,
-                depth_write: _,
-                lit,
-                lit_params,
-                normal_texture_id,
-            } => DrawState::Sprite {
-                texture_id: *texture_id,
-                size_mode: *size_mode,
-                lit: *lit,
-                lit_params: *lit_params,
-                normal_texture_id: *normal_texture_id,
-            },
-            ParticleRender::Mesh {
-                texture_id,
-                blend: _,
-                align,
-                mesh_id: _,
-            } => DrawState::Mesh {
-                texture_id: *texture_id,
-                align: *align,
-            },
-        };
-
         let _ = queue; // queue currently unused; reserved for textures upload paths
 
         let sim_bgl = self
@@ -441,17 +421,65 @@ impl crate::resources::DeviceResources {
             }],
         });
 
-        // Per-route draw resources. Exactly one of `sprite_draw_bg` and
-        // `mesh_draw_bg` is populated; the other arm stays `None`.
-        let mut sprite_draw_bg: Option<crate::gpu::BindGroup> = None;
-        let mut mesh_draw_bg: Option<crate::gpu::BindGroup> = None;
-        let mut sprite_lit_normal_bg: Option<crate::gpu::BindGroup> = None;
-        let draw_uniform_buf: Option<crate::gpu::Buffer>;
+        let bindings = self.build_particle_draw_bindings(device, &config.render, &particle_buf);
 
-        match draw_state {
-            DrawState::Sprite {
+        let system = ParticleSystem {
+            capacity,
+            render: config.render.clone(),
+            particle_buf,
+            emit_counter_buf,
+            sim_bg,
+            emit_params_buf,
+            sim_params_buf,
+            emit_params_bg,
+            sim_params_bg,
+            draw_bg: bindings.draw_bg,
+            draw_bg_mesh: bindings.draw_bg_mesh,
+            draw_lit_normal_bg: bindings.draw_lit_normal_bg,
+            draw_uniform_buf: bindings.draw_uniform_buf,
+            draw_deps: bindings.draw_deps,
+            alive: true,
+            frame_counter: 0,
+            spawn_accumulator: 0.0,
+        };
+
+        if let Some(idx) = self
+            .particle
+            .systems
+            .iter()
+            .position(|slot: &Option<ParticleSystem>| slot.as_ref().is_none_or(|s| !s.alive))
+        {
+            self.particle.systems[idx] = Some(system);
+            GpuParticleSystemId::from_index(idx)
+        } else {
+            self.particle.systems.push(Some(system));
+            GpuParticleSystemId::from_index(self.particle.systems.len() - 1)
+        }
+    }
+
+    /// Build the per-route draw bind groups for a particle system: the sprite
+    /// or mesh group-1 bind group, the lit normal-map group when the route is
+    /// lit, the uniform buffer behind them, and the [`ResourceDeps`] naming
+    /// the textures they bake in. Called at system creation and again by
+    /// [`revalidate_particle_draw_bindings`](Self::revalidate_particle_draw_bindings)
+    /// whenever a named texture is freed or replaced.
+    ///
+    /// A texture id that does not resolve binds the neutral fallback view and
+    /// clears the shader's `has_texture` flag, so a stale handle behaves as an
+    /// empty slot rather than sampling whatever occupies the storage now.
+    fn build_particle_draw_bindings(
+        &self,
+        device: &crate::gpu::Device,
+        render: &ParticleRender,
+        particle_buf: &crate::gpu::Buffer,
+    ) -> ParticleDrawBindings {
+        let mut out = ParticleDrawBindings::default();
+        match render {
+            ParticleRender::Sprite {
                 texture_id,
+                blend: _,
                 size_mode,
+                depth_write: _,
                 lit,
                 lit_params,
                 normal_texture_id,
@@ -474,12 +502,16 @@ impl crate::resources::DeviceResources {
                     crate::renderer::SpriteNormalMode::Flat => 1u32,
                     crate::renderer::SpriteNormalMode::NormalMap => 2u32,
                 };
+                let texture_live =
+                    texture_id.is_some_and(|id| self.content.textures.get(id).is_some());
+                let normal_live =
+                    normal_texture_id.is_some_and(|id| self.content.textures.get(id).is_some());
                 let uniform = SpriteDrawUniform {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
                     world_space: matches!(size_mode, SpriteSizeMode::WorldSpace) as u32,
-                    has_texture: texture_id.is_some() as u32,
+                    has_texture: texture_live as u32,
                     normal_mode: normal_mode_u32,
-                    has_normal_map: normal_texture_id.is_some() as u32,
+                    has_normal_map: normal_live as u32,
                     ambient_scale: lit_params.ambient_scale,
                     roughness: lit_params.roughness,
                     _pad0: 0,
@@ -492,18 +524,17 @@ impl crate::resources::DeviceResources {
                         usage: crate::gpu::BufferUsages::UNIFORM
                             | crate::gpu::BufferUsages::COPY_DST,
                     });
-                let texture_view = match texture_id {
-                    Some(id) if self.content.textures.get(id).is_some() => {
-                        &self.content.textures.get(id).unwrap().view
-                    }
-                    _ => &self.content.fallback_lut_view,
+                let texture_view = if texture_live {
+                    &self.content.textures.get(texture_id.unwrap()).unwrap().view
+                } else {
+                    &self.content.fallback_lut_view
                 };
                 let draw_bgl = self
                     .particle
                     .draw_bgl
                     .as_ref()
                     .expect("ensure_particle_pipelines failed to create draw BGL");
-                sprite_draw_bg = Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                out.draw_bg = Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("gpu_particle_draw_bg"),
                     layout: draw_bgl,
                     entries: &[
@@ -525,19 +556,23 @@ impl crate::resources::DeviceResources {
                         },
                     ],
                 }));
-                if lit {
+                if *lit {
                     let lit_bgl = self
                         .particle
                         .sprite_lit_bgl
                         .as_ref()
                         .expect("ensure_particle_pipelines failed to create lit BGL");
-                    let normal_view = match normal_texture_id {
-                        Some(id) if self.content.textures.get(id).is_some() => {
-                            &self.content.textures.get(id).unwrap().view
-                        }
-                        _ => &self.material.normal_map_view,
+                    let normal_view = if normal_live {
+                        &self
+                            .content
+                            .textures
+                            .get(normal_texture_id.unwrap())
+                            .unwrap()
+                            .view
+                    } else {
+                        &self.material.normal_map_view
                     };
-                    sprite_lit_normal_bg =
+                    out.draw_lit_normal_bg =
                         Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                             label: Some("gpu_particle_lit_normal_bg"),
                             layout: lit_bgl,
@@ -555,9 +590,21 @@ impl crate::resources::DeviceResources {
                             ],
                         }));
                 }
-                draw_uniform_buf = Some(uniform_buf);
+                out.draw_uniform_buf = Some(uniform_buf);
+                out.draw_deps = crate::resources::resource_deps::ResourceDeps::textures([
+                    *texture_id,
+                    *normal_texture_id,
+                    None,
+                    None,
+                    None,
+                ]);
             }
-            DrawState::Mesh { texture_id, align } => {
+            ParticleRender::Mesh {
+                texture_id,
+                blend: _,
+                align,
+                mesh_id: _,
+            } => {
                 #[repr(C)]
                 #[derive(Copy, Clone, Pod, Zeroable)]
                 struct MeshDrawUniform {
@@ -571,9 +618,11 @@ impl crate::resources::DeviceResources {
                     ParticleMeshAlign::Velocity => 1u32,
                     ParticleMeshAlign::Random => 2u32,
                 };
+                let texture_live =
+                    texture_id.is_some_and(|id| self.content.textures.get(id).is_some());
                 let uniform = MeshDrawUniform {
                     align: align_u32,
-                    has_texture: texture_id.is_some() as u32,
+                    has_texture: texture_live as u32,
                     _pad0: 0,
                     _pad1: 0,
                 };
@@ -584,73 +633,100 @@ impl crate::resources::DeviceResources {
                         usage: crate::gpu::BufferUsages::UNIFORM
                             | crate::gpu::BufferUsages::COPY_DST,
                     });
-                let texture_view = match texture_id {
-                    Some(id) if self.content.textures.get(id).is_some() => {
-                        &self.content.textures.get(id).unwrap().view
-                    }
-                    _ => &self.material.texture.view,
+                let texture_view = if texture_live {
+                    &self.content.textures.get(texture_id.unwrap()).unwrap().view
+                } else {
+                    &self.material.texture.view
                 };
                 let mesh_bgl = self
                     .particle
                     .mesh_draw_bgl
                     .as_ref()
                     .expect("ensure_particle_pipelines failed to create mesh draw BGL");
-                mesh_draw_bg = Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("gpu_particle_mesh_draw_bg"),
-                    layout: mesh_bgl,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: crate::gpu::BindingResource::TextureView(texture_view),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 2,
-                            resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 3,
-                            resource: particle_buf.as_entire_binding(),
-                        },
-                    ],
-                }));
-                draw_uniform_buf = Some(uniform_buf);
+                out.draw_bg_mesh =
+                    Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("gpu_particle_mesh_draw_bg"),
+                        layout: mesh_bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: uniform_buf.as_entire_binding(),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: crate::gpu::BindingResource::TextureView(texture_view),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 2,
+                                resource: crate::gpu::BindingResource::Sampler(
+                                    &self.material.sampler,
+                                ),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 3,
+                                resource: particle_buf.as_entire_binding(),
+                            },
+                        ],
+                    }));
+                out.draw_uniform_buf = Some(uniform_buf);
+                out.draw_deps = crate::resources::resource_deps::ResourceDeps::textures([
+                    *texture_id,
+                    None,
+                    None,
+                    None,
+                    None,
+                ]);
             }
         }
+        out
+    }
 
-        let system = ParticleSystem {
-            capacity,
-            render: config.render.clone(),
-            _particle_buf: particle_buf,
-            emit_counter_buf,
-            sim_bg,
-            emit_params_buf,
-            sim_params_buf,
-            emit_params_bg,
-            sim_params_bg,
-            draw_bg: sprite_draw_bg,
-            draw_bg_mesh: mesh_draw_bg,
-            draw_lit_normal_bg: sprite_lit_normal_bg,
-            _draw_uniform_buf: draw_uniform_buf,
-            alive: true,
-            frame_counter: 0,
-            spawn_accumulator: 0.0,
-        };
-
-        if let Some(idx) = self
+    /// Rebuild the draw bind groups of every live system whose baked textures
+    /// were freed or replaced since the last call. Without this a system's
+    /// bind group pins a freed texture's memory for the system's lifetime and
+    /// keeps sampling its contents; with it the draw falls back to the neutral
+    /// view, the same way every other cached binding responds to a free.
+    pub(crate) fn revalidate_particle_draw_bindings(&mut self, device: &crate::gpu::Device) {
+        use crate::resources::resource_deps::Revalidate;
+        let (free_epoch, view_epoch) = (self.resource_free_epoch, self.resource_view_epoch);
+        let verdict = self.particle.deps_gate.poll_epochs(free_epoch, view_epoch);
+        if verdict == Revalidate::Valid {
+            return;
+        }
+        let stale: Vec<usize> = self
             .particle
             .systems
             .iter()
-            .position(|slot: &Option<ParticleSystem>| slot.as_ref().is_none_or(|s| !s.alive))
-        {
-            self.particle.systems[idx] = Some(system);
-            GpuParticleSystemId::from_index(idx)
-        } else {
-            self.particle.systems.push(Some(system));
-            GpuParticleSystemId::from_index(self.particle.systems.len() - 1)
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                let s = slot.as_ref()?;
+                let needs = s.alive
+                    && (verdict == Revalidate::RebuildAll || !s.draw_deps.resolves(self));
+                needs.then_some(i)
+            })
+            .collect();
+        for i in stale {
+            let render = self.particle.systems[i]
+                .as_ref()
+                .expect("stale index came from a live slot")
+                .render
+                .clone();
+            let bindings = {
+                let buf = &self.particle.systems[i]
+                    .as_ref()
+                    .expect("stale index came from a live slot")
+                    .particle_buf;
+                self.build_particle_draw_bindings(device, &render, buf)
+            };
+            let system = self.particle.systems[i]
+                .as_mut()
+                .expect("stale index came from a live slot");
+            system.draw_bg = bindings.draw_bg;
+            system.draw_bg_mesh = bindings.draw_bg_mesh;
+            system.draw_lit_normal_bg = bindings.draw_lit_normal_bg;
+            system.draw_uniform_buf = bindings.draw_uniform_buf;
+            system.draw_deps = bindings.draw_deps;
+            self.particle.draw_bg_rebuilds += 1;
         }
     }
 
@@ -1034,6 +1110,10 @@ impl crate::resources::DeviceResources {
             return Vec::new();
         }
         self.ensure_particle_pipelines(device);
+        // A free or replace since the last frame invalidates the texture views
+        // baked into the systems' draw bind groups; rebuild the affected ones
+        // before this frame's draws reference them.
+        self.revalidate_particle_draw_bindings(device);
 
         let emit_pipeline = self
             .particle
@@ -1265,5 +1345,110 @@ fn build_sim_params(
         force_count: n as u32,
         _pad: 0,
         forces: gpu_forces,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn srgb_texture(px: u8) -> crate::resources::TextureData {
+        crate::resources::TextureData::srgb(4, 4, vec![px; 4 * 4 * 4])
+    }
+
+    fn sprite_config(texture_id: Option<crate::resources::TextureId>) -> GpuParticleSystemConfig {
+        let mut config = GpuParticleSystemConfig::default();
+        config.capacity = 16;
+        if let ParticleRender::Sprite {
+            texture_id: slot, ..
+        } = &mut config.render
+        {
+            *slot = texture_id;
+        }
+        config
+    }
+
+    /// A freed texture must not stay baked into a system's draw bind group:
+    /// the revalidation rebuilds it against the fallback view.
+    #[test]
+    fn freed_texture_rebuilds_draw_bind_group() {
+        let Some((device, queue, mut resources)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let tex = resources
+            .upload_texture(&device, &queue, srgb_texture(200))
+            .expect("texture upload");
+        let _system = resources.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
+
+        // Sync the gate so the assertion below isolates the free.
+        resources.revalidate_particle_draw_bindings(&device);
+        let baseline = resources.particle.draw_bg_rebuilds;
+
+        resources.free_texture(tex);
+        resources.revalidate_particle_draw_bindings(&device);
+        assert_eq!(
+            resources.particle.draw_bg_rebuilds,
+            baseline + 1,
+            "free of a baked texture must rebuild the system's draw bind group"
+        );
+
+        // Nothing further changed: the next poll is a no-op.
+        resources.revalidate_particle_draw_bindings(&device);
+        assert_eq!(resources.particle.draw_bg_rebuilds, baseline + 1);
+    }
+
+    /// A replace swaps the view behind a live id, which no per-entry check can
+    /// see, so it must rebuild unconditionally.
+    #[test]
+    fn replaced_texture_rebuilds_draw_bind_group() {
+        let Some((device, queue, mut resources)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let tex = resources
+            .upload_texture(&device, &queue, srgb_texture(40))
+            .expect("texture upload");
+        let _system = resources.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
+
+        resources.revalidate_particle_draw_bindings(&device);
+        let baseline = resources.particle.draw_bg_rebuilds;
+
+        resources
+            .replace_texture(&device, &queue, tex, srgb_texture(220))
+            .expect("texture replace");
+        resources.revalidate_particle_draw_bindings(&device);
+        assert_eq!(
+            resources.particle.draw_bg_rebuilds,
+            baseline + 1,
+            "replace must rebuild every live system's draw bind group"
+        );
+    }
+
+    /// A system with no texture never rebuilds on someone else's free.
+    #[test]
+    fn untextured_system_survives_unrelated_free() {
+        let Some((device, queue, mut resources)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let unrelated = resources
+            .upload_texture(&device, &queue, srgb_texture(10))
+            .expect("texture upload");
+        let _system = resources.create_gpu_particle_system(&device, &queue, &sprite_config(None));
+
+        resources.revalidate_particle_draw_bindings(&device);
+        let baseline = resources.particle.draw_bg_rebuilds;
+
+        resources.free_texture(unrelated);
+        resources.revalidate_particle_draw_bindings(&device);
+        assert_eq!(
+            resources.particle.draw_bg_rebuilds,
+            baseline,
+            "a free the system does not name must not rebuild its bind groups"
+        );
     }
 }
