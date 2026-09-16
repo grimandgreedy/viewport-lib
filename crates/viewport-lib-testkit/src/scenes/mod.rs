@@ -609,8 +609,24 @@ fn build_point_cloud(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     pc.positions = positions;
     pc.scalars = scalars;
     pc.point_size = 5.0;
+
+    // A second, much coarser cloud off to one side, marked selected so the
+    // reference carries a legible per-point selection outline. Outlining the
+    // 3000-point sphere instead would ring every point and fill the silhouette.
+    let mut selected = PointCloudItem::default();
+    selected.positions = (0..8)
+        .map(|i| {
+            let t = i as f32 / 8.0 * std::f32::consts::TAU;
+            [2.3 + t.cos() * 0.5, 0.0, t.sin() * 0.5]
+        })
+        .collect();
+    selected.point_size = 14.0;
+    selected.default_colour = viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15);
+    selected.settings.pick_id = viewport_lib::PickId(1614);
+    selected.settings.selected = true;
+
     BuiltScene {
-        point_clouds: vec![pc],
+        point_clouds: vec![pc, selected],
         lighting: rigs::from_above(),
         ..Default::default()
     }
