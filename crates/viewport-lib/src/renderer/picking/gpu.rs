@@ -1788,7 +1788,9 @@ impl ViewportRenderer {
                 | PickMask::VERTEX
                 | PickMask::EDGE
                 | PickMask::CELL
-                | PickMask::INSTANCE,
+                | PickMask::INSTANCE
+                | PickMask::SPLAT
+                | PickMask::CLOUD_POINT,
         ) && self.any_plugin_items_submitted(frame);
 
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
@@ -3000,12 +3002,13 @@ impl ViewportRenderer {
         world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
         let mesh_sub = PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL;
+        let shader_written = PickMask::INSTANCE | PickMask::SPLAT | PickMask::CLOUD_POINT;
         let effective_mask = if primitive_index_supported {
             mask
         } else {
             mask.difference(mesh_sub)
         };
-        if !effective_mask.intersects(mesh_sub | PickMask::INSTANCE) {
+        if !effective_mask.intersects(mesh_sub | shader_written) {
             return None;
         }
         let plugin = self.item_type_plugins.get(name)?;

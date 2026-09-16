@@ -628,24 +628,27 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
         None
     }
 
-    /// Return the pick ids of this plugin's items inside a screen-space
+    /// Return this plugin's items (and sub-elements) inside a screen-space
     /// rectangle (CPU box select).
     ///
     /// Called from the renderer's CPU
     /// [`pick_rect`](crate::renderer::ViewportRenderer::pick_rect) after the
-    /// built-in item types. Implementations project their items with
+    /// built-in item types; the returned result is merged into the query's.
+    /// Implementations project their items with
     /// [`project_to_screen`](crate::plugin_api::pick_helpers::project_to_screen)
     /// (and
     /// [`segment_in_rect`](crate::plugin_api::pick_helpers::segment_in_rect)
-    /// for edges), and return the ids of items touching the rectangle,
-    /// skipping hidden items and [`PickId::NONE`]. Like [`pick`](Self::pick),
-    /// the plugin answers from state cached in [`prepare`](Self::prepare).
+    /// for edges), push the ids of items touching the rectangle into
+    /// `objects`, and, when the mask asks for a sub-object level the item
+    /// type answers, push `(id, sub_object)` pairs into `elements`. Skip
+    /// hidden items and [`PickId::NONE`]. Like [`pick`](Self::pick), the
+    /// plugin answers from state cached in [`prepare`](Self::prepare).
     ///
     /// The GPU rect path needs no counterpart: items drawn in
     /// [`render_pick`](Self::render_pick) are decoded there per pixel.
-    /// Default: no items, matching plugins that only implement GPU picking.
-    fn pick_rect(&self, _ctx: &RectPickContext) -> Vec<PickId> {
-        Vec::new()
+    /// Default: empty, matching plugins that only implement GPU picking.
+    fn pick_rect(&self, _ctx: &RectPickContext) -> crate::renderer::PickRectResult {
+        crate::renderer::PickRectResult::default()
     }
 
     /// Issue draw calls into the lib's pick-id pass.
@@ -710,10 +713,12 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// has [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE);
     /// without it the renderer strips them from `mask` before this call, so
     /// a constant-0 channel is never misread as a triangle index. The
-    /// `INSTANCE` level decodes a shader-written instance index
-    /// ([`SHARED_PICK_INSTANCE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_INSTANCE_WGSL))
-    /// and is forwarded on every device, matching the built-in instanced
-    /// pick path.
+    /// `INSTANCE`, `SPLAT`, and `CLOUD_POINT` levels decode a shader-written
+    /// index (for example
+    /// [`SHARED_PICK_INSTANCE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_INSTANCE_WGSL),
+    /// or a pick fragment of the plugin's own that writes the element index)
+    /// and are forwarded on every device, matching the built-in paths for
+    /// those levels.
     fn resolve_sub_object(
         &self,
         _pick_id: PickId,

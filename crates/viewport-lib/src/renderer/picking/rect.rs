@@ -999,11 +999,9 @@ impl ViewportRenderer {
                 mask,
             };
             for plugin in self.item_type_plugins.values() {
-                for id in plugin.pick_rect(&plugin_ctx) {
-                    if id != PickId::NONE {
-                        result.objects.push(id.0);
-                    }
-                }
+                let plugin_result = plugin.pick_rect(&plugin_ctx);
+                result.objects.extend(plugin_result.objects);
+                result.elements.extend(plugin_result.elements);
             }
         }
 

@@ -174,9 +174,10 @@ impl ItemTypePlugin for ImageSlicePlugin {
         best
     }
 
-    fn pick_rect(&self, ctx: &RectPickContext) -> Vec<PickId> {
+    fn pick_rect(&self, ctx: &RectPickContext) -> crate::renderer::PickRectResult {
+        let mut result = crate::renderer::PickRectResult::default();
         if !ctx.mask.intersects(PickMask::OBJECT) {
-            return Vec::new();
+            return result;
         }
         let in_rect = |p: glam::Vec2| {
             p.x >= ctx.rect_min.x
@@ -184,7 +185,6 @@ impl ItemTypePlugin for ImageSlicePlugin {
                 && p.y >= ctx.rect_min.y
                 && p.y <= ctx.rect_max.y
         };
-        let mut out = Vec::new();
         for item in &self.pick_items {
             if item.settings.pick_id == PickId::NONE {
                 continue;
@@ -205,10 +205,10 @@ impl ItemTypePlugin for ImageSlicePlugin {
                     (None, None) => false,
                 });
             if hit {
-                out.push(item.settings.pick_id);
+                result.objects.push(item.settings.pick_id.0);
             }
         }
-        out
+        result
     }
 
     fn render_pick(

@@ -2308,7 +2308,18 @@ impl ViewportRenderer {
             crate::renderer::item_plugins::plugin_items_for(frame, name).is_some_and(|items| {
                 (0..items.len()).any(|i| {
                     let s = items.item_settings(i);
-                    s.selected && !s.hidden
+                    if s.hidden {
+                        return false;
+                    }
+                    // A sub-object selection on a plugin item drives the
+                    // outline machinery the same way whole-item selection
+                    // does; without this, sub-level outlines would never
+                    // open the mask pass.
+                    s.selected
+                        || (s.pick_id != PickId::NONE
+                            && frame.interaction.sub_selection.as_ref().is_some_and(|sel| {
+                                sel.items.iter().any(|(node_id, _)| *node_id == s.pick_id.0)
+                            }))
                 })
             })
         })
@@ -3238,6 +3249,20 @@ impl ViewportRenderer {
         );
         let (_, viewport_fx) = frame.effects.split();
         let mut sink = SubmitSink::inline(queue);
+        // The split API never routes through `prepare_into`, so plugin
+        // prepare and cull dispatch here, once per viewport, with this
+        // viewport's camera in the context. The single-call `prepare` path
+        // dispatches from `prepare_into` instead and does not reach this
+        // wrapper.
+        let plugin_bufs = self.dispatch_plugin_prepare(device, queue, frame);
+        if !plugin_bufs.is_empty() {
+            sink.extend(plugin_bufs);
+        }
+        if !self.item_type_plugins.is_empty() {
+            let vp = frame.camera.render_camera.view_proj();
+            let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
+            self.dispatch_plugin_cull(&frustum, frame);
+        }
         self.prepare_viewport_internal(device, queue, frame, &viewport_fx, &mut sink);
     }
 
