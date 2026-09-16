@@ -275,11 +275,6 @@ pub(crate) struct PickResources {
     pub(crate) polyline_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the polyline pick pipeline (per-draw object-id uniform).
     pub(crate) polyline_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for GPU marching-cubes surfaces: rasterises the generated MC
-    /// vertex buffer and writes the job's object id and depth.
-    pub(crate) mc_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 1 layout for the MC pick pipeline (per-job object-id uniform).
-    pub(crate) mc_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pick pipeline for point clouds: reuses the render screen-space quad
     /// expansion and writes the item's object id plus the hit point's instance
     /// index.

@@ -502,8 +502,6 @@ impl ViewportRenderer {
         >,
         decal_deps_gate: &mut crate::resources::resource_deps::DepsGate,
         decal_exclude_items: &mut Vec<crate::resources::decal::DecalExcludeGpuItem>,
-        mc_gpu_data: &mut Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>,
-        pick_mc_items: &mut Vec<GpuMcPickItem>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
@@ -618,27 +616,6 @@ impl ViewportRenderer {
                         let gpu =
                             resources.upload_decal_exclude_item(device, item.mesh_id, item.model);
                         decal_exclude_items.push(gpu);
-                    }
-                }
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // GPU marching cubes compute dispatch.
-        // ------------------------------------------------------------------
-        mc_gpu_data.clear();
-        pick_mc_items.clear();
-        if !frame.scene.gpu_mc_items.is_empty() {
-            resources.ensure_mc_pipelines(device);
-            *mc_gpu_data = resources.run_mc_jobs(device, queue, &frame.scene.gpu_mc_items);
-            for job in &frame.scene.gpu_mc_items {
-                if job.settings.pick_id != PickId::NONE {
-                    if let Some(cpu_data) = &job.cpu_data {
-                        pick_mc_items.push(GpuMcPickItem {
-                            id: job.settings.pick_id.0,
-                            isovalue: job.isovalue,
-                            volume_data: cpu_data.clone(),
-                        });
                     }
                 }
             }

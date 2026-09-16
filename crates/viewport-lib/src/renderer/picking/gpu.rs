@@ -224,14 +224,6 @@ struct PolylinePickDraw<'a> {
     segment_count: u32,
 }
 
-/// One GPU marching-cubes item to draw into the pick pass. The owned group-1 bind
-/// group holds the object id; each slab contributes a borrowed (vertex buffer,
-/// indirect-args buffer) pair drawn with the reused MC surface indirect args.
-struct McPickDraw<'a> {
-    id_bind_group: crate::gpu::BindGroup,
-    slabs: Vec<(&'a crate::gpu::Buffer, &'a crate::gpu::Buffer)>,
-}
-
 /// One point cloud to draw into the pick pass. The owned group-2 bind group
 /// holds the object id; the group-1 render bind group (uniform + LUT + radius
 /// buffer) and the position buffer are borrowed from prepared
@@ -274,7 +266,6 @@ struct PickPipelineFlags {
     has_pickable_tensor: bool,
     has_pickable_sprites: bool,
     has_pickable_polylines: bool,
-    has_pickable_mc: bool,
     has_pickable_point_clouds: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -362,7 +353,6 @@ struct PickDrawSet<'a> {
     glyph_draws: Vec<GlyphPickDraw<'a>>,
     sprite_draws: Vec<SpritePickDraw<'a>>,
     polyline_draws: Vec<PolylinePickDraw<'a>>,
-    mc_draws: Vec<McPickDraw<'a>>,
     point_cloud_draws: Vec<PointCloudPickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
@@ -390,7 +380,6 @@ impl PickDrawSet<'_> {
             && self.glyph_draws.is_empty()
             && self.sprite_draws.is_empty()
             && self.polyline_draws.is_empty()
-            && self.mc_draws.is_empty()
             && self.point_cloud_draws.is_empty()
             && !self.has_plugin_pick
     }
@@ -977,14 +966,6 @@ impl ViewportRenderer {
             self.resources.ensure_polyline_pick_pipeline(device);
         }
 
-        // GPU marching-cubes surfaces rasterise their generated vertex buffer.
-        // Object-level.
-        let has_pickable_mc = mask.intersects(PickMask::OBJECT)
-            && self.mc_gpu_data.iter().any(|m| m.pick_id != PickId::NONE);
-        if has_pickable_mc {
-            self.resources.ensure_mc_pick_pipeline(device);
-        }
-
         // Point clouds: each renders as a screen-space quad per point (approach
         // B), so the pick reuses that expansion. CLOUD_POINT sub-object comes
         // from the forwarded instance index.
@@ -1051,7 +1032,6 @@ impl ViewportRenderer {
             has_pickable_tensor,
             has_pickable_sprites,
             has_pickable_polylines,
-            has_pickable_mc,
             has_pickable_point_clouds,
             decal_cube,
             scatter_cube,
@@ -1082,7 +1062,6 @@ impl ViewportRenderer {
         let has_pickable_tensor = flags.has_pickable_tensor;
         let has_pickable_sprites = flags.has_pickable_sprites;
         let has_pickable_polylines = flags.has_pickable_polylines;
-        let has_pickable_mc = flags.has_pickable_mc;
         let has_pickable_point_clouds = flags.has_pickable_point_clouds;
         let decal_cube = flags.decal_cube;
         let scatter_cube = flags.scatter_cube;
@@ -1399,56 +1378,6 @@ impl ViewportRenderer {
             }
         }
 
-        // GPU marching-cubes surfaces: one indirect draw per slab of each pickable
-        // item, with a group-1 object-id uniform. The generated MC vertex buffer and
-        // surface indirect args are reused from the render path.
-        let mut mc_draws: Vec<McPickDraw> = Vec::new();
-        if has_pickable_mc && self.resources.pick.mc_pipeline.is_some() {
-            let id_bgl = self
-                .resources
-                .pick
-                .mc_pick_id_bgl
-                .as_ref()
-                .expect("mc pick id bgl built with the pipeline");
-            for mc in self
-                .mc_gpu_data
-                .iter()
-                .filter(|m| m.pick_id != PickId::NONE)
-            {
-                let Some(vol) = self.resources.mc.volumes.get(mc.volume_idx) else {
-                    continue;
-                };
-                if vol.slabs.is_empty() {
-                    continue;
-                }
-                let id_data = [mc.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("mc_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("mc_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: id_buf.as_entire_binding(),
-                    }],
-                });
-                let slabs = vol
-                    .slabs
-                    .iter()
-                    .map(|s| (&s.vertex_buf, &s.indirect_buf))
-                    .collect();
-                mc_draws.push(McPickDraw {
-                    id_bind_group,
-                    slabs,
-                });
-            }
-        }
-
         // Point clouds: each item draws its screen-space quad expansion with a
         // group-2 object-id uniform. The group-1 render bind group (uniform +
         // LUT + radius buffer) is reused unchanged.
@@ -1522,7 +1451,6 @@ impl ViewportRenderer {
             glyph_draws,
             sprite_draws,
             polyline_draws,
-            mc_draws,
             point_cloud_draws,
             has_plugin_pick,
             kinds,
@@ -1814,23 +1742,6 @@ impl ViewportRenderer {
                     pick_pass.set_bind_group(2, &pd.id_bind_group, &[]);
                     pick_pass.set_vertex_buffer(0, pd.vertex_buffer.slice(..));
                     pick_pass.draw(0..6, 0..pd.segment_count);
-                }
-            }
-        }
-
-        // GPU marching-cubes surfaces: rasterise each slab's generated vertex
-        // buffer via its surface indirect args. Group 0 is the shared minimal
-        // pick camera; group 1 is the per-item object id.
-        if let Some(mc_pipeline) = self.resources.pick.mc_pipeline.as_ref() {
-            if !draw_set.mc_draws.is_empty() {
-                pick_pass.set_pipeline(mc_pipeline);
-                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                for md in &draw_set.mc_draws {
-                    pick_pass.set_bind_group(1, &md.id_bind_group, &[]);
-                    for (vertex_buf, indirect_buf) in &md.slabs {
-                        pick_pass.set_vertex_buffer(0, vertex_buf.slice(..));
-                        pick_pass.draw_indirect(indirect_buf, 0);
-                    }
                 }
             }
         }

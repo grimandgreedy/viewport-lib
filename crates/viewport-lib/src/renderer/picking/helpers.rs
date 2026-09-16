@@ -1,9 +1,6 @@
 //! Free helper functions shared by the CPU pick and rect-pick paths.
 //!
-//! Ray/segment intersection, strip-index mapping, and CPU evaluators for
-//! marching-cubes picking.
-
-use super::*;
+//! Ray/segment intersection and strip-index mapping.
 
 /// Warn once if a CPU pick runs while the pick cache is disabled, so the call does
 /// not silently return nothing.
@@ -340,125 +337,6 @@ pub(super) fn ribbon_lateral_frames(
     }
 
     frames
-}
-
-// ---------------------------------------------------------------------------
-// CPU volume ray-march for GPU marching cubes isosurface picking
-// ---------------------------------------------------------------------------
-
-/// Slab test: returns (t_enter, t_exit) for a ray vs axis-aligned box, or None.
-pub(super) fn ray_aabb_slab(
-    ray_orig: glam::Vec3,
-    ray_dir: glam::Vec3,
-    bbox_min: glam::Vec3,
-    bbox_max: glam::Vec3,
-) -> Option<(f32, f32)> {
-    // Avoid division by zero for axis-aligned rays.
-    let inv = glam::Vec3::new(
-        if ray_dir.x.abs() > 1e-30 {
-            1.0 / ray_dir.x
-        } else {
-            f32::INFINITY * ray_dir.x.signum()
-        },
-        if ray_dir.y.abs() > 1e-30 {
-            1.0 / ray_dir.y
-        } else {
-            f32::INFINITY * ray_dir.y.signum()
-        },
-        if ray_dir.z.abs() > 1e-30 {
-            1.0 / ray_dir.z
-        } else {
-            f32::INFINITY * ray_dir.z.signum()
-        },
-    );
-    let t1 = (bbox_min - ray_orig) * inv;
-    let t2 = (bbox_max - ray_orig) * inv;
-    let tmin = t1.min(t2);
-    let tmax = t1.max(t2);
-    let t_enter = tmin.x.max(tmin.y).max(tmin.z);
-    let t_exit = tmax.x.min(tmax.y).min(tmax.z);
-    if t_enter <= t_exit && t_exit >= 0.0 {
-        Some((t_enter, t_exit))
-    } else {
-        None
-    }
-}
-
-/// Bisect to refine the isovalue crossing between t_lo and t_hi (8 iterations).
-pub(super) fn bisect_mc_crossing(
-    ray_orig: glam::Vec3,
-    ray_dir: glam::Vec3,
-    vol: &crate::geometry::marching_cubes::VolumeData,
-    isovalue: f32,
-    mut t_lo: f32,
-    mut t_hi: f32,
-) -> f32 {
-    let s0 = crate::geometry::marching_cubes::trilinear_sample(
-        vol,
-        (ray_orig + ray_dir * t_lo).to_array(),
-    ) - isovalue;
-    let mut lo_sign = s0 < 0.0;
-    for _ in 0..8 {
-        let mid = (t_lo + t_hi) * 0.5;
-        let s = crate::geometry::marching_cubes::trilinear_sample(
-            vol,
-            (ray_orig + ray_dir * mid).to_array(),
-        ) - isovalue;
-        if (s < 0.0) == lo_sign {
-            t_lo = mid;
-        } else {
-            t_hi = mid;
-            lo_sign = !lo_sign;
-        }
-    }
-    (t_lo + t_hi) * 0.5
-}
-
-/// CPU ray-march against a MC isosurface. Returns `(toi, world_pos)` on hit.
-///
-/// Steps through the volume AABB at half-cell intervals and refines any
-/// isovalue crossing to 8 bisection steps.
-pub(super) fn pick_mc_volume(
-    ray_orig: glam::Vec3,
-    ray_dir: glam::Vec3,
-    item: &GpuMcPickItem,
-) -> Option<(f32, glam::Vec3)> {
-    use crate::geometry::marching_cubes::trilinear_sample;
-
-    let vol = &item.volume_data;
-    let isovalue = item.isovalue;
-    let [nx, ny, nz] = vol.dims;
-    let origin = glam::Vec3::from(vol.origin);
-    let spacing = glam::Vec3::from(vol.spacing);
-    let extent = spacing * glam::Vec3::new(nx as f32, ny as f32, nz as f32);
-
-    let (t_enter, t_exit) = ray_aabb_slab(ray_orig, ray_dir, origin, origin + extent)?;
-    let t_start = t_enter.max(0.0);
-    if t_start >= t_exit {
-        return None;
-    }
-
-    // Step at half the smallest cell spacing so we don't skip thin features.
-    let step = spacing.min_element() * 0.5;
-    let mut t = t_start;
-    let mut prev = trilinear_sample(vol, (ray_orig + ray_dir * t).to_array()) - isovalue;
-
-    loop {
-        t += step;
-        if t > t_exit {
-            break;
-        }
-        let p = ray_orig + ray_dir * t;
-        let cur = trilinear_sample(vol, p.to_array()) - isovalue;
-        if prev * cur <= 0.0 {
-            // Sign change detected: bisect and return.
-            let t_hit = bisect_mc_crossing(ray_orig, ray_dir, vol, isovalue, t - step, t);
-            let world_pos = ray_orig + ray_dir * t_hit;
-            return Some((t_hit, world_pos));
-        }
-        prev = cur;
-    }
-    None
 }
 
 #[cfg(test)]

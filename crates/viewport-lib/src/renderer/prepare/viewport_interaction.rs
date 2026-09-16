@@ -808,61 +808,6 @@ impl ViewportRenderer {
             }
         }
 
-        // MC surface outlines: build per-item outline uniform + bind group.
-        let mut mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem> =
-            Vec::new();
-        if frame.interaction.outline_selected {
-            for (i, job) in frame.scene.gpu_mc_items.iter().enumerate() {
-                if job.settings.hidden || !job.settings.selected {
-                    continue;
-                }
-                self.resources.ensure_mc_pipelines(device);
-                self.resources.ensure_mc_outline_mask_pipeline(device);
-                let uniform = OutlineUniform {
-                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    colour: [0.0; 4],
-                    pixel_offset: 0.0,
-                    has_position_override: 0,
-                    position_override_base: 0,
-                    position_override_len: u32::MAX,
-                    deform_flags: 0,
-                    _deform_pad: [0; 3],
-                };
-                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("mc_outline_uniform_buf"),
-                    size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("mc_outline_bg"),
-                    layout: &self.resources.outline.bind_group_layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: self
-                                .resources
-                                .content
-                                .fallback_position_override_buf
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
-                mc_outline_data.push(
-                    crate::resources::volume::gpu_marching_cubes::McOutlineItem {
-                        mc_gpu_idx: i,
-                        _uniform_buf: buf,
-                        mask_bind_group: bg,
-                    },
-                );
-            }
-        }
-
         // X-ray buffers for selected objects.
         let mut xray_object_buffers: Vec<(
             crate::resources::mesh::mesh_store::MeshId,
@@ -983,7 +928,6 @@ impl ViewportRenderer {
             slot.selection_outlines.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
             slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
             slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
-            slot.selection_outlines.mc_outline_data = mc_outline_data;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.cap_buffers = cap_buffers;
@@ -1059,10 +1003,6 @@ impl ViewportRenderer {
                     .selection_outlines
                     .screen_rect_outline_buffers
                     .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .mc_outline_data
-                    .is_empty()
                 || plugin_outline)
         {
             let ppp = frame.camera.pixels_per_point;
@@ -1122,8 +1062,6 @@ impl ViewportRenderer {
                 as *const Vec<(usize, Option<Vec<u32>>)>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
-            let mc_outlines_ptr = &slot_ref.selection_outlines.mc_outline_data
-                as *const Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>;
             let glyph_gpu_ptr = &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
             let tensor_glyph_gpu_ptr =
                 &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
@@ -1137,8 +1075,6 @@ impl ViewportRenderer {
                 &self.ribbon_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
             let polyline_gpu_ptr =
                 &self.polyline_gpu_data as *const Vec<crate::resources::PolylineGpuData>;
-            let mc_gpu_data_ptr = &self.mc_gpu_data
-                as *const Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const crate::gpu::TextureView;
@@ -1158,7 +1094,6 @@ impl ViewportRenderer {
                 tensor_glyph_outline_indices,
                 sprite_outline_indices,
                 screen_rect_outlines,
-                mc_outlines,
                 glyph_gpu_data,
                 tensor_glyph_gpu_data,
                 sprite_gpu_data,
@@ -1166,7 +1101,6 @@ impl ViewportRenderer {
                 tube_gpu_data,
                 ribbon_gpu_data,
                 polyline_gpu_data,
-                mc_gpu_frame_data,
                 camera_bg,
                 mask_view,
                 colour_view,
@@ -1184,7 +1118,6 @@ impl ViewportRenderer {
                     &*tensor_glyph_outline_idx_ptr,
                     &*sprite_outline_idx_ptr,
                     &*screen_rect_outlines_ptr,
-                    &*mc_outlines_ptr,
                     &*glyph_gpu_ptr,
                     &*tensor_glyph_gpu_ptr,
                     &*sprite_gpu_ptr,
@@ -1192,7 +1125,6 @@ impl ViewportRenderer {
                     &*tube_gpu_ptr,
                     &*ribbon_gpu_ptr,
                     &*polyline_gpu_ptr,
-                    &*mc_gpu_data_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*colour_view_ptr,
@@ -1404,25 +1336,6 @@ impl ViewportRenderer {
                         for sr in screen_rect_outlines {
                             pass.set_bind_group(0, &sr.bind_group, &[]);
                             pass.draw(0..6, 0..1);
-                        }
-                    }
-                }
-
-                // Draw GPU marching cubes outlines (stride-24 vertex buffer, draw_indirect).
-                if !mc_outlines.is_empty() {
-                    if let Some(pipeline) = self.resources.mc.outline_mask_pipeline.as_ref() {
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, camera_bg, &[]);
-                        for mc_out in mc_outlines {
-                            pass.set_bind_group(1, &mc_out.mask_bind_group, &[]);
-                            if let Some(mc) = mc_gpu_frame_data.get(mc_out.mc_gpu_idx) {
-                                if let Some(vol) = self.resources.mc.volumes.get(mc.volume_idx) {
-                                    for slab in &vol.slabs {
-                                        pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
-                                        pass.draw_indirect(&slab.indirect_buf, 0);
-                                    }
-                                }
-                            }
                         }
                     }
                 }

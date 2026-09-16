@@ -696,67 +696,6 @@ impl ViewportRenderer {
             }
         }
 
-        // 12. GPU marching cubes surface rect picks (OBJECT only).
-        //
-        // Iterates over all cells in the volume where the scalar field straddles
-        // the isovalue (MC would generate triangles there). If any such cell's
-        // center projects into the pick rect, the item is a hit.
-        if wants_object {
-            for item in &self.pick_mc_items {
-                let vol = &item.volume_data;
-                let isovalue = item.isovalue;
-                let [nx, ny, nz] = vol.dims;
-                let origin = glam::Vec3::from(vol.origin);
-                let spacing = glam::Vec3::from(vol.spacing);
-
-                let mut hit = false;
-                'mc_rect: for iz in 0..nz.saturating_sub(1) {
-                    for iy in 0..ny.saturating_sub(1) {
-                        for ix in 0..nx.saturating_sub(1) {
-                            // A cell straddles the isovalue when not all 8 corners
-                            // are on the same side. Check for both above and below.
-                            let mut has_below = false;
-                            let mut has_above = false;
-                            'corners: for dz in 0u32..=1 {
-                                for dy in 0u32..=1 {
-                                    for dx in 0u32..=1 {
-                                        let s = vol.sample(ix + dx, iy + dy, iz + dz);
-                                        if s < isovalue {
-                                            has_below = true;
-                                        } else {
-                                            has_above = true;
-                                        }
-                                        if has_below && has_above {
-                                            break 'corners;
-                                        }
-                                    }
-                                }
-                            }
-                            if !(has_below && has_above) {
-                                continue;
-                            }
-                            let cell_center = origin
-                                + spacing
-                                    * glam::Vec3::new(
-                                        ix as f32 + 0.5,
-                                        iy as f32 + 0.5,
-                                        iz as f32 + 0.5,
-                                    );
-                            if let Some((sx, sy)) = project(view_proj, cell_center) {
-                                if in_rect(sx, sy) {
-                                    hit = true;
-                                    break 'mc_rect;
-                                }
-                            }
-                        }
-                    }
-                }
-                if hit {
-                    result.objects.push(item.id);
-                }
-            }
-        }
-
         // 13. Decal rect picks (OBJECT only): project the decal projection box
         // (unit cube [-0.5, 0.5]^3 mapped by `transform`) and test its corners
         // and edges against the selection rect. Mirrors the ray-versus-box test

@@ -947,26 +947,6 @@ impl ViewportRenderer {
             }
         }
 
-        // 12. GPU marching cubes surface picks (OBJECT only).
-        if wants_object {
-            for item in &self.pick_mc_items {
-                if let Some((toi, world_pos)) = pick_mc_volume(ray_origin, ray_dir, item) {
-                    #[allow(deprecated)]
-                    consider(
-                        toi,
-                        PickHit {
-                            id: item.id,
-                            sub_object: None,
-                            world_pos,
-                            normal: glam::Vec3::Z,
-                            scalar_value: None,
-                            sub_object_world_pos: None,
-                        },
-                    );
-                }
-            }
-        }
-
         // 13. Decal picks (OBJECT only): ray versus the decal projection box.
         // A decal is the unit box [-0.5, 0.5]^3 mapped to world by `transform`.
         // The box front face typically hugs the receiver surface, so a decal
