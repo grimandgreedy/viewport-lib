@@ -89,6 +89,19 @@ fn frame_for(items: Vec<crate::SceneRenderItem>) -> FrameData {
     FrameData::new(cf, SceneFrame::from_surface_items(items))
 }
 
+/// `frame_for` with a distinct scene generation.
+///
+/// Material identity is not part of the instanced batch cache key, so two frames
+/// differing only by material reuse the cached batch and render identically. A
+/// test comparing a textured render against an untextured one has to move the
+/// generation or it measures nothing. Frames that differ by an upload, a free or
+/// a replace do not need this: those move an epoch, which rebuilds on its own.
+fn frame_gen(items: Vec<crate::SceneRenderItem>, generation: u64) -> FrameData {
+    let mut fd = frame_for(items);
+    fd.scene.generation = generation;
+    fd
+}
+
 /// A textured plane at world x, unlit and two-sided (the material a windowed
 /// compositor uses for its client planes), sharing `mesh`.
 fn textured_plane(
@@ -994,5 +1007,437 @@ fn replacing_a_texture_rebuilds_the_batch_cache() {
     assert!(
         batches_rebuilt(&renderer),
         "a replaced texture keeps its id, so only the view epoch can force the rebuild"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Freeing, rather than replacing.
+//
+// The caches above validate themselves against a free by checking whether the
+// resources they name still resolve, and fall back to a wholesale rebuild only
+// when a view moved under a live id. The tests below cover the corners of that
+// split which the replace-path tests above do not reach. Every one of them fails
+// as a cache wrongly *kept*: the render does not change when it should, which
+// also means the freed resource is still pinned.
+// ---------------------------------------------------------------------------
+
+/// Freeing a *mesh* reaches the caches, not just freeing a texture.
+///
+/// `cached_batches_resolve` and `MaterialBindGroup::resources_resolve` both check
+/// the mesh id as well as the texture ids, and nothing exercised that.
+#[test]
+fn freeing_a_mesh_drops_its_items_from_the_cached_batches() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping freeing_a_mesh_drops_its_items_from_the_cached_batches: no adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    let keep = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::plane(1.6, 1.6))
+        .unwrap();
+    let doomed = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::plane(1.6, 1.6))
+        .unwrap();
+    let tex = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
+        .unwrap();
+
+    // Two items per mesh so each mesh forms its own instanced batch.
+    let items = |with_doomed: bool| {
+        let mut v = vec![
+            textured_plane(keep, tex, -1.8),
+            textured_plane(keep, tex, -0.6),
+        ];
+        if with_doomed {
+            v.push(textured_plane(doomed, tex, 0.6));
+            v.push(textured_plane(doomed, tex, 1.8));
+        }
+        v
+    };
+
+    let both = checksum(&renderer.render_offscreen(&device, &queue, &frame_for(items(true)), W, H));
+    assert!(renderer.is_using_instanced_path());
+    // The oracle: what the frame looks like when those items were never submitted.
+    let without =
+        checksum(&renderer.render_offscreen(&device, &queue, &frame_for(items(false)), W, H));
+    assert_ne!(
+        both, without,
+        "the second mesh must be visible, or this test cannot see its own subject"
+    );
+
+    assert!(renderer.resources_mut().free_mesh(doomed));
+    // Same item list as the first frame, including the items whose mesh is gone.
+    let after =
+        checksum(&renderer.render_offscreen(&device, &queue, &frame_for(items(true)), W, H));
+    assert_eq!(
+        after, without,
+        "items whose mesh was freed must stop drawing (after-free={after} \
+         never-submitted={without} before-free={both}); an unchanged frame means \
+         the batch list was kept and is still holding the freed mesh's buffers"
+    );
+}
+
+/// A texture reached only through `submesh_materials` is part of what the caches
+/// depend on. The item's own material names no texture at all, so a cache that
+/// only looked at `item.material` would not know the submesh texture was gone.
+#[test]
+fn freeing_a_texture_used_only_by_a_submesh_material_reaches_the_screen() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping freeing_a_texture_used_only_by_a_submesh_material: no adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    // The mesh needs a real submesh range: `active_submesh_materials` falls back
+    // to the item material when the mesh has none, which would make this test
+    // observe nothing. One range covering every index is the simplest that counts.
+    let mut data = crate::primitives::plane(2.0, 2.0);
+    data.submeshes = vec![crate::resources::SubmeshRange {
+        first_index: 0,
+        index_count: data.indices.len() as u32,
+    }];
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &data)
+        .unwrap();
+    let tex = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
+        .unwrap();
+
+    // The item's own material is untextured; only the submesh material names the
+    // texture, so a cache that looked at `item.material` alone would not know the
+    // submesh texture had gone.
+    let item = |with_submesh_texture: bool| {
+        let mut it = crate::SceneRenderItem::default();
+        it.mesh_id = mesh;
+        it.material = Material::from_colour([0.1, 0.1, 0.1]);
+        it.settings = unlit_settings();
+        let mut sub = Material::from_colour([0.1, 0.1, 0.1]);
+        if with_submesh_texture {
+            sub.texture_id = Some(tex);
+        }
+        it.submesh_materials = Some(vec![sub]);
+        it
+    };
+
+    let textured = checksum(&renderer.render_offscreen(
+        &device,
+        &queue,
+        &frame_gen(vec![item(true), item(true)], 1),
+        W,
+        H,
+    ));
+    let untextured = checksum(&renderer.render_offscreen(
+        &device,
+        &queue,
+        &frame_gen(vec![item(false), item(false)], 2),
+        W,
+        H,
+    ));
+    assert_ne!(
+        textured, untextured,
+        "the submesh texture must reach the draw, or this test observes nothing"
+    );
+
+    assert!(renderer.resources_mut().free_texture(tex));
+    let after = checksum(&renderer.render_offscreen(
+        &device,
+        &queue,
+        &frame_gen(vec![item(true), item(true)], 3),
+        W,
+        H,
+    ));
+    assert_eq!(
+        after, untextured,
+        "freeing a texture named only by a submesh material must reach the screen \
+         (after-free={after} untextured={untextured} textured={textured}); an \
+         unchanged frame means the cache never knew it depended on that texture"
+    );
+}
+
+/// `update_texture_view` re-points an externally-owned view under a live id.
+/// No liveness check can see that, so it bumps the view epoch and forces the
+/// wholesale rebuild. (The branch notes called this `replace_external_texture`,
+/// which is not the name of the method.)
+#[test]
+fn update_texture_view_reaches_the_screen() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping update_texture_view_reaches_the_screen: no adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Two caller-owned textures, the kind a compositor hands over per frame.
+    let external = |colour: [u8; 4]| {
+        let t = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("external_test_texture"),
+            size: crate::gpu::Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            crate::gpu::TexelCopyTextureInfo {
+                texture: &t,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d::ZERO,
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            &solid_rgba(2, 2, colour),
+            crate::gpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(8),
+                rows_per_image: Some(2),
+            },
+            crate::gpu::Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = t.create_view(&crate::gpu::TextureViewDescriptor::default());
+        (t, view)
+    };
+    let (_keep_a, view_a) = external(C_START);
+    let (_keep_b, view_b) = external(C_SWAP);
+
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::plane(2.0, 2.0))
+        .unwrap();
+    let id = renderer
+        .resources_mut()
+        .register_texture_view(&device, &view_a, 2, 2);
+    let items = vec![
+        textured_plane(mesh, id, -1.05),
+        textured_plane(mesh, id, 1.05),
+    ];
+
+    let before =
+        checksum(&renderer.render_offscreen(&device, &queue, &frame_for(items.clone()), W, H));
+    assert!(renderer.is_using_instanced_path());
+
+    assert!(
+        renderer
+            .resources_mut()
+            .update_texture_view(&device, id, &view_b, 2, 2),
+        "re-pointing a registered external view should succeed"
+    );
+    let after = checksum(&renderer.render_offscreen(&device, &queue, &frame_for(items), W, H));
+    assert_ne!(
+        before, after,
+        "re-pointing an external view must reach the screen (before={before} \
+         after={after}); the id stays live, so only the view epoch can carry this"
+    );
+}
+
+/// A free landing in the same frame as an in-flight async upload's apply.
+///
+/// The upload's apply closure checks the slot generation, so it must not write
+/// into a slot the free has already recycled. The render is the end-to-end check:
+/// whatever the ordering, the freed texture must not come back.
+#[test]
+fn a_free_racing_an_in_flight_upload_does_not_resurrect_the_texture() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping a_free_racing_an_in_flight_upload: no adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    let mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::plane(2.0, 2.0))
+        .unwrap();
+    let doomed = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
+        .unwrap();
+    let items = vec![
+        textured_plane(mesh, doomed, -1.05),
+        textured_plane(mesh, doomed, 1.05),
+    ];
+    let untextured: Vec<crate::SceneRenderItem> = items
+        .iter()
+        .cloned()
+        .map(|mut it| {
+            it.material = Material::default();
+            it.settings = unlit_settings();
+            it
+        })
+        .collect();
+
+    let before =
+        checksum(&renderer.render_offscreen(&device, &queue, &frame_gen(items.clone(), 1), W, H));
+    let oracle =
+        checksum(&renderer.render_offscreen(&device, &queue, &frame_gen(untextured, 2), W, H));
+    assert_ne!(before, oracle, "the texture must be visible to begin with");
+
+    // Start an upload, free the in-use texture, then let the upload land. The
+    // upload takes the recycled slot, so the item's handle is stale either way.
+    let job = renderer
+        .resources_mut()
+        .begin_upload_texture(
+            &device,
+            &queue,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_START)),
+        )
+        .expect("begin upload");
+    assert!(renderer.resources_mut().free_texture(doomed));
+    // The job queue is pumped by `process_uploads`, which `prepare` calls; nothing
+    // advances it on its own, so a bare spin here never finishes.
+    let mut arrived = None;
+    for _ in 0..1000 {
+        renderer.resources_mut().process_uploads(&device, &queue);
+        if let Ok(id) = renderer.resources_mut().upload_result_texture(job) {
+            arrived = Some(id);
+            break;
+        }
+        std::thread::yield_now();
+    }
+    let arrived = arrived.expect("the queued texture upload should land within 1000 pumps");
+
+    let after = checksum(&renderer.render_offscreen(&device, &queue, &frame_gen(items, 3), W, H));
+    assert_eq!(
+        after,
+        oracle,
+        "an item holding a freed id must render untextured even when a later \
+         upload took its slot (after={after} untextured={oracle} before={before}); \
+         the arrived texture landed in slot {} and the freed one was slot {}",
+        arrived.index(),
+        doomed.index()
+    );
+}
+
+/// The alpha-cutout shadow path, on a free rather than a replace.
+///
+/// `shadow_cull_bind_groups_stale` forces `bundle_key = None`, re-recording the
+/// shadow bundle. The replace case is covered above; a caster whose albedo is
+/// *freed* is the corner that was not.
+///
+/// The direction is deliberate. Start with a fully transparent mask, so the
+/// cutout discards every texel and the caster throws no shadow; freeing the
+/// texture leaves the material with no albedo at all, so the cutout falls back to
+/// the base colour's alpha and the caster becomes solid. The shadow therefore
+/// *appears*. Starting opaque would change nothing visible and the test would
+/// pass without observing anything.
+#[test]
+fn instanced_cutout_shadow_reflects_free_texture() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping instanced_cutout_shadow_reflects_free_texture: no GPU adapter");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    let ground = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::cuboid(24.0, 24.0, 0.5))
+        .unwrap();
+    let caster_mesh = renderer
+        .resources_mut()
+        .upload_mesh_data(&device, &crate::primitives::plane(4.0, 4.0))
+        .unwrap();
+    // Fully transparent: the cutout discards every texel, so no shadow.
+    let tex = renderer
+        .resources_mut()
+        .upload_texture(
+            &device,
+            &queue,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, [255, 255, 255, 0])),
+        )
+        .unwrap();
+
+    use crate::scene::material::AlphaMode;
+    let build = || -> FrameData {
+        let mut items = Vec::new();
+        let mut g = crate::SceneRenderItem::default();
+        g.mesh_id = ground;
+        g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+        g.material = Material::from_colour([0.85, 0.85, 0.85]);
+        items.push(g);
+        for x in [-1.0f32, 1.0] {
+            let mut c = crate::SceneRenderItem::default();
+            c.mesh_id = caster_mesh;
+            c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
+            let mut m = Material::textured(tex);
+            m.backface_policy = BackfacePolicy::Identical;
+            m.alpha_mode = AlphaMode::Mask(0.5);
+            c.material = m;
+            items.push(c);
+        }
+        let mut cam = Camera {
+            distance: 16.0,
+            ..Camera::default()
+        };
+        cam.center = glam::Vec3::new(-4.0, 0.0, 0.0);
+        cam.orientation = glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.0);
+        cam.set_aspect_ratio(EW as f32, EH as f32);
+        let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);
+        let mut fd = FrameData::new(cf, SceneFrame::from_surface_items(items));
+        let mut l = crate::LightingSettings::default();
+        l.lights = vec![{
+            let mut s = crate::LightSource::default();
+            s.kind = crate::LightKind::Directional {
+                direction: [1.6, 0.0, 1.0],
+            };
+            s.intensity = 1.0;
+            s
+        }];
+        l.shadows.enabled = true;
+        l.hemisphere_intensity = 0.05;
+        fd.effects.lighting = l;
+        fd
+    };
+
+    let region = |bytes: &[u8]| {
+        region_checksum(
+            bytes,
+            EW as usize,
+            SHADOW_X0,
+            SHADOW_X1,
+            SHADOW_Y0,
+            SHADOW_Y1,
+        )
+    };
+
+    // Frame 1: transparent mask, so the region is lit.
+    let lit = region(&renderer.render_offscreen(&device, &queue, &build(), EW, EH));
+    assert!(
+        renderer.is_using_instanced_path(),
+        "two casters sharing one mesh must select the instanced path"
+    );
+
+    assert!(renderer.resources_mut().free_texture(tex));
+
+    // Frame 2: the mask is gone, so the caster is solid and shadows the region.
+    let shadowed = region(&renderer.render_offscreen(&device, &queue, &build(), EW, EH));
+    assert!(
+        shadowed + 5_000 < lit,
+        "freeing a cutout caster's albedo must re-record the shadow bundle \
+         (lit={lit} after-free={shadowed}); an unchanged region means the cull \
+         bind groups and the bundle survived the free"
     );
 }
