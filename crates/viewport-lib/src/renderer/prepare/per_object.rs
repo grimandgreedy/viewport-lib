@@ -57,7 +57,13 @@ pub(super) fn build_object_uniform(
     } else {
         (0u32, 0.0, 1.0)
     };
-    let cm = common_material(item);
+    let cm = common_material(
+        item,
+        crate::resources::material_gpu::MaterialSlots::resolve(
+            &item.material,
+            &resources.content.textures,
+        ),
+    );
     ObjectUniform {
         model: cm.model,
         colour: cm.colour,
@@ -437,7 +443,13 @@ impl ViewportRenderer {
                     );
                     continue;
                 };
-                let material_id = resources.material_gpu_builder.intern(&item.material);
+                let resolved = crate::resources::material_gpu::MaterialSlots::resolve(
+                    &item.material,
+                    &resources.content.textures,
+                );
+                let material_id = resources
+                    .material_gpu_builder
+                    .intern(&item.material, resolved);
                 let obj_uniform = build_object_uniform(
                     resources,
                     item,
@@ -576,8 +588,13 @@ impl ViewportRenderer {
                     let mut range_indices: Vec<u32> = Vec::with_capacity(mats.len());
                     for (r, mat) in mats.iter().enumerate() {
                         range_item.material = mat.clone();
-                        let range_material_id =
-                            resources.material_gpu_builder.intern(&range_item.material);
+                        let range_material_id = resources.material_gpu_builder.intern(
+                            &range_item.material,
+                            crate::resources::material_gpu::MaterialSlots::resolve(
+                                &range_item.material,
+                                &resources.content.textures,
+                            ),
+                        );
                         let range_uniform = build_object_uniform(
                             resources,
                             &range_item,
@@ -930,7 +947,13 @@ impl ViewportRenderer {
                 item.material.emissive_texture_id,
             );
 
-            let material_id = resources.material_gpu_builder.intern(&item.material);
+            let material_id = resources.material_gpu_builder.intern(
+                &item.material,
+                crate::resources::material_gpu::MaterialSlots::resolve(
+                    &item.material,
+                    &resources.content.textures,
+                ),
+            );
             let obj_uniform = build_object_uniform(resources, item, false, None, material_id);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {

@@ -120,14 +120,59 @@ const _: () = assert!(std::mem::size_of::<MaterialGpu>() == 304);
 /// and so on) rather than sampling the array.
 pub(crate) const NO_TEXTURE: u32 = u32::MAX;
 
+/// A material's five texture slots resolved against the texture store: the array
+/// index for each slot that names a live texture, `None` otherwise.
+///
+/// The point of resolving all five in one place is that the block's index and
+/// the flag that tells the shader whether to sample it come from the same
+/// lookup. Derived separately they disagree the moment a handle goes stale, and
+/// a flag saying "sample" next to an index that names nothing is an out-of-bounds
+/// read on the bindless array.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct MaterialSlots([Option<u32>; MATERIAL_TEX_SLOTS]);
+
+impl MaterialSlots {
+    /// Resolve every slot of `m` against `textures`. A handle whose slot has been
+    /// freed does not resolve and reads as an unset slot.
+    pub(crate) fn resolve(
+        m: &Material,
+        textures: &crate::resources::material::texture_store::TextureStore,
+    ) -> Self {
+        MaterialSlots([
+            textures.slot_index(m.texture_id),
+            textures.slot_index(m.normal_map_id),
+            textures.slot_index(m.ao_map_id),
+            textures.slot_index(m.metallic_roughness_texture_id),
+            textures.slot_index(m.emissive_texture_id),
+        ])
+    }
+
+    /// The array index for `slot`, or `None` when it names no live texture.
+    pub(crate) fn index(self, slot: crate::scene::material::TextureSlot) -> Option<u32> {
+        self.0[slot as usize]
+    }
+
+    /// Whether `slot` names a live texture, which is what the shader's
+    /// "has a texture here" flag must be built from.
+    pub(crate) fn live(self, slot: crate::scene::material::TextureSlot) -> bool {
+        self.index(slot).is_some()
+    }
+}
+
 impl MaterialGpu {
     /// Build the full GPU material block (transforms + scalars) from a material.
     /// The scalar derivations mirror `common_material` (`mesh_material.rs`).
     ///
-    /// `tex_indices` fills the bindless array indices from the material's texture
-    /// ids; when false (the per-batch binding, the common case) every slot is
-    /// `NO_TEXTURE`, so material blocks dedup independently of their textures.
-    pub(crate) fn from_material(m: &Material, tex_indices: bool) -> MaterialGpu {
+    /// `tex_indices` fills the bindless array indices from `resolved`; when false
+    /// (the per-batch binding, the common case) every index is `NO_TEXTURE`, so
+    /// material blocks dedup independently of their textures. The has-a-texture
+    /// flags come from `resolved` either way, because both binding paths have to
+    /// take the scalar path for a slot that names no live texture.
+    pub(crate) fn from_material(
+        m: &Material,
+        tex_indices: bool,
+        resolved: MaterialSlots,
+    ) -> MaterialGpu {
         use crate::scene::material::TextureSlot::{
             Albedo, Ao, Emissive, MetallicRoughness, Normal,
         };
@@ -172,15 +217,14 @@ impl MaterialGpu {
             }
             _ => [0.0; 4],
         };
-        let has_mr = m.metallic_roughness_texture_id.is_some() as u32 as f32;
-        let has_emissive = m.emissive_texture_id.is_some() as u32 as f32;
-        // Bindless array indices: a texture's dense slot index (a never-freed
-        // handle equals its slot), or NO_TEXTURE when the slot is empty. Constant
-        // NO_TEXTURE under the per-batch binding so the block dedups by scalars
-        // only, exactly as before bindless.
-        let idx = |id: Option<crate::resources::TextureId>| {
+        let has_mr = resolved.live(MetallicRoughness) as u32 as f32;
+        let has_emissive = resolved.live(Emissive) as u32 as f32;
+        // Bindless array indices: the texture's slot index, or NO_TEXTURE when the
+        // slot names no live texture. Constant NO_TEXTURE under the per-batch
+        // binding so the block dedups by scalars only, exactly as before bindless.
+        let idx = |slot| {
             if tex_indices {
-                id.map_or(NO_TEXTURE, |t| t.index() as u32)
+                resolved.index(slot).unwrap_or(NO_TEXTURE)
             } else {
                 NO_TEXTURE
             }
@@ -209,18 +253,8 @@ impl MaterialGpu {
                 m.roughness_range[0],
                 m.roughness_range[1],
             ],
-            tex_index0: [
-                idx(m.texture_id),
-                idx(m.normal_map_id),
-                idx(m.ao_map_id),
-                idx(m.metallic_roughness_texture_id),
-            ],
-            tex_index1: [
-                idx(m.emissive_texture_id),
-                NO_TEXTURE,
-                NO_TEXTURE,
-                NO_TEXTURE,
-            ],
+            tex_index0: [idx(Albedo), idx(Normal), idx(Ao), idx(MetallicRoughness)],
+            tex_index1: [idx(Emissive), NO_TEXTURE, NO_TEXTURE, NO_TEXTURE],
         }
     }
 }
@@ -262,7 +296,12 @@ impl MaterialGpuBuilder {
         self.entries.clear();
         self.lookup.clear();
         self.overflowed = false;
-        let default_block = MaterialGpu::from_material(&Material::default(), self.bindless);
+        // The default material names no textures, so nothing to resolve.
+        let default_block = MaterialGpu::from_material(
+            &Material::default(),
+            self.bindless,
+            MaterialSlots::default(),
+        );
         self.entries.push(default_block);
         self.lookup.insert(bytemuck::cast(default_block), 0);
     }
@@ -278,8 +317,12 @@ impl MaterialGpuBuilder {
     /// Intern a material's block, returning its `material_id` (its index in the
     /// uploaded buffer). Deduplicates by the block bytes, so instances sharing a
     /// material share an id. On overflow, returns 0.
-    pub(crate) fn intern(&mut self, m: &Material) -> u32 {
-        let block = MaterialGpu::from_material(m, self.bindless);
+    ///
+    /// `resolved` comes from [`MaterialSlots::resolve`] against the texture store.
+    /// The caller resolves rather than this method, so one resolve serves both the
+    /// block and the per-item flags in `common_material`.
+    pub(crate) fn intern(&mut self, m: &Material, resolved: MaterialSlots) -> u32 {
+        let block = MaterialGpu::from_material(m, self.bindless, resolved);
         let key: [u8; 304] = bytemuck::cast(block);
         if let Some(&id) = self.lookup.get(&key) {
             return id;
@@ -302,13 +345,29 @@ impl MaterialGpuBuilder {
 
 #[cfg(test)]
 mod tests {
+
+    /// Slots for a material whose textures all resolve, keyed by the low 32 bits
+    /// of each handle. The unit tests have no GPU device and so no texture store;
+    /// this stands in for one that holds every texture the material names.
+    fn all_live(m: &Material) -> MaterialSlots {
+        MaterialSlots([
+            m.texture_id.map(|t| t.index() as u32),
+            m.normal_map_id.map(|t| t.index() as u32),
+            m.ao_map_id.map(|t| t.index() as u32),
+            m.metallic_roughness_texture_id.map(|t| t.index() as u32),
+            m.emissive_texture_id.map(|t| t.index() as u32),
+        ])
+    }
     use super::*;
     use crate::scene::material::{Material, TextureSlot, UvTransform};
 
     #[test]
     fn identity_material_interns_to_zero() {
         let mut b = MaterialGpuBuilder::default();
-        assert_eq!(b.intern(&Material::default()), 0);
+        assert_eq!(
+            b.intern(&Material::default(), all_live(&Material::default())),
+            0
+        );
         // Only the reserved identity entry exists.
         assert_eq!(b.entries().len(), 1);
     }
@@ -317,10 +376,10 @@ mod tests {
     fn rotation_makes_a_distinct_entry_and_dedups() {
         let mut b = MaterialGpuBuilder::default();
         let rotated = Material::default().with_uv_rotation(std::f32::consts::FRAC_PI_2);
-        let id = b.intern(&rotated);
+        let id = b.intern(&rotated, all_live(&rotated));
         assert_ne!(id, 0, "a rotated material is not identity");
         // Same transform interns to the same id (dedup), no new entry.
-        assert_eq!(b.intern(&rotated), id);
+        assert_eq!(b.intern(&rotated, all_live(&rotated)), id);
         assert_eq!(b.entries().len(), 2);
     }
 
@@ -329,7 +388,7 @@ mod tests {
         let mut m = Material::default();
         m.emissive = crate::Colour::linear_rgb(1.5, 0.25, 4.0);
         m.metallic = 0.7;
-        let b = MaterialGpu::from_material(&m, false);
+        let b = MaterialGpu::from_material(&m, false, all_live(&m));
         // scalars2.xyz = emissive (HDR nits), scalars1.x = metallic.
         assert_eq!(
             [b.scalars2[0], b.scalars2[1], b.scalars2[2]],
@@ -347,7 +406,7 @@ mod tests {
                 ..UvTransform::IDENTITY
             },
         );
-        let block = MaterialGpu::from_material(&m, false);
+        let block = MaterialGpu::from_material(&m, false, all_live(&m));
         // Albedo (slot 0) stays identity; normal (slot 1) carries the 4x scale.
         assert_eq!(block.xf[0].offset_scale, [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(block.xf[1].offset_scale, [0.0, 0.0, 4.0, 4.0]);
@@ -360,7 +419,7 @@ mod tests {
         let mut m = Material::default();
         m.backface_policy =
             BackfacePolicy::DifferentColour(crate::Colour::linear_rgb(0.1, 0.2, 0.3));
-        let b = MaterialGpu::from_material(&m, false);
+        let b = MaterialGpu::from_material(&m, false, all_live(&m));
         assert_eq!(u32::try_from(b.scalars3[2] as i64).unwrap(), 2);
         assert_eq!(
             [
@@ -374,19 +433,21 @@ mod tests {
         // Tint: policy 3, factor in backface_colour.r.
         let mut m = Material::default();
         m.backface_policy = BackfacePolicy::Tint(0.4);
-        let b = MaterialGpu::from_material(&m, false);
+        let b = MaterialGpu::from_material(&m, false, all_live(&m));
         assert_eq!(b.scalars3[2] as u32, 3);
         assert!((b.backface_colour[0] - 0.4).abs() < 1e-6);
 
         // A default material is Cull (policy 0), no styled back-face.
-        let b = MaterialGpu::from_material(&Material::default(), false);
+        let b =
+            MaterialGpu::from_material(&Material::default(), false, all_live(&Material::default()));
         assert_eq!(b.scalars3[2] as u32, 0);
     }
 
     #[test]
     fn pbr_texture_flags_and_ranges_pack() {
         // No MR/emissive texture: both has-flags are 0.
-        let b = MaterialGpu::from_material(&Material::default(), false);
+        let b =
+            MaterialGpu::from_material(&Material::default(), false, all_live(&Material::default()));
         assert_eq!(b.scalars1[3], 0.0, "has_mr_tex off by default");
         assert_eq!(b.scalars3[3], 0.0, "has_emissive_tex off by default");
 
@@ -395,7 +456,7 @@ mod tests {
         m.emissive_texture_id = Some(crate::resources::TextureId::from_raw(8));
         m.metallic_range = [0.1, 0.9];
         m.roughness_range = [0.2, 0.8];
-        let b = MaterialGpu::from_material(&m, false);
+        let b = MaterialGpu::from_material(&m, false, all_live(&m));
         assert_eq!(b.scalars1[3], 1.0, "has_mr_tex set");
         assert_eq!(b.scalars3[3], 1.0, "has_emissive_tex set");
         assert_eq!(b.mr_range, [0.1, 0.9, 0.2, 0.8]);
@@ -412,7 +473,7 @@ mod tests {
         m.emissive_texture_id = Some(crate::resources::TextureId::from_raw(9));
         // Bindless on: the slot index (low 32 bits of the handle) lands in the
         // matching lane; empty slots stay NO_TEXTURE.
-        let b = MaterialGpu::from_material(&m, true);
+        let b = MaterialGpu::from_material(&m, true, all_live(&m));
         assert_eq!(b.tex_index0[0], 3, "albedo index");
         assert_eq!(b.tex_index0[1], 4, "normal index");
         assert_eq!(b.tex_index0[2], NO_TEXTURE, "no AO texture");
@@ -422,15 +483,19 @@ mod tests {
         // that differ only by texture no longer dedup together.
         let mut with_indices = MaterialGpuBuilder::default();
         with_indices.set_bindless(true);
-        let a_id = with_indices.intern(&m);
+        let a_id = with_indices.intern(&m, all_live(&m));
         let mut m2 = m.clone();
         m2.texture_id = Some(crate::resources::TextureId::from_raw(5));
-        assert_ne!(a_id, with_indices.intern(&m2), "bindless splits by texture");
+        assert_ne!(
+            a_id,
+            with_indices.intern(&m2, all_live(&m2)),
+            "bindless splits by texture"
+        );
         // Per-batch: the same two materials dedup (textures not in the block).
         let mut per_batch = MaterialGpuBuilder::default();
         assert_eq!(
-            per_batch.intern(&m),
-            per_batch.intern(&m2),
+            per_batch.intern(&m, all_live(&m)),
+            per_batch.intern(&m2, all_live(&m2)),
             "per-batch dedups across textures",
         );
     }

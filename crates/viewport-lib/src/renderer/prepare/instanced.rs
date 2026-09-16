@@ -452,8 +452,14 @@ impl ViewportRenderer {
                             .unwrap_or((0, 0));
 
                         for (orig_idx, item) in batch_items {
-                            let cm = common_material(item);
-                            let material_id = resources.material_gpu_builder.intern(&item.material);
+                            let resolved = crate::resources::material_gpu::MaterialSlots::resolve(
+                                &item.material,
+                                &resources.content.textures,
+                            );
+                            let cm = common_material(item, resolved);
+                            let material_id = resources
+                                .material_gpu_builder
+                                .intern(&item.material, resolved);
                             let custom_data_id = resources
                                 .custom_data_builder
                                 .intern(item.settings.custom_data);

@@ -3041,11 +3041,12 @@ pub(crate) struct ResolvedTexture<'a> {
     /// The view to bind: the texture's own when the slot names a live one, the
     /// slot's fallback otherwise.
     pub(crate) view: &'a crate::gpu::TextureView,
-    /// Whether the slot named a live texture. False when the slot is unset and
-    /// false when the handle no longer resolves, which is the case a caller has
-    /// to be able to tell apart from a real texture.
+    /// The store slot index, for a caller that indexes a texture array rather
+    /// than binding the view. `None` when the slot is unset and `None` when the
+    /// handle no longer resolves, which are the two cases a caller must not tell
+    /// apart from each other and must tell apart from a live texture.
     #[allow(dead_code)]
-    pub(crate) live: bool,
+    pub(crate) index: Option<u32>,
 }
 
 impl crate::resources::material::texture_store::TextureStore {
@@ -3066,16 +3067,28 @@ impl crate::resources::material::texture_store::TextureStore {
         slot: crate::scene::material::TextureSlot,
         id: Option<crate::resources::TextureId>,
     ) -> ResolvedTexture<'a> {
-        match id.and_then(|id| self.get(id)) {
-            Some(t) => ResolvedTexture {
+        match id.and_then(|id| self.get(id).map(|t| (id, t))) {
+            Some((id, t)) => ResolvedTexture {
                 view: &t.view,
-                live: true,
+                index: Some(id.index() as u32),
             },
             None => ResolvedTexture {
                 view: fallbacks.slot_view(slot),
-                live: false,
+                index: None,
             },
         }
+    }
+
+    /// The array index a material texture slot should carry, or `None` when the
+    /// slot is unset or its handle no longer resolves.
+    ///
+    /// The index half of [`resolve_slot`](Self::resolve_slot), for the callers
+    /// that build a material block and have no use for the view. Both go through
+    /// the same generation-checked lookup, so a block's index and the flag that
+    /// says whether to sample it cannot disagree.
+    pub(crate) fn slot_index(&self, id: Option<crate::resources::TextureId>) -> Option<u32> {
+        id.filter(|id| self.get(*id).is_some())
+            .map(|id| id.index() as u32)
     }
 }
 
