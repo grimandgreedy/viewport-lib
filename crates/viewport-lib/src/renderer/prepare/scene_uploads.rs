@@ -559,7 +559,10 @@ impl ViewportRenderer {
                 // Apply appearance.opacity on top of the item's own alpha.
                 let mut effective = item.clone();
                 effective.alpha *= item.settings.opacity;
-                let key = crate::resources::decal::hash_decal_item(&effective);
+                let key = crate::resources::decal::hash_decal_item(
+                    &effective,
+                    &resources.content.textures,
+                );
                 match decal_cache.entry(key) {
                     std::collections::hash_map::Entry::Occupied(e) => {
                         // `selected` is not part of the cache key, so refresh it

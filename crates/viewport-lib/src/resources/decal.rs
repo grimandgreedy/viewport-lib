@@ -69,7 +69,10 @@ pub(crate) struct DecalExcludeGpuItem {
 
 /// Build the flat uniform for a decal. Pure: no GPU access, so it can also feed
 /// the content hash used to cache GPU resources across frames.
-pub(crate) fn decal_uniform_raw(item: &crate::renderer::DecalItem) -> DecalUniformRaw {
+pub(crate) fn decal_uniform_raw(
+    item: &crate::renderer::DecalItem,
+    textures: &crate::resources::material::texture_store::TextureStore,
+) -> DecalUniformRaw {
     let model = glam::Mat4::from_cols_array_2d(&item.transform);
     let inv_transform = model.inverse().to_cols_array_2d();
 
@@ -94,10 +97,18 @@ pub(crate) fn decal_uniform_raw(item: &crate::renderer::DecalItem) -> DecalUnifo
         }
     };
 
-    let has_normal = item.normal_texture_id.is_some() as u32;
-    let has_roughness_tex = item.roughness_texture_id.is_some() as u32;
-    let has_metallic_tex = item.metallic_texture_id.is_some() as u32;
-    let has_emissive_tex = item.emissive_texture_id.is_some() as u32;
+    // Each flag says "sample the texture bound in this slot", so it has to agree
+    // with what the bind group actually bound. Resolving through the store is
+    // what makes them agree: a handle whose slot has been freed does not
+    // resolve, the slot binds its fallback, and the flag says to use the scalar
+    // instead of sampling it.
+    let live = |id: Option<crate::resources::TextureId>| {
+        id.and_then(|id| textures.get(id)).is_some() as u32
+    };
+    let has_normal = live(item.normal_texture_id);
+    let has_roughness_tex = live(item.roughness_texture_id);
+    let has_metallic_tex = live(item.metallic_texture_id);
+    let has_emissive_tex = live(item.emissive_texture_id);
 
     DecalUniformRaw {
         inv_transform,
@@ -133,13 +144,21 @@ pub(crate) fn decal_uniform_raw(item: &crate::renderer::DecalItem) -> DecalUnifo
 ///
 /// Two decals with the same hash produce identical GPU resources, so the cache
 /// can reuse one across frames instead of rebuilding a buffer and bind group.
-pub(crate) fn hash_decal_item(item: &crate::renderer::DecalItem) -> u64 {
+pub(crate) fn hash_decal_item(
+    item: &crate::renderer::DecalItem,
+    textures: &crate::resources::material::texture_store::TextureStore,
+) -> u64 {
     use std::hash::Hasher as _;
-    let raw = decal_uniform_raw(item);
+    let raw = decal_uniform_raw(item, textures);
     let mut h = std::collections::hash_map::DefaultHasher::new();
     h.write(bytemuck::bytes_of(&raw));
     h.write_u8(item.blend_mode as u8);
     h.write_u64(item.texture_id.raw());
+    // Whether the albedo still resolves is part of the key. The ids alone do not
+    // change when a texture is freed, so without this a cached bind group would
+    // keep drawing (and keep alive) a texture the consumer has released. The
+    // other four slots ride the uniform bytes above, which now carry liveness.
+    h.write_u8(textures.get(item.texture_id).is_some() as u8);
     for id in [
         item.normal_texture_id,
         item.roughness_texture_id,
@@ -583,7 +602,7 @@ impl DeviceResources {
         item: &crate::renderer::DecalItem,
     ) -> DecalGpuItem {
         let model = glam::Mat4::from_cols_array_2d(&item.transform);
-        let raw = decal_uniform_raw(item);
+        let raw = decal_uniform_raw(item, &self.content.textures);
 
         let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("decal_uniform_buf"),
@@ -808,6 +827,12 @@ mod tests {
     use super::hash_decal_item;
     use crate::renderer::{DecalBlendMode, DecalItem};
 
+    /// An empty store: every id in these items is unresolvable, which is what
+    /// the hash sees for a decal whose textures were never uploaded.
+    fn no_textures() -> crate::resources::material::texture_store::TextureStore {
+        crate::resources::material::texture_store::TextureStore::new()
+    }
+
     #[test]
     fn identical_decals_hash_equal() {
         let a = DecalItem {
@@ -815,7 +840,10 @@ mod tests {
             ..DecalItem::default()
         };
         let b = a.clone();
-        assert_eq!(hash_decal_item(&a), hash_decal_item(&b));
+        assert_eq!(
+            hash_decal_item(&a, &no_textures()),
+            hash_decal_item(&b, &no_textures())
+        );
     }
 
     #[test]
@@ -830,7 +858,10 @@ mod tests {
             blend_mode: DecalBlendMode::Additive,
             ..DecalItem::default()
         };
-        assert_ne!(hash_decal_item(&replace), hash_decal_item(&additive));
+        assert_ne!(
+            hash_decal_item(&replace, &no_textures()),
+            hash_decal_item(&additive, &no_textures())
+        );
     }
 
     #[test]
@@ -840,10 +871,16 @@ mod tests {
             texture_id: crate::resources::TextureId::from_raw(7),
             ..DecalItem::default()
         };
-        assert_ne!(hash_decal_item(&base), hash_decal_item(&tex));
+        assert_ne!(
+            hash_decal_item(&base, &no_textures()),
+            hash_decal_item(&tex, &no_textures())
+        );
 
         let mut moved = DecalItem::default();
         moved.transform[3][0] = 5.0;
-        assert_ne!(hash_decal_item(&base), hash_decal_item(&moved));
+        assert_ne!(
+            hash_decal_item(&base, &no_textures()),
+            hash_decal_item(&moved, &no_textures())
+        );
     }
 }
