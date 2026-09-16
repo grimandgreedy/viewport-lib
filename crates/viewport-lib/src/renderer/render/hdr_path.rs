@@ -1517,7 +1517,6 @@ impl ViewportRenderer {
                 &self.point_cloud_gpu_data,
                 &self.glyph_gpu_data,
                 &self.polyline_gpu_data,
-                &self.volume_gpu_data,
                 &self.streamtube_gpu_data,
                 camera_bg,
                 &self.tube_gpu_data,
@@ -4139,7 +4138,6 @@ impl ViewportRenderer {
             || !slot.selection_outlines.tube_outline_items.is_empty()
             || !slot.selection_outlines.ribbon_outline_items.is_empty()
             || !slot.selection_outlines.polyline_outline_indices.is_empty()
-            || !slot.selection_outlines.volume_outline_indices.is_empty()
             || !slot.selection_outlines.glyph_outline_indices.is_empty()
             || !slot
                 .selection_outlines

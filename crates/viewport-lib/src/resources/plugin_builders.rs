@@ -282,6 +282,41 @@ impl DeviceResources {
         &self.content.fallback_lut_view
     }
 
+    /// Borrow the GPU LUT view for a built-in colourmap preset.
+    ///
+    /// `None` before the built-in set is resident, which cannot happen inside
+    /// `prepare` (the lib uploads it before dispatching plugins) but can if
+    /// called earlier. Fall back to
+    /// [`fallback_colourmap_view`](Self::fallback_colourmap_view).
+    pub fn builtin_colourmap_view(
+        &self,
+        preset: crate::resources::BuiltinColourmap,
+    ) -> Option<&crate::gpu::TextureView> {
+        let ids = self.content.builtin_colourmap_ids?;
+        self.content.colourmap_views.get(ids[preset as usize].0)
+    }
+
+    /// Borrow the 3D texture view for a scalar field uploaded via
+    /// [`upload_volume`](Self::upload_volume).
+    ///
+    /// `None` when `id` was never uploaded or has been freed. The texture is
+    /// filterable (`R16Float`, or `R32Float` where `FLOAT32_FILTERABLE` is
+    /// available), so a linear sampler reconstructs it trilinearly. The same
+    /// lifetime contract as [`texture_view`](Self::texture_view) applies: bake
+    /// the view into a bind group during `prepare` rather than holding the
+    /// borrow.
+    pub fn volume_view(&self, id: crate::resources::VolumeId) -> Option<&crate::gpu::TextureView> {
+        self.content.volume_textures.get(id).map(|(_, view)| view)
+    }
+
+    /// Grid dimensions `[nx, ny, nz]` of an uploaded scalar field, or `None`
+    /// when `id` was never uploaded or has been freed.
+    pub fn volume_dims(&self, id: crate::resources::VolumeId) -> Option<[u32; 3]> {
+        let (tex, _) = self.content.volume_textures.get(id)?;
+        let size = tex.size();
+        Some([size.width, size.height, size.depth_or_array_layers])
+    }
+
     /// Read-only borrow of the shared cached base mesh (vertex + index
     /// buffers) for a glyph shape.
     ///

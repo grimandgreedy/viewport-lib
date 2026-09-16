@@ -791,21 +791,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Volume outline: record indices of selected volumes so the mask pass can
-        // reuse their VolumeGpuData bind groups (which already contain model, 3D
-        // texture, samplers, and LUTs needed by the ray-march mask shader).
-        let mut volume_outline_indices: Vec<usize> = Vec::new();
-        if frame.interaction.outline_selected {
-            self.resources.ensure_volume_cube(device);
-            self.resources.ensure_volume_pipeline(device);
-            self.resources.ensure_volume_outline_mask_pipeline(device);
-            for (i, item) in frame.scene.volumes.iter().enumerate() {
-                if !item.settings.hidden && item.settings.selected {
-                    volume_outline_indices.push(i);
-                }
-            }
-        }
-
         // Screen image outlines: compute NDC bounds and create outline buffers.
         let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> =
             Vec::new();
@@ -1041,7 +1026,6 @@ impl ViewportRenderer {
             slot.selection_outlines.tube_outline_items = tube_outline_items;
             slot.selection_outlines.ribbon_outline_items = ribbon_outline_items;
             slot.selection_outlines.polyline_outline_indices = polyline_outline_indices;
-            slot.selection_outlines.volume_outline_indices = volume_outline_indices;
             slot.selection_outlines.glyph_outline_indices = glyph_outline_indices;
             slot.selection_outlines.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
             slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
@@ -1105,10 +1089,6 @@ impl ViewportRenderer {
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
                     .polyline_outline_indices
-                    .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .volume_outline_indices
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
@@ -1180,8 +1160,6 @@ impl ViewportRenderer {
                 as *const Vec<CurveMeshOutlineItem>;
             let polyline_outline_idx_ptr =
                 &slot_ref.selection_outlines.polyline_outline_indices as *const Vec<usize>;
-            let vol_outline_idx_ptr =
-                &slot_ref.selection_outlines.volume_outline_indices as *const Vec<usize>;
             let glyph_outline_idx_ptr = &slot_ref.selection_outlines.glyph_outline_indices
                 as *const Vec<(usize, Option<Vec<u32>>)>;
             let tensor_glyph_outline_idx_ptr =
@@ -1223,7 +1201,6 @@ impl ViewportRenderer {
                 tube_outline_items,
                 ribbon_outline_items,
                 polyline_outline_idxs,
-                vol_outline_indices,
                 glyph_outline_indices,
                 tensor_glyph_outline_indices,
                 sprite_outline_indices,
@@ -1250,7 +1227,6 @@ impl ViewportRenderer {
                     &*tube_outline_items_ptr,
                     &*ribbon_outline_items_ptr,
                     &*polyline_outline_idx_ptr,
-                    &*vol_outline_idx_ptr,
                     &*glyph_outline_idx_ptr,
                     &*tensor_glyph_outline_idx_ptr,
                     &*sprite_outline_idx_ptr,
@@ -1458,25 +1434,6 @@ impl ViewportRenderer {
                                         }
                                     }
                                 }
-                            }
-                        }
-                    }
-                }
-
-                // Draw volumes into the mask using a simplified ray march so the
-                // outline hugs the actual volume silhouette, not the AABB.
-                if !vol_outline_indices.is_empty() {
-                    if let Some(pipeline) = self.resources.volume.outline_mask_pipeline.as_ref() {
-                        pass.set_pipeline(pipeline);
-                        for &idx in vol_outline_indices {
-                            if let Some(vol) = self.volume_gpu_data.get(idx) {
-                                pass.set_bind_group(1, &vol.bind_group, &[]);
-                                pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
-                                pass.set_index_buffer(
-                                    vol.index_buffer.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                pass.draw_indexed(0..36, 0, 0..1);
                             }
                         }
                     }

@@ -279,66 +279,6 @@ impl ViewportRenderer {
             }
         }
 
-        // 4. Volume voxel picks (VOXEL or OBJECT).
-        let wants_voxel = mask.intersects(PickMask::VOXEL);
-        if wants_voxel || wants_object {
-            for item in &self.pick_volume_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let Some(vol_data) = item.volume_data.as_deref() else {
-                    continue;
-                };
-                let [nx, ny, nz] = vol_data.dims;
-                if nx == 0 || ny == 0 || nz == 0 || vol_data.data.is_empty() {
-                    continue;
-                }
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let mvp = view_proj * model;
-                let bbox_min = glam::Vec3::from(item.bbox_min);
-                let bbox_max = glam::Vec3::from(item.bbox_max);
-                let cell = (bbox_max - bbox_min) / glam::Vec3::new(nx as f32, ny as f32, nz as f32);
-                let id = item.settings.pick_id.0;
-                let mut item_hit = false;
-
-                for iz in 0..nz {
-                    for iy in 0..ny {
-                        for ix in 0..nx {
-                            let flat = (ix + iy * nx + iz * nx * ny) as usize;
-                            let scalar = vol_data.data[flat];
-                            if scalar.is_nan()
-                                || scalar < item.threshold_min
-                                || scalar > item.threshold_max
-                            {
-                                continue;
-                            }
-                            let center = bbox_min
-                                + cell
-                                    * glam::Vec3::new(
-                                        ix as f32 + 0.5,
-                                        iy as f32 + 0.5,
-                                        iz as f32 + 0.5,
-                                    );
-                            if let Some((sx, sy)) = project(mvp, center) {
-                                if in_rect(sx, sy) {
-                                    if wants_voxel {
-                                        result
-                                            .elements
-                                            .push((id, SubObjectRef::Voxel(flat as u32)));
-                                    }
-                                    item_hit = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if wants_object && item_hit {
-                    result.objects.push(id);
-                }
-            }
-        }
-
         // 6. Instance picks (INSTANCE or OBJECT) for glyphs, tensor glyphs, sprites.
         let wants_instance = mask.intersects(PickMask::INSTANCE);
         if wants_instance || wants_object {

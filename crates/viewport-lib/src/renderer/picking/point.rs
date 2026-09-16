@@ -35,7 +35,7 @@ impl ViewportRenderer {
     ) -> Option<PickHit> {
         use crate::interaction::query::picking::{
             pick_gaussian_splat_cpu, pick_point_cloud_cpu, pick_transparent_volume_mesh_cpu,
-            pick_volume_cpu, screen_to_ray,
+            screen_to_ray,
         };
         use parry3d::math::{Pose, Vector};
         use parry3d::query::{Ray, RayCast};
@@ -334,28 +334,6 @@ impl ViewportRenderer {
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     if !wants_cloud {
-                        hit.sub_object = None;
-                    }
-                    consider(toi, hit);
-                }
-            }
-        }
-
-        // 4. Volume voxel picks (VOXEL or OBJECT fallback).
-        let wants_voxel = mask.intersects(PickMask::VOXEL);
-        if wants_voxel || wants_object {
-            for item in &self.pick_volume_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let Some(vol_data) = item.volume_data.as_deref() else {
-                    continue;
-                };
-                if let Some(mut hit) =
-                    pick_volume_cpu(ray_origin, ray_dir, item.settings.pick_id.0, item, vol_data)
-                {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if !wants_voxel {
                         hit.sub_object = None;
                     }
                     consider(toi, hit);

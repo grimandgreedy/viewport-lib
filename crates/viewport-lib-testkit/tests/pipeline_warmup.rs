@@ -72,10 +72,13 @@ fn first_decal_frame_builds_no_pipelines() {
     );
 }
 
-/// `upload_volume` compiles the volume ray-march pipeline, so the first frame
-/// that draws the uploaded volume compiles nothing.
+/// The volume ray-march pipelines belong to the volume item-type plugin, which
+/// builds them on the first prepare that has a volume to draw. Neither
+/// `upload_volume` nor any frame reports them through
+/// `pipelines_built_this_frame`: that counter tracks the lib's own pipeline
+/// cache, and a plugin owns its pipelines outright.
 #[test]
-fn volume_upload_warms_its_pipeline() {
+fn volume_pipelines_are_owned_by_the_plugin() {
     let Some(mut h) = Harness::new() else {
         eprintln!("skipping: no GPU adapter");
         return;
@@ -98,15 +101,16 @@ fn volume_upload_warms_its_pipeline() {
         .resources_mut()
         .upload_volume(&h.device, &h.queue, &data, dims);
 
-    // The compile lands with the upload: the next frame's counter reports it.
+    // The upload is a texture upload only; no pipeline work rides along.
     let _ = h.render(&base, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
-        1,
-        "upload_volume must compile the volume pipeline"
+        0,
+        "upload_volume uploads a texture and compiles nothing"
     );
 
-    // The first frame that actually draws the volume compiles nothing.
+    // The first frame that draws the volume does build the plugin's pipelines,
+    // but they are the plugin's own and so stay off this counter.
     let mut volume = VolumeItem::default();
     volume.volume_id = volume_id;
     let mut with_volume = mesh_frame(item, [200.0, 150.0]);
@@ -115,7 +119,7 @@ fn volume_upload_warms_its_pipeline() {
     assert_eq!(
         h.stats().pipelines_built_this_frame,
         0,
-        "the first volume frame must not compile a pipeline (upload_volume warmed it)"
+        "plugin-owned pipelines are not counted in the lib's pipeline cache"
     );
 }
 

@@ -1067,7 +1067,6 @@ macro_rules! emit_outline_composite {
                 || !slot.selection_outlines.tube_outline_items.is_empty()
                 || !slot.selection_outlines.ribbon_outline_items.is_empty()
                 || !slot.selection_outlines.polyline_outline_indices.is_empty()
-                || !slot.selection_outlines.volume_outline_indices.is_empty()
                 || !slot.selection_outlines.glyph_outline_indices.is_empty()
                 || !slot
                     .selection_outlines
@@ -1096,7 +1095,7 @@ macro_rules! emit_outline_composite {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $volume_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
@@ -1198,26 +1197,6 @@ macro_rules! emit_scivis_draw_calls {
                     render_pass.set_bind_group(1, &pl.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
                     render_pass.draw(0..6, 0..pl.segment_count);
-                }
-            }
-        }
-
-        // Volume pass (after glyphs : volumes are translucent, rendered last).
-        if !$volume_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.volume.pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for vol in $volume_gpu_data.iter() {
-                    if vol.wireframe {
-                        continue;
-                    }
-                    render_pass.set_bind_group(1, &vol.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, vol.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        vol.index_buffer.slice(..),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    render_pass.draw_indexed(0..36, 0, 0..1);
                 }
             }
         }

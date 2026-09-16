@@ -175,7 +175,6 @@ impl ViewportRenderer {
                 &self.point_cloud_gpu_data,
                 &self.glyph_gpu_data,
                 &self.polyline_gpu_data,
-                &self.volume_gpu_data,
                 &self.streamtube_gpu_data,
                 camera_bg,
                 &self.tube_gpu_data,

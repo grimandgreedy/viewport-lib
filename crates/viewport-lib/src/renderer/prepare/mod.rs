@@ -576,37 +576,6 @@ impl ViewportRenderer {
             }
         }
 
-        // ------------------------------------------------------------------
-        // Volume GPU data upload.
-        // Note: clip_planes are per-viewport but passed here for culling.
-        // ------------------------------------------------------------------
-        self.volume_gpu_data.clear();
-        if !frame.scene.volumes.is_empty() {
-            resources.ensure_volume_pipeline(device);
-            let clip_objects_for_vol = &frame.effects.clip.objects;
-            // Under budget pressure with allow_volume_quality_reduction, double the
-            // step size (half the sample count) to reduce GPU raymarch cost.
-            let vol_step_multiplier = if self.degradation_volume_quality_reduced {
-                2.0_f32
-            } else {
-                1.0_f32
-            };
-            for item in &frame.scene.volumes {
-                if item.settings.hidden {
-                    continue;
-                }
-                let mut gpu = resources.upload_volume_frame(
-                    device,
-                    queue,
-                    item,
-                    clip_objects_for_vol,
-                    vol_step_multiplier,
-                );
-                gpu.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                self.volume_gpu_data.push(gpu);
-            }
-        }
-
         // Volume wireframe overlay: OBB from bbox + model matrix.
         let need_vol_wf = frame.viewport.wireframe_mode
             || frame

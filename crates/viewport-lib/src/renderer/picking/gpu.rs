@@ -224,17 +224,6 @@ struct PolylinePickDraw<'a> {
     segment_count: u32,
 }
 
-/// One voxel volume to draw into the pick pass. The owned group-2 bind group
-/// holds the object id; the group-1 render bind group (volume uniform + 3D
-/// texture + samplers) and the unit-cube buffers are borrowed from prepared
-/// `VolumeGpuData`.
-struct VolumePickDraw<'a> {
-    id_bind_group: crate::gpu::BindGroup,
-    render_bind_group: &'a crate::gpu::BindGroup,
-    vertex_buffer: &'a crate::gpu::Buffer,
-    index_buffer: &'a crate::gpu::Buffer,
-}
-
 /// One GPU marching-cubes item to draw into the pick pass. The owned group-1 bind
 /// group holds the object id; each slab contributes a borrowed (vertex buffer,
 /// indirect-args buffer) pair drawn with the reused MC surface indirect args.
@@ -295,7 +284,6 @@ struct PickPipelineFlags {
     has_pickable_tensor: bool,
     has_pickable_sprites: bool,
     has_pickable_polylines: bool,
-    has_pickable_volumes: bool,
     has_pickable_mc: bool,
     has_pickable_point_clouds: bool,
     has_pickable_volume_surface_slices: bool,
@@ -385,7 +373,6 @@ struct PickDrawSet<'a> {
     glyph_draws: Vec<GlyphPickDraw<'a>>,
     sprite_draws: Vec<SpritePickDraw<'a>>,
     polyline_draws: Vec<PolylinePickDraw<'a>>,
-    volume_draws: Vec<VolumePickDraw<'a>>,
     mc_draws: Vec<McPickDraw<'a>>,
     point_cloud_draws: Vec<PointCloudPickDraw<'a>>,
     volume_surface_slice_draws: Vec<VolumeSurfaceSlicePickDraw<'a>>,
@@ -415,7 +402,6 @@ impl PickDrawSet<'_> {
             && self.glyph_draws.is_empty()
             && self.sprite_draws.is_empty()
             && self.polyline_draws.is_empty()
-            && self.volume_draws.is_empty()
             && self.mc_draws.is_empty()
             && self.point_cloud_draws.is_empty()
             && self.volume_surface_slice_draws.is_empty()
@@ -1004,18 +990,6 @@ impl ViewportRenderer {
             self.resources.ensure_polyline_pick_pipeline(device);
         }
 
-        // Voxel volumes raymarch their bounding cube to the first in-threshold
-        // voxel. Answers OBJECT and the VOXEL sub-object level; wireframe volumes
-        // render an OBB polyline instead, so they are picked as polylines, not here.
-        let has_pickable_volumes = mask.intersects(PickMask::OBJECT | PickMask::VOXEL)
-            && self
-                .volume_gpu_data
-                .iter()
-                .any(|v| !v.wireframe && v.pick_id != PickId::NONE);
-        if has_pickable_volumes {
-            self.resources.ensure_volume_pick_pipeline(device);
-        }
-
         // GPU marching-cubes surfaces rasterise their generated vertex buffer.
         // Object-level.
         let has_pickable_mc = mask.intersects(PickMask::OBJECT)
@@ -1101,7 +1075,6 @@ impl ViewportRenderer {
             has_pickable_tensor,
             has_pickable_sprites,
             has_pickable_polylines,
-            has_pickable_volumes,
             has_pickable_mc,
             has_pickable_point_clouds,
             has_pickable_volume_surface_slices,
@@ -1134,7 +1107,6 @@ impl ViewportRenderer {
         let has_pickable_tensor = flags.has_pickable_tensor;
         let has_pickable_sprites = flags.has_pickable_sprites;
         let has_pickable_polylines = flags.has_pickable_polylines;
-        let has_pickable_volumes = flags.has_pickable_volumes;
         let has_pickable_mc = flags.has_pickable_mc;
         let has_pickable_point_clouds = flags.has_pickable_point_clouds;
         let has_pickable_volume_surface_slices = flags.has_pickable_volume_surface_slices;
@@ -1453,47 +1425,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Voxel volumes: one draw of the bounding cube per pickable, non-wireframe
-        // volume, with a group-2 object-id uniform. The group-1 render bind group
-        // (volume uniform + 3D texture) is reused from prepared `VolumeGpuData`.
-        let mut volume_draws: Vec<VolumePickDraw> = Vec::new();
-        if has_pickable_volumes && self.resources.pick.volume_pipeline.is_some() {
-            let id_bgl = self
-                .resources
-                .pick
-                .volume_pick_id_bgl
-                .as_ref()
-                .expect("volume pick id bgl built with the pipeline");
-            for gpu in self
-                .volume_gpu_data
-                .iter()
-                .filter(|v| !v.wireframe && v.pick_id != PickId::NONE)
-            {
-                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("volume_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("volume_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: id_buf.as_entire_binding(),
-                    }],
-                });
-                volume_draws.push(VolumePickDraw {
-                    id_bind_group,
-                    render_bind_group: &gpu.bind_group,
-                    vertex_buffer: &gpu.vertex_buffer,
-                    index_buffer: &gpu.index_buffer,
-                });
-            }
-        }
-
         // GPU marching-cubes surfaces: one indirect draw per slab of each pickable
         // item, with a group-1 object-id uniform. The generated MC vertex buffer and
         // surface indirect args are reused from the render path.
@@ -1658,7 +1589,6 @@ impl ViewportRenderer {
             glyph_draws,
             sprite_draws,
             polyline_draws,
-            volume_draws,
             mc_draws,
             point_cloud_draws,
             volume_surface_slice_draws,
@@ -1952,28 +1882,6 @@ impl ViewportRenderer {
                     pick_pass.set_bind_group(2, &pd.id_bind_group, &[]);
                     pick_pass.set_vertex_buffer(0, pd.vertex_buffer.slice(..));
                     pick_pass.draw(0..6, 0..pd.segment_count);
-                }
-            }
-        }
-
-        // Voxel volumes: raymarch each bounding cube. Group 0 is the full
-        // scene camera bind group (the volume pick fragment reads view_proj
-        // and the clip volume); group 1 is the reused volume render bind
-        // group; group 2 is the per-item object id.
-        if let Some(volume_pipeline) = self.resources.pick.volume_pipeline.as_ref() {
-            if !draw_set.volume_draws.is_empty() {
-                pick_pass.set_pipeline(volume_pipeline);
-                pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
-                for vd in &draw_set.volume_draws {
-                    pick_pass.set_bind_group(1, vd.render_bind_group, &[]);
-                    pick_pass.set_bind_group(2, &vd.id_bind_group, &[]);
-                    pick_pass.set_vertex_buffer(0, vd.vertex_buffer.slice(..));
-                    pick_pass.set_index_buffer(
-                        vd.index_buffer.slice(..),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    // The volume cube is 36 indices (12 triangles).
-                    pick_pass.draw_indexed(0..36, 0, 0..1);
                 }
             }
         }
@@ -3088,16 +2996,6 @@ impl ViewportRenderer {
             .filter(|g| g.pick_id != PickId::NONE && g.point_count > 0)
         {
             kinds.insert(gpu.pick_id.0, PickSubKind::CloudPoint);
-        }
-
-        // Ray-marched volumes: the pick shader writes the hit voxel's flat index
-        // into the primitive channel, decoded to SubObjectRef::Voxel.
-        for gpu in self
-            .volume_gpu_data
-            .iter()
-            .filter(|v| !v.wireframe && v.pick_id != PickId::NONE)
-        {
-            kinds.insert(gpu.pick_id.0, PickSubKind::Voxel);
         }
 
         kinds

@@ -132,7 +132,7 @@ pub use self::types::{
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
     OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData, SingleLightUniform,
-    Vertex, VertexBufferLayoutExt, VolumeGpuData,
+    Vertex, VertexBufferLayoutExt,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;

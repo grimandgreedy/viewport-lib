@@ -134,8 +134,6 @@ pub(crate) struct SelectionOutlines {
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
     /// Per-frame outline buffers for selected Gaussian splat sets.
     pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
-    /// Indices into `volume_gpu_data` for selected volumes.
-    pub volume_outline_indices: Vec<usize>,
     /// Indices into `glyph_gpu_data` for selected glyph sets. Each entry is
     /// (gpu_data_index, instance_filter): None draws all instances, Some(indices)
     /// draws only those specific instance indices.
@@ -400,8 +398,6 @@ pub struct ViewportRenderer {
     tensor_glyph_gpu_data: Vec<crate::resources::TensorGlyphGpuData>,
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
-    /// Per-frame volume GPU data, rebuilt in prepare(), consumed in paint().
-    volume_gpu_data: Vec<crate::resources::VolumeGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
     streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
     /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
@@ -584,8 +580,6 @@ pub struct ViewportRenderer {
     pick_bvh_transform_rev: u64,
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_point_cloud_items: Vec<PointCloudItem>,
-    /// Volume items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_volume_items: Vec<VolumeItem>,
     /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_scatter_volume_items: Vec<crate::renderer::types::ScatterVolumeItem>,
     /// Volumes packed into the GPU storage buffer this frame
@@ -1038,7 +1032,6 @@ impl ViewportRenderer {
             glyph_gpu_data: Vec::new(),
             tensor_glyph_gpu_data: Vec::new(),
             polyline_gpu_data: Vec::new(),
-            volume_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
             tube_gpu_data: Vec::new(),
             ribbon_gpu_data: Vec::new(),
@@ -1095,7 +1088,6 @@ impl ViewportRenderer {
             pick_bvh_identity_rev: 0,
             pick_bvh_transform_rev: 0,
             pick_point_cloud_items: Vec::new(),
-            pick_volume_items: Vec::new(),
             pick_scatter_volume_items: Vec::new(),
             prepared_scatter_volumes: Vec::new(),
             prepared_refraction_volumes: Vec::new(),
@@ -3284,7 +3276,6 @@ impl ViewportRenderer {
             &self.point_cloud_gpu_data,
             &self.glyph_gpu_data,
             &self.polyline_gpu_data,
-            &self.volume_gpu_data,
             &self.streamtube_gpu_data,
             camera_bg,
             &self.tube_gpu_data,

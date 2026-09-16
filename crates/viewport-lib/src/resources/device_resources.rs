@@ -275,12 +275,6 @@ pub(crate) struct PickResources {
     pub(crate) polyline_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the polyline pick pipeline (per-draw object-id uniform).
     pub(crate) polyline_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for voxel volumes: rasterises the volume bounding cube and
-    /// raymarches to the first in-threshold voxel, writing the item's object id
-    /// and that voxel's depth. Reuses the volume render group-1 layout.
-    pub(crate) volume_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the volume pick pipeline (per-item object-id uniform).
-    pub(crate) volume_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pick pipeline for GPU marching-cubes surfaces: rasterises the generated MC
     /// vertex buffer and writes the job's object id and depth.
     pub(crate) mc_pipeline: Option<crate::gpu::RenderPipeline>,
