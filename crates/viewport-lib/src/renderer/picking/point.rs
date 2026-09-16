@@ -56,7 +56,6 @@ impl ViewportRenderer {
         let wants_vertex = mask.intersects(PickMask::VERTEX);
         let wants_cell = mask.intersects(PickMask::CELL);
         let wants_cloud = mask.intersects(PickMask::CLOUD_POINT);
-        let wants_splat = mask.intersects(PickMask::SPLAT);
         let wants_object = mask.intersects(PickMask::OBJECT);
         let wants_mesh_sub = wants_face || wants_vertex || mask.intersects(PickMask::EDGE);
 
@@ -357,67 +356,6 @@ impl ViewportRenderer {
                 {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     if !wants_voxel {
-                        hit.sub_object = None;
-                    }
-                    consider(toi, hit);
-                }
-            }
-        }
-
-        // 5. Gaussian splat picks (SPLAT or OBJECT fallback).
-        if wants_splat || wants_object {
-            for item in &self.pick_splat_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let Some(gpu_set) = self.resources.content.gaussian_splat_store.get(item.source)
-                else {
-                    continue;
-                };
-                if gpu_set.cpu_positions.is_empty() {
-                    continue;
-                }
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                // Derive pick radius from the mean per-splat scale so that a
-                // click anywhere inside the visible disc registers as a hit.
-                let mean_max_scale: f32 = if gpu_set.cpu_scales.is_empty() {
-                    0.05
-                } else {
-                    gpu_set
-                        .cpu_scales
-                        .iter()
-                        .map(|s| s[0].max(s[1]).max(s[2]))
-                        .sum::<f32>()
-                        / gpu_set.cpu_scales.len() as f32
-                };
-                let world_radius = mean_max_scale * 3.0;
-                let center_w = model.transform_point3(glam::Vec3::ZERO);
-                let p0_clip = view_proj * center_w.extend(1.0);
-                let p1_clip = view_proj * (center_w + glam::Vec3::X * world_radius).extend(1.0);
-                let radius_px = if p0_clip.w.abs() > 1e-6 && p1_clip.w.abs() > 1e-6 {
-                    let p0_ndc = glam::Vec2::new(p0_clip.x, p0_clip.y) / p0_clip.w;
-                    let p1_ndc = glam::Vec2::new(p1_clip.x, p1_clip.y) / p1_clip.w;
-                    ((p1_ndc - p0_ndc).length() * 0.5 * viewport_size.x.max(viewport_size.y))
-                        .max(4.0)
-                } else {
-                    world_radius * 100.0
-                };
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos,
-                    item.settings.pick_id.0,
-                    &gpu_set.cpu_positions,
-                    model,
-                    view_proj,
-                    viewport_size,
-                    radius_px,
-                ) {
-                    // pick_gaussian_splat_cpu returns SubObjectRef::Point; remap to Splat.
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_splat {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Splat(idx));
-                        }
-                    } else {
                         hit.sub_object = None;
                     }
                     consider(toi, hit);

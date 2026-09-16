@@ -1006,7 +1006,6 @@ impl ViewportRenderer {
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
-        self.prepare_splat_sort(device, queue, frame);
         self.prepare_splat_wireframe(device, queue, frame);
         self.prepare_sprite_wireframe(device, queue, frame);
         self.prepare_debug_buffer(frame);

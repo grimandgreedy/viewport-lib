@@ -186,15 +186,6 @@ impl ViewportRenderer {
                 &self.mesh_instance_gpu_data,
                 false
             );
-            // Gaussian splats. Mirrors the block in `paint_to` and the HDR
-            // path so the offscreen LDR path draws splats too.
-            super::draw_gaussian_splats(
-                &mut render_pass,
-                &self.resources,
-                &self.gaussian_splat_draw_data,
-                camera_bg,
-                false,
-            );
             // TransparentVolumeMesh boundary wireframe overlay.
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {

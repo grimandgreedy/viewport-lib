@@ -468,8 +468,6 @@ pub struct ViewportRenderer {
     /// alongside `viewport_slots`. Lazily allocated when the first refractive
     /// sprite appears for a viewport.
     sprite_refraction_resolves: Vec<Option<SpriteRefractionResolve>>,
-    /// Per-frame Gaussian splat draw data, rebuilt in prepare_viewport_internal(), consumed in paint().
-    gaussian_splat_draw_data: Vec<crate::resources::GaussianSplatDrawData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
@@ -601,8 +599,6 @@ pub struct ViewportRenderer {
     pick_bvh_transform_rev: u64,
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_point_cloud_items: Vec<PointCloudItem>,
-    /// Gaussian splat items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_splat_items: Vec<GaussianSplatItem>,
     /// Volume items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_volume_items: Vec<VolumeItem>,
     /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -1073,7 +1069,6 @@ impl ViewportRenderer {
             particle_gpu_data: Vec::new(),
             external_instances_gpu_data: Vec::new(),
             sprite_refraction_resolves: Vec::new(),
-            gaussian_splat_draw_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             implicit_gpu_data: Vec::new(),
             decal_gpu_data: Vec::new(),
@@ -1118,7 +1113,6 @@ impl ViewportRenderer {
             pick_bvh_identity_rev: 0,
             pick_bvh_transform_rev: 0,
             pick_point_cloud_items: Vec::new(),
-            pick_splat_items: Vec::new(),
             pick_volume_items: Vec::new(),
             pick_scatter_volume_items: Vec::new(),
             prepared_scatter_volumes: Vec::new(),
@@ -3315,14 +3309,6 @@ impl ViewportRenderer {
             &self.sprite_gpu_data,
             &self.mesh_instance_gpu_data,
             false
-        );
-        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
-        render::draw_gaussian_splats(
-            render_pass,
-            &self.resources,
-            &self.gaussian_splat_draw_data,
-            camera_bg,
-            false,
         );
         // TransparentVolumeMesh boundary wireframe overlay.
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {

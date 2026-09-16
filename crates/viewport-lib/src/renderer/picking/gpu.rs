@@ -185,8 +185,6 @@ enum PickSubKind {
     Curve,
     /// Point cloud: `instance_index` is the point.
     CloudPoint,
-    /// Gaussian splat set: `instance_index` is the splat.
-    Splat,
     /// Ray-marched volume: the primitive channel carries the flat index of the
     /// first in-threshold voxel the fragment marched to.
     Voxel,
@@ -265,16 +263,6 @@ struct PointCloudPickDraw<'a> {
     point_count: u32,
 }
 
-/// One Gaussian splat set to draw into the pick pass. The owned group-2 bind
-/// group holds the object id; the group-1 render bind group (the per-viewport
-/// sorted-index / position / scale / rotation storage buffers) is borrowed
-/// from the splat store's prepared viewport sort.
-struct GaussianSplatPickDraw<'a> {
-    id_bind_group: crate::gpu::BindGroup,
-    render_bind_group: &'a crate::gpu::BindGroup,
-    count: u32,
-}
-
 /// One volume surface slice to draw into the pick pass. The owned group-2 bind
 /// group holds the object id; the group-1 render bind group is borrowed from
 /// prepared `VolumeSurfaceSliceGpuData`; the mesh is resolved against
@@ -320,7 +308,6 @@ struct PickPipelineFlags {
     has_pickable_implicit: bool,
     has_pickable_mc: bool,
     has_pickable_point_clouds: bool,
-    has_pickable_splats: bool,
     has_pickable_volume_surface_slices: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -412,7 +399,6 @@ struct PickDrawSet<'a> {
     implicit_draws: Vec<ImplicitPickDraw<'a>>,
     mc_draws: Vec<McPickDraw<'a>>,
     point_cloud_draws: Vec<PointCloudPickDraw<'a>>,
-    splat_draws: Vec<GaussianSplatPickDraw<'a>>,
     volume_surface_slice_draws: Vec<VolumeSurfaceSlicePickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
@@ -444,7 +430,6 @@ impl PickDrawSet<'_> {
             && self.implicit_draws.is_empty()
             && self.mc_draws.is_empty()
             && self.point_cloud_draws.is_empty()
-            && self.splat_draws.is_empty()
             && self.volume_surface_slice_draws.is_empty()
             && !self.has_plugin_pick
     }
@@ -1074,19 +1059,6 @@ impl ViewportRenderer {
             self.resources.ensure_point_cloud_pick_pipeline(device);
         }
 
-        // Gaussian splats: each renders as an instanced billboard per splat.
-        // Occlusion is resolved by the pick pass's own depth test, so the
-        // existing per-viewport sorted-index buffer (built for back-to-front
-        // render blending) can be reused without re-sorting.
-        let has_pickable_splats = mask.intersects(PickMask::OBJECT | PickMask::SPLAT)
-            && self
-                .gaussian_splat_draw_data
-                .iter()
-                .any(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0);
-        if has_pickable_splats {
-            self.resources.ensure_gaussian_splat_pick_pipeline(device);
-        }
-
         // Volume surface slices: textured world-space meshes. Object-level only.
         let has_pickable_volume_surface_slices = mask.intersects(PickMask::OBJECT)
             && self
@@ -1156,7 +1128,6 @@ impl ViewportRenderer {
             has_pickable_implicit,
             has_pickable_mc,
             has_pickable_point_clouds,
-            has_pickable_splats,
             has_pickable_volume_surface_slices,
             decal_cube,
             scatter_cube,
@@ -1191,7 +1162,6 @@ impl ViewportRenderer {
         let has_pickable_implicit = flags.has_pickable_implicit;
         let has_pickable_mc = flags.has_pickable_mc;
         let has_pickable_point_clouds = flags.has_pickable_point_clouds;
-        let has_pickable_splats = flags.has_pickable_splats;
         let has_pickable_volume_surface_slices = flags.has_pickable_volume_surface_slices;
         let decal_cube = flags.decal_cube;
         let scatter_cube = flags.scatter_cube;
@@ -1679,59 +1649,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Gaussian splats: each item draws its covariance-projected billboard
-        // expansion with a group-2 object-id uniform. The group-1 render bind
-        // group is the same per-viewport sorted-index bind group the render
-        // path draws with; occlusion is resolved by the pick pass's own depth
-        // test, so the sort order does not matter here.
-        let mut splat_draws: Vec<GaussianSplatPickDraw> = Vec::new();
-        if has_pickable_splats && self.resources.pick.gaussian_splat_pipeline.is_some() {
-            let id_bgl = self
-                .resources
-                .pick
-                .gaussian_splat_pick_id_bgl
-                .as_ref()
-                .expect("gaussian splat pick id bgl built with the pipeline");
-            for dd in self
-                .gaussian_splat_draw_data
-                .iter()
-                .filter(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0)
-            {
-                let Some(set) = self
-                    .resources
-                    .content
-                    .gaussian_splat_store
-                    .get_by_index(dd.store_index)
-                else {
-                    continue;
-                };
-                let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) else {
-                    continue;
-                };
-                let id_data = [dd.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("gaussian_splat_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("gaussian_splat_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: id_buf.as_entire_binding(),
-                    }],
-                });
-                splat_draws.push(GaussianSplatPickDraw {
-                    id_bind_group,
-                    render_bind_group: &vp_sort.render_bg,
-                    count: dd.count,
-                });
-            }
-        }
-
         // Volume surface slices: each item draws its mesh with a group-2
         // object-id uniform. Object-level only.
         let mut volume_surface_slice_draws: Vec<VolumeSurfaceSlicePickDraw> = Vec::new();
@@ -1808,7 +1725,6 @@ impl ViewportRenderer {
             implicit_draws,
             mc_draws,
             point_cloud_draws,
-            splat_draws,
             volume_surface_slice_draws,
             has_plugin_pick,
             kinds,
@@ -2172,22 +2088,6 @@ impl ViewportRenderer {
                     pick_pass.set_bind_group(2, &pcd.id_bind_group, &[]);
                     pick_pass.set_vertex_buffer(0, pcd.vertex_buffer.slice(..));
                     pick_pass.draw(0..6, 0..pcd.point_count);
-                }
-            }
-        }
-
-        // Gaussian splats: each item draws its covariance-projected
-        // billboard expansion. Group 0 is the minimal pick camera; group 1
-        // is the reused per-viewport sorted-index render bind group; group
-        // 2 is the per-item object id.
-        if let Some(splat_pipeline) = self.resources.pick.gaussian_splat_pipeline.as_ref() {
-            if !draw_set.splat_draws.is_empty() {
-                pick_pass.set_pipeline(splat_pipeline);
-                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                for sd in &draw_set.splat_draws {
-                    pick_pass.set_bind_group(1, sd.render_bind_group, &[]);
-                    pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
-                    pick_pass.draw(0..6, 0..sd.count);
                 }
             }
         }
@@ -2948,13 +2848,6 @@ impl ViewportRenderer {
                     None
                 }
             }
-            PickSubKind::Splat => {
-                if mask.intersects(PickMask::SPLAT) {
-                    Some(SubObjectRef::Splat(sub_primitive))
-                } else {
-                    None
-                }
-            }
             PickSubKind::Voxel => {
                 if mask.intersects(PickMask::VOXEL) {
                     Some(SubObjectRef::Voxel(sub_primitive))
@@ -3046,9 +2939,6 @@ impl ViewportRenderer {
             PickSubKind::CloudPoint => mask
                 .intersects(PickMask::CLOUD_POINT)
                 .then_some(SubObjectRef::Point(sub_primitive)),
-            PickSubKind::Splat => mask
-                .intersects(PickMask::SPLAT)
-                .then_some(SubObjectRef::Splat(sub_primitive)),
             PickSubKind::Voxel => mask
                 .intersects(PickMask::VOXEL)
                 .then_some(SubObjectRef::Voxel(sub_primitive)),
@@ -3276,15 +3166,6 @@ impl ViewportRenderer {
             .filter(|g| g.pick_id != PickId::NONE && g.point_count > 0)
         {
             kinds.insert(gpu.pick_id.0, PickSubKind::CloudPoint);
-        }
-
-        // Gaussian splat sets.
-        for dd in self
-            .gaussian_splat_draw_data
-            .iter()
-            .filter(|dd| !dd.wireframe && dd.pick_id != PickId::NONE && dd.count > 0)
-        {
-            kinds.insert(dd.pick_id.0, PickSubKind::Splat);
         }
 
         // Ray-marched volumes: the pick shader writes the hit voxel's flat index

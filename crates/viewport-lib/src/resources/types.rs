@@ -68,7 +68,6 @@ pub(crate) use crate::resources::postprocess::uniforms::DofUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ShadowAtlasUniform;
 pub(crate) use crate::resources::postprocess::uniforms::SsaoUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ToneMapUniform;
-pub(crate) use crate::resources::scivis::gaussian_splat::GaussianSplatDrawData;
 pub(crate) use crate::resources::scivis::gaussian_splat::GaussianSplatStore;
 pub(crate) use crate::resources::scivis::glyph::GlyphBaseMesh;
 pub use crate::resources::scivis::glyph::GlyphGpuData;

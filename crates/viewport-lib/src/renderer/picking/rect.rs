@@ -42,7 +42,6 @@ impl ViewportRenderer {
         let wants_vertex = mask.intersects(PickMask::VERTEX);
         let wants_cell = mask.intersects(PickMask::CELL);
         let wants_cloud = mask.intersects(PickMask::CLOUD_POINT);
-        let wants_splat = mask.intersects(PickMask::SPLAT);
         let wants_object = mask.intersects(PickMask::OBJECT);
 
         // Build lookup for opaque volume mesh face_to_cell maps.
@@ -330,41 +329,6 @@ impl ViewportRenderer {
                                     item_hit = true;
                                 }
                             }
-                        }
-                    }
-                }
-
-                if wants_object && item_hit {
-                    result.objects.push(id);
-                }
-            }
-        }
-
-        // 5. Gaussian splat picks (SPLAT or OBJECT).
-        if wants_splat || wants_object {
-            for item in &self.pick_splat_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let Some(gpu_set) = self.resources.content.gaussian_splat_store.get(item.source)
-                else {
-                    continue;
-                };
-                if gpu_set.cpu_positions.is_empty() {
-                    continue;
-                }
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let mvp = view_proj * model;
-                let id = item.settings.pick_id.0;
-                let mut item_hit = false;
-
-                for (i, pos) in gpu_set.cpu_positions.iter().enumerate() {
-                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
-                        if in_rect(sx, sy) {
-                            if wants_splat {
-                                result.elements.push((id, SubObjectRef::Splat(i as u32)));
-                            }
-                            item_hit = true;
                         }
                     }
                 }

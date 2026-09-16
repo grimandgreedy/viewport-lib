@@ -298,12 +298,6 @@ pub(crate) struct PickResources {
     pub(crate) point_cloud_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the point cloud pick pipeline (per-item object-id uniform).
     pub(crate) point_cloud_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for Gaussian splats: reuses the render covariance
-    /// projection and writes the item's object id plus the hit splat's instance
-    /// index.
-    pub(crate) gaussian_splat_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the Gaussian splat pick pipeline (per-item object-id uniform).
-    pub(crate) gaussian_splat_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pick pipeline for volume surface slices: reuses the render mesh vertex
     /// buffer and writes the item's object id. Object-level.
     pub(crate) volume_surface_slice_pipeline: Option<crate::gpu::RenderPipeline>,
@@ -675,10 +669,6 @@ pub struct DeviceResources {
     // --- Surface LIC shared resources ---
     /// Surface LIC pipelines and layouts (surface + advect passes).
     pub(crate) lic: crate::resources::postprocess::LicResources,
-
-    // --- Gaussian splat pipelines (lazily created) ---
-    /// Gaussian splat render/sort pipelines and their bind group layouts.
-    pub(crate) gaussian_splat: crate::resources::scivis::gaussian_splat::GaussianSplatResources,
 
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite (emissive + lit) pipelines, layouts, refraction, and soft-particle fallbacks.

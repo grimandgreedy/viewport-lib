@@ -9,6 +9,7 @@
 //! the dispatchers route it to the plugin as if it had been submitted under
 //! the plugin's name.
 
+pub(crate) mod gaussian_splat;
 pub(crate) mod image_slice;
 
 use crate::plugin_api::PluginItemCollection;
@@ -22,6 +23,7 @@ pub(crate) fn plugin_items_for<'f>(
     name: &str,
 ) -> Option<&'f dyn PluginItemCollection> {
     match name {
+        gaussian_splat::TYPE_NAME => Some(&frame.scene.gaussian_splats),
         image_slice::TYPE_NAME => Some(&frame.scene.image_slices),
         _ => frame
             .scene
@@ -36,6 +38,10 @@ impl crate::renderer::ViewportRenderer {
     /// external registration through
     /// [`with_item_type_plugin`](Self::with_item_type_plugin) is unaffected.
     pub(crate) fn register_internal_item_plugins(&mut self, device: &crate::gpu::Device) {
+        self.with_item_type_plugin(
+            device,
+            Box::new(gaussian_splat::GaussianSplatPlugin::default()),
+        );
         self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
     }
 }

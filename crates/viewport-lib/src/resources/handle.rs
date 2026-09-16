@@ -97,10 +97,6 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
 
     /// Mutable raw-index lookup, same contract as
     /// [`get_by_index`](Self::get_by_index).
-    pub(crate) fn get_mut_by_index(&mut self, index: usize) -> Option<&mut T> {
-        self.slots.get_mut(index)?.value.as_mut()
-    }
-
     /// Swap the value in `id`'s slot, charging `bytes` in place of the old size
     /// and keeping the slot generation so `id` stays valid. Returns the old
     /// value, or `None` for a stale handle or an empty slot.

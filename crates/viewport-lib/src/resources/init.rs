@@ -2488,8 +2488,6 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             lic: crate::resources::postprocess::LicResources::default(),
-            gaussian_splat:
-                crate::resources::scivis::gaussian_splat::GaussianSplatResources::default(),
             sprite: crate::resources::scivis::sprite::SpriteResources::default(),
             point_cloud: crate::resources::scivis::point_cloud::PointCloudResources {
                 pipeline: None,

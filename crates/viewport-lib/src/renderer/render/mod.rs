@@ -30,42 +30,6 @@ pub(crate) fn emit_indirect_run(
     }
 }
 
-/// Draw the gaussian splat batches: alpha-blended, back-to-front sorted, no
-/// depth write. Shared verbatim across all four render paths (HDR, LDR,
-/// `paint_to`, and the split-viewport `paint_viewport`), which differ only in
-/// whether they resolve the HDR or LDR half of the dual pipeline.
-pub(crate) fn draw_gaussian_splats(
-    render_pass: &mut crate::gpu::RenderPass<'_>,
-    resources: &crate::resources::DeviceResources,
-    draw_data: &[crate::resources::GaussianSplatDrawData],
-    camera_bg: &crate::gpu::BindGroup,
-    hdr: bool,
-) {
-    if draw_data.is_empty() {
-        return;
-    }
-    let Some(ref dual) = resources.gaussian_splat.pipeline else {
-        return;
-    };
-    render_pass.set_pipeline(dual.for_format(hdr));
-    render_pass.set_bind_group(0, camera_bg, &[]);
-    for dd in draw_data {
-        if dd.wireframe {
-            continue;
-        }
-        if let Some(set) = resources
-            .content
-            .gaussian_splat_store
-            .get_by_index(dd.store_index)
-        {
-            if let Some(Some(vp_sort)) = set.viewport_sort.get(dd.viewport_index) {
-                render_pass.set_bind_group(1, &vp_sort.render_bg, &[]);
-                render_pass.draw(0..6, 0..dd.count);
-            }
-        }
-    }
-}
-
 /// Emit the 2D overlay draw calls in the fixed family order used when no
 /// overlay carries a non-zero `z_order`: SDF shapes, then the merged text batch
 /// (labels, glyph runs, polylines), back to front. Each block is guarded by its

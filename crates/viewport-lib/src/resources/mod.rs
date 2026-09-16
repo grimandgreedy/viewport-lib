@@ -36,7 +36,7 @@ pub(crate) mod resource_deps;
 pub(crate) mod scene_bindings;
 /// Core scene mesh pipelines (base LDR set plus HDR variants).
 pub(crate) mod scene_pipelines;
-mod scivis;
+pub(crate) mod scivis;
 /// Shadow-map GPU resources (cascade atlas, point-shadow cube array, debug viewer).
 pub(crate) mod shadow;
 #[cfg(test)]
@@ -109,8 +109,8 @@ pub(crate) use self::postprocess::producer::{PostStage, ProducerFrameInputs, Pro
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
     ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,
-    FrustumUniform, GaussianSplatDrawData, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh,
-    GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform,
+    FrustumUniform, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh, GridUniform,
+    GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform,
     LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform, OutlineEdgeUniform,
     OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
     OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,

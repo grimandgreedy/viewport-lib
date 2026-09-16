@@ -64,14 +64,6 @@ impl ViewportRenderer {
             &self.mesh_instance_gpu_data,
             false
         );
-        // Gaussian splats (alpha-blended, back-to-front sorted, no depth write).
-        super::draw_gaussian_splats(
-            render_pass,
-            &self.resources,
-            &self.gaussian_splat_draw_data,
-            camera_bg,
-            false,
-        );
         // TransparentVolumeMesh boundary wireframe overlay.
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
