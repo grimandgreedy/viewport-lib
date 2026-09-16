@@ -215,6 +215,11 @@ pub struct PaintContext<'a> {
     /// configured output format in `paint` on the LDR path. Use it to select
     /// the matching pipeline variant.
     pub target_format: crate::gpu::TextureFormat,
+    /// Draw handle for meshes the consumer uploaded through
+    /// [`upload_mesh_data`](crate::resources::DeviceResources::upload_mesh_data).
+    /// An item type whose geometry is a `MeshId` binds and draws it through
+    /// this; one that owns its buffers ignores it.
+    pub meshes: crate::resources::MeshDraw<'a>,
 }
 
 /// Information forwarded to a plugin's `paint_depth_read`.
@@ -315,6 +320,11 @@ pub struct OutlineMaskContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter.
     pub frame_index: u64,
+    /// Draw handle for meshes the consumer uploaded through
+    /// [`upload_mesh_data`](crate::resources::DeviceResources::upload_mesh_data).
+    /// An item type whose geometry is a `MeshId` binds and draws it through
+    /// this; one that owns its buffers ignores it.
+    pub meshes: crate::resources::MeshDraw<'a>,
 }
 
 /// Information forwarded to a plugin's `render_pick`.
@@ -342,6 +352,11 @@ pub struct PickPassContext<'a> {
     /// caller asked for. A plugin can pick a pipeline variant per level, or
     /// skip its draws when the mask holds nothing its items answer.
     pub mask: crate::renderer::PickMask,
+    /// Draw handle for meshes the consumer uploaded through
+    /// [`upload_mesh_data`](crate::resources::DeviceResources::upload_mesh_data).
+    /// An item type whose geometry is a `MeshId` binds and draws it through
+    /// this; one that owns its buffers ignores it.
+    pub meshes: crate::resources::MeshDraw<'a>,
 }
 
 /// A new scene item category supplied by a plugin.

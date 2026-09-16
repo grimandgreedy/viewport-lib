@@ -2020,6 +2020,7 @@ impl ViewportRenderer {
             } else {
                 self.resources.target_format
             },
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if !is_hdr && !plugin.draws_ldr() {
@@ -2078,6 +2079,7 @@ impl ViewportRenderer {
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if !plugin.draws_foreground() {
@@ -2162,6 +2164,7 @@ impl ViewportRenderer {
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             mask,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
@@ -2189,6 +2192,7 @@ impl ViewportRenderer {
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
             target_format: crate::resources::HDR_COLOR_FORMAT,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
@@ -2309,6 +2313,7 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {

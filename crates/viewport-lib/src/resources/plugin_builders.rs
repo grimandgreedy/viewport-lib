@@ -8,6 +8,7 @@ use crate::plugin_api::{
     target_desc::{OIT_ACCUM_BLEND, OIT_REVEAL_BLEND},
 };
 use crate::resources::DeviceResources;
+use crate::resources::mesh::mesh_store::MeshId;
 
 /// HDR colour format used by the scene buffer. Plugins targeting the HDR
 /// path build pipelines against this format.
@@ -827,4 +828,54 @@ fn build_layout(
     bgls.push(&res.binds.camera_bgl);
     bgls.extend(extras.iter().copied());
     crate::resources::builders::pipeline_layout(device, label, &bgls)
+}
+
+/// Draw handle for meshes the consumer uploaded through
+/// [`upload_mesh_data`](DeviceResources::upload_mesh_data).
+///
+/// An item type whose geometry is a consumer-supplied [`MeshId`] rather than
+/// buffers of its own cannot bind it from a draw hook: the hook contexts carry
+/// no resources borrow, and the vertex and index data live in a shared arena
+/// whose layout is the lib's business. This hands over the one operation that
+/// needs, and nothing else.
+///
+/// Vertices use the lib's full 64-byte `Vertex` layout, so a pipeline that
+/// consumes them declares that layout (or a prefix of it) as vertex buffer 0.
+#[derive(Clone, Copy)]
+pub struct MeshDraw<'a> {
+    resources: &'a DeviceResources,
+}
+
+impl<'a> MeshDraw<'a> {
+    pub(crate) fn new(resources: &'a DeviceResources) -> Self {
+        Self { resources }
+    }
+
+    /// Bind the mesh's vertex and index buffers at slot 0 and issue the
+    /// indexed draw for its full index range.
+    ///
+    /// Returns `false` without touching the pass when `mesh_id` was never
+    /// uploaded or has been freed, so a plugin holding a stale id draws
+    /// nothing instead of drawing the wrong geometry. The pipeline and any
+    /// bind groups are the caller's to set first.
+    pub fn draw_indexed(&self, pass: &mut crate::gpu::RenderPass<'_>, mesh_id: MeshId) -> bool {
+        let Some(mesh) = self.resources.mesh_store.get(mesh_id) else {
+            return false;
+        };
+        pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
+        pass.set_index_buffer(
+            self.resources.geometry.index_slice(mesh.index_span),
+            crate::gpu::IndexFormat::Uint32,
+        );
+        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+        true
+    }
+
+    /// Index count of an uploaded mesh, or `None` when the id is stale.
+    pub fn index_count(&self, mesh_id: MeshId) -> Option<u32> {
+        self.resources
+            .mesh_store
+            .get(mesh_id)
+            .map(|m| m.index_count)
+    }
 }
