@@ -1991,6 +1991,8 @@ impl ViewportRenderer {
                     wireframe_mode: frame.viewport.wireframe_mode,
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
+                    clip_objects: &frame.effects.clip.objects,
+                    quality_reduced: self.degradation_volume_quality_reduced,
                 };
                 bufs.extend(plugin.prepare(device, queue, &ctx, items));
             }
@@ -2261,6 +2263,8 @@ impl ViewportRenderer {
                     wireframe_mode: frame.viewport.wireframe_mode,
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
+                    clip_objects: &frame.effects.clip.objects,
+                    quality_reduced: self.degradation_volume_quality_reduced,
                 };
                 plugin.cull(frustum, &ctx, items);
             }

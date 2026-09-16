@@ -276,6 +276,8 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             wireframe_mode: false,
             outline_selected: false,
             sub_selection: None,
+            clip_objects: &[],
+            quality_reduced: false,
         };
         let mut plugin = GpuImplicitPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);

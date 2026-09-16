@@ -1643,7 +1643,8 @@ impl ViewportRenderer {
                 | PickMask::CELL
                 | PickMask::INSTANCE
                 | PickMask::SPLAT
-                | PickMask::CLOUD_POINT,
+                | PickMask::CLOUD_POINT
+                | PickMask::VOXEL,
         ) && self.any_plugin_items_submitted(frame);
 
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
@@ -2803,7 +2804,8 @@ impl ViewportRenderer {
     /// plugin sees it, so a constant-0 channel is never misread as a
     /// triangle index. Instance-level refinement decodes a shader-written
     /// instance index (`viewport_pick_instance_fs`) and needs no feature,
-    /// matching the built-in instanced pick path.
+    /// matching the built-in instanced pick path. Splat, cloud-point and voxel
+    /// levels are shader-written the same way.
     fn resolve_plugin_sub_object(
         &self,
         name: &'static str,
@@ -2814,7 +2816,8 @@ impl ViewportRenderer {
         world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
         let mesh_sub = PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL;
-        let shader_written = PickMask::INSTANCE | PickMask::SPLAT | PickMask::CLOUD_POINT;
+        let shader_written =
+            PickMask::INSTANCE | PickMask::SPLAT | PickMask::CLOUD_POINT | PickMask::VOXEL;
         let effective_mask = if primitive_index_supported {
             mask
         } else {

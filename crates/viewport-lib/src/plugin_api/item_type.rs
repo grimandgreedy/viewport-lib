@@ -174,6 +174,19 @@ pub struct ItemFrameContext<'a> {
     /// (`InteractionFrame::sub_selection`). Plugins that support sub-object
     /// highlighting read their own items' entries out of it.
     pub sub_selection: Option<&'a crate::renderer::SubSelectionRef>,
+    /// The frame's clip objects (`EffectsFrame::clip`). Group 0 already carries
+    /// the clip bindings, so a plugin whose shader reads them needs nothing
+    /// here; this is for a plugin that bakes clipping into a uniform of its
+    /// own, which a ray-marcher generally must, since it tests along the ray
+    /// rather than per fragment.
+    pub clip_objects: &'a [crate::renderer::ClipObject],
+    /// `true` when the frame budget asked for reduced quality this frame
+    /// (reported as `FrameStats::volume_quality_reduced`). A plugin with a
+    /// cost knob, such as a march step count or a sample budget, should turn
+    /// it down while this is set; one without ignores it. The value reflects
+    /// the previous frame's measurement, since this frame's has not been
+    /// taken yet.
+    pub quality_reduced: bool,
 }
 
 /// Information forwarded to a plugin's `paint`.
