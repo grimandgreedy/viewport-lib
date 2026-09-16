@@ -1074,6 +1074,7 @@ impl ViewportRenderer {
                 viewport_size,
                 view_proj,
                 mask,
+                meshes: crate::resources::MeshGeometry::new(&self.resources),
             };
             for plugin in self.item_type_plugins.values() {
                 if let Some((t, hit)) = plugin.pick(&plugin_ray, &plugin_ctx) {

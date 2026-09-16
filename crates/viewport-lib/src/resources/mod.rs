@@ -77,8 +77,9 @@ pub use self::mesh_sidecar::shade::{
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
-    GlyphBaseMeshRef, HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, PICK_COLOR_FORMAT,
-    PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
+    GlyphBaseMeshRef, HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry,
+    PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
+    SHADOW_DEPTH_FORMAT,
 };
 pub use self::scivis::curve_store::{
     GlyphSetId, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,

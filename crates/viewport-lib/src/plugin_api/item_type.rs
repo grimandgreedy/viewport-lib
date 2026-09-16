@@ -48,7 +48,7 @@ pub struct PickRay {
 /// return `None` cheaply when the query asks for nothing its items answer.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub struct PickContext {
+pub struct PickContext<'a> {
     /// Click position in the same pixel coordinates as `viewport_size`
     /// (origin top-left, y down).
     pub click_pos: glam::Vec2,
@@ -58,6 +58,10 @@ pub struct PickContext {
     pub view_proj: glam::Mat4,
     /// The query's pick mask.
     pub mask: crate::renderer::PickMask,
+    /// Read handle for the CPU geometry of consumer-uploaded meshes. An item
+    /// type whose geometry is a `MeshId` tests against these arrays; one that
+    /// holds its own geometry ignores it.
+    pub meshes: crate::resources::MeshGeometry<'a>,
 }
 
 /// Query information forwarded to a plugin's [`ItemTypePlugin::pick_rect`].
@@ -68,7 +72,7 @@ pub struct PickContext {
 /// maps into.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub struct RectPickContext {
+pub struct RectPickContext<'a> {
     /// Rectangle minimum corner in pixels.
     pub rect_min: glam::Vec2,
     /// Rectangle maximum corner in pixels.
@@ -79,6 +83,10 @@ pub struct RectPickContext {
     pub view_proj: glam::Mat4,
     /// The query's pick mask.
     pub mask: crate::renderer::PickMask,
+    /// Read handle for the CPU geometry of consumer-uploaded meshes. An item
+    /// type whose geometry is a `MeshId` tests against these arrays; one that
+    /// holds its own geometry ignores it.
+    pub meshes: crate::resources::MeshGeometry<'a>,
 }
 
 /// Per-frame item collection owned by the consumer and read by the lib.
@@ -652,7 +660,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// ([`pick_object`](crate::renderer::ViewportRenderer::pick_object) with
     /// [`PickBackend::Gpu`](crate::renderer::PickBackend::Gpu)) returns their
     /// items with no CPU ray-cast.
-    fn pick(&self, _ray: &PickRay, _ctx: &PickContext) -> Option<(f32, PickHit)> {
+    fn pick(&self, _ray: &PickRay, _ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
         None
     }
 
@@ -675,7 +683,7 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// The GPU rect path needs no counterpart: items drawn in
     /// [`render_pick`](Self::render_pick) are decoded there per pixel.
     /// Default: empty, matching plugins that only implement GPU picking.
-    fn pick_rect(&self, _ctx: &RectPickContext) -> crate::renderer::PickRectResult {
+    fn pick_rect(&self, _ctx: &RectPickContext<'_>) -> crate::renderer::PickRectResult {
         crate::renderer::PickRectResult::default()
     }
 

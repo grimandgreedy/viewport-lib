@@ -879,3 +879,49 @@ impl<'a> MeshDraw<'a> {
             .map(|m| m.index_count)
     }
 }
+
+/// Read handle for the CPU-side geometry of meshes the consumer uploaded
+/// through [`upload_mesh_data`](DeviceResources::upload_mesh_data).
+///
+/// The counterpart of [`MeshDraw`] for the picking hooks: an item type whose
+/// geometry is a consumer-supplied [`MeshId`] answers
+/// [`pick`](crate::plugin_api::ItemTypePlugin::pick) and
+/// [`pick_rect`](crate::plugin_api::ItemTypePlugin::pick_rect) against these
+/// arrays rather than keeping a copy of its own.
+///
+/// Both accessors return `None` when the id is stale, and when the mesh was
+/// uploaded without CPU-side geometry retained.
+#[derive(Clone, Copy)]
+pub struct MeshGeometry<'a> {
+    resources: &'a DeviceResources,
+}
+
+impl std::fmt::Debug for MeshGeometry<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshGeometry")
+    }
+}
+
+impl<'a> MeshGeometry<'a> {
+    pub(crate) fn new(resources: &'a DeviceResources) -> Self {
+        Self { resources }
+    }
+
+    /// Object-space vertex positions, in the mesh's own vertex order.
+    pub fn positions(&self, mesh_id: MeshId) -> Option<&'a [[f32; 3]]> {
+        self.resources
+            .mesh_store
+            .get(mesh_id)?
+            .cpu_positions
+            .as_deref()
+    }
+
+    /// Triangle indices into [`positions`](Self::positions), three per face.
+    pub fn indices(&self, mesh_id: MeshId) -> Option<&'a [u32]> {
+        self.resources
+            .mesh_store
+            .get(mesh_id)?
+            .cpu_indices
+            .as_deref()
+    }
+}

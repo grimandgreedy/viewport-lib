@@ -844,6 +844,7 @@ impl ViewportRenderer {
                 viewport_size,
                 view_proj,
                 mask,
+                meshes: crate::resources::MeshGeometry::new(&self.resources),
             };
             for plugin in self.item_type_plugins.values() {
                 let plugin_result = plugin.pick_rect(&plugin_ctx);
