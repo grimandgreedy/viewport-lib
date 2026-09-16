@@ -3,10 +3,11 @@
 //! pipelines, the shadow, outline-mask and pick pipelines, and the shared case
 //! tables.
 //!
-//! The uploaded volumes themselves stay in the lib's store (`upload_volume_for_mc`
-//! and `McVolumeId` are consumer API); this reads them each prepare and clones
-//! the per-slab buffer handles it needs into [`McFrame`], so the draw hooks
-//! never need a borrow of the store.
+//! The uploaded volumes live in `resources`, because `upload_volume_for_mc` and
+//! `McVolumeId` are consumer API and the store is wired into the resident-byte
+//! accounting and the async upload runner. Nothing else reads them. This module
+//! reads the store each prepare and clones the per-slab buffer handles it needs
+//! into [`McFrame`], so the draw hooks never need a borrow of it.
 
 use crate::geometry::marching_cubes::TRI_TABLE;
 use crate::gpu::util::DeviceExt as _;
