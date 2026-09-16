@@ -1,6 +1,6 @@
 //! Bindless material-texture variant of the instanced mesh path.
 //!
-//! On devices with the texture-array feature set (Vulkan/DX12), the instanced
+//! On devices with the texture-array feature set, the instanced
 //! colour pipelines bind one texture array once per frame and index it per
 //! material, instead of binding a batch's five material textures into group 1.
 //! This lets the batch key drop the texture ids, so instances of one mesh with
@@ -28,8 +28,11 @@ use crate::resources::DeviceResources;
 /// one mesh with different materials collapse into a single batch.
 ///
 /// The mode is chosen once at renderer construction from the device's enabled
-/// features: `Bindless` needs the texture-array feature set (Vulkan/DX12); Metal
-/// and WebGPU stay on `PerBatch`. Both paths render the same result. See ADR 0003.
+/// features: `Bindless` needs the texture-array feature set. Whether an adapter
+/// has it is not decided by the backend, so do not infer the path from the
+/// platform: Apple silicon reports the feature set through Metal argument
+/// buffers and takes the bindless path, while WebGPU does not. Both paths render
+/// the same result. See ADR 0003.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum MaterialTextureBinding {
     /// One group-1 texture bind per batch; texture ids are part of the batch key.

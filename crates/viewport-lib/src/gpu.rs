@@ -198,9 +198,17 @@ pub const RAY_QUERY_FEATURE: Features = Features::EXPERIMENTAL_RAY_QUERY;
 
 /// The feature set the bindless material-texture path needs: a sampled-texture
 /// `binding_array`, non-uniform (per-instance) indexing into it, and a partially
-/// bound array so freed texture slots can be left unbound. Present together on
-/// Vulkan and DX12; absent on Metal and WebGPU, which stay on the per-batch
-/// texture binding. Named the same on every wgpu leg.
+/// bound array so freed texture slots can be left unbound. Named the same on
+/// every wgpu leg.
+///
+/// Support is a property of the adapter, not of the backend: ask the adapter
+/// rather than assuming from the platform. Apple silicon reports all three
+/// through Metal argument buffers, so a Mac takes the bindless path, and WebGPU
+/// does not. `recommended_device_features` requests these when the adapter has
+/// them, which is what selects
+/// [`MaterialTextureBinding::Bindless`](crate::resources::mesh::instanced_bindless::MaterialTextureBinding);
+/// [`ViewportRenderer::material_texture_binding`](crate::ViewportRenderer::material_texture_binding)
+/// reports which path a renderer actually took.
 #[doc(hidden)]
 pub const BINDLESS_TEXTURE_FEATURES: Features = Features::TEXTURE_BINDING_ARRAY
     .union(Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)

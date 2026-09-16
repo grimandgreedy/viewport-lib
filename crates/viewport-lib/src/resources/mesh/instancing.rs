@@ -6,9 +6,10 @@ use crate::resources::*;
 /// and `ensure_hdr_instanced_pipelines`.
 #[derive(Default)]
 pub(crate) struct InstancingResources {
-    /// How the colour pipelines bind material textures. `Bindless` (Vulkan/DX12)
-    /// swaps the per-batch group-1 textures for one texture array indexed per
-    /// material; `PerBatch` (the default, Metal/WebGPU) keeps the per-batch binds.
+    /// How the colour pipelines bind material textures. `Bindless` swaps the
+    /// per-batch group-1 textures for one texture array indexed per material;
+    /// `PerBatch` (the default) keeps the per-batch binds. Which one a device
+    /// gets depends on its enabled features, not on its backend.
     /// Fixed at renderer construction from the device's enabled features.
     pub(crate) material_texture_binding:
         crate::resources::mesh::instanced_bindless::MaterialTextureBinding,

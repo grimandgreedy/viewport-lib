@@ -71,7 +71,7 @@ impl TexTransformGpu {
 /// `tex_index0` / `tex_index1` hold each material texture's index into the
 /// bindless texture array, or `NO_TEXTURE` (`u32::MAX`) when the material has no
 /// texture in that slot. They are only meaningful under the bindless texture
-/// binding (Vulkan/DX12); under the per-batch binding the interner writes the
+/// binding; under the per-batch binding the interner writes the
 /// constant `NO_TEXTURE` into every slot so the material blocks dedup exactly as
 /// before (textures are keyed by the batch, not the material buffer). The
 /// bindless shader reads the index and samples the array; the per-batch shaders

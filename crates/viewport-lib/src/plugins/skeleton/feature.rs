@@ -112,7 +112,7 @@ impl SkinnedMeshHandle {
                         .attach_weights(resources, device, update.mesh_id, weights);
                 }
             }
-            self.skinning.attach_palette(
+            let attached = self.skinning.attach_palette(
                 resources,
                 device,
                 queue,
@@ -120,6 +120,19 @@ impl SkinnedMeshHandle {
                 update.instance_id,
                 &update.joint_matrices,
             );
+            // A pose update for a mesh with no weights skins it against no
+            // palette, which collapses the geometry and drags its UVs with it.
+            // That reads as ruined textures rather than a broken pose, so say so
+            // rather than letting it render wrong in silence.
+            if !attached {
+                tracing::warn!(
+                    mesh_index = update.mesh_id.index(),
+                    instance_id = update.instance_id,
+                    "skinned pose update for a mesh with no attached weights; the \
+                     palette was dropped and the mesh will render unskinned. Call \
+                     attach_weights for this mesh first."
+                );
+            }
         }
     }
 }

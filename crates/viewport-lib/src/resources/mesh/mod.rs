@@ -4,7 +4,7 @@ pub(crate) mod geometry;
 pub(crate) mod geometry_slab;
 /// Per-mesh GPU buffers and bind group.
 pub(crate) mod gpu_mesh;
-/// Bindless material-texture variant of the instanced path (Vulkan/DX12).
+/// Bindless material-texture variant of the instanced path.
 pub(crate) mod instanced_bindless;
 pub(crate) mod instancing;
 pub mod lod;

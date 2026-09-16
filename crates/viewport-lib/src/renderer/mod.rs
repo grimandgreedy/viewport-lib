@@ -1518,6 +1518,25 @@ impl ViewportRenderer {
         self.instancing.use_instancing
     }
 
+    /// Which material-texture path this renderer took: `"bindless"` or
+    /// `"per-batch"`.
+    ///
+    /// Chosen once at construction from the device's enabled features, and it is
+    /// not inferable from the backend: an Apple silicon device reports the
+    /// bindless feature set through Metal argument buffers and takes that path.
+    /// Requesting [`recommended_device_features`](Self::recommended_device_features)
+    /// is what enables it when the adapter has it.
+    ///
+    /// The two paths bind textures differently, so they do not share a bug
+    /// surface. Worth logging, and worth putting in a bug report.
+    pub fn material_texture_binding(&self) -> &'static str {
+        use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+        match self.resources.instancing.material_texture_binding {
+            MaterialTextureBinding::Bindless => "bindless",
+            MaterialTextureBinding::PerBatch => "per-batch",
+        }
+    }
+
     /// Returns the number of instanced batches prepared for the current frame.
     ///
     /// Zero when using the non-instanced path. Each batch corresponds to a distinct
