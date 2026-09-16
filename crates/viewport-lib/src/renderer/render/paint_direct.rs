@@ -92,17 +92,6 @@ impl ViewportRenderer {
                 }
             }
         }
-        // GPU implicit surface (depth-writes enabled, LessEqual compare).
-        if !self.implicit_gpu_data.is_empty() {
-            if let Some(ref dual) = self.resources.implicit.pipeline {
-                render_pass.set_pipeline(dual.for_format(false));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for gpu in &self.implicit_gpu_data {
-                    render_pass.set_bind_group(1, &gpu.bind_group, &[]);
-                    render_pass.draw(0..6, 0..1);
-                }
-            }
-        }
         // GPU marching cubes indirect draw.
         if !self.mc_gpu_data.is_empty() {
             render_pass.set_bind_group(0, camera_bg, &[]);

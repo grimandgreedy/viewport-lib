@@ -490,10 +490,8 @@ impl ViewportRenderer {
         }
     }
 
-    pub(super) fn upload_implicit_decals_mc(
+    pub(super) fn upload_decals_mc(
         resources: &mut DeviceResources,
-        implicit_gpu_data: &mut Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
-        pick_implicit_items: &mut Vec<GpuImplicitPickItem>,
         decal_gpu_data: &mut Vec<crate::resources::decal::DecalGpuItem>,
         decal_cache: &mut std::collections::HashMap<
             u64,
@@ -510,34 +508,6 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> DecalCacheStats {
-        // ------------------------------------------------------------------
-        // GPU implicit surface items.
-        // ------------------------------------------------------------------
-        implicit_gpu_data.clear();
-        pick_implicit_items.clear();
-        if !frame.scene.gpu_implicit.is_empty() {
-            resources.ensure_implicit_pipeline(device);
-            for item in &frame.scene.gpu_implicit {
-                if item.settings.hidden || item.primitives.is_empty() {
-                    continue;
-                }
-                let mut gpu = resources.upload_implicit_item(device, item);
-                gpu.pick_id = item.settings.pick_id;
-                implicit_gpu_data.push(gpu);
-                if item.settings.pick_id != PickId::NONE {
-                    pick_implicit_items.push(GpuImplicitPickItem {
-                        id: item.settings.pick_id.0,
-                        primitives: item.primitives.clone(),
-                        blend_mode: item.blend_mode,
-                        max_steps: item.march_options.max_steps,
-                        step_scale: item.march_options.step_scale,
-                        hit_threshold: item.march_options.hit_threshold,
-                        max_distance: item.march_options.max_distance,
-                    });
-                }
-            }
-        }
-
         // ------------------------------------------------------------------
         // Screen-space decals, sorted by sort_key.
         // ------------------------------------------------------------------

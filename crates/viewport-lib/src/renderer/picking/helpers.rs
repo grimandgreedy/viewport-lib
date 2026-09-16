@@ -1,7 +1,7 @@
 //! Free helper functions shared by the CPU pick and rect-pick paths.
 //!
 //! Ray/segment intersection, strip-index mapping, and CPU evaluators for
-//! implicit-surface and marching-cubes picking.
+//! marching-cubes picking.
 
 use super::*;
 
@@ -340,108 +340,6 @@ pub(super) fn ribbon_lateral_frames(
     }
 
     frames
-}
-
-// ---------------------------------------------------------------------------
-// CPU SDF evaluation for GPU implicit surfaces (mirrors implicit.wgsl)
-// ---------------------------------------------------------------------------
-
-/// Evaluate one implicit primitive's signed distance from `p`.
-pub(super) fn eval_implicit_primitive(
-    p: glam::Vec3,
-    prim: &crate::resources::ImplicitPrimitive,
-) -> f32 {
-    match prim.kind {
-        1 => {
-            // Sphere: center=params[0..3], radius=params[3]
-            let center = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            (p - center).length() - prim.params[3]
-        }
-        2 => {
-            // Box: center=params[0..3], half-extents=params[4..7]
-            let center = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            let half = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
-            let q = (p - center).abs() - half;
-            q.max(glam::Vec3::ZERO).length() + q.x.max(q.y).max(q.z).min(0.0)
-        }
-        3 => {
-            // Plane: normal=params[0..3], offset=params[3]
-            let n =
-                glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]).normalize_or_zero();
-            p.dot(n) + prim.params[3]
-        }
-        4 => {
-            // Capsule: a=params[0..3], radius=params[3], b=params[4..7]
-            let a = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            let r = prim.params[3];
-            let b = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
-            let pa = p - a;
-            let ba = b - a;
-            let h = (pa.dot(ba) / ba.dot(ba).max(1e-10)).clamp(0.0, 1.0);
-            (pa - ba * h).length() - r
-        }
-        _ => f32::MAX,
-    }
-}
-
-/// Polynomial smooth minimum.
-#[inline]
-pub(super) fn smin_implicit(a: f32, b: f32, k: f32) -> f32 {
-    let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
-    a * h + b * (1.0 - h) - k * h * (1.0 - h)
-}
-
-/// Evaluate the combined SDF for all primitives in one GPU implicit item.
-pub(super) fn eval_implicit_sdf(p: glam::Vec3, item: &GpuImplicitPickItem) -> f32 {
-    use crate::resources::ImplicitBlendMode;
-    let mut d = item.max_distance;
-    for (i, prim) in item.primitives.iter().enumerate() {
-        let pd = eval_implicit_primitive(p, prim);
-        match item.blend_mode {
-            ImplicitBlendMode::Union => {
-                d = d.min(pd);
-            }
-            ImplicitBlendMode::SmoothUnion => {
-                let k = if prim.blend > 0.0 { prim.blend } else { 1e-5 };
-                d = smin_implicit(d, pd, k);
-            }
-            ImplicitBlendMode::Intersection => {
-                if i == 0 {
-                    d = pd;
-                } else {
-                    d = d.max(pd);
-                }
-            }
-        }
-    }
-    d
-}
-
-/// CPU ray-march against the implicit SDF. Returns `(toi, world_pos)` on hit.
-pub(super) fn pick_implicit_sdf(
-    ray_origin: glam::Vec3,
-    ray_dir: glam::Vec3,
-    item: &GpuImplicitPickItem,
-) -> Option<(f32, glam::Vec3)> {
-    let max_steps = item.max_steps.min(512) as usize;
-    let scale = item.step_scale.clamp(0.01, 1.0);
-    let hit_thr = item.hit_threshold;
-    let max_dist = item.max_distance;
-    let min_step = hit_thr * 0.5;
-
-    let mut t = 0.0f32;
-    for _ in 0..max_steps {
-        if t > max_dist {
-            break;
-        }
-        let p = ray_origin + ray_dir * t;
-        let d = eval_implicit_sdf(p, item);
-        if d < hit_thr {
-            return Some((t, p));
-        }
-        t += d.abs().max(min_step) * scale;
-    }
-    None
 }
 
 // ---------------------------------------------------------------------------

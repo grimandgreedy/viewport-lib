@@ -447,10 +447,8 @@ impl ViewportRenderer {
             queue,
             frame,
         );
-        let decal_cache_stats = Self::upload_implicit_decals_mc(
+        let decal_cache_stats = Self::upload_decals_mc(
             resources,
-            &mut self.implicit_gpu_data,
-            &mut self.pick_implicit_items,
             &mut self.decal_gpu_data,
             &mut self.decal_cache,
             &mut self.decal_deps_gate,

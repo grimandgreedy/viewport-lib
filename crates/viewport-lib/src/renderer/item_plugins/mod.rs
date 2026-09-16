@@ -10,6 +10,7 @@
 //! the plugin's name.
 
 pub(crate) mod gaussian_splat;
+pub(crate) mod gpu_implicit;
 pub(crate) mod image_slice;
 
 use crate::plugin_api::PluginItemCollection;
@@ -24,6 +25,7 @@ pub(crate) fn plugin_items_for<'f>(
 ) -> Option<&'f dyn PluginItemCollection> {
     match name {
         gaussian_splat::TYPE_NAME => Some(&frame.scene.gaussian_splats),
+        gpu_implicit::TYPE_NAME => Some(&frame.scene.gpu_implicit),
         image_slice::TYPE_NAME => Some(&frame.scene.image_slices),
         _ => frame
             .scene
@@ -42,6 +44,7 @@ impl crate::renderer::ViewportRenderer {
             device,
             Box::new(gaussian_splat::GaussianSplatPlugin::default()),
         );
+        self.with_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
         self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
     }
 }

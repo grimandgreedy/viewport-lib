@@ -281,12 +281,6 @@ pub(crate) struct PickResources {
     pub(crate) volume_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the volume pick pipeline (per-item object-id uniform).
     pub(crate) volume_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for GPU implicit SDF surfaces: raymarches the isosurface on a
-    /// full-screen quad and writes the item's object id and hit depth. Reuses the
-    /// implicit render group-1 uniform layout.
-    pub(crate) implicit_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the implicit pick pipeline (per-item object-id uniform).
-    pub(crate) implicit_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pick pipeline for GPU marching-cubes surfaces: rasterises the generated MC
     /// vertex buffer and writes the job's object id and depth.
     pub(crate) mc_pipeline: Option<crate::gpu::RenderPipeline>,
@@ -303,17 +297,6 @@ pub(crate) struct PickResources {
     pub(crate) volume_surface_slice_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the volume surface slice pick pipeline (per-item object-id uniform).
     pub(crate) volume_surface_slice_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-}
-
-/// GPU implicit-surface ray-march pipeline and layout. Lazily built.
-#[derive(Default)]
-pub(crate) struct ImplicitResources {
-    /// Render pipeline for GPU-side implicit surface ray-marching.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Group 1 layout (ImplicitUniformRaw).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Outline mask pipeline for implicit surfaces. None until first selected item.
-    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 /// Screen-space image quad pipelines (plain + depth-composite) and the rect
@@ -724,10 +707,6 @@ pub struct DeviceResources {
     /// Full-screen ground-plane pipeline, uniform, and bind group.
     /// See `resources::ground_plane::GroundPlaneResources`.
     pub(crate) ground: crate::resources::ground_plane::GroundPlaneResources,
-
-    // --- GPU implicit surface (lazily created) ---
-    /// Implicit-surface ray-march pipeline, layout, and outline mask.
-    pub(crate) implicit: ImplicitResources,
 
     // --- GPU marching cubes (lazily created) ---
     /// Marching-cubes compute/render pipelines, layouts, case tables, and per-item volumes.

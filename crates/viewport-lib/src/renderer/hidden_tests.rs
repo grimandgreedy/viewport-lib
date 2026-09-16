@@ -18,7 +18,9 @@ use super::{
     TubeItem, ViewportRenderer,
 };
 use crate::camera::Camera;
+use crate::plugin_api::ItemTypePlugin as _;
 use crate::renderer::PickId;
+use crate::renderer::item_plugins::gpu_implicit::GpuImplicitPlugin;
 use crate::resources::{GpuImplicitItem, ImplicitPrimitive};
 use crate::scene::material::ItemSettings;
 
@@ -243,8 +245,10 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
     // -----------------------------------------------------------------
     // GPU implicit
     // -----------------------------------------------------------------
+    //
+    // The implicit item type is an `ItemTypePlugin`, so the check drives the
+    // plugin's prepare directly instead of reading a renderer field.
     {
-        let mut fd = empty_frame();
         let mut vis_prim = ImplicitPrimitive::zeroed();
         vis_prim.kind = 1; // sphere
         vis_prim.params[3] = 1.0;
@@ -257,11 +261,25 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         let mut hid = GpuImplicitItem::default();
         hid.primitives.push(hid_prim);
         hid.settings = hidden();
-        fd.scene.gpu_implicit.push(vis);
-        fd.scene.gpu_implicit.push(hid);
-        let _ = renderer.prepare_callback(&device, &queue, &fd);
+        let items: Vec<GpuImplicitItem> = vec![vis, hid];
+
+        let fd = empty_frame();
+        let resources = renderer.resources();
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &fd.camera.render_camera,
+            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
+            viewport_index: 0,
+            frame_index: 0,
+            jobs: crate::resources::Jobs::new(resources),
+            resources,
+            wireframe_mode: false,
+            outline_selected: false,
+            sub_selection: None,
+        };
+        let mut plugin = GpuImplicitPlugin::default();
+        let _ = plugin.prepare(&device, &queue, &ctx, &items);
         assert_eq!(
-            renderer.implicit_gpu_data.len(),
+            plugin.drawn_count(),
             1,
             "gpu_implicit: hidden item must not produce gpu data"
         );

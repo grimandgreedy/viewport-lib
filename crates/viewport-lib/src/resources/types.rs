@@ -1,7 +1,6 @@
 pub use crate::resources::device_resources::ContentResources;
 pub use crate::resources::device_resources::DeviceResources;
 pub(crate) use crate::resources::device_resources::DualPipeline;
-pub(crate) use crate::resources::device_resources::ImplicitResources;
 pub(crate) use crate::resources::device_resources::OutlineResources;
 pub(crate) use crate::resources::device_resources::PickResources;
 pub(crate) use crate::resources::device_resources::ProjectedTetResources;

@@ -777,63 +777,6 @@ impl ViewportRenderer {
             }
         }
 
-        // 11. GPU implicit surface rect picks (OBJECT only).
-        //
-        // For each primitive compute a conservative screen-space AABB by projecting
-        // the primitive's bounding sphere. If any projected AABB corner falls inside
-        // the pick rect, the item is a hit. This is approximate (the actual rendered
-        // surface may be smaller) but avoids per-pixel SDF marching for rect queries.
-        if wants_object {
-            for item in &self.pick_implicit_items {
-                let mut hit = false;
-                'prim_loop: for prim in &item.primitives {
-                    // Derive a bounding sphere center and radius for each primitive.
-                    let (center, radius) = match prim.kind {
-                        1 => {
-                            // Sphere
-                            let c = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-                            (c, prim.params[3].abs())
-                        }
-                        2 => {
-                            // Box: center + max half-extent as radius
-                            let c = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-                            let h = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
-                            (c, h.length())
-                        }
-                        3 => {
-                            // Plane: not bounded -- skip.
-                            continue;
-                        }
-                        4 => {
-                            // Capsule: midpoint of segment + (half-length + radius)
-                            let a = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-                            let b = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
-                            let r = prim.params[3].abs();
-                            ((a + b) * 0.5, (b - a).length() * 0.5 + r)
-                        }
-                        _ => continue,
-                    };
-                    // Project 8 AABB corners of the bounding sphere box.
-                    for dx in [-radius, radius] {
-                        for dy in [-radius, radius] {
-                            for dz in [-radius, radius] {
-                                let corner = center + glam::Vec3::new(dx, dy, dz);
-                                if let Some((sx, sy)) = project(view_proj, corner) {
-                                    if in_rect(sx, sy) {
-                                        hit = true;
-                                        break 'prim_loop;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if hit {
-                    result.objects.push(item.id);
-                }
-            }
-        }
-
         // 12. GPU marching cubes surface rect picks (OBJECT only).
         //
         // Iterates over all cells in the volume where the scalar field straddles

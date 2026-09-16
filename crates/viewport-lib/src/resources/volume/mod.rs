@@ -1,6 +1,6 @@
 /// GPU marching cubes compute pipeline.
 pub mod gpu_marching_cubes;
-/// GPU implicit surface types and pipeline.
+/// GPU implicit surface public types.
 pub mod implicit;
 /// Scatter-volume participating-media pipeline state and uploads.
 pub mod scatter_volume;

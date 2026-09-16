@@ -146,8 +146,6 @@ pub(crate) struct SelectionOutlines {
     pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Per-frame NDC rect outline buffers for selected screen images.
     pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
-    /// Indices into `implicit_gpu_data` for selected GPU implicit items.
-    pub implicit_outline_indices: Vec<usize>,
     /// Per-frame outline data for selected GPU marching cubes items.
     pub mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>,
     /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
@@ -248,17 +246,6 @@ pub(crate) struct ViewportSlot {
     /// Version of the last sub-selection snapshot that was uploaded.
     /// `u64::MAX` forces a rebuild on the first frame.
     pub sub_highlight_generation: u64,
-}
-
-/// Retained pick state for one GPU implicit surface, built during `prepare()`.
-struct GpuImplicitPickItem {
-    id: u64,
-    primitives: Vec<crate::resources::ImplicitPrimitive>,
-    blend_mode: crate::resources::ImplicitBlendMode,
-    max_steps: u32,
-    step_scale: f32,
-    hit_threshold: f32,
-    max_distance: f32,
 }
 
 /// Retained pick state for one GPU marching cubes item, built during `prepare()`.
@@ -433,8 +420,6 @@ pub struct ViewportRenderer {
     volume_surface_slice_gpu_data: Vec<crate::resources::VolumeSurfaceSliceGpuData>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
-    /// Per-frame GPU implicit surface data, rebuilt in prepare(), consumed in paint().
-    implicit_gpu_data: Vec<crate::resources::volume::implicit::ImplicitGpuItem>,
     /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
     /// Entries are cheap clones of cached GPU handles from `decal_cache`.
     decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
@@ -639,8 +624,6 @@ pub struct ViewportRenderer {
     pick_screen_image_items: Vec<ScreenImageItem>,
     /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_decal_items: Vec<DecalItem>,
-    /// GPU implicit surface items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_implicit_items: Vec<GpuImplicitPickItem>,
     /// GPU marching cubes items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_mc_items: Vec<GpuMcPickItem>,
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
@@ -1070,7 +1053,6 @@ impl ViewportRenderer {
             external_instances_gpu_data: Vec::new(),
             sprite_refraction_resolves: Vec::new(),
             lic_gpu_data: Vec::new(),
-            implicit_gpu_data: Vec::new(),
             decal_gpu_data: Vec::new(),
             decal_cache: std::collections::HashMap::new(),
             decal_deps_gate: crate::resources::resource_deps::DepsGate::default(),
@@ -1129,7 +1111,6 @@ impl ViewportRenderer {
             pick_volume_surface_slice_items: Vec::new(),
             pick_screen_image_items: Vec::new(),
             pick_decal_items: Vec::new(),
-            pick_implicit_items: Vec::new(),
             pick_mc_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,

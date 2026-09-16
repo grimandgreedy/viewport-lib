@@ -1529,17 +1529,6 @@ impl ViewportRenderer {
                 true
             );
 
-            // GPU implicit surface (HDR path, before skybox).
-            if !self.implicit_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.implicit.pipeline {
-                    render_pass.set_pipeline(dual.for_format(true));
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    for gpu in &self.implicit_gpu_data {
-                        render_pass.set_bind_group(1, &gpu.bind_group, &[]);
-                        render_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
             // GPU marching cubes indirect draw (HDR path).
             if !self.mc_gpu_data.is_empty() {
                 render_pass.set_bind_group(0, camera_bg, &[]);
@@ -4161,7 +4150,6 @@ impl ViewportRenderer {
                 .selection_outlines
                 .screen_rect_outline_buffers
                 .is_empty()
-            || !slot.selection_outlines.implicit_outline_indices.is_empty()
             || !slot.selection_outlines.mc_outline_data.is_empty()
             || slot.selection_outlines.plugin_outline_present
         {

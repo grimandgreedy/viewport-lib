@@ -870,23 +870,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Implicit surface outlines: record indices into implicit_gpu_data for selected items.
-        let mut implicit_outline_indices: Vec<usize> = Vec::new();
-        if frame.interaction.outline_selected {
-            let mut gpu_idx = 0usize;
-            for item in &frame.scene.gpu_implicit {
-                if item.settings.hidden || item.primitives.is_empty() {
-                    continue;
-                }
-                if item.settings.selected {
-                    self.resources.ensure_implicit_pipeline(device);
-                    self.resources.ensure_implicit_outline_mask_pipeline(device);
-                    implicit_outline_indices.push(gpu_idx);
-                }
-                gpu_idx += 1;
-            }
-        }
-
         // MC surface outlines: build per-item outline uniform + bind group.
         let mut mc_outline_data: Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem> =
             Vec::new();
@@ -1063,7 +1046,6 @@ impl ViewportRenderer {
             slot.selection_outlines.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
             slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
             slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
-            slot.selection_outlines.implicit_outline_indices = implicit_outline_indices;
             slot.selection_outlines.mc_outline_data = mc_outline_data;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
@@ -1146,10 +1128,6 @@ impl ViewportRenderer {
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
-                    .implicit_outline_indices
-                    .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
                     .mc_outline_data
                     .is_empty()
                 || plugin_outline)
@@ -1213,8 +1191,6 @@ impl ViewportRenderer {
                 as *const Vec<(usize, Option<Vec<u32>>)>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
-            let implicit_outline_idx_ptr =
-                &slot_ref.selection_outlines.implicit_outline_indices as *const Vec<usize>;
             let mc_outlines_ptr = &slot_ref.selection_outlines.mc_outline_data
                 as *const Vec<crate::resources::volume::gpu_marching_cubes::McOutlineItem>;
             let glyph_gpu_ptr = &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
@@ -1230,8 +1206,6 @@ impl ViewportRenderer {
                 &self.ribbon_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
             let polyline_gpu_ptr =
                 &self.polyline_gpu_data as *const Vec<crate::resources::PolylineGpuData>;
-            let implicit_gpu_ptr = &self.implicit_gpu_data
-                as *const Vec<crate::resources::volume::implicit::ImplicitGpuItem>;
             let mc_gpu_data_ptr = &self.mc_gpu_data
                 as *const Vec<crate::resources::volume::gpu_marching_cubes::McFrameData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
@@ -1254,7 +1228,6 @@ impl ViewportRenderer {
                 tensor_glyph_outline_indices,
                 sprite_outline_indices,
                 screen_rect_outlines,
-                implicit_outline_idxs,
                 mc_outlines,
                 glyph_gpu_data,
                 tensor_glyph_gpu_data,
@@ -1263,7 +1236,6 @@ impl ViewportRenderer {
                 tube_gpu_data,
                 ribbon_gpu_data,
                 polyline_gpu_data,
-                implicit_gpu_data,
                 mc_gpu_frame_data,
                 camera_bg,
                 mask_view,
@@ -1283,7 +1255,6 @@ impl ViewportRenderer {
                     &*tensor_glyph_outline_idx_ptr,
                     &*sprite_outline_idx_ptr,
                     &*screen_rect_outlines_ptr,
-                    &*implicit_outline_idx_ptr,
                     &*mc_outlines_ptr,
                     &*glyph_gpu_ptr,
                     &*tensor_glyph_gpu_ptr,
@@ -1292,7 +1263,6 @@ impl ViewportRenderer {
                     &*tube_gpu_ptr,
                     &*ribbon_gpu_ptr,
                     &*polyline_gpu_ptr,
-                    &*implicit_gpu_ptr,
                     &*mc_gpu_data_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
@@ -1524,20 +1494,6 @@ impl ViewportRenderer {
                         for sr in screen_rect_outlines {
                             pass.set_bind_group(0, &sr.bind_group, &[]);
                             pass.draw(0..6, 0..1);
-                        }
-                    }
-                }
-
-                // Draw GPU implicit surface outlines via ray-march to mask.
-                if !implicit_outline_idxs.is_empty() {
-                    if let Some(pipeline) = self.resources.implicit.outline_mask_pipeline.as_ref() {
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, camera_bg, &[]);
-                        for &idx in implicit_outline_idxs {
-                            if let Some(gpu) = implicit_gpu_data.get(idx) {
-                                pass.set_bind_group(1, &gpu.bind_group, &[]);
-                                pass.draw(0..6, 0..1);
-                            }
                         }
                     }
                 }
