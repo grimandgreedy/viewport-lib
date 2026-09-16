@@ -247,7 +247,6 @@ enum PickGeom<'a> {
 /// `PickDrawSet` is still alive.
 struct PickPipelineFlags {
     has_pickable_glyphs: bool,
-    has_pickable_tensor: bool,
     has_pickable_sprites: bool,
     has_pickable_polylines: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -919,16 +918,8 @@ impl ViewportRenderer {
                 .glyph_gpu_data
                 .iter()
                 .any(|g| g.pick_id != PickId::NONE && g.instance_count > 0);
-        let has_pickable_tensor = glyph_wanted
-            && self
-                .tensor_glyph_gpu_data
-                .iter()
-                .any(|g| g.pick_id != PickId::NONE && g.instance_count > 0);
         if has_pickable_glyphs {
             self.resources.ensure_glyph_pick_pipeline(device);
-        }
-        if has_pickable_tensor {
-            self.resources.ensure_tensor_glyph_pick_pipeline(device);
         }
         let has_pickable_sprites = PickItemType::Sprite.satisfies(mask)
             && self
@@ -998,7 +989,6 @@ impl ViewportRenderer {
 
         PickPipelineFlags {
             has_pickable_glyphs,
-            has_pickable_tensor,
             has_pickable_sprites,
             has_pickable_polylines,
             decal_cube,
@@ -1027,7 +1017,6 @@ impl ViewportRenderer {
         flags: &PickPipelineFlags,
     ) -> PickDrawSet<'a> {
         let has_pickable_glyphs = flags.has_pickable_glyphs;
-        let has_pickable_tensor = flags.has_pickable_tensor;
         let has_pickable_sprites = flags.has_pickable_sprites;
         let has_pickable_polylines = flags.has_pickable_polylines;
         let decal_cube = flags.decal_cube;
@@ -1184,7 +1173,7 @@ impl ViewportRenderer {
         // uniform) here so it outlives the render pass. The buffers behind the
         // bind group stay alive through it, so the temporary id buffer can drop.
         let mut glyph_draws: Vec<GlyphPickDraw> = Vec::new();
-        if has_pickable_glyphs || has_pickable_tensor {
+        if has_pickable_glyphs {
             let id_bgl = self
                 .resources
                 .pick
@@ -1224,29 +1213,6 @@ impl ViewportRenderer {
                     .expect("glyph pick pipeline");
                 for gpu in self
                     .glyph_gpu_data
-                    .iter()
-                    .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
-                {
-                    glyph_draws.push(GlyphPickDraw {
-                        pipeline,
-                        id_bind_group: make_id_bg(gpu.pick_id, &gpu._uniform_buf),
-                        instance_bind_group: &gpu.instance_bind_group,
-                        vertex_buffer: &gpu.mesh_vertex_buffer,
-                        index_buffer: &gpu.mesh_index_buffer,
-                        index_count: gpu.mesh_index_count,
-                        instance_count: gpu.instance_count,
-                    });
-                }
-            }
-            if has_pickable_tensor {
-                let pipeline = self
-                    .resources
-                    .pick
-                    .tensor_glyph_pipeline
-                    .as_ref()
-                    .expect("tensor glyph pick pipeline");
-                for gpu in self
-                    .tensor_glyph_gpu_data
                     .iter()
                     .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
                 {
@@ -2664,13 +2630,6 @@ impl ViewportRenderer {
         // Instanced families.
         for gpu in self
             .glyph_gpu_data
-            .iter()
-            .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
-        {
-            kinds.insert(gpu.pick_id.0, PickSubKind::Instance);
-        }
-        for gpu in self
-            .tensor_glyph_gpu_data
             .iter()
             .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
         {

@@ -35,6 +35,32 @@ pub fn project_to_screen(
     ))
 }
 
+/// Pixel radius of a world-space radius `world_r` measured at `world_centre`.
+///
+/// Item types whose instances are drawn at a world size but picked by
+/// screen-space proximity (glyphs, tensor glyphs, world-space sprites) need
+/// their pick tolerance in pixels. Measuring at the instance centroid rather
+/// than at the model origin keeps the estimate right when the instances sit
+/// far from the origin. The result is floored at 4 pixels so a distant set is
+/// still clickable, and falls back to a scaled world radius when the centre
+/// projects to or behind the eye.
+pub fn world_radius_in_pixels(
+    world_centre: glam::Vec3,
+    world_r: f32,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+) -> f32 {
+    let p0 = view_proj * world_centre.extend(1.0);
+    let p1 = view_proj * (world_centre + glam::Vec3::X * world_r).extend(1.0);
+    if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
+        let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
+        let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
+        ((n1 - n0).length() * 0.5 * viewport_size.x.max(viewport_size.y)).max(4.0)
+    } else {
+        (world_r * 100.0_f32).max(4.0)
+    }
+}
+
 /// Ray versus the local unit box `[-0.5, 0.5]^3`, used for decal projection
 /// volumes. `origin` and `dir` are the ray in the box's local space (the world
 /// ray transformed by the inverse of the box's model matrix).

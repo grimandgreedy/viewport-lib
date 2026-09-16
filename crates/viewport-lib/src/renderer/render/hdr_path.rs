@@ -1519,7 +1519,6 @@ impl ViewportRenderer {
                 &self.streamtube_gpu_data,
                 camera_bg,
                 &self.tube_gpu_data,
-                &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
                 sprite_slice_for_inline,
                 &self.mesh_instance_gpu_data,
@@ -4112,10 +4111,6 @@ impl ViewportRenderer {
             || !slot.selection_outlines.ribbon_outline_items.is_empty()
             || !slot.selection_outlines.polyline_outline_indices.is_empty()
             || !slot.selection_outlines.glyph_outline_indices.is_empty()
-            || !slot
-                .selection_outlines
-                .tensor_glyph_outline_indices
-                .is_empty()
             || !slot.selection_outlines.sprite_outline_indices.is_empty()
             || !slot
                 .selection_outlines

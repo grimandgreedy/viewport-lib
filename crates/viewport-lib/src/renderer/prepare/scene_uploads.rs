@@ -152,7 +152,6 @@ impl ViewportRenderer {
         glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
         sprite_gpu_data: &mut Vec<crate::resources::SpriteGpuData>,
         particle_gpu_data: &mut Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
-        tensor_glyph_gpu_data: &mut Vec<crate::resources::TensorGlyphGpuData>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
@@ -258,47 +257,6 @@ impl ViewportRenderer {
         if !frame.scene.gpu_particle_systems.is_empty() {
             *particle_gpu_data =
                 resources.run_particle_jobs(device, queue, &frame.scene.gpu_particle_systems, sink);
-        }
-
-        // ------------------------------------------------------------------
-        // Tensor glyph GPU data upload.
-        // ------------------------------------------------------------------
-        tensor_glyph_gpu_data.clear();
-        if !frame.scene.tensor_glyphs.is_empty() {
-            resources.ensure_tensor_glyph_pipeline(device);
-            for item in &frame.scene.tensor_glyphs {
-                if item.settings.hidden || item.positions.is_empty() {
-                    continue;
-                }
-                let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gd =
-                    resources.upload_tensor_glyph_set_per_frame(device, queue, item, wireframe);
-                tensor_glyph_gpu_data.push(gd);
-            }
-        }
-
-        // Pre-uploaded tensor glyph set references. Model matrix lives at
-        // offset 0 of TensorGlyphUniform and is composed on top of the
-        // per-instance ellipsoid model in the vertex shader.
-        if !frame.scene.tensor_glyph_set_refs.is_empty() {
-            resources.ensure_tensor_glyph_pipeline(device);
-            for ref_item in &frame.scene.tensor_glyph_set_refs {
-                if ref_item.settings.hidden {
-                    continue;
-                }
-                let entry = match resources
-                    .content
-                    .tensor_glyph_set_store
-                    .get(ref_item.source)
-                {
-                    Some(e) => e.clone(),
-                    None => continue,
-                };
-                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
-                let mut gpu_data = entry;
-                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
-                tensor_glyph_gpu_data.push(gpu_data);
-            }
         }
     }
 

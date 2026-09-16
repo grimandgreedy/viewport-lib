@@ -136,8 +136,6 @@ pub(crate) struct SelectionOutlines {
     /// (gpu_data_index, instance_filter): None draws all instances, Some(indices)
     /// draws only those specific instance indices.
     pub glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Indices into `tensor_glyph_gpu_data` for selected tensor glyph sets.
-    pub tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Indices into `sprite_gpu_data` for selected sprite sets.
     pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Per-frame NDC rect outline buffers for selected screen images.
@@ -381,7 +379,6 @@ pub struct ViewportRenderer {
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
     glyph_gpu_data: Vec<crate::resources::GlyphGpuData>,
     /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
-    tensor_glyph_gpu_data: Vec<crate::resources::TensorGlyphGpuData>,
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
     /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
@@ -584,7 +581,6 @@ pub struct ViewportRenderer {
     /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_glyph_items: Vec<GlyphItem>,
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_tensor_glyph_items: Vec<TensorGlyphItem>,
     /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_sprite_items: Vec<SpriteItem>,
     /// Streamtube items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -1007,7 +1003,6 @@ impl ViewportRenderer {
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             glyph_gpu_data: Vec::new(),
-            tensor_glyph_gpu_data: Vec::new(),
             polyline_gpu_data: Vec::new(),
             streamtube_gpu_data: Vec::new(),
             tube_gpu_data: Vec::new(),
@@ -1069,7 +1064,6 @@ impl ViewportRenderer {
             pick_volume_mesh_items: Vec::new(),
             pick_polyline_items: Vec::new(),
             pick_glyph_items: Vec::new(),
-            pick_tensor_glyph_items: Vec::new(),
             pick_sprite_items: Vec::new(),
             pick_streamtube_items: Vec::new(),
             pick_tube_items: Vec::new(),
@@ -3257,7 +3251,6 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg,
             &self.tube_gpu_data,
-            &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
             &self.sprite_gpu_data,
             &self.mesh_instance_gpu_data,

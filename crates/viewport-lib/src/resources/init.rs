@@ -2426,7 +2426,7 @@ impl DeviceResources {
             sprite: crate::resources::scivis::sprite::SpriteResources::default(),
             point_cloud: crate::resources::scivis::point_cloud::PointCloudResources::new(device),
             glyph: crate::resources::scivis::glyph::GlyphResources::default(),
-            tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::default(),
+            tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::new(device),
             polyline: crate::resources::scivis::polyline::PolylineResources::default(),
             streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
             ribbon: crate::resources::scivis::tube::RibbonResources::default(),

@@ -1067,10 +1067,6 @@ macro_rules! emit_outline_composite {
                 || !slot.selection_outlines.ribbon_outline_items.is_empty()
                 || !slot.selection_outlines.polyline_outline_indices.is_empty()
                 || !slot.selection_outlines.glyph_outline_indices.is_empty()
-                || !slot
-                    .selection_outlines
-                    .tensor_glyph_outline_indices
-                    .is_empty()
                 || !slot.selection_outlines.sprite_outline_indices.is_empty()
                 || slot.selection_outlines.plugin_outline_present
             {
@@ -1094,7 +1090,7 @@ macro_rules! emit_outline_composite {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
@@ -1263,49 +1259,6 @@ macro_rules! emit_scivis_draw_calls {
                             crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // Tensor glyph pass (instanced ellipsoids for stress/strain tensors).
-        if !$tensor_glyph_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for tg in $tensor_glyph_gpu_data.iter() {
-                let pipeline = if tg.wireframe {
-                    resources
-                        .tensor_glyph
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .tensor_glyph
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
-                    render_pass.set_bind_group(2, &tg.instance_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
-                    if tg.wireframe {
-                        render_pass.set_index_buffer(
-                            tg.mesh_edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(
-                            0..tg.mesh_edge_index_count,
-                            0,
-                            0..tg.instance_count,
-                        );
-                    } else {
-                        render_pass.set_index_buffer(
-                            tg.mesh_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
                     }
                 }
             }

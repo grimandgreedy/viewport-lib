@@ -314,11 +314,6 @@ impl PointCloudPlugin {
     pub(crate) fn drawn_count(&self) -> usize {
         self.frame.len()
     }
-
-    /// Number of outline entries the last `prepare` built.
-    pub(crate) fn outline_count(&self) -> usize {
-        self.outlines.len()
-    }
 }
 
 /// Build this frame's outline coverage: every point of a selected item, or just

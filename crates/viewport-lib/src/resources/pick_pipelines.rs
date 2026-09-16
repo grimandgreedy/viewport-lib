@@ -574,44 +574,6 @@ impl DeviceResources {
         self.pick.glyph_pipeline = Some(pipeline);
     }
 
-    /// Lazily create the tensor glyph pick pipeline. Reuses the render tensor
-    /// glyph vertex transform (same instance buffer + uniform) with a fragment
-    /// that writes the set's object id.
-    pub(crate) fn ensure_tensor_glyph_pick_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.pick.tensor_glyph_pipeline.is_some() {
-            return;
-        }
-        self.ensure_pick_pipeline(device);
-        self.ensure_tensor_glyph_pipeline(device);
-        self.ensure_glyph_pick_id_bgl(device);
-
-        let camera_bgl = self.pick.camera_bgl.as_ref().expect("pick camera bgl");
-        let id_bgl = self
-            .pick
-            .glyph_pick_id_bgl
-            .as_ref()
-            .expect("glyph pick id bgl");
-        let instance_bgl = self
-            .tensor_glyph
-            .instance_bgl
-            .as_ref()
-            .expect("tensor glyph instance bgl");
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "tensor_glyph_pick_shader",
-            crate::resources::builders::wgsl_source!("tensor_glyph_pick"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "tensor_glyph_pick_pipeline_layout",
-            &[camera_bgl, id_bgl, instance_bgl],
-        );
-        let pipeline =
-            build_glyph_pick_pipeline(device, "tensor_glyph_pick_pipeline", &layout, &shader);
-        self.pick.tensor_glyph_pipeline = Some(pipeline);
-    }
-
     /// Lazily create the sprite pick pipeline. Reuses the sprite render vertex
     /// expansion (same position vertex buffer + sprite bind group) with a
     /// fragment that writes the item's object id. Group 0 is the full camera

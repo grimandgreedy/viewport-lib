@@ -15,8 +15,11 @@
 //! - [`ray_triangle`]: Moller-Trumbore ray/triangle parameter.
 //! - [`ray_unit_box_toi`]: ray versus the local unit box, for oriented-box
 //!   proxies (transform the ray by the box's inverse model first).
+//! - [`world_radius_in_pixels`]: a world-space radius measured in pixels, for
+//!   an item type whose instances are drawn at a world size but picked by
+//!   screen-space proximity.
 
 pub use crate::renderer::picking::helpers::{
     pick_closest_polyline_segment, project_to_screen, ray_triangle, ray_unit_box_toi,
-    segment_in_rect,
+    segment_in_rect, world_radius_in_pixels,
 };

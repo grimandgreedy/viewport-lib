@@ -440,7 +440,6 @@ impl ViewportRenderer {
         // None = draw all instances (object-level selection).
         // Some(vec) = draw only these specific instance indices (sub-object Instance selection).
         let mut glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
-        let mut tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
         let mut sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
         if frame.interaction.outline_selected {
             // Glyph outline indices: record which glyph GPU data entries are selected
@@ -570,41 +569,6 @@ impl ViewportRenderer {
             }
             for &idx in &self.ribbon_selected_gpu_indices {
                 ribbon_outline_items.push(make_curve_item(idx, true));
-            }
-
-            // Tensor glyph outline indices: same approach as arrow glyphs.
-            {
-                let sub_sel = frame.interaction.sub_selection.as_ref();
-                let mut gpu_idx = 0usize;
-                for item in &frame.scene.tensor_glyphs {
-                    if item.settings.hidden || item.positions.is_empty() {
-                        continue;
-                    }
-                    if item.settings.selected {
-                        self.resources
-                            .ensure_tensor_glyph_outline_mask_pipeline(device);
-                        tensor_glyph_outline_indices.push((gpu_idx, None));
-                    } else if item.settings.pick_id != PickId::NONE {
-                        let instances: Vec<u32> = sub_sel
-                            .iter()
-                            .flat_map(|s| s.items.iter())
-                            .filter_map(|(node_id, sub)| {
-                                if *node_id == item.settings.pick_id.0 {
-                                    if let crate::renderer::SubObjectRef::Instance(i) = sub {
-                                        return Some(*i);
-                                    }
-                                }
-                                None
-                            })
-                            .collect();
-                        if !instances.is_empty() {
-                            self.resources
-                                .ensure_tensor_glyph_outline_mask_pipeline(device);
-                            tensor_glyph_outline_indices.push((gpu_idx, Some(instances)));
-                        }
-                    }
-                    gpu_idx += 1;
-                }
             }
         }
 
@@ -788,7 +752,6 @@ impl ViewportRenderer {
             slot.selection_outlines.ribbon_outline_items = ribbon_outline_items;
             slot.selection_outlines.polyline_outline_indices = polyline_outline_indices;
             slot.selection_outlines.glyph_outline_indices = glyph_outline_indices;
-            slot.selection_outlines.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
             slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
             slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
             slot.xray_object_buffers = xray_object_buffers;
@@ -852,10 +815,6 @@ impl ViewportRenderer {
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
-                    .tensor_glyph_outline_indices
-                    .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
                     .sprite_outline_indices
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
@@ -912,16 +871,11 @@ impl ViewportRenderer {
                 &slot_ref.selection_outlines.polyline_outline_indices as *const Vec<usize>;
             let glyph_outline_idx_ptr = &slot_ref.selection_outlines.glyph_outline_indices
                 as *const Vec<(usize, Option<Vec<u32>>)>;
-            let tensor_glyph_outline_idx_ptr =
-                &slot_ref.selection_outlines.tensor_glyph_outline_indices
-                    as *const Vec<(usize, Option<Vec<u32>>)>;
             let sprite_outline_idx_ptr = &slot_ref.selection_outlines.sprite_outline_indices
                 as *const Vec<(usize, Option<Vec<u32>>)>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
             let glyph_gpu_ptr = &self.glyph_gpu_data as *const Vec<crate::resources::GlyphGpuData>;
-            let tensor_glyph_gpu_ptr =
-                &self.tensor_glyph_gpu_data as *const Vec<crate::resources::TensorGlyphGpuData>;
             let sprite_gpu_ptr =
                 &self.sprite_gpu_data as *const Vec<crate::resources::SpriteGpuData>;
             let streamtube_gpu_ptr =
@@ -947,11 +901,9 @@ impl ViewportRenderer {
                 ribbon_outline_items,
                 polyline_outline_idxs,
                 glyph_outline_indices,
-                tensor_glyph_outline_indices,
                 sprite_outline_indices,
                 screen_rect_outlines,
                 glyph_gpu_data,
-                tensor_glyph_gpu_data,
                 sprite_gpu_data,
                 streamtube_gpu_data,
                 tube_gpu_data,
@@ -970,11 +922,9 @@ impl ViewportRenderer {
                     &*ribbon_outline_items_ptr,
                     &*polyline_outline_idx_ptr,
                     &*glyph_outline_idx_ptr,
-                    &*tensor_glyph_outline_idx_ptr,
                     &*sprite_outline_idx_ptr,
                     &*screen_rect_outlines_ptr,
                     &*glyph_gpu_ptr,
-                    &*tensor_glyph_gpu_ptr,
                     &*sprite_gpu_ptr,
                     &*streamtube_gpu_ptr,
                     &*tube_gpu_ptr,
@@ -1099,41 +1049,6 @@ impl ViewportRenderer {
                                                 0,
                                                 i..i + 1,
                                             );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Draw tensor glyph instances into the mask (instanced ellipsoids).
-                if !tensor_glyph_outline_indices.is_empty() {
-                    if let Some(pipeline) =
-                        self.resources.tensor_glyph.outline_mask_pipeline.as_ref()
-                    {
-                        pass.set_pipeline(pipeline);
-                        for (idx, instance_filter) in tensor_glyph_outline_indices {
-                            if let Some(tg) = tensor_glyph_gpu_data.get(*idx) {
-                                pass.set_bind_group(0, camera_bg, &[]);
-                                pass.set_bind_group(1, &tg.uniform_bind_group, &[]);
-                                pass.set_bind_group(2, &tg.instance_bind_group, &[]);
-                                pass.set_vertex_buffer(0, tg.mesh_vertex_buffer.slice(..));
-                                pass.set_index_buffer(
-                                    tg.mesh_index_buffer.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                match instance_filter {
-                                    None => {
-                                        pass.draw_indexed(
-                                            0..tg.mesh_index_count,
-                                            0,
-                                            0..tg.instance_count,
-                                        );
-                                    }
-                                    Some(indices) => {
-                                        for &i in indices {
-                                            pass.draw_indexed(0..tg.mesh_index_count, 0, i..i + 1);
                                         }
                                     }
                                 }

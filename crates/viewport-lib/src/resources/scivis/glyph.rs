@@ -25,19 +25,41 @@ pub(crate) struct GlyphResources {
     pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
-/// Tensor glyph (ellipsoid / superquadric) pipelines and layouts.
-#[derive(Default)]
+/// The tensor glyph bind group layouts. Uploads build their bind groups against
+/// them, so they live here with the store rather than with the item type's
+/// pipelines, and are created up front: they are layouts, not compiled
+/// pipelines.
 pub(crate) struct TensorGlyphResources {
-    /// Tensor glyph render pipeline. None until first tensor glyph set is submitted.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Tensor glyph wireframe pipeline (LineList, same bind groups as `pipeline`).
-    pub(crate) wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for tensor glyph uniforms (group 1).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) bgl: crate::gpu::BindGroupLayout,
     /// Bind group layout for tensor glyph instance storage (group 2).
-    pub(crate) instance_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Instanced mask pipeline for tensor glyph outlines.
-    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) instance_bgl: crate::gpu::BindGroupLayout,
+}
+
+impl TensorGlyphResources {
+    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+        let bgl = crate::resources::builders::uniform_texture_sampler_bgl(
+            device,
+            "tensor_glyph_bgl",
+            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            crate::gpu::ShaderStages::VERTEX,
+        );
+        let instance_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("tensor_glyph_instance_bgl"),
+                entries: &[crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        Self { bgl, instance_bgl }
+    }
 }
 
 impl DeviceResources {
@@ -397,99 +419,12 @@ fn build_glyph_base_mesh(
 }
 
 impl DeviceResources {
-    /// Lazily create the tensor glyph render pipeline (instanced ellipsoids).
-    ///
-    /// No-op if already created. Called from `prepare()` when `frame.scene.tensor_glyphs`
-    /// is non-empty.
-    pub(crate) fn ensure_tensor_glyph_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.tensor_glyph.pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        let tg_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
-            device,
-            "tensor_glyph_bgl",
-            crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
-            crate::gpu::ShaderStages::VERTEX,
-        );
-
-        let tg_instance_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("tensor_glyph_instance_bgl"),
-                entries: &[crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "tensor_glyph_shader",
-            crate::resources::builders::wgsl_source!("tensor_glyph"),
-        );
-
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "tensor_glyph_pipeline_layout",
-            &[&self.binds.camera_bgl, &tg_bgl, &tg_instance_bgl],
-        );
-
-        self.tensor_glyph.bgl = Some(tg_bgl);
-        self.tensor_glyph.instance_bgl = Some(tg_instance_bgl);
-        self.tensor_glyph.pipeline = Some(crate::resources::builders::build_dual_pipeline(
-            device,
-            &crate::resources::builders::DualPipelineDesc {
-                label: "tensor_glyph_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(crate::gpu::Face::Back),
-                depth_write: true,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        ));
-
-        // Wireframe variant: same bind groups, LineList topology, no culling.
-        self.tensor_glyph.wireframe_pipeline =
-            Some(crate::resources::builders::build_dual_pipeline(
-                device,
-                &crate::resources::builders::DualPipelineDesc {
-                    label: "tensor_glyph_wireframe_pipeline",
-                    layout: &layout,
-                    shader: &shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[Vertex::buffer_layout()],
-                    blend: None,
-                    topology: crate::gpu::PrimitiveTopology::LineList,
-                    cull_mode: None,
-                    depth_write: true,
-                    depth_compare: crate::gpu::CompareFunction::Less,
-                    sample_count: self.sample_count,
-                    ldr_format: self.target_format,
-                },
-            ));
-    }
-
     /// Upload one [`TensorGlyphItem`] to the GPU and return draw data.
     ///
-    /// Called from `prepare()` for each non-empty item in `frame.scene.tensor_glyphs`.
-    /// Reuses the sphere base mesh cached by the glyph pipeline.
+    /// Shared by the per-frame item upload and the pre-upload store. Reuses the
+    /// shared sphere base mesh.
     pub(crate) fn upload_tensor_glyph_set_per_frame(
-        &mut self,
+        &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         item: &crate::renderer::TensorGlyphItem,
@@ -665,14 +600,9 @@ impl DeviceResources {
 
         let lut_sampler = &self.material.sampler;
 
-        let bgl1 = self
-            .tensor_glyph
-            .bgl
-            .as_ref()
-            .expect("ensure_tensor_glyph_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tensor_glyph_uniform_bg"),
-            layout: bgl1,
+            layout: &self.tensor_glyph.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -689,14 +619,9 @@ impl DeviceResources {
             ],
         });
 
-        let bgl2 = self
-            .tensor_glyph
-            .instance_bgl
-            .as_ref()
-            .expect("ensure_tensor_glyph_pipeline not called");
         let instance_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tensor_glyph_instance_bg"),
-            layout: bgl2,
+            layout: &self.tensor_glyph.instance_bgl,
             entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: instance_buf.as_entire_binding(),
@@ -757,55 +682,6 @@ impl DeviceResources {
             Some(crate::resources::builders::build_outline_mask_pipeline(
                 device,
                 "glyph_outline_mask_pipeline",
-                &layout,
-                &shader,
-                crate::gpu::TextureFormat::R8Unorm,
-                &[Vertex::buffer_layout()],
-                Some(crate::gpu::Face::Back),
-                true,
-                crate::gpu::CompareFunction::Less,
-            ));
-    }
-
-    /// Lazily create the tensor glyph outline mask pipeline.
-    ///
-    /// Same idea as `ensure_glyph_outline_mask_pipeline` but for tensor
-    /// glyph ellipsoids.  Must be called after `ensure_tensor_glyph_pipeline`.
-    pub(crate) fn ensure_tensor_glyph_outline_mask_pipeline(
-        &mut self,
-        device: &crate::gpu::Device,
-    ) {
-        if self.tensor_glyph.outline_mask_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let tg_bgl = self
-            .tensor_glyph
-            .bgl
-            .as_ref()
-            .expect("ensure_tensor_glyph_pipeline must be called first");
-        let tg_instance_bgl = self
-            .tensor_glyph
-            .instance_bgl
-            .as_ref()
-            .expect("ensure_tensor_glyph_pipeline must be called first");
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "tensor_glyph_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("tensor_glyph_outline_mask"),
-        );
-
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "tensor_glyph_outline_mask_pipeline_layout",
-            &[&self.binds.camera_bgl, tg_bgl, tg_instance_bgl],
-        );
-
-        self.tensor_glyph.outline_mask_pipeline =
-            Some(crate::resources::builders::build_outline_mask_pipeline(
-                device,
-                "tensor_glyph_outline_mask_pipeline",
                 &layout,
                 &shader,
                 crate::gpu::TextureFormat::R8Unorm,
@@ -916,7 +792,6 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::TensorGlyphItem,
     ) -> crate::resources::TensorGlyphSetId {
-        self.ensure_tensor_glyph_pipeline(device);
         let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
         self.content.tensor_glyph_set_store.insert(gpu)
     }
@@ -937,7 +812,6 @@ impl DeviceResources {
         if !self.content.tensor_glyph_set_store.contains(id) {
             return false;
         }
-        self.ensure_tensor_glyph_pipeline(device);
         let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
         self.content.tensor_glyph_set_store.replace(id, gpu)
     }

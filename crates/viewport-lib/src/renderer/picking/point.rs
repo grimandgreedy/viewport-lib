@@ -407,55 +407,6 @@ impl ViewportRenderer {
                 }
             }
 
-            // Tensor glyphs
-            for item in &self.pick_tensor_glyph_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                // Use the max eigenvalue across all instances so the largest ellipsoid
-                // is fully covered. Use the centroid of instance positions for an accurate
-                // pixel-size estimate (instances may be far from the model origin).
-                let world_r = if !item.eigenvalues.is_empty() {
-                    let max_ev = item
-                        .eigenvalues
-                        .iter()
-                        .map(|ev| ev[0].abs().max(ev[1].abs()).max(ev[2].abs()))
-                        .fold(0.0_f32, f32::max);
-                    (max_ev * item.scale).max(0.01)
-                } else {
-                    item.scale.max(0.01)
-                };
-                let n = item.positions.len() as f32;
-                let centroid = model.transform_point3(
-                    item.positions
-                        .iter()
-                        .map(|p| glam::Vec3::from(*p))
-                        .sum::<glam::Vec3>()
-                        / n,
-                );
-                let radius_px = instance_radius_px(centroid, world_r);
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos,
-                    item.settings.pick_id.0,
-                    &item.positions,
-                    model,
-                    view_proj,
-                    viewport_size,
-                    radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_instance {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Instance(idx));
-                        }
-                    } else {
-                        hit.sub_object = None;
-                    }
-                    consider(toi, hit);
-                }
-            }
-
             // Sprites
             for item in &self.pick_sprite_items {
                 if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {

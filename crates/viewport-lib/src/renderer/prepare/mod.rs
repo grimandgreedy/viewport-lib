@@ -417,7 +417,6 @@ impl ViewportRenderer {
             &mut self.glyph_gpu_data,
             &mut self.sprite_gpu_data,
             &mut self.particle_gpu_data,
-            &mut self.tensor_glyph_gpu_data,
             device,
             queue,
             frame,

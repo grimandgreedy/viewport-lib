@@ -50,7 +50,6 @@ impl ViewportRenderer {
         self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
         self.pick_polyline_items = frame.scene.polylines.clone();
         self.pick_glyph_items = frame.scene.glyphs.clone();
-        self.pick_tensor_glyph_items = frame.scene.tensor_glyphs.clone();
         self.pick_sprite_items = frame.scene.sprite_items.clone();
         self.pick_streamtube_items = frame.scene.streamtube_items.clone();
         self.pick_tube_items = frame.scene.tube_items.clone();
@@ -73,7 +72,6 @@ impl ViewportRenderer {
         self.pick_volume_mesh_items = Vec::new();
         self.pick_polyline_items = Vec::new();
         self.pick_glyph_items = Vec::new();
-        self.pick_tensor_glyph_items = Vec::new();
         self.pick_sprite_items = Vec::new();
         self.pick_streamtube_items = Vec::new();
         self.pick_tube_items = Vec::new();

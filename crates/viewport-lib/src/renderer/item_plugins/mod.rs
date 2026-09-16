@@ -16,6 +16,7 @@ pub(crate) mod gpu_implicit;
 pub(crate) mod gpu_marching_cubes;
 pub(crate) mod image_slice;
 pub(crate) mod point_cloud;
+pub(crate) mod tensor_glyph;
 pub(crate) mod volume;
 pub(crate) mod volume_surface_slice;
 
@@ -35,6 +36,7 @@ pub(crate) fn plugin_items_for<'f>(
         gpu_marching_cubes::TYPE_NAME => Some(&frame.scene.gpu_mc_items),
         image_slice::TYPE_NAME => Some(&frame.scene.image_slices),
         point_cloud::TYPE_NAME => Some(&frame.scene.point_clouds),
+        tensor_glyph::TYPE_NAME => Some(&frame.scene.tensor_glyphs),
         volume::TYPE_NAME => Some(&frame.scene.volumes),
         volume_surface_slice::TYPE_NAME => Some(&frame.scene.volume_surface_slices),
         _ => frame
@@ -55,6 +57,7 @@ pub(crate) fn plugin_ref_items_for<'f>(
 ) -> Option<&'f dyn PluginItemCollection> {
     match name {
         point_cloud::TYPE_NAME => Some(&frame.scene.point_cloud_refs),
+        tensor_glyph::TYPE_NAME => Some(&frame.scene.tensor_glyph_set_refs),
         _ => None,
     }
 }
@@ -83,7 +86,17 @@ impl crate::renderer::ViewportRenderer {
         // Registration order is draw order. The scivis types keep the order the
         // shared draw loop gave them, so a migrated type keeps blending against
         // its neighbours the way it always has.
+        // First the types that came off the shared scivis draw loop, in the
+        // order that loop drew them.
         self.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
+        self.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
+        self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
+        self.with_item_type_plugin(device, Box::new(tensor_glyph::TensorGlyphPlugin::default()));
+        self.with_item_type_plugin(
+            device,
+            Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
+        );
+        // Then the types that always had a draw site of their own.
         self.with_item_type_plugin(
             device,
             Box::new(gaussian_splat::GaussianSplatPlugin::default()),
@@ -92,12 +105,6 @@ impl crate::renderer::ViewportRenderer {
         self.with_item_type_plugin(
             device,
             Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
-        );
-        self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
-        self.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
-        self.with_item_type_plugin(
-            device,
-            Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
         );
     }
 }
