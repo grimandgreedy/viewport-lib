@@ -362,15 +362,18 @@ pub struct EncoderScopeContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter assigned by the lib.
     pub frame_index: u64,
-    /// Scene-resolution target size in pixels, render scale and SSAA applied.
-    /// The scene attachments below are this size.
+    /// Size in pixels of the scene attachments below, render scale applied.
+    /// Size intermediate targets from this, not from the viewport extent.
     pub scene_size: [u32; 2],
     /// The shared group-0 bind group for this viewport, the same one the lib
     /// binds before the draw hooks. Bind it at group 0 in passes of the
     /// plugin's own so its shaders can use the shared camera, lighting and
     /// clip declarations.
     pub camera_bind_group: &'a crate::gpu::BindGroup,
-    /// The HDR scene colour target, as a view to attach and render into.
+    /// The scene colour target, as a view to attach and render into. This is
+    /// the HDR target at scene resolution even under supersampling: the SSAA
+    /// resolve runs before either scope, so from here on the frame is drawing
+    /// into the same target it would without SSAA.
     pub scene_colour: &'a crate::gpu::TextureView,
     /// The same target as a texture, as the source for a
     /// `copy_texture_to_texture` into a sampleable copy. An effect that reads

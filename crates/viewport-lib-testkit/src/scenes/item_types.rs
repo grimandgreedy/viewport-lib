@@ -93,6 +93,11 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_decals,
         },
         NamedScene {
+            name: "supersampled_decals",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_supersampled_decals,
+        },
+        NamedScene {
             name: "mesh_instances",
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_mesh_instances,
@@ -645,6 +650,23 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         lighting: rigs::from_above(),
         ..Default::default()
     }
+}
+
+/// The decal scene again with supersampling on.
+///
+/// Under SSAA the scene is drawn into the supersampled attachments and resolved
+/// down partway through the frame, and everything after the resolve depth-tests
+/// against the HDR depth buffer. This scene is the gate on that buffer being
+/// written: when the resolve carried colour alone, the decals here rendered as
+/// nothing at all while the rest of the frame looked correct. Decals are the
+/// cheapest post-resolve content to put in shot; the sub-highlight, OIT,
+/// scatter and foreground passes all depend on the same buffer.
+fn build_supersampled_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut scene = build_decals(ctx);
+    let mut post = viewport_lib::PostProcessSettings::default();
+    post.ssaa_factor = 2;
+    scene.post_process = Some(post);
+    scene
 }
 
 fn build_mesh_instances(ctx: &mut BuildCtx<'_>) -> BuiltScene {

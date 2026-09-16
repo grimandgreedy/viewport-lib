@@ -2099,6 +2099,9 @@ impl ViewportRenderer {
         let Some(slot_hdr) = slot.hdr.as_ref() else {
             return;
         };
+        // The HDR attachments, not the supersampled ones: under SSAA the
+        // resolve has already run by the time either scope fires, so from here
+        // on the frame draws into the HDR target like every other frame.
         let ctx = crate::plugin_api::EncoderScopeContext {
             scope,
             device,

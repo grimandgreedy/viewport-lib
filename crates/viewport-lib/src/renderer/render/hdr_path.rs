@@ -2222,6 +2222,13 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         // SSAA resolve pass: downsample supersampled scene -> hdr_texture.
         // Only runs when ssaa_factor > 1 and the resolve pipeline is available.
+        //
+        // Both halves matter. The colour resolve produces the image; the depth
+        // blit after it writes the supersampled depth down into hdr_depth, which
+        // every pass from here on attaches and depth-tests against. Without the
+        // depth half that buffer is never written all frame under SSAA, and
+        // decals, the sub-highlight, OIT, scatter, the foreground pass and the
+        // plugin encode hook all fail their depth test and draw nothing.
         // -----------------------------------------------------------------------
         if ssaa_factor > 1 {
             let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
@@ -2250,6 +2257,42 @@ impl ViewportRenderer {
                 resolve_pass.set_pipeline(pipeline);
                 resolve_pass.set_bind_group(0, bg, &[]);
                 resolve_pass.draw(0..3, 0..1);
+            }
+
+            // Depth half: a fullscreen depth-only pass taking the nearest
+            // sample of each block. See `ssaa_depth_resolve.wgsl` for why the
+            // reduction has to be min rather than an arbitrary sub-sample:
+            // the decal pass reconstructs its receiver normal from screen-space
+            // derivatives of this buffer.
+            if let (Some(blit_pipeline), Some(blit_bg)) = (
+                &self.resources.post.ssaa_depth_resolve_pipeline,
+                &slot_hdr.ssaa_depth_blit_bind_group,
+            ) {
+                let mut depth_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
+                    #[cfg(any(wgpu29, wgpu30))]
+                    multiview_mask: None,
+                    label: Some("ssaa_depth_resolve_pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
+                        view: &slot_hdr.hdr_depth_view,
+                        depth_ops: Some(crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(1.0),
+                            store: crate::gpu::StoreOp::Store,
+                        }),
+                        // 1, the value the scene pass clears stencil to when
+                        // it owns this attachment. The decal exclude pass then
+                        // stamps 0 on non-receivers as usual.
+                        stencil_ops: Some(crate::gpu::Operations {
+                            load: crate::gpu::LoadOp::Clear(1),
+                            store: crate::gpu::StoreOp::Store,
+                        }),
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                depth_pass.set_pipeline(blit_pipeline);
+                depth_pass.set_bind_group(0, blit_bg, &[]);
+                depth_pass.draw(0..3, 0..1);
             }
         }
     }

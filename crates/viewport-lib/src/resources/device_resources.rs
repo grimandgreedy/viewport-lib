@@ -60,6 +60,12 @@ pub(crate) struct ViewportHdrState {
     pub ssaa_depth_only_view: Option<crate::gpu::TextureView>,
     /// Bind group for the SSAA resolve pass (reads ssaa_colour_texture). `None` when ssaa_factor == 1.
     pub ssaa_resolve_bind_group: Option<crate::gpu::BindGroup>,
+    /// Bind group for the depth half of the SSAA resolve: reads
+    /// `ssaa_depth_only_view` so the blit can write the supersampled depth down
+    /// into `hdr_depth_view`. Without it that buffer stays unwritten for the
+    /// whole frame and every pass after the resolve depth-tests against
+    /// nothing. `None` when ssaa_factor == 1.
+    pub ssaa_depth_blit_bind_group: Option<crate::gpu::BindGroup>,
     /// Uniform buffer holding the ssaa_factor value for the resolve shader.
     pub ssaa_uniform_buf: Option<crate::gpu::Buffer>,
     /// The ssaa_factor this state was created with (1 = no SSAA).

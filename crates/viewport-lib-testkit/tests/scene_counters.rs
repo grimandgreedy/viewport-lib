@@ -75,6 +75,9 @@ fn expected(name: &str) -> Option<Expected> {
         "screen_image" => e(1, 1, 1, 0, 0, 960),
         "scatter_volume" => e(2, 2, 2, 2, 0, 972),
         "decals" => e(2, 2, 2, 2, 0, 24),
+        // The decal scene again with supersampling on: same content and same
+        // draw structure, only the resolution differs.
+        "supersampled_decals" => e(2, 2, 2, 2, 0, 24),
         _ => return None,
     })
 }
