@@ -17,38 +17,57 @@ fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let shaders_dir = PathBuf::from(&manifest_dir).join("src/shaders");
+    // Second scan root: item types that live as one directory each under
+    // renderer/item_plugins/ keep their WGSL next to their Rust. The directory
+    // may not exist until the first type moves in.
+    let item_plugins_dir = PathBuf::from(&manifest_dir).join("src/renderer/item_plugins");
 
     println!("cargo:rerun-if-changed=src/shaders");
+    println!("cargo:rerun-if-changed=src/renderer/item_plugins");
     println!("cargo:rerun-if-changed=build.rs");
 
-    let mut shader_names: Vec<String> = fs::read_dir(&shaders_dir)
+    // (bare file name, full source path). Names must stay globally unique:
+    // OUT_DIR output is flat and every include_str! site keys on the name.
+    let mut shaders: Vec<(String, PathBuf)> = fs::read_dir(&shaders_dir)
         .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", shaders_dir.display(), e))
         .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
+            let path = entry.ok()?.path();
             if path.extension().and_then(|s| s.to_str()) != Some("wgsl") {
                 return None;
             }
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string())
+            let name = path.file_name()?.to_str()?.to_string();
+            Some((name, path))
         })
         .collect();
-    shader_names.sort();
+    collect_wgsl_recursive(&item_plugins_dir, &mut shaders);
+    shaders.sort();
+    for pair in shaders.windows(2) {
+        if pair[0].0 == pair[1].0 {
+            panic!(
+                "build.rs: duplicate shader name {} ({} and {}); shader names must be \
+                 globally unique because OUT_DIR output is flat",
+                pair[0].0,
+                pair[0].1.display(),
+                pair[1].1.display()
+            );
+        }
+    }
 
-    for name in &shader_names {
-        println!("cargo:rerun-if-changed=src/shaders/{}", name);
+    for (_, path) in &shaders {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
 
     let is_ios = std::env::var("CARGO_CFG_TARGET_OS")
         .map(|v| v == "ios")
         .unwrap_or(false);
 
-    for name in &shader_names {
-        let src_path = shaders_dir.join(name);
-        let raw = fs::read_to_string(&src_path)
+    for (name, src_path) in &shaders {
+        let raw = fs::read_to_string(src_path)
             .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {}", src_path.display(), e));
-        let preprocessed = resolve_includes(&raw, &shaders_dir, name);
+        // Includes resolve against the shader's own directory first, then
+        // src/shaders/ (where the shared helpers/ directives point).
+        let own_dir = src_path.parent().unwrap_or(&shaders_dir);
+        let preprocessed = resolve_includes(&raw, &[own_dir, &shaders_dir], name);
         let preprocessed = if is_ios {
             patch_for_ios(&preprocessed)
         } else {
@@ -62,6 +81,7 @@ fn main() {
     // For shaders that include deform.wgsl, produce a _noop variant where that
     // include is replaced with deform_noop.wgsl. These are loaded at runtime by
     // ViewportGpuResources::new when the device reports max_bind_groups < 3.
+    // All of them live in src/shaders/.
     let deform_shaders = [
         "mesh.wgsl",
         "mesh_instanced.wgsl",
@@ -79,7 +99,7 @@ fn main() {
             "// #include \"helpers/deform.wgsl\"",
             "// #include \"helpers/deform_noop.wgsl\"",
         );
-        let preprocessed = resolve_includes(&raw_noop, &shaders_dir, name);
+        let preprocessed = resolve_includes(&raw_noop, &[&shaders_dir], name);
         let preprocessed = if is_ios {
             patch_for_ios(&preprocessed)
         } else {
@@ -92,7 +112,7 @@ fn main() {
     }
 
     let mut catalog = String::from("&[\n");
-    for name in &shader_names {
+    for (name, _) in &shaders {
         write!(
             &mut catalog,
             "    ShaderEntry {{\n        name: \"{name}\",\n        source: include_str!(concat!(env!(\"OUT_DIR\"), \"/{name}\")),\n    }},\n",
@@ -111,6 +131,24 @@ fn main() {
     });
 }
 
+// Walk `dir` recursively collecting `.wgsl` files. Missing directories are
+// fine (the item_plugins tree appears when the first type moves in).
+fn collect_wgsl_recursive(dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_wgsl_recursive(&path, out);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("wgsl") {
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                out.push((name.to_string(), path.clone()));
+            }
+        }
+    }
+}
+
 // On iOS, Metal does not support cube array textures. Replace the binding type
 // with texture_depth_2d_array (which IS supported) and stub out point shadow
 // sampling to always return 1.0 (unshadowed), since cube-direction-to-face
@@ -126,13 +164,29 @@ fn patch_for_ios(source: &str) -> String {
     )
 }
 
-fn resolve_includes(source: &str, shaders_dir: &Path, shader_name: &str) -> String {
+fn resolve_includes(source: &str, search_dirs: &[&Path], shader_name: &str) -> String {
     let mut out = String::with_capacity(source.len());
     for line in source.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("// #include \"") {
             if let Some(include_name) = rest.strip_suffix("\"") {
-                let include_path = shaders_dir.join(include_name);
+                let include_path = search_dirs
+                    .iter()
+                    .map(|d| d.join(include_name))
+                    .find(|p| p.is_file())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "build.rs: {} includes \"{}\" but no search directory holds it \
+                             (looked in: {})",
+                            shader_name,
+                            include_name,
+                            search_dirs
+                                .iter()
+                                .map(|d| d.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    });
                 let content = fs::read_to_string(&include_path).unwrap_or_else(|e| {
                     panic!(
                         "build.rs: {} includes \"{}\" but read failed: {}",
