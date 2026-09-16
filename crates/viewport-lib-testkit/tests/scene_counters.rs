@@ -57,6 +57,24 @@ fn expected(name: &str) -> Option<Expected> {
         "point_cloud" => e(0, 0, 0, 0, 0, 0),
         "polyline" => e(0, 0, 0, 0, 0, 0),
         "glyphs" => e(0, 0, 0, 0, 0, 0),
+        "tensor_glyphs" => e(0, 0, 0, 0, 0, 0),
+        "tubes" => e(0, 0, 0, 0, 0, 0),
+        "streamtubes" => e(0, 0, 0, 0, 0, 0),
+        "ribbons" => e(0, 0, 0, 0, 0, 0),
+        "sprites" => e(0, 0, 0, 0, 0, 0),
+        "volume" => e(0, 0, 0, 0, 0, 0),
+        "gaussian_splats" => e(0, 0, 0, 0, 0, 0),
+        "image_slice" => e(0, 0, 0, 0, 0, 0),
+        "volume_surface_slice" => e(0, 0, 0, 0, 0, 0),
+        "gpu_implicit" => e(0, 0, 0, 0, 0, 0),
+        "gpu_marching_cubes" => e(0, 0, 0, 0, 0, 0),
+        "mesh_instances" => e(0, 0, 0, 0, 0, 0),
+        // These item-type scenes include mesh geometry (a backdrop for the
+        // screen image; ground and receivers for scatter and decals), so the
+        // mesh counters are live for them.
+        "screen_image" => e(1, 1, 1, 0, 0, 960),
+        "scatter_volume" => e(2, 2, 2, 2, 0, 972),
+        "decals" => e(2, 2, 2, 2, 0, 24),
         _ => return None,
     })
 }

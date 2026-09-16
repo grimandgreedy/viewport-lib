@@ -16,8 +16,8 @@
 # Example (do not keep; illustrative):
 #   transparent 2 40   # OIT pass is order-dependent; probe floor on lavapipe
 #
-# The reference set is blessed on the pinned software adapter (lavapipe);
-# populate this file from the probe's report for any scene that is not
-# bit-identical there.
+# This file sits inside a per-backend reference directory and describes that
+# backend's set only: bless and probe on the same machine that owns the
+# directory.
 
 # No overrides: every scene is exact.

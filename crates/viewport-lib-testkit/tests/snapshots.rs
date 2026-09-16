@@ -5,14 +5,17 @@
 //! scene has a measured tolerance in `tests/snapshots/tolerances.txt`; the policy
 //! and the comparison live in the `golden` module.
 //!
-//! References live in `tests/snapshots/` as committed PNG files, blessed on the
-//! pinned reference adapter. A GPU or driver change needs a re-bless:
+//! References live in `tests/snapshots/<backend>/` (`metal/`, `vulkan/`, ...)
+//! as committed PNG files, blessed per backend on that backend's pinned
+//! reference machine: different backends rasterise the same frame differently,
+//! so each keeps its own reference set and its own `tolerances.txt`. A GPU or
+//! driver change needs a re-bless:
 //!
 //!     BLESS=1 cargo test --test snapshots
 //!
-//! On a machine with no GPU adapter the test skips. The first run on a fresh
-//! checkout with no references generates them (and passes); subsequent runs
-//! compare against them.
+//! On a machine with no GPU adapter the test skips. The first run on a machine
+//! whose backend has no references generates them (and passes); subsequent
+//! runs compare against them.
 
 use std::path::{Path, PathBuf};
 use viewport_lib_testkit::golden::{self, Outcome, RgbaImage, Tolerance};
@@ -32,7 +35,7 @@ fn scene_snapshots_match_references() {
         return;
     };
     let bless = std::env::var_os("BLESS").is_some();
-    let dir = snapshot_dir();
+    let dir = snapshot_dir().join(harness.backend_dir_name());
     std::fs::create_dir_all(&dir).expect("create snapshot dir");
     let tolerances = golden::load_tolerances(&dir.join("tolerances.txt"));
 

@@ -9,7 +9,7 @@
 //!
 //! The probe reports every non-bit-identical scene with its worst relative
 //! difference and how many pixels moved, so the numbers can be transcribed into
-//! `tests/snapshots/tolerances.txt`. It is deliberately loud: it renders the
+//! `tests/snapshots/<backend>/tolerances.txt`. It is deliberately loud: it renders the
 //! same frame twice, so any difference is the renderer's own non-determinism on
 //! this adapter, not a code change.
 //!
@@ -99,7 +99,7 @@ fn scenes_render_deterministically() {
     assert!(
         nondeterministic.is_empty(),
         "non-deterministic scenes on this adapter (each needs a measured tolerance \
-         in tests/snapshots/tolerances.txt):\n  {}",
+         in tests/snapshots/<backend>/tolerances.txt):\n  {}",
         nondeterministic.join("\n  ")
     );
 }

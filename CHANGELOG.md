@@ -13,6 +13,7 @@
 - **`ViewportPlugin` is now `PluginInstaller`** - the installer trait's old name read as "a plugin for a viewport" rather than what it does; rename the trait in your `impl` and in any import. `PluginInstallCtx`, `install_plugin`, and `install` are unchanged.
 
 ### Features
+- **`GpuImplicitItem` and `GpuMarchingCubesItem` are `Clone`** - the last two scene item types without it; a frame driver that clones its retained item lists no longer has to special-case them.
 - **Every texture slot names the colour space it needs** - all twenty-two of them, across `Material`, `DecalItem`, `SpriteItem`, `RibbonItem`, `MeshInstanceItem`, `ParticleRender`, and `LightmapData`, along with the `TextureData` constructor that produces it. Eight require linear, so the default-sounding path was wrong for nearly half the surface.
 - **`texture_colour_space` and `texture_slot_mismatches`** - ask what space a texture was uploaded in, and what has been bound somewhere that wants the other one. `clear_texture_slot_mismatches` forgets them after a re-upload.
 - **`TextureData` carries a texture's colour space** - the space is stated where the pixels are prepared, so it survives being built on a worker, cached, or returned across a loader boundary. `TextureRole` distinguishes a normal map from a plain linear data map, since the two bind to different slots. Nothing is converted: an sRGB payload reaches the GPU byte-identical and the sampler decodes it, which is why this labels the space rather than erasing it the way `Colour` does.

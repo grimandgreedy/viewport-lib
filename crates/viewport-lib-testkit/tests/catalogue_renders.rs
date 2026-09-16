@@ -20,7 +20,22 @@ fn every_scene_builds_and_renders() {
         let has_content = !built.items.is_empty()
             || !built.point_clouds.is_empty()
             || !built.polylines.is_empty()
-            || !built.glyphs.is_empty();
+            || !built.glyphs.is_empty()
+            || !built.tensor_glyphs.is_empty()
+            || !built.tube_items.is_empty()
+            || !built.streamtube_items.is_empty()
+            || !built.ribbon_items.is_empty()
+            || !built.sprite_items.is_empty()
+            || !built.volumes.is_empty()
+            || !built.gaussian_splats.is_empty()
+            || !built.image_slices.is_empty()
+            || !built.volume_surface_slices.is_empty()
+            || !built.screen_images.is_empty()
+            || !built.gpu_implicit.is_empty()
+            || !built.gpu_mc_items.is_empty()
+            || !built.scatter_volumes.is_empty()
+            || !built.decals.is_empty()
+            || !built.mesh_instances.is_empty();
         assert!(has_content, "{}: built no content", scene.name);
         assert!(!scene.cameras.is_empty(), "{}: no cameras", scene.name);
 

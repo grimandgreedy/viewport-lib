@@ -19,6 +19,14 @@ pub struct Harness {
     pub queue: wgpu::Queue,
     /// The viewport renderer (LDR target format).
     pub renderer: ViewportRenderer,
+    /// Info for the adapter the device was requested from. `None` when the
+    /// harness was built around a caller-owned device via
+    /// [`from_device`](Self::from_device).
+    pub adapter_info: Option<wgpu::AdapterInfo>,
+    /// Scenes built so far; stamps each built scene's `generation` so the
+    /// renderer's scene-content caches see consecutive catalogue scenes as
+    /// different content.
+    scenes_built: u64,
 }
 
 impl Harness {
@@ -39,9 +47,11 @@ impl Harness {
     /// Pass [`Harness::FLOAT_TARGET_FORMAT`] to render into a half-float target
     /// and read frames back with [`render_float`](Self::render_float).
     pub fn with_target_format(target_format: wgpu::TextureFormat) -> Option<Self> {
-        let (device, queue) =
-            crate::device::headless_device_with(&crate::device::DeviceProfile::harness())?;
-        Some(Self::from_device(device, queue, target_format))
+        let (device, queue, info) =
+            crate::device::headless_device_with_info(&crate::device::DeviceProfile::harness())?;
+        let mut harness = Self::from_device(device, queue, target_format);
+        harness.adapter_info = Some(info);
+        Some(harness)
     }
 
     /// Build a harness on a device requested with `profile`, or `None` when no
@@ -54,12 +64,10 @@ impl Harness {
     /// without them. Pass `DeviceProfile::low_power(..)` or
     /// `high_performance(..)` to get those limits.
     pub fn with_profile(profile: &crate::device::DeviceProfile) -> Option<Self> {
-        let (device, queue) = crate::device::headless_device_with(profile)?;
-        Some(Self::from_device(
-            device,
-            queue,
-            Self::DEFAULT_TARGET_FORMAT,
-        ))
+        let (device, queue, info) = crate::device::headless_device_with_info(profile)?;
+        let mut harness = Self::from_device(device, queue, Self::DEFAULT_TARGET_FORMAT);
+        harness.adapter_info = Some(info);
+        Some(harness)
     }
 
     /// Build a harness around a device the caller already owns, with a
@@ -78,6 +86,20 @@ impl Harness {
             device,
             queue,
             renderer,
+            adapter_info: None,
+            scenes_built: 0,
+        }
+    }
+
+    /// Directory name golden references for this harness's backend live under:
+    /// `"metal"`, `"vulkan"`, `"dx12"`, `"gl"`. References are blessed per
+    /// backend because different backends rasterise the same frame differently.
+    /// Falls back to `"unknown"` when the harness was built around a
+    /// caller-owned device.
+    pub fn backend_dir_name(&self) -> String {
+        match &self.adapter_info {
+            Some(info) => format!("{:?}", info.backend).to_lowercase(),
+            None => "unknown".to_string(),
         }
     }
 
@@ -91,7 +113,15 @@ impl Harness {
             device: &self.device,
             queue: &self.queue,
         };
-        (scene.build)(&mut ctx)
+        let mut built = (scene.build)(&mut ctx);
+        // Each build gets a fresh scene generation. The renderer's
+        // instanced-batch cache keys on `SceneFrame::generation` plus item
+        // counts, so two different scenes built back to back with the default
+        // generation and the same item count would silently reuse the first
+        // scene's batches.
+        self.scenes_built += 1;
+        built.generation = self.scenes_built;
+        built
     }
 
     /// Render a frame offscreen and return the RGBA pixels (row-major,

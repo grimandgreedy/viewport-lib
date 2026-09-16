@@ -21,6 +21,7 @@ use crate::scene::material::ItemSettings;
 /// item.march_options = GpuImplicitOptions::default();
 /// ```
 #[non_exhaustive]
+#[derive(Clone)]
 pub struct GpuImplicitItem {
     /// Primitive descriptors (max 16 entries; excess entries are ignored).
     pub primitives: Vec<ImplicitPrimitive>,
