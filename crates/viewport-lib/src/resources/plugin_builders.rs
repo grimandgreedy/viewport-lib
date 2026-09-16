@@ -332,22 +332,19 @@ impl DeviceResources {
     /// Read-only borrow of the shared cached base mesh (vertex + index
     /// buffers) for a glyph shape.
     ///
-    /// `None` until the mesh has been built: call
-    /// [`ensure_glyph_base_mesh`](Self::ensure_glyph_base_mesh) once (for
-    /// example at plugin install time, via
-    /// [`ViewportRenderer::resources_mut`](crate::renderer::ViewportRenderer::resources_mut))
-    /// and the borrow is available every frame after. Vertices use the lib's
-    /// full 64-byte `Vertex` layout, the same one the built-in glyph
-    /// pipelines consume.
+    /// `None` until the mesh has been built; use
+    /// [`ensure_glyph_base_mesh`](Self::ensure_glyph_base_mesh) to build it on
+    /// the spot instead. Vertices use the lib's full 64-byte `Vertex` layout,
+    /// the same one the built-in glyph pipelines consume.
     pub fn glyph_base_mesh(
         &self,
         glyph_type: crate::renderer::GlyphType,
     ) -> Option<GlyphBaseMeshRef<'_>> {
         use crate::renderer::GlyphType;
         let mesh = match glyph_type {
-            GlyphType::Arrow => self.glyph.arrow_mesh.as_ref(),
-            GlyphType::Sphere => self.glyph.sphere_mesh.as_ref(),
-            GlyphType::Cube => self.glyph.cube_mesh.as_ref(),
+            GlyphType::Arrow => self.glyph.arrow_mesh.get(),
+            GlyphType::Sphere => self.glyph.sphere_mesh.get(),
+            GlyphType::Cube => self.glyph.cube_mesh.get(),
         }?;
         Some(GlyphBaseMeshRef {
             vertex_buffer: &mesh.vertex_buffer,
@@ -358,15 +355,22 @@ impl DeviceResources {
         })
     }
 
-    /// Build (on first call) and cache the shared base mesh for a glyph
-    /// shape, so [`glyph_base_mesh`](Self::glyph_base_mesh) returns it.
-    /// Idempotent and cheap once cached.
+    /// Borrow the shared base mesh for a glyph shape, building and caching it
+    /// on the first call. Idempotent and cheap once cached, and callable from
+    /// `prepare`, which holds a shared borrow of the resources.
     pub fn ensure_glyph_base_mesh(
-        &mut self,
+        &self,
         device: &crate::gpu::Device,
         glyph_type: crate::renderer::GlyphType,
-    ) {
-        self.ensure_glyph_mesh(device, glyph_type);
+    ) -> GlyphBaseMeshRef<'_> {
+        let mesh = self.ensure_glyph_mesh(device, glyph_type);
+        GlyphBaseMeshRef {
+            vertex_buffer: &mesh.vertex_buffer,
+            index_buffer: &mesh.index_buffer,
+            index_count: mesh.index_count,
+            edge_index_buffer: &mesh.edge_index_buffer,
+            edge_index_count: mesh.edge_index_count,
+        }
     }
 
     // ------------------------------------------------------------------

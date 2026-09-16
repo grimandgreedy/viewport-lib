@@ -13,12 +13,14 @@ pub(crate) struct GlyphResources {
     pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
     /// Bind group layout for glyph instance storage (group 2).
     pub(crate) instance_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Cached glyph base mesh for the Arrow shape.
-    pub(crate) arrow_mesh: Option<GlyphBaseMesh>,
+    /// Cached glyph base mesh for the Arrow shape. Built on first use through
+    /// a shared reference, so an item-type plugin can reach it from `prepare`,
+    /// which holds `&DeviceResources`.
+    pub(crate) arrow_mesh: std::sync::OnceLock<GlyphBaseMesh>,
     /// Cached glyph base mesh for the Sphere shape.
-    pub(crate) sphere_mesh: Option<GlyphBaseMesh>,
+    pub(crate) sphere_mesh: std::sync::OnceLock<GlyphBaseMesh>,
     /// Cached glyph base mesh for the Cube shape.
-    pub(crate) cube_mesh: Option<GlyphBaseMesh>,
+    pub(crate) cube_mesh: std::sync::OnceLock<GlyphBaseMesh>,
     /// Instanced mask pipeline for arrow/sphere glyph outlines.
     pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
@@ -137,21 +139,15 @@ impl DeviceResources {
     ) -> GlyphGpuData {
         let instance_count = item.positions.len() as u32;
 
-        self.ensure_glyph_mesh(device, item.glyph_type);
-
         let (mesh_vbuf, mesh_ibuf, mesh_idx_count, mesh_edge_ibuf, mesh_edge_count) = {
-            let mesh = match item.glyph_type {
-                crate::renderer::GlyphType::Arrow => self.glyph.arrow_mesh.as_ref(),
-                crate::renderer::GlyphType::Sphere => self.glyph.sphere_mesh.as_ref(),
-                crate::renderer::GlyphType::Cube => self.glyph.cube_mesh.as_ref(),
-            }
-            .expect("glyph mesh should have been created by ensure_glyph_mesh");
-
-            let vbuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
-            let ibuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            let eibuf: &'static crate::gpu::Buffer =
-                unsafe { &*(&mesh.edge_index_buffer as *const _) };
-            (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
+            let mesh = self.ensure_glyph_mesh(device, item.glyph_type);
+            (
+                mesh.vertex_buffer.clone(),
+                mesh.index_buffer.clone(),
+                mesh.index_count,
+                mesh.edge_index_buffer.clone(),
+                mesh.edge_index_count,
+            )
         };
 
         let mags: Vec<f32> = item
@@ -329,21 +325,29 @@ impl DeviceResources {
     /// Ensure a glyph base mesh is cached for the given [`GlyphType`].
     /// Creates and uploads the mesh on first call for that type.
     pub(crate) fn ensure_glyph_mesh(
-        &mut self,
+        &self,
         device: &crate::gpu::Device,
         glyph_type: crate::renderer::GlyphType,
-    ) {
+    ) -> &GlyphBaseMesh {
         use crate::renderer::GlyphType;
 
-        let already_cached = match glyph_type {
-            GlyphType::Arrow => self.glyph.arrow_mesh.is_some(),
-            GlyphType::Sphere => self.glyph.sphere_mesh.is_some(),
-            GlyphType::Cube => self.glyph.cube_mesh.is_some(),
+        let slot = match glyph_type {
+            GlyphType::Arrow => &self.glyph.arrow_mesh,
+            GlyphType::Sphere => &self.glyph.sphere_mesh,
+            GlyphType::Cube => &self.glyph.cube_mesh,
         };
-        if already_cached {
-            return;
-        }
+        slot.get_or_init(|| build_glyph_base_mesh(device, glyph_type))
+    }
+}
 
+/// Build one glyph base mesh: the shape's vertex and index buffers plus the
+/// edge index buffer the wireframe variant draws.
+fn build_glyph_base_mesh(
+    device: &crate::gpu::Device,
+    glyph_type: crate::renderer::GlyphType,
+) -> GlyphBaseMesh {
+    use crate::renderer::GlyphType;
+    {
         let (verts, indices) = match glyph_type {
             GlyphType::Arrow => build_glyph_arrow(),
             GlyphType::Sphere => build_glyph_sphere(),
@@ -382,21 +386,17 @@ impl DeviceResources {
         );
         edge_ibuf.unmap();
 
-        let mesh = GlyphBaseMesh {
+        GlyphBaseMesh {
             vertex_buffer: vbuf,
             index_buffer: ibuf,
             index_count: indices.len() as u32,
             edge_index_buffer: edge_ibuf,
             edge_index_count: edge_indices.len() as u32,
-        };
-
-        match glyph_type {
-            GlyphType::Arrow => self.glyph.arrow_mesh = Some(mesh),
-            GlyphType::Sphere => self.glyph.sphere_mesh = Some(mesh),
-            GlyphType::Cube => self.glyph.cube_mesh = Some(mesh),
         }
     }
+}
 
+impl DeviceResources {
     /// Lazily create the tensor glyph render pipeline (instanced ellipsoids).
     ///
     /// No-op if already created. Called from `prepare()` when `frame.scene.tensor_glyphs`
@@ -499,19 +499,16 @@ impl DeviceResources {
 
         let instance_count = item.positions.len() as u32;
 
-        // Reuse the cached sphere mesh from the glyph pipeline.
-        self.ensure_glyph_mesh(device, GlyphType::Sphere);
+        // Reuse the shared sphere base mesh.
         let (mesh_vbuf, mesh_ibuf, mesh_idx_count, mesh_edge_ibuf, mesh_edge_count) = {
-            let mesh = self
-                .glyph
-                .sphere_mesh
-                .as_ref()
-                .expect("sphere mesh should be present after ensure_glyph_mesh");
-            let vbuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.vertex_buffer as *const _) };
-            let ibuf: &'static crate::gpu::Buffer = unsafe { &*(&mesh.index_buffer as *const _) };
-            let eibuf: &'static crate::gpu::Buffer =
-                unsafe { &*(&mesh.edge_index_buffer as *const _) };
-            (vbuf, ibuf, mesh.index_count, eibuf, mesh.edge_index_count)
+            let mesh = self.ensure_glyph_mesh(device, GlyphType::Sphere);
+            (
+                mesh.vertex_buffer.clone(),
+                mesh.index_buffer.clone(),
+                mesh.index_count,
+                mesh.edge_index_buffer.clone(),
+                mesh.edge_index_count,
+            )
         };
 
         // Pre-compute per-instance model and normal matrices on the CPU.
@@ -1140,16 +1137,16 @@ pub(crate) struct GlyphBaseMesh {
 /// Per-frame GPU data for one glyph item, created in `prepare()`.
 #[derive(Clone)]
 pub struct GlyphGpuData {
-    /// Vertex buffer for the glyph base mesh (borrowed from cached `GlyphBaseMesh`).
-    /// We keep a reference via raw pointer : `DeviceResources` owns the mesh.
-    /// Safety: the mesh lives as long as `DeviceResources`.
-    pub(crate) mesh_vertex_buffer: &'static crate::gpu::Buffer,
+    /// Vertex buffer for the glyph base mesh. A cloned handle on the shared
+    /// mesh `DeviceResources` caches, so the draw data outlives the borrow the
+    /// upload took.
+    pub(crate) mesh_vertex_buffer: crate::gpu::Buffer,
     /// Triangle index buffer for the glyph base mesh.
-    pub(crate) mesh_index_buffer: &'static crate::gpu::Buffer,
+    pub(crate) mesh_index_buffer: crate::gpu::Buffer,
     /// Number of triangle mesh indices.
     pub(crate) mesh_index_count: u32,
-    /// Edge index buffer for wireframe LineList rendering (borrowed from cached `GlyphBaseMesh`).
-    pub(crate) mesh_edge_index_buffer: &'static crate::gpu::Buffer,
+    /// Edge index buffer for wireframe LineList rendering.
+    pub(crate) mesh_edge_index_buffer: crate::gpu::Buffer,
     /// Number of edge indices.
     pub(crate) mesh_edge_index_count: u32,
     /// Number of glyph instances.
@@ -1170,17 +1167,18 @@ pub struct GlyphGpuData {
 
 /// Per-frame GPU data for one tensor glyph item, created in `prepare()`.
 ///
-/// The sphere base mesh is borrowed from `glyph_sphere_mesh` (owned by `DeviceResources`).
+/// The sphere base mesh comes from the shared glyph mesh cache; the buffer
+/// handles here are clones of it.
 #[derive(Clone)]
 pub struct TensorGlyphGpuData {
-    /// Vertex buffer for the sphere base mesh (borrowed).
-    pub(crate) mesh_vertex_buffer: &'static crate::gpu::Buffer,
-    /// Triangle index buffer for the sphere base mesh (borrowed).
-    pub(crate) mesh_index_buffer: &'static crate::gpu::Buffer,
+    /// Vertex buffer for the sphere base mesh.
+    pub(crate) mesh_vertex_buffer: crate::gpu::Buffer,
+    /// Triangle index buffer for the sphere base mesh.
+    pub(crate) mesh_index_buffer: crate::gpu::Buffer,
     /// Number of triangle mesh indices.
     pub(crate) mesh_index_count: u32,
-    /// Edge index buffer for wireframe LineList rendering (borrowed from sphere mesh).
-    pub(crate) mesh_edge_index_buffer: &'static crate::gpu::Buffer,
+    /// Edge index buffer for wireframe LineList rendering.
+    pub(crate) mesh_edge_index_buffer: crate::gpu::Buffer,
     /// Number of edge indices.
     pub(crate) mesh_edge_index_count: u32,
     /// Number of tensor glyph instances.

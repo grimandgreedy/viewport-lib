@@ -1231,8 +1231,8 @@ impl ViewportRenderer {
                         pipeline,
                         id_bind_group: make_id_bg(gpu.pick_id, &gpu._uniform_buf),
                         instance_bind_group: &gpu.instance_bind_group,
-                        vertex_buffer: gpu.mesh_vertex_buffer,
-                        index_buffer: gpu.mesh_index_buffer,
+                        vertex_buffer: &gpu.mesh_vertex_buffer,
+                        index_buffer: &gpu.mesh_index_buffer,
                         index_count: gpu.mesh_index_count,
                         instance_count: gpu.instance_count,
                     });
@@ -1254,8 +1254,8 @@ impl ViewportRenderer {
                         pipeline,
                         id_bind_group: make_id_bg(gpu.pick_id, &gpu._uniform_buf),
                         instance_bind_group: &gpu.instance_bind_group,
-                        vertex_buffer: gpu.mesh_vertex_buffer,
-                        index_buffer: gpu.mesh_index_buffer,
+                        vertex_buffer: &gpu.mesh_vertex_buffer,
+                        index_buffer: &gpu.mesh_index_buffer,
                         index_count: gpu.mesh_index_count,
                         instance_count: gpu.instance_count,
                     });
