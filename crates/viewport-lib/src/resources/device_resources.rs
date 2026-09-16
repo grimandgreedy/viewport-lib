@@ -286,11 +286,6 @@ pub(crate) struct PickResources {
     pub(crate) point_cloud_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the point cloud pick pipeline (per-item object-id uniform).
     pub(crate) point_cloud_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for volume surface slices: reuses the render mesh vertex
-    /// buffer and writes the item's object id. Object-level.
-    pub(crate) volume_surface_slice_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the volume surface slice pick pipeline (per-item object-id uniform).
-    pub(crate) volume_surface_slice_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Screen-space image quad pipelines (plain + depth-composite) and the rect
@@ -672,7 +667,6 @@ pub struct DeviceResources {
 
     // --- volume rendering (lazily created) ---
     /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.
-    pub(crate) volume: crate::resources::volume::volumes::VolumeResources,
 
     // --- GPU compute filtering (lazily created) ---
     /// Compute-filter pipeline and bind group layout (lazy).

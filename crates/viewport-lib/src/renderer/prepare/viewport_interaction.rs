@@ -428,53 +428,6 @@ impl ViewportRenderer {
                     mask_bind_group: bg,
                 });
             }
-            // Selected volume surface slices: use their mesh directly.
-            for item in &frame.scene.volume_surface_slices {
-                if item.settings.hidden || !item.settings.selected {
-                    continue;
-                }
-                let uniform = OutlineUniform {
-                    model: item.model,
-                    colour: [0.0; 4],
-                    pixel_offset: 0.0,
-                    has_position_override: 0,
-                    position_override_base: 0,
-                    position_override_len: u32::MAX,
-                    deform_flags: 0,
-                    _deform_pad: [0; 3],
-                };
-                let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("outline_mask_uniform_buf"),
-                    size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline.bind_group_layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: resources
-                                .content
-                                .fallback_position_override_buf
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
-                outline_object_buffers.push(OutlineObjectBuffers {
-                    mesh_id: item.mesh_id,
-                    two_sided: true,
-                    deform_instance: None,
-                    _mask_uniform_buf: buf,
-                    mask_bind_group: bg,
-                });
-            }
         }
 
         // Splat outline buffers: point sprite discs for selected Gaussian splat sets.

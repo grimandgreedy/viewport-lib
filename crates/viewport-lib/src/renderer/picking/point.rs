@@ -909,66 +909,8 @@ impl ViewportRenderer {
             }
         }
 
-        // 10. Volume surface slice / screen image object picks (OBJECT only).
+        // 10. Screen image object picks (OBJECT only).
         if wants_object {
-            // Volume surface slice: ray/mesh intersection via mesh_store CPU data.
-            for item in &self.pick_volume_surface_slice_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
-                    continue;
-                };
-                let (Some(positions), Some(indices)) = (&mesh.cpu_positions, &mesh.cpu_indices)
-                else {
-                    continue;
-                };
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let verts: Vec<parry3d::math::Vector> = positions
-                    .iter()
-                    .map(|p| {
-                        let wp = model.transform_point3(glam::Vec3::from(*p));
-                        parry3d::math::Vector::new(wp.x, wp.y, wp.z)
-                    })
-                    .collect();
-                let tri_indices: Vec<[u32; 3]> = indices
-                    .chunks(3)
-                    .filter(|c| c.len() == 3)
-                    .map(|c| [c[0], c[1], c[2]])
-                    .collect();
-                if tri_indices.is_empty() {
-                    continue;
-                }
-                let ray = parry3d::query::Ray::new(
-                    parry3d::math::Vector::new(ray_origin.x, ray_origin.y, ray_origin.z),
-                    parry3d::math::Vector::new(ray_dir.x, ray_dir.y, ray_dir.z),
-                );
-                if let Ok(trimesh) = parry3d::shape::TriMesh::new(verts, tri_indices) {
-                    use parry3d::query::RayCast;
-                    if let Some(hit) = trimesh.cast_ray_and_get_normal(
-                        &parry3d::math::Pose::identity(),
-                        &ray,
-                        f32::MAX,
-                        true,
-                    ) {
-                        let world_pos = ray_origin + ray_dir * hit.time_of_impact;
-                        let n = hit.normal;
-                        #[allow(deprecated)]
-                        consider(
-                            hit.time_of_impact,
-                            PickHit {
-                                id: item.settings.pick_id.0,
-                                sub_object: None,
-                                world_pos,
-                                normal: glam::Vec3::new(n.x, n.y, n.z),
-                                scalar_value: None,
-                                sub_object_world_pos: None,
-                            },
-                        );
-                    }
-                }
-            }
-
             // Screen image: screen-space rect test. toi=0 so these win over any 3D hit.
             for item in &self.pick_screen_image_items {
                 if item.settings.pick_id == PickId::NONE || item.width == 0 || item.height == 0 {

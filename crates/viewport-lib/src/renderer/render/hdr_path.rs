@@ -1522,7 +1522,6 @@ impl ViewportRenderer {
                 &self.tube_gpu_data,
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
-                &self.volume_surface_slice_gpu_data,
                 sprite_slice_for_inline,
                 &self.mesh_instance_gpu_data,
                 true

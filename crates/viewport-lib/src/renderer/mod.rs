@@ -412,8 +412,6 @@ pub struct ViewportRenderer {
     ribbon_selected_gpu_indices: Vec<usize>,
     /// Indices into polyline_gpu_data for selected user polylines (set in prepare_scene, consumed in prepare_viewport).
     polyline_selected_gpu_indices: Vec<usize>,
-    /// Per-frame volume surface slice GPU data, rebuilt in prepare(), consumed in paint().
-    volume_surface_slice_gpu_data: Vec<crate::resources::VolumeSurfaceSliceGpuData>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
@@ -613,7 +611,6 @@ pub struct ViewportRenderer {
     /// Ribbon items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_ribbon_items: Vec<RibbonItem>,
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_volume_surface_slice_items: Vec<VolumeSurfaceSliceItem>,
     /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_screen_image_items: Vec<ScreenImageItem>,
     /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -1039,7 +1036,6 @@ impl ViewportRenderer {
             tube_selected_gpu_indices: Vec::new(),
             ribbon_selected_gpu_indices: Vec::new(),
             polyline_selected_gpu_indices: Vec::new(),
-            volume_surface_slice_gpu_data: Vec::new(),
             sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             particle_gpu_data: Vec::new(),
@@ -1100,7 +1096,6 @@ impl ViewportRenderer {
             pick_streamtube_items: Vec::new(),
             pick_tube_items: Vec::new(),
             pick_ribbon_items: Vec::new(),
-            pick_volume_surface_slice_items: Vec::new(),
             pick_screen_image_items: Vec::new(),
             pick_decal_items: Vec::new(),
             pick_mc_items: Vec::new(),
@@ -3286,7 +3281,6 @@ impl ViewportRenderer {
             &self.tube_gpu_data,
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
-            &self.volume_surface_slice_gpu_data,
             &self.sprite_gpu_data,
             &self.mesh_instance_gpu_data,
             false

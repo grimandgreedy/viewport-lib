@@ -1095,7 +1095,7 @@ macro_rules! emit_outline_composite {
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $volume_surface_slice_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
@@ -1321,28 +1321,6 @@ macro_rules! emit_scivis_draw_calls {
                             crate::gpu::IndexFormat::Uint32,
                         );
                         render_pass.draw_indexed(0..tg.mesh_index_count, 0, 0..tg.instance_count);
-                    }
-                }
-            }
-        }
-
-        // Volume surface slice pass (arbitrary mesh sampled from volume).
-        if !$volume_surface_slice_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.volume.surface_slice_pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for slice in $volume_surface_slice_gpu_data.iter() {
-                    if let Some(mesh) = resources.mesh_store.get(slice.mesh_id) {
-                        render_pass.set_bind_group(1, &slice.bind_group, &[]);
-                        render_pass.set_vertex_buffer(
-                            0,
-                            resources.geometry.vertex_slice(mesh.vertex_span),
-                        );
-                        render_pass.set_index_buffer(
-                            resources.geometry.index_slice(mesh.index_span),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                     }
                 }
             }

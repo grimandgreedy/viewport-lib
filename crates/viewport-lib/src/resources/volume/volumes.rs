@@ -53,16 +53,6 @@ fn encode_volume_texels(format: crate::gpu::TextureFormat, data: &[f32]) -> Vec<
     }
 }
 
-/// Volume surface slice pipeline and layout. Lazily built; the uploaded 3D
-/// volume textures live in a separate flat store.
-#[derive(Default)]
-pub(crate) struct VolumeResources {
-    /// Volume surface slice render pipeline. None until first slice item.
-    pub(crate) surface_slice_pipeline: Option<DualPipeline>,
-    /// Bind group layout for volume surface slice uniforms (group 1).
-    pub(crate) surface_slice_bgl: Option<crate::gpu::BindGroupLayout>,
-}
-
 impl DeviceResources {
     /// Upload a 3D scalar field to the GPU as a filterable 3D texture
     /// ([`volume_texture_format`]: `R32Float` at full precision, or the
@@ -577,16 +567,4 @@ mod tests {
             .upload_volume_for_mc(&device, &queue, &vol)
             .expect("upload ok");
     }
-}
-
-/// Per-frame GPU data for one volume surface slice item, created in `prepare()`.
-pub(crate) struct VolumeSurfaceSliceGpuData {
-    /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.
-    pub(crate) bind_group: crate::gpu::BindGroup,
-    // Keep uniform buffer alive.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// Mesh to draw (vertex + index buffers looked up from mesh_store at render time).
-    pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
-    pub(crate) pick_id: crate::renderer::PickId,
 }

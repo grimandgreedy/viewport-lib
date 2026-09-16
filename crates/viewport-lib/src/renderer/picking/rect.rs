@@ -670,29 +670,8 @@ impl ViewportRenderer {
             }
         }
 
-        // 9. Volume surface slice / screen image object rect picks (OBJECT only).
+        // 9. Screen image object rect picks (OBJECT only).
         if wants_object {
-            // Volume surface slice: project each mesh vertex (with model transform) and check.
-            for item in &self.pick_volume_surface_slice_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let Some(mesh) = self.resources.mesh_store.get(item.mesh_id) else {
-                    continue;
-                };
-                let Some(positions) = &mesh.cpu_positions else {
-                    continue;
-                };
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let hit = positions.iter().any(|&p| {
-                    let wp = model.transform_point3(glam::Vec3::from(p));
-                    project(view_proj, wp).map_or(false, |(sx, sy)| in_rect(sx, sy))
-                });
-                if hit {
-                    result.objects.push(item.settings.pick_id.0);
-                }
-            }
-
             // Screen image: check if the image's screen rect overlaps the pick rect.
             for item in &self.pick_screen_image_items {
                 if item.settings.pick_id == PickId::NONE || item.width == 0 || item.height == 0 {

@@ -2495,7 +2495,6 @@ impl DeviceResources {
             },
             glyph: crate::resources::scivis::glyph::GlyphResources::default(),
             tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::default(),
-            volume: crate::resources::volume::volumes::VolumeResources::default(),
             polyline: crate::resources::scivis::polyline::PolylineResources::default(),
             streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
             ribbon: crate::resources::scivis::tube::RibbonResources::default(),

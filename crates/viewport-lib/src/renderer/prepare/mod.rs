@@ -481,13 +481,6 @@ impl ViewportRenderer {
             queue,
             frame,
         );
-        Self::upload_slices(
-            resources,
-            &mut self.volume_surface_slice_gpu_data,
-            device,
-            queue,
-            frame,
-        );
         let vp_size = frame.camera.viewport_size;
         // Surface LIC GPU data upload.
         // ------------------------------------------------------------------

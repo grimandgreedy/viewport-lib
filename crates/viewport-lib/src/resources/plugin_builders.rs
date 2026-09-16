@@ -297,6 +297,17 @@ impl DeviceResources {
         self.content.colourmap_views.get(ids[preset as usize].0)
     }
 
+    /// Index count of a mesh uploaded through
+    /// [`upload_mesh_data`](Self::upload_mesh_data), or `None` when the id was
+    /// never uploaded or has been freed.
+    ///
+    /// Use it during `prepare` to drop an item whose mesh is not resident,
+    /// rather than building per-item state for geometry the draw hooks cannot
+    /// bind.
+    pub fn mesh_index_count(&self, mesh_id: MeshId) -> Option<u32> {
+        self.mesh_store.get(mesh_id).map(|m| m.index_count)
+    }
+
     /// Borrow the 3D texture view for a scalar field uploaded via
     /// [`upload_volume`](Self::upload_volume).
     ///

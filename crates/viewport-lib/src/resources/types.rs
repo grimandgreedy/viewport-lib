@@ -79,7 +79,6 @@ pub use crate::resources::scivis::tube::StreamtubeGpuData;
 pub(crate) use crate::resources::volume::tetmesh::GpuProjectedTetMesh;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetChunk;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetUniform;
-pub(crate) use crate::resources::volume::volumes::VolumeSurfaceSliceGpuData;
 
 pub use viewport_lib_types::ids::{ProjectedTetId, VolumeId};
 

@@ -243,16 +243,6 @@ struct PointCloudPickDraw<'a> {
     point_count: u32,
 }
 
-/// One volume surface slice to draw into the pick pass. The owned group-2 bind
-/// group holds the object id; the group-1 render bind group is borrowed from
-/// prepared `VolumeSurfaceSliceGpuData`; the mesh is resolved against
-/// `mesh_store` at draw time.
-struct VolumeSurfaceSlicePickDraw<'a> {
-    id_bind_group: crate::gpu::BindGroup,
-    render_bind_group: &'a crate::gpu::BindGroup,
-    mesh_id: crate::resources::mesh::mesh_store::MeshId,
-}
-
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
 /// in `mesh_store`; tube-family items reference the owned per-frame buffers built
 /// during prepare.
@@ -286,7 +276,6 @@ struct PickPipelineFlags {
     has_pickable_polylines: bool,
     has_pickable_mc: bool,
     has_pickable_point_clouds: bool,
-    has_pickable_volume_surface_slices: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -375,7 +364,6 @@ struct PickDrawSet<'a> {
     polyline_draws: Vec<PolylinePickDraw<'a>>,
     mc_draws: Vec<McPickDraw<'a>>,
     point_cloud_draws: Vec<PointCloudPickDraw<'a>>,
-    volume_surface_slice_draws: Vec<VolumeSurfaceSlicePickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -404,7 +392,6 @@ impl PickDrawSet<'_> {
             && self.polyline_draws.is_empty()
             && self.mc_draws.is_empty()
             && self.point_cloud_draws.is_empty()
-            && self.volume_surface_slice_draws.is_empty()
             && !self.has_plugin_pick
     }
 }
@@ -1010,17 +997,6 @@ impl ViewportRenderer {
             self.resources.ensure_point_cloud_pick_pipeline(device);
         }
 
-        // Volume surface slices: textured world-space meshes. Object-level only.
-        let has_pickable_volume_surface_slices = mask.intersects(PickMask::OBJECT)
-            && self
-                .volume_surface_slice_gpu_data
-                .iter()
-                .any(|g| g.pick_id != PickId::NONE);
-        if has_pickable_volume_surface_slices {
-            self.resources
-                .ensure_volume_surface_slice_pick_pipeline(device);
-        }
-
         // Decals rasterise their projection box (the unit cube mapped by
         // `transform`) as an object-level proxy. Ensure the shared cube mesh
         // exists when a decal is pickable and the query asks for OBJECT. Computed
@@ -1077,7 +1053,6 @@ impl ViewportRenderer {
             has_pickable_polylines,
             has_pickable_mc,
             has_pickable_point_clouds,
-            has_pickable_volume_surface_slices,
             decal_cube,
             scatter_cube,
             scatter_sphere,
@@ -1109,7 +1084,6 @@ impl ViewportRenderer {
         let has_pickable_polylines = flags.has_pickable_polylines;
         let has_pickable_mc = flags.has_pickable_mc;
         let has_pickable_point_clouds = flags.has_pickable_point_clouds;
-        let has_pickable_volume_surface_slices = flags.has_pickable_volume_surface_slices;
         let decal_cube = flags.decal_cube;
         let scatter_cube = flags.scatter_cube;
         let scatter_sphere = flags.scatter_sphere;
@@ -1516,47 +1490,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Volume surface slices: each item draws its mesh with a group-2
-        // object-id uniform. Object-level only.
-        let mut volume_surface_slice_draws: Vec<VolumeSurfaceSlicePickDraw> = Vec::new();
-        if has_pickable_volume_surface_slices
-            && self.resources.pick.volume_surface_slice_pipeline.is_some()
-        {
-            let id_bgl = self
-                .resources
-                .pick
-                .volume_surface_slice_pick_id_bgl
-                .as_ref()
-                .expect("volume surface slice pick id bgl built with the pipeline");
-            for gpu in self
-                .volume_surface_slice_gpu_data
-                .iter()
-                .filter(|g| g.pick_id != PickId::NONE)
-            {
-                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("volume_surface_slice_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("volume_surface_slice_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: id_buf.as_entire_binding(),
-                    }],
-                });
-                volume_surface_slice_draws.push(VolumeSurfaceSlicePickDraw {
-                    id_bind_group,
-                    render_bind_group: &gpu.bind_group,
-                    mesh_id: gpu.mesh_id,
-                });
-            }
-        }
-
         // Registered plugins draw their own pick-ids into the pass. They answer
         // the same level set as built-in surfaces (object plus the mesh
         // sub-object levels, refined through `ItemTypePlugin::resolve_sub_object`
@@ -1591,7 +1524,6 @@ impl ViewportRenderer {
             polyline_draws,
             mc_draws,
             point_cloud_draws,
-            volume_surface_slice_draws,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -1916,32 +1848,6 @@ impl ViewportRenderer {
                     pick_pass.set_bind_group(2, &pcd.id_bind_group, &[]);
                     pick_pass.set_vertex_buffer(0, pcd.vertex_buffer.slice(..));
                     pick_pass.draw(0..6, 0..pcd.point_count);
-                }
-            }
-        }
-
-        // Volume surface slices: each item draws its mesh. Group 0 is the
-        // minimal pick camera; group 1 is the reused render bind group;
-        // group 2 is the per-item object id.
-        if let Some(vss_pipeline) = self.resources.pick.volume_surface_slice_pipeline.as_ref() {
-            if !draw_set.volume_surface_slice_draws.is_empty() {
-                pick_pass.set_pipeline(vss_pipeline);
-                pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                for vsd in &draw_set.volume_surface_slice_draws {
-                    let Some(mesh) = self.resources.mesh_store.get(vsd.mesh_id) else {
-                        continue;
-                    };
-                    pick_pass.set_bind_group(1, vsd.render_bind_group, &[]);
-                    pick_pass.set_bind_group(2, &vsd.id_bind_group, &[]);
-                    pick_pass.set_vertex_buffer(
-                        0,
-                        self.resources.geometry.vertex_slice(mesh.vertex_span),
-                    );
-                    pick_pass.set_index_buffer(
-                        self.resources.geometry.index_slice(mesh.index_span),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    pick_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
         }

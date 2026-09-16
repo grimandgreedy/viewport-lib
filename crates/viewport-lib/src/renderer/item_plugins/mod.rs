@@ -13,6 +13,7 @@ pub(crate) mod gaussian_splat;
 pub(crate) mod gpu_implicit;
 pub(crate) mod image_slice;
 pub(crate) mod volume;
+pub(crate) mod volume_surface_slice;
 
 use crate::plugin_api::PluginItemCollection;
 use crate::renderer::types::FrameData;
@@ -29,6 +30,7 @@ pub(crate) fn plugin_items_for<'f>(
         gpu_implicit::TYPE_NAME => Some(&frame.scene.gpu_implicit),
         image_slice::TYPE_NAME => Some(&frame.scene.image_slices),
         volume::TYPE_NAME => Some(&frame.scene.volumes),
+        volume_surface_slice::TYPE_NAME => Some(&frame.scene.volume_surface_slices),
         _ => frame
             .scene
             .plugin_items
@@ -49,5 +51,9 @@ impl crate::renderer::ViewportRenderer {
         self.with_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
         self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
         self.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
+        self.with_item_type_plugin(
+            device,
+            Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
+        );
     }
 }
