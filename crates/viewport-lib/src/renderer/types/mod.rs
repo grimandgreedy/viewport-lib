@@ -1062,7 +1062,6 @@ macro_rules! emit_outline_composite {
         let render_pass = $render_pass;
         if let Some(slot) = $vp_slot {
             if !slot.selection_outlines.outline_object_buffers.is_empty()
-                || !slot.selection_outlines.splat_outline_buffers.is_empty()
                 || !slot.selection_outlines.streamtube_outline_items.is_empty()
                 || !slot.selection_outlines.tube_outline_items.is_empty()
                 || !slot.selection_outlines.ribbon_outline_items.is_empty()
@@ -1091,29 +1090,15 @@ macro_rules! emit_outline_composite {
     }};
 }
 
-/// Draw point cloud and glyph items from per-frame GPU data prepared in `prepare()`.
+/// Draw glyph and curve items from per-frame GPU data prepared in `prepare()`.
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $pc_gpu_data:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $glyph_gpu_data:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $tensor_glyph_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
         let _is_hdr: bool = $is_hdr;
-
-        // Point cloud pass.
-        if !$pc_gpu_data.is_empty() {
-            if let Some(ref dual) = resources.point_cloud.pipeline {
-                render_pass.set_pipeline(dual.for_format(_is_hdr));
-                render_pass.set_bind_group(0, camera_bg, &[]);
-                for pc in $pc_gpu_data.iter() {
-                    render_pass.set_bind_group(1, &pc.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, pc.vertex_buffer.slice(..));
-                    // 6 vertices per point (billboard quad = 2 triangles), point_count instances.
-                    render_pass.draw(0..6, 0..pc.point_count);
-                }
-            }
-        }
 
         // Glyph pass.
         if !$glyph_gpu_data.is_empty() {

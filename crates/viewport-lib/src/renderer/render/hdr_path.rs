@@ -1514,7 +1514,6 @@ impl ViewportRenderer {
             emit_scivis_draw_calls!(
                 &self.resources,
                 &mut render_pass,
-                &self.point_cloud_gpu_data,
                 &self.glyph_gpu_data,
                 &self.polyline_gpu_data,
                 &self.streamtube_gpu_data,
@@ -4108,7 +4107,6 @@ impl ViewportRenderer {
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
         if !slot.selection_outlines.outline_object_buffers.is_empty()
-            || !slot.selection_outlines.splat_outline_buffers.is_empty()
             || !slot.selection_outlines.streamtube_outline_items.is_empty()
             || !slot.selection_outlines.tube_outline_items.is_empty()
             || !slot.selection_outlines.ribbon_outline_items.is_empty()

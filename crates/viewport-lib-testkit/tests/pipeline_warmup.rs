@@ -5,7 +5,8 @@
 //! prepare, so a frame that hits a cold pipeline reads non-zero.
 
 use viewport_lib::{
-    CameraFrame, DecalItem, FrameData, Material, SceneFrame, SceneRenderItem, VolumeItem,
+    CameraFrame, DecalItem, FrameData, Material, PointCloudItem, PointCloudRefItem, SceneFrame,
+    SceneRenderItem, VolumeItem,
 };
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -69,6 +70,56 @@ fn first_decal_frame_builds_no_pipelines() {
         h.stats().pipelines_built_this_frame,
         0,
         "the first decal frame must not compile a pipeline (decal pipelines are built in new())"
+    );
+}
+
+/// The point cloud pipelines belong to the point cloud item-type plugin, so
+/// `upload_point_cloud` compiles nothing: it writes buffers and builds one bind
+/// group against a layout the renderer already holds.
+#[test]
+fn point_cloud_pipelines_are_owned_by_the_plugin() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mesh_id = h
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&h.device, &meshes::stress_sphere(1.0, 3).into())
+        .expect("mesh upload");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    let base = mesh_frame(item.clone(), [200.0, 150.0]);
+    let _ = h.render_two_frames(&base, 200, 150);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]];
+    cloud.point_size = 8.0;
+    let source = h
+        .renderer
+        .resources_mut()
+        .upload_point_cloud(&h.device, &h.queue, &cloud);
+
+    let _ = h.render(&base, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "upload_point_cloud writes buffers and compiles nothing"
+    );
+
+    // The first frame that draws the cloud builds the plugin's pipelines, but
+    // they are the plugin's own and so stay off this counter.
+    let mut with_cloud = mesh_frame(item, [200.0, 150.0]);
+    with_cloud
+        .scene
+        .point_cloud_refs
+        .push(PointCloudRefItem::new(source));
+    let _ = h.render(&with_cloud, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "plugin-owned pipelines are not counted in the lib's pipeline cache"
     );
 }
 

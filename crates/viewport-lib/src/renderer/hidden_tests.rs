@@ -22,6 +22,7 @@ use crate::plugin_api::ItemTypePlugin as _;
 use crate::renderer::ImplicitPrimitive;
 use crate::renderer::PickId;
 use crate::renderer::item_plugins::gpu_implicit::GpuImplicitPlugin;
+use crate::renderer::item_plugins::point_cloud::PointCloudPlugin;
 use crate::resources::GpuImplicitItem;
 use crate::scene::material::ItemSettings;
 
@@ -85,19 +86,38 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
     // -----------------------------------------------------------------
     // Point cloud
     // -----------------------------------------------------------------
+    //
+    // The point cloud item type is an `ItemTypePlugin`, so the check drives
+    // the plugin's prepare directly instead of reading a renderer field.
     {
-        let mut fd = empty_frame();
         let mut vis = PointCloudItem::default();
         vis.positions = vec![[0.0, 0.0, 0.0]];
         vis.settings = visible();
         let mut hid = PointCloudItem::default();
         hid.positions = vec![[1.0, 0.0, 0.0]];
         hid.settings = hidden();
-        fd.scene.point_clouds.push(vis);
-        fd.scene.point_clouds.push(hid);
-        let _ = renderer.prepare_callback(&device, &queue, &fd);
+        let items: Vec<PointCloudItem> = vec![vis, hid];
+
+        let fd = empty_frame();
+        let resources = renderer.resources();
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &fd.camera.render_camera,
+            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
+            viewport_index: 0,
+            frame_index: 0,
+            jobs: crate::resources::Jobs::new(resources),
+            resources,
+            wireframe_mode: false,
+            outline_selected: false,
+            sub_selection: None,
+            clip_objects: &[],
+            quality_reduced: false,
+            ref_items: None,
+        };
+        let mut plugin = PointCloudPlugin::default();
+        let _ = plugin.prepare(&device, &queue, &ctx, &items);
         assert_eq!(
-            renderer.point_cloud_gpu_data.len(),
+            plugin.drawn_count(),
             1,
             "point_cloud: hidden item must not produce gpu data"
         );
@@ -278,6 +298,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            ref_items: None,
         };
         let mut plugin = GpuImplicitPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);

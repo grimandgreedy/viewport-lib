@@ -195,6 +195,14 @@ pub struct ItemFrameContext<'a> {
     /// the previous frame's measurement, since this frame's has not been
     /// taken yet.
     pub quality_reduced: bool,
+    /// Per-frame references to pre-uploaded content of this same item type,
+    /// for the built-in types that have a reference form (`point_clouds` has
+    /// `point_cloud_refs`, and so on). The reference items carry their own
+    /// `ItemSettings` and a per-frame model matrix; the payload lives in the
+    /// upload store. Always `None` for an externally registered plugin, whose
+    /// items arrive on one collection; it goes away when `SceneFrame` merges
+    /// the two.
+    pub(crate) ref_items: Option<&'a dyn PluginItemCollection>,
 }
 
 /// Information forwarded to a plugin's `paint`.

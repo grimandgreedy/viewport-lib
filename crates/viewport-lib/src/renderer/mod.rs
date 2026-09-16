@@ -120,7 +120,7 @@ use crate::resources::{
     BatchMeta, CLIP_VOLUME_MAX, CameraUniform, ClipPlanesUniform, ClipVolumeEntry,
     ClipVolumesUniform, DeviceResources, GridUniform, InstanceAabb, InstanceData, LightsUniform,
     ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, PickInstance,
-    ShadowAtlasUniform, SingleLightUniform, SplatOutlineMaskUniform,
+    ShadowAtlasUniform, SingleLightUniform,
 };
 
 /// Per-frame selection-outline state for one viewport, one entry per scene-item
@@ -132,8 +132,6 @@ use crate::resources::{
 pub(crate) struct SelectionOutlines {
     /// Per-frame outline buffers for selected objects.
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Per-frame outline buffers for selected Gaussian splat sets.
-    pub splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers>,
     /// Indices into `glyph_gpu_data` for selected glyph sets. Each entry is
     /// (gpu_data_index, instance_filter): None draws all instances, Some(indices)
     /// draws only those specific instance indices.
@@ -380,8 +378,6 @@ pub struct ViewportRenderer {
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
-    /// Per-frame point cloud GPU data, rebuilt in prepare(), consumed in paint().
-    point_cloud_gpu_data: Vec<crate::resources::PointCloudGpuData>,
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
     glyph_gpu_data: Vec<crate::resources::GlyphGpuData>,
     /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
@@ -565,7 +561,6 @@ pub struct ViewportRenderer {
     /// identity is stable means objects only moved: refit the pick BVH.
     pick_bvh_transform_rev: u64,
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_point_cloud_items: Vec<PointCloudItem>,
     /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_scatter_volume_items: Vec<crate::renderer::types::ScatterVolumeItem>,
     /// Volumes packed into the GPU storage buffer this frame
@@ -1011,7 +1006,6 @@ impl ViewportRenderer {
             plugin_frame_index: 0,
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
-            point_cloud_gpu_data: Vec::new(),
             glyph_gpu_data: Vec::new(),
             tensor_glyph_gpu_data: Vec::new(),
             polyline_gpu_data: Vec::new(),
@@ -1068,7 +1062,6 @@ impl ViewportRenderer {
             pick_bvh: std::sync::Mutex::new(None),
             pick_bvh_identity_rev: 0,
             pick_bvh_transform_rev: 0,
-            pick_point_cloud_items: Vec::new(),
             pick_scatter_volume_items: Vec::new(),
             prepared_scatter_volumes: Vec::new(),
             prepared_refraction_volumes: Vec::new(),
@@ -1964,6 +1957,7 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
+                    ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
                 };
                 bufs.extend(plugin.prepare(device, queue, &ctx, items));
             }
@@ -2020,8 +2014,8 @@ impl ViewportRenderer {
     pub(crate) fn any_plugin_items_submitted(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.keys().any(|name| {
-                crate::renderer::item_plugins::plugin_items_for(frame, name)
-                    .is_some_and(|items| !items.is_empty())
+                crate::renderer::item_plugins::plugin_collections_for(frame, name)
+                    .any(|items| !items.is_empty())
             })
     }
 
@@ -2240,6 +2234,7 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
+                    ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
                 };
                 plugin.cull(frustum, &ctx, items);
             }
@@ -2259,7 +2254,7 @@ impl ViewportRenderer {
             return false;
         }
         self.item_type_plugins.keys().any(|name| {
-            crate::renderer::item_plugins::plugin_items_for(frame, name).is_some_and(|items| {
+            crate::renderer::item_plugins::plugin_collections_for(frame, name).any(|items| {
                 (0..items.len()).any(|i| {
                     let s = items.item_settings(i);
                     if s.hidden {
@@ -3257,7 +3252,6 @@ impl ViewportRenderer {
         emit_scivis_draw_calls!(
             &self.resources,
             &mut *render_pass,
-            &self.point_cloud_gpu_data,
             &self.glyph_gpu_data,
             &self.polyline_gpu_data,
             &self.streamtube_gpu_data,

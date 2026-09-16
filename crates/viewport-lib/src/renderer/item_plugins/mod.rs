@@ -15,6 +15,7 @@ pub(crate) mod gaussian_splat;
 pub(crate) mod gpu_implicit;
 pub(crate) mod gpu_marching_cubes;
 pub(crate) mod image_slice;
+pub(crate) mod point_cloud;
 pub(crate) mod volume;
 pub(crate) mod volume_surface_slice;
 
@@ -33,6 +34,7 @@ pub(crate) fn plugin_items_for<'f>(
         gpu_implicit::TYPE_NAME => Some(&frame.scene.gpu_implicit),
         gpu_marching_cubes::TYPE_NAME => Some(&frame.scene.gpu_mc_items),
         image_slice::TYPE_NAME => Some(&frame.scene.image_slices),
+        point_cloud::TYPE_NAME => Some(&frame.scene.point_clouds),
         volume::TYPE_NAME => Some(&frame.scene.volumes),
         volume_surface_slice::TYPE_NAME => Some(&frame.scene.volume_surface_slices),
         _ => frame
@@ -43,11 +45,45 @@ pub(crate) fn plugin_items_for<'f>(
     }
 }
 
+/// The per-frame reference collection for a registered plugin, for the
+/// built-in types that have a reference form: a `*_refs` field whose items
+/// name a pre-uploaded payload in an upload store rather than carrying the
+/// data inline. `None` for every other type, including every external plugin.
+pub(crate) fn plugin_ref_items_for<'f>(
+    frame: &'f FrameData,
+    name: &str,
+) -> Option<&'f dyn PluginItemCollection> {
+    match name {
+        point_cloud::TYPE_NAME => Some(&frame.scene.point_cloud_refs),
+        _ => None,
+    }
+}
+
+/// Every collection submitted for `name` this frame: the type's own items and
+/// its reference items. Queries that ask "did this plugin get anything" or
+/// "what pick ids does it own" walk this rather than the items alone, so a
+/// frame carrying only reference items is not mistaken for an empty one.
+pub(crate) fn plugin_collections_for<'f>(
+    frame: &'f FrameData,
+    name: &str,
+) -> impl Iterator<Item = &'f dyn PluginItemCollection> {
+    [
+        plugin_items_for(frame, name),
+        plugin_ref_items_for(frame, name),
+    ]
+    .into_iter()
+    .flatten()
+}
+
 impl crate::renderer::ViewportRenderer {
     /// Register the internal item-type plugins. Called once at construction;
     /// external registration through
     /// [`with_item_type_plugin`](Self::with_item_type_plugin) is unaffected.
     pub(crate) fn register_internal_item_plugins(&mut self, device: &crate::gpu::Device) {
+        // Registration order is draw order. The scivis types keep the order the
+        // shared draw loop gave them, so a migrated type keeps blending against
+        // its neighbours the way it always has.
+        self.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
         self.with_item_type_plugin(
             device,
             Box::new(gaussian_splat::GaussianSplatPlugin::default()),

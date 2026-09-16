@@ -46,7 +46,6 @@ impl ViewportRenderer {
                     .map(|item| item.to_render_item()),
             )
             .collect();
-        self.pick_point_cloud_items = frame.scene.point_clouds.clone();
         self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
         self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
         self.pick_polyline_items = frame.scene.polylines.clone();
@@ -70,7 +69,6 @@ impl ViewportRenderer {
         *self.pick_bvh.lock().unwrap() = None;
         self.pick_bvh_identity_rev = 0;
         self.pick_bvh_transform_rev = 0;
-        self.pick_point_cloud_items = Vec::new();
         self.pick_scatter_volume_items = Vec::new();
         self.pick_volume_mesh_items = Vec::new();
         self.pick_polyline_items = Vec::new();

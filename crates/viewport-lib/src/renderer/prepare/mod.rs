@@ -414,7 +414,6 @@ impl ViewportRenderer {
         let geometry_start = web_time::Instant::now();
         Self::upload_geometry_glyphs(
             resources,
-            &mut self.point_cloud_gpu_data,
             &mut self.glyph_gpu_data,
             &mut self.sprite_gpu_data,
             &mut self.particle_gpu_data,

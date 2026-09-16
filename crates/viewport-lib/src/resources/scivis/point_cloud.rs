@@ -1,25 +1,16 @@
 use super::*;
 
-/// Point-cloud render pipeline and its bind group layout, both built lazily on
-/// the first point-cloud submission. Grouped off `DeviceResources`.
+/// The point cloud group-1 bind group layout. Uploads build their bind groups
+/// against it, so it lives here with the store rather than with the item type's
+/// pipelines, and is created up front: it is a layout, not a compiled pipeline.
 pub(crate) struct PointCloudResources {
-    /// Point cloud render pipeline. None until first point cloud is submitted.
-    pub(crate) pipeline: Option<crate::resources::DualPipeline>,
     /// Bind group layout for point cloud uniforms (group 1).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) bgl: crate::gpu::BindGroupLayout,
 }
 
-impl DeviceResources {
-    /// Lazily create the point cloud render pipeline (PointList topology).
-    ///
-    /// No-op if already created. Called from `prepare()` when `frame.scene.point_clouds` is non-empty.
-    pub(crate) fn ensure_point_cloud_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.point_cloud.pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        let pc_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+impl PointCloudResources {
+    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("point_cloud_bgl"),
             entries: &[
                 crate::gpu::BindGroupLayoutEntry {
@@ -92,55 +83,16 @@ impl DeviceResources {
             ],
         });
 
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "point_cloud_shader",
-            crate::resources::builders::wgsl_source!("point_cloud"),
-        );
-
-        let layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "point_cloud_pipeline_layout",
-            &self.binds.camera_bgl,
-            &pc_bgl,
-        );
-
-        let pc_vertex_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &[crate::gpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: crate::gpu::VertexFormat::Float32x3,
-            }],
-        };
-
-        self.point_cloud.pipeline = Some(crate::resources::builders::build_dual_pipeline(
-            device,
-            &crate::resources::builders::DualPipelineDesc {
-                label: "point_cloud_pipeline",
-                layout: &layout,
-                shader: &shader,
-                vertex_entry: "vs_main",
-                fragment_entry: "fs_main",
-                vertex_buffers: &[pc_vertex_layout.clone()],
-                blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                depth_write: true,
-                depth_compare: crate::gpu::CompareFunction::Less,
-                sample_count: self.sample_count,
-                ldr_format: self.target_format,
-            },
-        ));
-        self.point_cloud.bgl = Some(pc_bgl);
+        Self { bgl }
     }
+}
 
+impl DeviceResources {
     /// Upload one [`PointCloudItem`] to the GPU and return draw data.
     ///
-    /// Called from `prepare()` for each non-empty item in `frame.scene.point_clouds`.
+    /// Shared by the per-frame item upload and the pre-upload store.
     pub(crate) fn upload_point_cloud_per_frame(
-        &mut self,
+        &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         item: &crate::renderer::PointCloudItem,
@@ -335,14 +287,9 @@ impl DeviceResources {
 
         let lut_sampler = &self.material.sampler;
 
-        let bgl = self
-            .point_cloud
-            .bgl
-            .as_ref()
-            .expect("ensure_point_cloud_pipeline not called");
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pc_bind_group"),
-            layout: bgl,
+            layout: &self.point_cloud.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -395,7 +342,6 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::PointCloudItem,
     ) -> crate::resources::PointCloudId {
-        self.ensure_point_cloud_pipeline(device);
         let gpu = self.upload_point_cloud_per_frame(device, queue, item);
         self.content.point_cloud_store.insert(gpu)
     }
@@ -416,7 +362,6 @@ impl DeviceResources {
         if !self.content.point_cloud_store.contains(id) {
             return false;
         }
-        self.ensure_point_cloud_pipeline(device);
         let gpu = self.upload_point_cloud_per_frame(device, queue, item);
         self.content.point_cloud_store.replace(id, gpu)
     }
@@ -506,9 +451,9 @@ mod tests {
         pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
-    /// Both lazily-built pipeline pairs start empty at construction, and their
-    /// bind group layouts too. Guards the init-assembly grouping of
-    /// `point_cloud` and `compute_filter`.
+    /// The compute-filter pipeline pair is still lazily built. The point cloud
+    /// layout is not: uploads bind against it, so it is created up front while
+    /// the pipelines that use it belong to the item type.
     #[test]
     fn lazy_pipeline_pairs_start_empty() {
         let Some((device, _queue)) = try_make_device() else {
@@ -516,8 +461,6 @@ mod tests {
             return;
         };
         let res = DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        assert!(res.point_cloud.pipeline.is_none());
-        assert!(res.point_cloud.bgl.is_none());
         assert!(res.compute_filter.pipeline.is_none());
         assert!(res.compute_filter.bgl.is_none());
     }

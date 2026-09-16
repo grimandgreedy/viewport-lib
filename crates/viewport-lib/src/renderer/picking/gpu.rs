@@ -183,11 +183,6 @@ enum PickSubKind {
     /// triangle, mapped to a segment / strip through the item's `tri_segment` /
     /// `tri_strip` tables.
     Curve,
-    /// Point cloud: `instance_index` is the point.
-    CloudPoint,
-    /// Ray-marched volume: the primitive channel carries the flat index of the
-    /// first in-threshold voxel the fragment marched to.
-    Voxel,
 }
 
 /// One glyph or tensor-glyph set to draw into the pick pass. The group-1 bind
@@ -224,17 +219,6 @@ struct PolylinePickDraw<'a> {
     segment_count: u32,
 }
 
-/// One point cloud to draw into the pick pass. The owned group-2 bind group
-/// holds the object id; the group-1 render bind group (uniform + LUT + radius
-/// buffer) and the position buffer are borrowed from prepared
-/// `PointCloudGpuData`.
-struct PointCloudPickDraw<'a> {
-    id_bind_group: crate::gpu::BindGroup,
-    render_bind_group: &'a crate::gpu::BindGroup,
-    vertex_buffer: &'a crate::gpu::Buffer,
-    point_count: u32,
-}
-
 /// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
 /// in `mesh_store`; tube-family items reference the owned per-frame buffers built
 /// during prepare.
@@ -266,7 +250,6 @@ struct PickPipelineFlags {
     has_pickable_tensor: bool,
     has_pickable_sprites: bool,
     has_pickable_polylines: bool,
-    has_pickable_point_clouds: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -353,7 +336,6 @@ struct PickDrawSet<'a> {
     glyph_draws: Vec<GlyphPickDraw<'a>>,
     sprite_draws: Vec<SpritePickDraw<'a>>,
     polyline_draws: Vec<PolylinePickDraw<'a>>,
-    point_cloud_draws: Vec<PointCloudPickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -380,7 +362,6 @@ impl PickDrawSet<'_> {
             && self.glyph_draws.is_empty()
             && self.sprite_draws.is_empty()
             && self.polyline_draws.is_empty()
-            && self.point_cloud_draws.is_empty()
             && !self.has_plugin_pick
     }
 }
@@ -966,18 +947,6 @@ impl ViewportRenderer {
             self.resources.ensure_polyline_pick_pipeline(device);
         }
 
-        // Point clouds: each renders as a screen-space quad per point (approach
-        // B), so the pick reuses that expansion. CLOUD_POINT sub-object comes
-        // from the forwarded instance index.
-        let has_pickable_point_clouds = mask.intersects(PickMask::OBJECT | PickMask::CLOUD_POINT)
-            && self
-                .point_cloud_gpu_data
-                .iter()
-                .any(|g| g.pick_id != PickId::NONE && g.point_count > 0);
-        if has_pickable_point_clouds {
-            self.resources.ensure_point_cloud_pick_pipeline(device);
-        }
-
         // Decals rasterise their projection box (the unit cube mapped by
         // `transform`) as an object-level proxy. Ensure the shared cube mesh
         // exists when a decal is pickable and the query asks for OBJECT. Computed
@@ -1032,7 +1001,6 @@ impl ViewportRenderer {
             has_pickable_tensor,
             has_pickable_sprites,
             has_pickable_polylines,
-            has_pickable_point_clouds,
             decal_cube,
             scatter_cube,
             scatter_sphere,
@@ -1062,7 +1030,6 @@ impl ViewportRenderer {
         let has_pickable_tensor = flags.has_pickable_tensor;
         let has_pickable_sprites = flags.has_pickable_sprites;
         let has_pickable_polylines = flags.has_pickable_polylines;
-        let has_pickable_point_clouds = flags.has_pickable_point_clouds;
         let decal_cube = flags.decal_cube;
         let scatter_cube = flags.scatter_cube;
         let scatter_sphere = flags.scatter_sphere;
@@ -1378,47 +1345,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Point clouds: each item draws its screen-space quad expansion with a
-        // group-2 object-id uniform. The group-1 render bind group (uniform +
-        // LUT + radius buffer) is reused unchanged.
-        let mut point_cloud_draws: Vec<PointCloudPickDraw> = Vec::new();
-        if has_pickable_point_clouds && self.resources.pick.point_cloud_pipeline.is_some() {
-            let id_bgl = self
-                .resources
-                .pick
-                .point_cloud_pick_id_bgl
-                .as_ref()
-                .expect("point cloud pick id bgl built with the pipeline");
-            for gpu in self
-                .point_cloud_gpu_data
-                .iter()
-                .filter(|g| g.pick_id != PickId::NONE && g.point_count > 0)
-            {
-                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("point_cloud_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("point_cloud_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: id_buf.as_entire_binding(),
-                    }],
-                });
-                point_cloud_draws.push(PointCloudPickDraw {
-                    id_bind_group,
-                    render_bind_group: &gpu.bind_group,
-                    vertex_buffer: &gpu.vertex_buffer,
-                    point_count: gpu.point_count,
-                });
-            }
-        }
-
         // Registered plugins draw their own pick-ids into the pass. They answer
         // the same level set as built-in surfaces (object plus the mesh
         // sub-object levels, refined through `ItemTypePlugin::resolve_sub_object`
@@ -1451,7 +1377,6 @@ impl ViewportRenderer {
             glyph_draws,
             sprite_draws,
             polyline_draws,
-            point_cloud_draws,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -1742,23 +1667,6 @@ impl ViewportRenderer {
                     pick_pass.set_bind_group(2, &pd.id_bind_group, &[]);
                     pick_pass.set_vertex_buffer(0, pd.vertex_buffer.slice(..));
                     pick_pass.draw(0..6, 0..pd.segment_count);
-                }
-            }
-        }
-
-        // Point clouds: each item draws its screen-space quad expansion.
-        // Group 0 is the full scene camera bind group (the expansion needs
-        // the viewport size); group 1 is the reused render bind group;
-        // group 2 is the per-item object id.
-        if let Some(point_cloud_pipeline) = self.resources.pick.point_cloud_pipeline.as_ref() {
-            if !draw_set.point_cloud_draws.is_empty() {
-                pick_pass.set_pipeline(point_cloud_pipeline);
-                pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
-                for pcd in &draw_set.point_cloud_draws {
-                    pick_pass.set_bind_group(1, pcd.render_bind_group, &[]);
-                    pick_pass.set_bind_group(2, &pcd.id_bind_group, &[]);
-                    pick_pass.set_vertex_buffer(0, pcd.vertex_buffer.slice(..));
-                    pick_pass.draw(0..6, 0..pcd.point_count);
                 }
             }
         }
@@ -2486,20 +2394,6 @@ impl ViewportRenderer {
                     None
                 }
             }
-            PickSubKind::CloudPoint => {
-                if mask.intersects(PickMask::CLOUD_POINT) {
-                    Some(SubObjectRef::Point(sub_primitive))
-                } else {
-                    None
-                }
-            }
-            PickSubKind::Voxel => {
-                if mask.intersects(PickMask::VOXEL) {
-                    Some(SubObjectRef::Voxel(sub_primitive))
-                } else {
-                    None
-                }
-            }
             PickSubKind::Surface => self.resolve_surface_sub_object(
                 object_id,
                 sub_primitive,
@@ -2583,12 +2477,6 @@ impl ViewportRenderer {
             PickSubKind::Instance => mask
                 .intersects(PickMask::INSTANCE)
                 .then_some(SubObjectRef::Instance(sub_primitive)),
-            PickSubKind::CloudPoint => mask
-                .intersects(PickMask::CLOUD_POINT)
-                .then_some(SubObjectRef::Point(sub_primitive)),
-            PickSubKind::Voxel => mask
-                .intersects(PickMask::VOXEL)
-                .then_some(SubObjectRef::Voxel(sub_primitive)),
             PickSubKind::Polyline => {
                 if mask.intersects(PickMask::STRIP) {
                     let strip = self
@@ -2735,13 +2623,12 @@ impl ViewportRenderer {
         // built-in item resolves to the built-in kind (ids are consumer-assigned
         // and expected unique; this just makes the overlap deterministic).
         for (name, _) in self.item_type_plugins.iter() {
-            let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) else {
-                continue;
-            };
-            for i in 0..items.len() {
-                let settings = items.item_settings(i);
-                if !settings.hidden && settings.pick_id != PickId::NONE {
-                    kinds.insert(settings.pick_id.0, PickSubKind::Plugin(name));
+            for items in crate::renderer::item_plugins::plugin_collections_for(frame, name) {
+                for i in 0..items.len() {
+                    let settings = items.item_settings(i);
+                    if !settings.hidden && settings.pick_id != PickId::NONE {
+                        kinds.insert(settings.pick_id.0, PickSubKind::Plugin(name));
+                    }
                 }
             }
         }
@@ -2804,15 +2691,6 @@ impl ViewportRenderer {
             .filter(|g| g.pick_id != PickId::NONE && g.segment_count > 0)
         {
             kinds.insert(gpu.pick_id.0, PickSubKind::Polyline);
-        }
-
-        // Point clouds.
-        for gpu in self
-            .point_cloud_gpu_data
-            .iter()
-            .filter(|g| g.pick_id != PickId::NONE && g.point_count > 0)
-        {
-            kinds.insert(gpu.pick_id.0, PickSubKind::CloudPoint);
         }
 
         kinds

@@ -275,12 +275,6 @@ pub(crate) struct PickResources {
     pub(crate) polyline_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the polyline pick pipeline (per-draw object-id uniform).
     pub(crate) polyline_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for point clouds: reuses the render screen-space quad
-    /// expansion and writes the item's object id plus the hit point's instance
-    /// index.
-    pub(crate) point_cloud_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the point cloud pick pipeline (per-item object-id uniform).
-    pub(crate) point_cloud_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Screen-space image quad pipelines (plain + depth-composite) and the rect
@@ -353,8 +347,6 @@ pub(crate) struct OutlineResources {
     pub(crate) edge_bgl: crate::gpu::BindGroupLayout,
     /// X-ray pipeline: draws selected objects through occluders (depth Always).
     pub(crate) xray_pipeline: crate::gpu::RenderPipeline,
-    /// Billboard disc pipeline for the Gaussian splat outline mask pass.
-    pub(crate) splat_mask_pipeline: crate::gpu::RenderPipeline,
     /// Offscreen RGBA texture the outline stencil pass renders into.
     pub(crate) colour_texture: Option<crate::gpu::Texture>,
     pub(crate) colour_view: Option<crate::gpu::TextureView>,

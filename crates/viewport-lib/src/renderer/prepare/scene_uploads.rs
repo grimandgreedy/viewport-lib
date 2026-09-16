@@ -149,7 +149,6 @@ impl ViewportRenderer {
 
     pub(super) fn upload_geometry_glyphs(
         resources: &mut DeviceResources,
-        point_cloud_gpu_data: &mut Vec<crate::resources::PointCloudGpuData>,
         glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
         sprite_gpu_data: &mut Vec<crate::resources::SpriteGpuData>,
         particle_gpu_data: &mut Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
@@ -160,37 +159,8 @@ impl ViewportRenderer {
         sink: &mut crate::renderer::SubmitSink,
     ) {
         // ------------------------------------------------------------------
-        // point cloud and glyph GPU data upload.
+        // glyph GPU data upload.
         // ------------------------------------------------------------------
-        point_cloud_gpu_data.clear();
-        if !frame.scene.point_clouds.is_empty() {
-            resources.ensure_point_cloud_pipeline(device);
-            for item in &frame.scene.point_clouds {
-                if item.settings.hidden || item.positions.is_empty() {
-                    continue;
-                }
-                let gpu_data = resources.upload_point_cloud_per_frame(device, queue, item);
-                point_cloud_gpu_data.push(gpu_data);
-            }
-        }
-
-        // Pre-uploaded point cloud references. Model matrix lives at offset 0
-        // of PointCloudUniform.
-        if !frame.scene.point_cloud_refs.is_empty() {
-            resources.ensure_point_cloud_pipeline(device);
-            for ref_item in &frame.scene.point_cloud_refs {
-                if ref_item.settings.hidden {
-                    continue;
-                }
-                let entry = match resources.content.point_cloud_store.get(ref_item.source) {
-                    Some(e) => e.clone(),
-                    None => continue,
-                };
-                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
-                point_cloud_gpu_data.push(entry);
-            }
-        }
-
         glyph_gpu_data.clear();
         if !frame.scene.glyphs.is_empty() {
             resources.ensure_glyph_pipeline(device);

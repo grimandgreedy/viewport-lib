@@ -430,8 +430,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Splat outline buffers: point sprite discs for selected Gaussian splat sets.
-        let mut splat_outline_buffers: Vec<crate::resources::SplatOutlineBuffers> = Vec::new();
         // Curve mesh outline items: streamtubes, tubes, ribbons rendered via outline_mask_pipeline.
         let mut streamtube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
         let mut tube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
@@ -445,140 +443,6 @@ impl ViewportRenderer {
         let mut tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
         let mut sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
         if frame.interaction.outline_selected {
-            let [vp_w, vp_h] = frame.camera.viewport_size;
-            // Point cloud outline buffers: reuse the same point sprite mask pipeline.
-            for item in &frame.scene.point_clouds {
-                if item.settings.hidden || item.positions.is_empty() {
-                    continue;
-                }
-                let pixel_radius = (item.point_size * 0.5).max(1.0);
-                if item.settings.selected {
-                    // Object-level: outline all points.
-                    let position_buf =
-                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                            label: Some("pc_outline_pos_buf"),
-                            contents: bytemuck::cast_slice(item.positions.as_slice()),
-                            usage: crate::gpu::BufferUsages::VERTEX,
-                        });
-                    let uniform = SplatOutlineMaskUniform {
-                        model: item.model,
-                        viewport_w: vp_w,
-                        viewport_h: vp_h,
-                        pixel_radius,
-                        _pad: [0.0; 9],
-                    };
-                    let uniform_buf =
-                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                            label: Some("pc_outline_uniform_buf"),
-                            contents: bytemuck::cast_slice(&[uniform]),
-                            usage: crate::gpu::BufferUsages::UNIFORM,
-                        });
-                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("pc_outline_bg"),
-                        layout: &self.resources.outline.bind_group_layout,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: uniform_buf.as_entire_binding(),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 1,
-                                resource: self
-                                    .resources
-                                    .content
-                                    .fallback_position_override_buf
-                                    .as_entire_binding(),
-                            },
-                        ],
-                    });
-                    let n = item.positions.len();
-                    let size_data: Vec<f32> = vec![pixel_radius; n];
-                    let size_buf =
-                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                            label: Some("pc_outline_size_buf"),
-                            contents: bytemuck::cast_slice(&size_data),
-                            usage: crate::gpu::BufferUsages::VERTEX,
-                        });
-                    splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                        position_buf,
-                        size_buf,
-                        instance_count: n as u32,
-                        _uniform_buf: uniform_buf,
-                        bind_group,
-                    });
-                } else if item.settings.pick_id != PickId::NONE {
-                    // Per-point sub-selection: outline only the selected points.
-                    let sub_sel = frame.interaction.sub_selection.as_ref();
-                    let selected_positions: Vec<[f32; 3]> = sub_sel
-                        .iter()
-                        .flat_map(|s| s.items.iter())
-                        .filter_map(|(node_id, sub)| {
-                            if *node_id == item.settings.pick_id.0 {
-                                if let crate::renderer::SubObjectRef::Point(i) = sub {
-                                    return item.positions.get(*i as usize).copied();
-                                }
-                            }
-                            None
-                        })
-                        .collect();
-                    if selected_positions.is_empty() {
-                        continue;
-                    }
-                    let n = selected_positions.len();
-                    let uniform = SplatOutlineMaskUniform {
-                        model: item.model,
-                        viewport_w: vp_w,
-                        viewport_h: vp_h,
-                        pixel_radius,
-                        _pad: [0.0; 9],
-                    };
-                    let uniform_buf =
-                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                            label: Some("pc_sel_outline_uniform_buf"),
-                            contents: bytemuck::cast_slice(&[uniform]),
-                            usage: crate::gpu::BufferUsages::UNIFORM,
-                        });
-                    let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("pc_sel_outline_bg"),
-                        layout: &self.resources.outline.bind_group_layout,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: uniform_buf.as_entire_binding(),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 1,
-                                resource: self
-                                    .resources
-                                    .content
-                                    .fallback_position_override_buf
-                                    .as_entire_binding(),
-                            },
-                        ],
-                    });
-                    let position_buf =
-                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                            label: Some("pc_sel_outline_pos_buf"),
-                            contents: bytemuck::cast_slice(&selected_positions),
-                            usage: crate::gpu::BufferUsages::VERTEX,
-                        });
-                    let size_data = vec![pixel_radius; n];
-                    let size_buf =
-                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                            label: Some("pc_sel_outline_size_buf"),
-                            contents: bytemuck::cast_slice(&size_data),
-                            usage: crate::gpu::BufferUsages::VERTEX,
-                        });
-                    splat_outline_buffers.push(crate::resources::SplatOutlineBuffers {
-                        position_buf,
-                        size_buf,
-                        instance_count: n as u32,
-                        _uniform_buf: uniform_buf,
-                        bind_group,
-                    });
-                }
-            }
-
             // Glyph outline indices: record which glyph GPU data entries are selected
             // so the mask pass can render the actual instanced mesh.
             {
@@ -919,7 +783,6 @@ impl ViewportRenderer {
         {
             let slot = &mut self.viewport_slots[vp_idx];
             slot.selection_outlines.outline_object_buffers = outline_object_buffers;
-            slot.selection_outlines.splat_outline_buffers = splat_outline_buffers;
             slot.selection_outlines.streamtube_outline_items = streamtube_outline_items;
             slot.selection_outlines.tube_outline_items = tube_outline_items;
             slot.selection_outlines.ribbon_outline_items = ribbon_outline_items;
@@ -967,10 +830,6 @@ impl ViewportRenderer {
                 .selection_outlines
                 .outline_object_buffers
                 .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .splat_outline_buffers
-                    .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
                     .streamtube_outline_items
@@ -1043,8 +902,6 @@ impl ViewportRenderer {
             let slot_ref = &self.viewport_slots[vp_idx];
             let outlines_ptr = &slot_ref.selection_outlines.outline_object_buffers
                 as *const Vec<OutlineObjectBuffers>;
-            let splat_outlines_ptr = &slot_ref.selection_outlines.splat_outline_buffers
-                as *const Vec<crate::resources::SplatOutlineBuffers>;
             let streamtube_outline_items_ptr = &slot_ref.selection_outlines.streamtube_outline_items
                 as *const Vec<CurveMeshOutlineItem>;
             let tube_outline_items_ptr =
@@ -1085,7 +942,6 @@ impl ViewportRenderer {
             // no other code modifies these fields here.
             let (
                 outlines,
-                splat_outlines,
                 streamtube_outline_items,
                 tube_outline_items,
                 ribbon_outline_items,
@@ -1109,7 +965,6 @@ impl ViewportRenderer {
             ) = unsafe {
                 (
                     &*outlines_ptr,
-                    &*splat_outlines_ptr,
                     &*streamtube_outline_items_ptr,
                     &*tube_outline_items_ptr,
                     &*ribbon_outline_items_ptr,
@@ -1212,18 +1067,6 @@ impl ViewportRenderer {
                     };
                     pass.set_index_buffer(index_slice, crate::gpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..index_count, 0, 0..1);
-                }
-
-                // Draw Gaussian splat outline discs.  Each splat position expands to
-                // a screen-space disc in the vertex shader (6 vertices per instance).
-                // Depth is tested (splats behind selected meshes are culled) but not
-                // written, so all visible splats in a cloud contribute to the mask.
-                pass.set_pipeline(&self.resources.outline.splat_mask_pipeline);
-                for splat in splat_outlines {
-                    pass.set_bind_group(1, &splat.bind_group, &[]);
-                    pass.set_vertex_buffer(0, splat.position_buf.slice(..));
-                    pass.set_vertex_buffer(1, splat.size_buf.slice(..));
-                    pass.draw(0..6, 0..splat.instance_count);
                 }
 
                 // Draw glyph instances into the mask using the actual instanced

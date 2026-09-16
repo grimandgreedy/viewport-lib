@@ -41,7 +41,6 @@ impl ViewportRenderer {
         let wants_face = mask.intersects(PickMask::FACE);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
         let wants_cell = mask.intersects(PickMask::CELL);
-        let wants_cloud = mask.intersects(PickMask::CLOUD_POINT);
         let wants_object = mask.intersects(PickMask::OBJECT);
 
         // Build lookup for opaque volume mesh face_to_cell maps.
@@ -237,36 +236,6 @@ impl ViewportRenderer {
                                 result
                                     .elements
                                     .push((id, SubObjectRef::Cell(cell_idx as u32)));
-                            }
-                            item_hit = true;
-                        }
-                    }
-                }
-
-                if wants_object && item_hit {
-                    result.objects.push(id);
-                }
-            }
-        }
-
-        // 3. Point cloud picks (CLOUD_POINT or OBJECT).
-        if wants_cloud || wants_object {
-            for item in &self.pick_point_cloud_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let mvp = view_proj * model;
-                let id = item.settings.pick_id.0;
-                let mut item_hit = false;
-
-                for (pt_idx, pos) in item.positions.iter().enumerate() {
-                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
-                        if in_rect(sx, sy) {
-                            if wants_cloud {
-                                result
-                                    .elements
-                                    .push((id, SubObjectRef::Point(pt_idx as u32)));
                             }
                             item_hit = true;
                         }

@@ -34,8 +34,7 @@ impl ViewportRenderer {
         mask: PickMask,
     ) -> Option<PickHit> {
         use crate::interaction::query::picking::{
-            pick_gaussian_splat_cpu, pick_point_cloud_cpu, pick_transparent_volume_mesh_cpu,
-            screen_to_ray,
+            pick_gaussian_splat_cpu, pick_transparent_volume_mesh_cpu, screen_to_ray,
         };
         use parry3d::math::{Pose, Vector};
         use parry3d::query::{Ray, RayCast};
@@ -55,7 +54,6 @@ impl ViewportRenderer {
         let wants_face = mask.intersects(PickMask::FACE);
         let wants_vertex = mask.intersects(PickMask::VERTEX);
         let wants_cell = mask.intersects(PickMask::CELL);
-        let wants_cloud = mask.intersects(PickMask::CLOUD_POINT);
         let wants_object = mask.intersects(PickMask::OBJECT);
         let wants_mesh_sub = wants_face || wants_vertex || mask.intersects(PickMask::EDGE);
 
@@ -310,30 +308,6 @@ impl ViewportRenderer {
                 ) {
                     let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
                     if !wants_cell {
-                        hit.sub_object = None;
-                    }
-                    consider(toi, hit);
-                }
-            }
-        }
-
-        // 3. Point cloud picks (CLOUD_POINT or OBJECT fallback).
-        if wants_cloud || wants_object {
-            for item in &self.pick_point_cloud_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                let radius_px = item.point_size.max(4.0);
-                if let Some(mut hit) = pick_point_cloud_cpu(
-                    click_pos,
-                    item.settings.pick_id.0,
-                    item,
-                    view_proj,
-                    viewport_size,
-                    radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if !wants_cloud {
                         hit.sub_object = None;
                     }
                     consider(toi, hit);

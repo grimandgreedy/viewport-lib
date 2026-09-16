@@ -319,7 +319,6 @@ impl ViewportRenderer {
             emit_scivis_draw_calls!(
                 &self.resources,
                 &mut render_pass,
-                &self.point_cloud_gpu_data,
                 &self.glyph_gpu_data,
                 &self.polyline_gpu_data,
                 &self.streamtube_gpu_data,

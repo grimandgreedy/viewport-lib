@@ -116,9 +116,9 @@ pub(crate) use self::types::{
     OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
     OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
     OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ScreenRectOutlineBuffers,
-    ShadowAtlasUniform, ShadowCullState, SplatOutlineBuffers, SplatOutlineMaskUniform,
-    SpriteGpuData, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData,
-    ToneMapUniform, ViewportCullState, ViewportHdrState,
+    ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform, SpriteGpuData, SsaoUniform,
+    StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData, ToneMapUniform, ViewportCullState,
+    ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

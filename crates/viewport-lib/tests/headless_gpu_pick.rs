@@ -1761,41 +1761,8 @@ fn gpu_pick_rect_resolves_plugin_faces() {
 }
 
 // ---------------------------------------------------------------------------
-// GPU pick: point clouds and Gaussian splats, image slices and volume
-// surface slices
+// GPU pick: Gaussian splats, image slices and volume surface slices
 // ---------------------------------------------------------------------------
-
-#[test]
-fn gpu_pick_point_cloud_resolves_point() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // Three points spread along X. The centre point (index 1) sits at world
-    // origin, under the cursor. CLOUD_POINT picking reads the forwarded
-    // instance_index, which needs no device feature.
-    let mut cloud = PointCloudItem::default();
-    cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    cloud.point_size = 20.0;
-    cloud.settings.pick_id = PickId(444);
-    frame.scene.point_clouds.push(cloud);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::CLOUD_POINT,
-    );
-    let hit = hit.expect("centre point should be hit");
-    assert_eq!(hit.id, 444);
-    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
-}
 
 #[test]
 fn gpu_pick_splat_resolves_splat() {
@@ -1929,53 +1896,6 @@ fn gpu_pick_rect_returns_unique_object_ids() {
             .iter()
             .all(|(id, sub)| *id == 654 && matches!(sub, viewport_lib::SubObjectRef::Face(_))),
         "FACE rect elements must all be faces of the box"
-    );
-}
-
-#[test]
-fn gpu_pick_rect_resolves_point_cloud_elements() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // Three fat points spread across the centre of the view.
-    let mut pc = PointCloudItem::default();
-    pc.positions = vec![[-1.2, 0.0, 0.0], [0.0, 0.0, 0.0], [1.2, 0.0, 0.0]];
-    pc.point_size = 24.0;
-    pc.settings.pick_id = PickId(500);
-    frame.scene.point_clouds.push(pc);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    // A CLOUD_POINT rect over the whole frame collects point sub-objects and no
-    // objects (the mask carries no OBJECT bit). Point sub-objects come from the
-    // instance index, so this needs no device feature.
-    let result = renderer.pick_rect_objects(
-        PickBackend::Gpu,
-        glam::Vec2::new(0.0, 0.0),
-        glam::Vec2::new(64.0, 64.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::CLOUD_POINT,
-    );
-    assert!(
-        result.objects.is_empty(),
-        "CLOUD_POINT mask carries no OBJECT bit"
-    );
-    assert!(
-        !result.elements.is_empty(),
-        "rect should collect point sub-objects"
-    );
-    assert!(
-        result
-            .elements
-            .iter()
-            .all(|(id, sub)| *id == 500 && matches!(sub, viewport_lib::SubObjectRef::Point(_))),
-        "every element must be a point of the cloud"
     );
 }
 

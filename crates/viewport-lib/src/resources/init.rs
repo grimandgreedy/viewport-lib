@@ -2096,70 +2096,6 @@ impl DeviceResources {
         let outline_mask_pipeline = outline_masks.mask;
         let outline_mask_two_sided_pipeline = outline_masks.mask_two_sided;
 
-        // Billboard disc pipeline for the Gaussian splat outline mask pass.
-        // Reuses the same pipeline layout as the mesh mask pipelines (camera_bgl + outline_bgl).
-        // Positions are instance-stepped vec3; each instance expands to a 6-vertex quad.
-        let splat_outline_mask_shader = crate::resources::builders::wgsl_module(
-            device,
-            "splat_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("splat_outline_mask"),
-        );
-        let splat_outline_pos_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }];
-        let splat_outline_pos_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 12, // vec3<f32>
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &splat_outline_pos_attrs,
-        };
-        let splat_outline_size_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 1,
-            format: crate::gpu::VertexFormat::Float32,
-        }];
-        let splat_outline_size_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 4, // f32
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &splat_outline_size_attrs,
-        };
-        let splat_outline_mask_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "splat_outline_mask_pipeline",
-                layout: &outline_pipeline_layout,
-                vertex_module: &splat_outline_mask_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[splat_outline_pos_layout, splat_outline_size_layout],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &splat_outline_mask_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::R8Unorm,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
         // outputs an anti-aliased outline ring to the outline colour texture.
         let outline_edge_shader = crate::resources::builders::wgsl_module(
@@ -2472,7 +2408,6 @@ impl DeviceResources {
                 edge_pipeline: outline_edge_pipeline,
                 edge_bgl: outline_edge_bgl,
                 xray_pipeline,
-                splat_mask_pipeline: splat_outline_mask_pipeline,
                 colour_texture: None,
                 colour_view: None,
                 depth_texture: None,
@@ -2489,10 +2424,7 @@ impl DeviceResources {
             cull: crate::resources::mesh::instancing::CullResources::default(),
             lic: crate::resources::postprocess::LicResources::default(),
             sprite: crate::resources::scivis::sprite::SpriteResources::default(),
-            point_cloud: crate::resources::scivis::point_cloud::PointCloudResources {
-                pipeline: None,
-                bgl: None,
-            },
+            point_cloud: crate::resources::scivis::point_cloud::PointCloudResources::new(device),
             glyph: crate::resources::scivis::glyph::GlyphResources::default(),
             tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::default(),
             polyline: crate::resources::scivis::polyline::PolylineResources::default(),

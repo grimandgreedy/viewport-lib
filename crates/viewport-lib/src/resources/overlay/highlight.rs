@@ -680,20 +680,6 @@ pub(crate) struct SplatOutlineMaskUniform {
     pub(crate) _pad: [f32; 9],       // 36 bytes  (total: 112)
 }
 
-/// Per-frame GPU buffers for one selected Gaussian splat set's outline mask draw.
-pub(crate) struct SplatOutlineBuffers {
-    /// Object-space positions as `[f32; 3]` per splat, instance-stepped.
-    pub(crate) position_buf: crate::gpu::Buffer,
-    /// Per-instance pixel radius as `f32`, instance-stepped.
-    pub(crate) size_buf: crate::gpu::Buffer,
-    /// Number of splats (= instance count).
-    pub(crate) instance_count: u32,
-    /// Uniform buffer kept alive for the duration of the frame.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// Bind group for group 1 (SplatOutlineMaskUniform).
-    pub(crate) bind_group: crate::gpu::BindGroup,
-}
-
 /// Per-frame outline item for a tube/streamtube/ribbon mesh.
 ///
 /// Holds an index into the per-frame gpu_data array and a mask bind group
