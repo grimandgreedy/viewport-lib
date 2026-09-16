@@ -6,7 +6,6 @@
 //! app that never picks a given kind pays nothing for it. All of these methods
 //! are continuations of the `DeviceResources` impl that lives in
 //! `device_resources.rs`.
-use crate::resources::VertexBufferLayoutExt;
 
 use crate::resources::types::*;
 
@@ -500,80 +499,6 @@ impl DeviceResources {
         self.pick.node_pipeline = Some(pipeline);
     }
 
-    /// Group 1 layout for the glyph and tensor glyph pick pipelines: the set's
-    /// uniform (binding 0) plus the object-id uniform (binding 3). Built once and
-    /// shared by both pipelines.
-    fn ensure_glyph_pick_id_bgl(&mut self, device: &crate::gpu::Device) {
-        if self.pick.glyph_pick_id_bgl.is_some() {
-            return;
-        }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("glyph_pick_id_bgl"),
-            entries: &[
-                // binding 0: the set's glyph / tensor uniform (model + params).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 3: object id to write for this set.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        self.pick.glyph_pick_id_bgl = Some(bgl);
-    }
-
-    /// Lazily create the glyph pick pipeline. Reuses the render glyph vertex
-    /// transform (same instance buffer + uniform) with a fragment that writes the
-    /// set's object id.
-    pub(crate) fn ensure_glyph_pick_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.pick.glyph_pipeline.is_some() {
-            return;
-        }
-        self.ensure_pick_pipeline(device);
-        self.ensure_glyph_pipeline(device);
-        self.ensure_glyph_pick_id_bgl(device);
-
-        let camera_bgl = self.pick.camera_bgl.as_ref().expect("pick camera bgl");
-        let id_bgl = self
-            .pick
-            .glyph_pick_id_bgl
-            .as_ref()
-            .expect("glyph pick id bgl");
-        let instance_bgl = self
-            .glyph
-            .instance_bgl
-            .as_ref()
-            .expect("glyph instance bgl");
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "glyph_pick_shader",
-            crate::resources::builders::wgsl_source!("glyph_pick"),
-        );
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "glyph_pick_pipeline_layout",
-            &[camera_bgl, id_bgl, instance_bgl],
-        );
-        let pipeline = build_glyph_pick_pipeline(device, "glyph_pick_pipeline", &layout, &shader);
-        self.pick.glyph_pipeline = Some(pipeline);
-    }
-
     /// Lazily create the sprite pick pipeline. Reuses the sprite render vertex
     /// expansion (same position vertex buffer + sprite bind group) with a
     /// fragment that writes the item's object id. Group 0 is the full camera
@@ -811,68 +736,4 @@ impl DeviceResources {
         self.pick.polyline_pick_id_bgl = Some(pick_id_bgl);
         self.pick.polyline_pipeline = Some(pipeline);
     }
-}
-
-/// Build a glyph / tensor glyph pick pipeline. Both share the same fragment
-/// targets as the surface pick pipeline (R32Uint object id + R32Uint primitive
-/// id + R32Float depth) and the same depth-stencil setup; only the shader and
-/// layout differ.
-fn build_glyph_pick_pipeline(
-    device: &crate::gpu::Device,
-    label: &str,
-    layout: &crate::gpu::PipelineLayout,
-    shader: &crate::gpu::ShaderModule,
-) -> crate::gpu::RenderPipeline {
-    // Reuse the full 64-byte Vertex layout so the glyph base mesh binds as-is and
-    // the shader reads position + normal like the render path.
-    let vertex_layout = Vertex::buffer_layout();
-    crate::resources::builders::render_pipeline(
-        device,
-        crate::resources::builders::RenderPipelineDesc {
-            label,
-            layout,
-            vertex_module: shader,
-            vertex_entry: "vs_main",
-            vertex_buffers: &[vertex_layout],
-            fragment: Some(crate::gpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                targets: &[
-                    Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    }),
-                    Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::R32Uint,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    }),
-                    Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::R32Float,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    }),
-                ],
-                compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: crate::gpu::PrimitiveState {
-                topology: crate::gpu::PrimitiveTopology::TriangleList,
-                front_face: crate::gpu::FrontFace::Ccw,
-                // Glyphs are viewed from any direction; pick both faces like the
-                // surface pick pipeline does.
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                true,
-                crate::gpu::CompareFunction::Less,
-            )),
-            multisample: crate::gpu::MultisampleState {
-                count: 1,
-                ..Default::default()
-            },
-            cache: None,
-        },
-    )
 }

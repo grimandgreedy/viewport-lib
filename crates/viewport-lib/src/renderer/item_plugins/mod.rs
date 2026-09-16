@@ -12,6 +12,7 @@
 pub(crate) mod registry;
 
 pub(crate) mod gaussian_splat;
+pub(crate) mod glyph;
 pub(crate) mod gpu_implicit;
 pub(crate) mod gpu_marching_cubes;
 pub(crate) mod image_slice;
@@ -35,6 +36,7 @@ pub(crate) fn plugin_items_for<'f>(
         gpu_implicit::TYPE_NAME => Some(&frame.scene.gpu_implicit),
         gpu_marching_cubes::TYPE_NAME => Some(&frame.scene.gpu_mc_items),
         image_slice::TYPE_NAME => Some(&frame.scene.image_slices),
+        glyph::TYPE_NAME => Some(&frame.scene.glyphs),
         point_cloud::TYPE_NAME => Some(&frame.scene.point_clouds),
         tensor_glyph::TYPE_NAME => Some(&frame.scene.tensor_glyphs),
         volume::TYPE_NAME => Some(&frame.scene.volumes),
@@ -56,6 +58,7 @@ pub(crate) fn plugin_ref_items_for<'f>(
     name: &str,
 ) -> Option<&'f dyn PluginItemCollection> {
     match name {
+        glyph::TYPE_NAME => Some(&frame.scene.glyph_set_refs),
         point_cloud::TYPE_NAME => Some(&frame.scene.point_cloud_refs),
         tensor_glyph::TYPE_NAME => Some(&frame.scene.tensor_glyph_set_refs),
         _ => None,
@@ -89,6 +92,7 @@ impl crate::renderer::ViewportRenderer {
         // First the types that came off the shared scivis draw loop, in the
         // order that loop drew them.
         self.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
+        self.with_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
         self.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
         self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
         self.with_item_type_plugin(device, Box::new(tensor_glyph::TensorGlyphPlugin::default()));

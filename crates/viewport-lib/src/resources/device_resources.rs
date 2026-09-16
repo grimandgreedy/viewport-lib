@@ -262,12 +262,6 @@ pub(crate) struct PickResources {
     /// Group 2 layout for `node_pipeline`: the per-triangle node payload buffer
     /// (read-only storage).
     pub(crate) node_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for glyph sets. Reuses the render glyph transform and writes
-    /// the set's object id.
-    pub(crate) glyph_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 1 layout for the glyph pick pipeline: the set's uniform (binding
-    /// 0) plus the object-id uniform (binding 3).
-    pub(crate) glyph_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pick pipeline for polylines. Reuses the polyline render vertex expansion
     /// and writes the item's object id.
     pub(crate) polyline_pipeline: Option<crate::gpu::RenderPipeline>,

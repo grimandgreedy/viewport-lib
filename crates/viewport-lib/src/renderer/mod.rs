@@ -132,10 +132,6 @@ use crate::resources::{
 pub(crate) struct SelectionOutlines {
     /// Per-frame outline buffers for selected objects.
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Indices into `glyph_gpu_data` for selected glyph sets. Each entry is
-    /// (gpu_data_index, instance_filter): None draws all instances, Some(indices)
-    /// draws only those specific instance indices.
-    pub glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Indices into `sprite_gpu_data` for selected sprite sets.
     pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Per-frame NDC rect outline buffers for selected screen images.
@@ -377,6 +373,10 @@ pub struct ViewportRenderer {
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
     /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
+    /// Per-frame glyph GPU data for the polyline vector decoration only.
+    /// Submitted glyph sets are prepared and drawn by the glyph item-type
+    /// plugin; this goes when the polyline item type moves and takes the
+    /// decoration with it.
     glyph_gpu_data: Vec<crate::resources::GlyphGpuData>,
     /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
@@ -579,7 +579,6 @@ pub struct ViewportRenderer {
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_polyline_items: Vec<PolylineItem>,
     /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_glyph_items: Vec<GlyphItem>,
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_sprite_items: Vec<SpriteItem>,
@@ -1063,7 +1062,6 @@ impl ViewportRenderer {
             scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
             pick_polyline_items: Vec::new(),
-            pick_glyph_items: Vec::new(),
             pick_sprite_items: Vec::new(),
             pick_streamtube_items: Vec::new(),
             pick_tube_items: Vec::new(),

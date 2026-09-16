@@ -147,9 +147,8 @@ impl ViewportRenderer {
         (resolved, switches, culled, reduced)
     }
 
-    pub(super) fn upload_geometry_glyphs(
+    pub(super) fn upload_sprites_and_particles(
         resources: &mut DeviceResources,
-        glyph_gpu_data: &mut Vec<crate::resources::GlyphGpuData>,
         sprite_gpu_data: &mut Vec<crate::resources::SpriteGpuData>,
         particle_gpu_data: &mut Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
         device: &crate::gpu::Device,
@@ -157,42 +156,6 @@ impl ViewportRenderer {
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
-        // ------------------------------------------------------------------
-        // glyph GPU data upload.
-        // ------------------------------------------------------------------
-        glyph_gpu_data.clear();
-        if !frame.scene.glyphs.is_empty() {
-            resources.ensure_glyph_pipeline(device);
-            for item in &frame.scene.glyphs {
-                if item.settings.hidden || item.positions.is_empty() || item.vectors.is_empty() {
-                    continue;
-                }
-                let wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                let gpu_data = resources.upload_glyph_set_per_frame(device, queue, item, wireframe);
-                glyph_gpu_data.push(gpu_data);
-            }
-        }
-
-        // Pre-uploaded glyph set references. Model matrix lives at offset 0
-        // of GlyphUniform and is composed on top of per-instance positions
-        // in the vertex shader.
-        if !frame.scene.glyph_set_refs.is_empty() {
-            resources.ensure_glyph_pipeline(device);
-            for ref_item in &frame.scene.glyph_set_refs {
-                if ref_item.settings.hidden {
-                    continue;
-                }
-                let entry = match resources.content.glyph_set_store.get(ref_item.source) {
-                    Some(e) => e.clone(),
-                    None => continue,
-                };
-                queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
-                let mut gpu_data = entry;
-                gpu_data.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
-                glyph_gpu_data.push(gpu_data);
-            }
-        }
-
         // ------------------------------------------------------------------
         // Sprite billboard GPU data upload.
         // ------------------------------------------------------------------
@@ -297,7 +260,7 @@ impl ViewportRenderer {
 
                 // Auto-generate GlyphItems for node/edge vector quantities.
                 if !item.node_vectors.is_empty() {
-                    resources.ensure_glyph_pipeline(device);
+                    resources.ensure_decoration_glyph_pipeline(device);
                     let g = crate::quantities::polyline_node_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
                         let wf = frame.viewport.wireframe_mode || item.settings.wireframe;
@@ -306,7 +269,7 @@ impl ViewportRenderer {
                     }
                 }
                 if !item.edge_vectors.is_empty() {
-                    resources.ensure_glyph_pipeline(device);
+                    resources.ensure_decoration_glyph_pipeline(device);
                     let g = crate::quantities::polyline_edge_vectors_to_glyphs(item);
                     if !g.positions.is_empty() {
                         let wf = frame.viewport.wireframe_mode || item.settings.wireframe;

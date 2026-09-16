@@ -4110,7 +4110,6 @@ impl ViewportRenderer {
             || !slot.selection_outlines.tube_outline_items.is_empty()
             || !slot.selection_outlines.ribbon_outline_items.is_empty()
             || !slot.selection_outlines.polyline_outline_indices.is_empty()
-            || !slot.selection_outlines.glyph_outline_indices.is_empty()
             || !slot.selection_outlines.sprite_outline_indices.is_empty()
             || !slot
                 .selection_outlines

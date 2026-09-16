@@ -1,28 +1,30 @@
 use super::*;
 use crate::resources::VertexBufferLayoutExt;
 
-/// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
-/// All lazily built; the uploaded glyph sets live in a separate flat store.
-#[derive(Default)]
+/// The glyph bind group layouts and the cached arrow / sphere / cube base
+/// meshes. Uploads build their bind groups against the layouts, so they live
+/// here with the store rather than with the item type's pipelines, and are
+/// created up front: they are layouts, not compiled pipelines. The meshes are
+/// still built on first use, but through a shared reference, so an item-type
+/// plugin can reach them from `prepare`, which holds `&DeviceResources`.
 pub(crate) struct GlyphResources {
-    /// Glyph render pipeline. None until first glyph set is submitted.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Glyph wireframe pipeline (LineList, same bind groups as `pipeline`).
-    pub(crate) wireframe_pipeline: Option<DualPipeline>,
+    /// Render pipeline for the polyline vector decoration, built on the first
+    /// frame that carries one. The glyph item type has its own copy of this
+    /// pipeline; the two collapse into one when the polyline item type moves
+    /// onto the plugin seam and takes the decoration with it.
+    pub(crate) decoration_pipeline: Option<DualPipeline>,
+    /// Wireframe variant of `decoration_pipeline`.
+    pub(crate) decoration_wireframe_pipeline: Option<DualPipeline>,
     /// Bind group layout for glyph uniforms (group 1).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) bgl: crate::gpu::BindGroupLayout,
     /// Bind group layout for glyph instance storage (group 2).
-    pub(crate) instance_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Cached glyph base mesh for the Arrow shape. Built on first use through
-    /// a shared reference, so an item-type plugin can reach it from `prepare`,
-    /// which holds `&DeviceResources`.
+    pub(crate) instance_bgl: crate::gpu::BindGroupLayout,
+    /// Cached glyph base mesh for the Arrow shape.
     pub(crate) arrow_mesh: std::sync::OnceLock<GlyphBaseMesh>,
     /// Cached glyph base mesh for the Sphere shape.
     pub(crate) sphere_mesh: std::sync::OnceLock<GlyphBaseMesh>,
     /// Cached glyph base mesh for the Cube shape.
     pub(crate) cube_mesh: std::sync::OnceLock<GlyphBaseMesh>,
-    /// Instanced mask pipeline for arrow/sphere glyph outlines.
-    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
 /// The tensor glyph bind group layouts. Uploads build their bind groups against
@@ -62,24 +64,15 @@ impl TensorGlyphResources {
     }
 }
 
-impl DeviceResources {
-    /// Lazily create the glyph render pipeline (instanced TriangleList).
-    ///
-    /// No-op if already created. Called from `prepare()` when `frame.scene.glyphs` is non-empty.
-    pub(crate) fn ensure_glyph_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.glyph.pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        let glyph_bgl = crate::resources::builders::uniform_texture_sampler_bgl(
+impl GlyphResources {
+    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+        let bgl = crate::resources::builders::uniform_texture_sampler_bgl(
             device,
             "glyph_bgl",
             crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
             crate::gpu::ShaderStages::VERTEX,
         );
-
-        let glyph_instance_bgl =
+        let instance_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("glyph_instance_bgl"),
                 entries: &[crate::gpu::BindGroupLayoutEntry {
@@ -93,22 +86,46 @@ impl DeviceResources {
                     count: None,
                 }],
             });
+        Self {
+            decoration_pipeline: None,
+            decoration_wireframe_pipeline: None,
+            bgl,
+            instance_bgl,
+            arrow_mesh: std::sync::OnceLock::new(),
+            sphere_mesh: std::sync::OnceLock::new(),
+            cube_mesh: std::sync::OnceLock::new(),
+        }
+    }
+}
 
+impl DeviceResources {
+    /// Build the glyph pipelines used to draw the polyline vector decoration.
+    ///
+    /// The glyph item type owns an identical pair inside its plugin. This copy
+    /// exists only because the decoration is produced while uploading polyline
+    /// items, which have not moved onto the plugin seam yet; it goes when they
+    /// do.
+    pub(crate) fn ensure_decoration_glyph_pipeline(&mut self, device: &crate::gpu::Device) {
+        if self.glyph.decoration_pipeline.is_some() {
+            return;
+        }
+        self.note_pipeline_built(concat!(file!(), ":", line!()));
         let shader = crate::resources::builders::wgsl_module(
             device,
             "glyph_shader",
             crate::resources::builders::wgsl_source!("glyph"),
         );
-
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "glyph_pipeline_layout",
-            &[&self.binds.camera_bgl, &glyph_bgl, &glyph_instance_bgl],
+            &[
+                &self.binds.camera_bgl,
+                &self.glyph.bgl,
+                &self.glyph.instance_bgl,
+            ],
         );
-
-        self.glyph.bgl = Some(glyph_bgl);
-        self.glyph.instance_bgl = Some(glyph_instance_bgl);
-        self.glyph.pipeline = Some(crate::resources::builders::build_dual_pipeline(
+        let vertex_buffers = [Vertex::buffer_layout()];
+        let pipeline = crate::resources::builders::build_dual_pipeline(
             device,
             &crate::resources::builders::DualPipelineDesc {
                 label: "glyph_pipeline",
@@ -116,7 +133,7 @@ impl DeviceResources {
                 shader: &shader,
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
+                vertex_buffers: &vertex_buffers,
                 blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
                 topology: crate::gpu::PrimitiveTopology::TriangleList,
                 cull_mode: Some(crate::gpu::Face::Back),
@@ -125,10 +142,8 @@ impl DeviceResources {
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
-        ));
-
-        // Wireframe variant: same bind groups, LineList topology, no culling.
-        self.glyph.wireframe_pipeline = Some(crate::resources::builders::build_dual_pipeline(
+        );
+        let wireframe = crate::resources::builders::build_dual_pipeline(
             device,
             &crate::resources::builders::DualPipelineDesc {
                 label: "glyph_wireframe_pipeline",
@@ -136,7 +151,7 @@ impl DeviceResources {
                 shader: &shader,
                 vertex_entry: "vs_main",
                 fragment_entry: "fs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
+                vertex_buffers: &vertex_buffers,
                 blend: None,
                 topology: crate::gpu::PrimitiveTopology::LineList,
                 cull_mode: None,
@@ -145,15 +160,17 @@ impl DeviceResources {
                 sample_count: self.sample_count,
                 ldr_format: self.target_format,
             },
-        ));
+        );
+        self.glyph.decoration_pipeline = Some(pipeline);
+        self.glyph.decoration_wireframe_pipeline = Some(wireframe);
     }
 
     /// Upload one [`GlyphItem`] to the GPU and return draw data.
     ///
-    /// Called from `prepare()` for each non-empty item in `frame.scene.glyphs`.
-    /// The glyph base mesh is cached in `glyph_arrow_mesh` / `glyph_sphere_mesh` / `glyph_cube_mesh`.
+    /// Shared by the per-frame item upload and the pre-upload store. The base
+    /// mesh comes from the shared glyph mesh cache.
     pub(crate) fn upload_glyph_set_per_frame(
-        &mut self,
+        &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         item: &crate::renderer::GlyphItem,
@@ -290,14 +307,9 @@ impl DeviceResources {
 
         let lut_sampler = &self.material.sampler;
 
-        let bgl1 = self
-            .glyph
-            .bgl
-            .as_ref()
-            .expect("ensure_glyph_pipeline not called");
         let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("glyph_uniform_bg"),
-            layout: bgl1,
+            layout: &self.glyph.bgl,
             entries: &[
                 crate::gpu::BindGroupEntry {
                     binding: 0,
@@ -314,14 +326,9 @@ impl DeviceResources {
             ],
         });
 
-        let bgl2 = self
-            .glyph
-            .instance_bgl
-            .as_ref()
-            .expect("ensure_glyph_pipeline not called");
         let instance_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("glyph_instance_bg"),
-            layout: bgl2,
+            layout: &self.glyph.instance_bgl,
             entries: &[crate::gpu::BindGroupEntry {
                 binding: 0,
                 resource: instance_buf.as_entire_binding(),
@@ -644,54 +651,6 @@ impl DeviceResources {
         }
     }
 
-    /// Lazily create the glyph outline mask pipeline.
-    ///
-    /// Renders the instanced glyph mesh into the R8 outline mask texture so
-    /// outlines follow the actual arrow/sphere shape.  Reuses the bind group
-    /// layouts from the main glyph pipeline (must be called after
-    /// `ensure_glyph_pipeline`).
-    pub(crate) fn ensure_glyph_outline_mask_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.glyph.outline_mask_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let glyph_bgl = self
-            .glyph
-            .bgl
-            .as_ref()
-            .expect("ensure_glyph_pipeline must be called first");
-        let glyph_instance_bgl = self
-            .glyph
-            .instance_bgl
-            .as_ref()
-            .expect("ensure_glyph_pipeline must be called first");
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "glyph_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("glyph_outline_mask"),
-        );
-
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "glyph_outline_mask_pipeline_layout",
-            &[&self.binds.camera_bgl, glyph_bgl, glyph_instance_bgl],
-        );
-
-        self.glyph.outline_mask_pipeline =
-            Some(crate::resources::builders::build_outline_mask_pipeline(
-                device,
-                "glyph_outline_mask_pipeline",
-                &layout,
-                &shader,
-                crate::gpu::TextureFormat::R8Unorm,
-                &[Vertex::buffer_layout()],
-                Some(crate::gpu::Face::Back),
-                true,
-                crate::gpu::CompareFunction::Less,
-            ));
-    }
-
     /// Pre-upload a glyph set and return a typed handle.
     pub fn upload_glyph_set(
         &mut self,
@@ -699,7 +658,6 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::GlyphItem,
     ) -> crate::resources::GlyphSetId {
-        self.ensure_glyph_pipeline(device);
         let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
         self.content.glyph_set_store.insert(gpu)
     }
@@ -720,7 +678,6 @@ impl DeviceResources {
         if !self.content.glyph_set_store.contains(id) {
             return false;
         }
-        self.ensure_glyph_pipeline(device);
         let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
         self.content.glyph_set_store.replace(id, gpu)
     }

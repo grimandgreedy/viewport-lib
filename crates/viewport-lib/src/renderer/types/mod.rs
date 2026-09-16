@@ -1066,7 +1066,6 @@ macro_rules! emit_outline_composite {
                 || !slot.selection_outlines.tube_outline_items.is_empty()
                 || !slot.selection_outlines.ribbon_outline_items.is_empty()
                 || !slot.selection_outlines.polyline_outline_indices.is_empty()
-                || !slot.selection_outlines.glyph_outline_indices.is_empty()
                 || !slot.selection_outlines.sprite_outline_indices.is_empty()
                 || slot.selection_outlines.plugin_outline_present
             {
@@ -1096,20 +1095,21 @@ macro_rules! emit_scivis_draw_calls {
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
         let _is_hdr: bool = $is_hdr;
 
-        // Glyph pass.
+        // Glyph pass: the polyline vector decoration only. Submitted glyph
+        // sets draw through the glyph item-type plugin.
         if !$glyph_gpu_data.is_empty() {
             render_pass.set_bind_group(0, camera_bg, &[]);
             for glyph in $glyph_gpu_data.iter() {
                 let pipeline = if glyph.wireframe {
                     resources
                         .glyph
-                        .wireframe_pipeline
+                        .decoration_wireframe_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 } else {
                     resources
                         .glyph
-                        .pipeline
+                        .decoration_pipeline
                         .as_ref()
                         .map(|d| d.for_format(_is_hdr))
                 };

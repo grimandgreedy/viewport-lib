@@ -19,9 +19,6 @@ enum PickItemType {
     /// owned connected mesh each frame into the renderer's tube gpu-data vecs
     /// rather than living in `mesh_store`. Object-level only.
     Curve,
-    /// Glyph and tensor-glyph sets: instanced base meshes drawn with a dedicated
-    /// pick pipeline that reuses the render vertex transform. Object-level only.
-    Glyph,
     /// Sprite sets: camera-facing quads expanded in the vertex shader, drawn with
     /// a dedicated pick pipeline that reuses the render expansion. Object-level.
     Sprite,
@@ -139,11 +136,8 @@ impl PickItemType {
             PickItemType::Curve => mask.intersects(
                 PickMask::OBJECT | PickMask::POLY_NODE | PickMask::SEGMENT | PickMask::STRIP,
             ),
-            // Glyph and sprite sets answer the object mask plus the per-instance
-            // level.
-            PickItemType::Glyph | PickItemType::Sprite => {
-                mask.intersects(PickMask::OBJECT | PickMask::INSTANCE)
-            }
+            // Sprite sets answer the object mask plus the per-instance level.
+            PickItemType::Sprite => mask.intersects(PickMask::OBJECT | PickMask::INSTANCE),
             // Polylines are object-level; they answer the whole object mask plus
             // the node/segment/strip levels a curve query may ask.
             PickItemType::Polyline => mask.intersects(
@@ -183,19 +177,6 @@ enum PickSubKind {
     /// triangle, mapped to a segment / strip through the item's `tri_segment` /
     /// `tri_strip` tables.
     Curve,
-}
-
-/// One glyph or tensor-glyph set to draw into the pick pass. The group-1 bind
-/// group (the set uniform + a per-set object-id uniform) is owned; the pipeline,
-/// instance bind group, and mesh buffers are borrowed from prepared state.
-struct GlyphPickDraw<'a> {
-    pipeline: &'a crate::gpu::RenderPipeline,
-    id_bind_group: crate::gpu::BindGroup,
-    instance_bind_group: &'a crate::gpu::BindGroup,
-    vertex_buffer: &'a crate::gpu::Buffer,
-    index_buffer: &'a crate::gpu::Buffer,
-    index_count: u32,
-    instance_count: u32,
 }
 
 /// One sprite set to draw into the pick pass. The group-2 pick-id bind group is
@@ -246,7 +227,6 @@ enum PickGeom<'a> {
 /// (instance/camera bind groups, draw recording) while the returned
 /// `PickDrawSet` is still alive.
 struct PickPipelineFlags {
-    has_pickable_glyphs: bool,
     has_pickable_sprites: bool,
     has_pickable_polylines: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -332,7 +312,6 @@ fn build_surface_pick_meta(frame: &FrameData) -> SurfacePickMeta {
 /// pixel or a whole rect region back, only which types answer `mask`.
 struct PickDrawSet<'a> {
     draws: Vec<(PickGeom<'a>, PickInstance)>,
-    glyph_draws: Vec<GlyphPickDraw<'a>>,
     sprite_draws: Vec<SpritePickDraw<'a>>,
     polyline_draws: Vec<PolylinePickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
@@ -358,7 +337,6 @@ impl PickDrawSet<'_> {
     /// the caller can report a miss without touching the GPU.
     fn is_empty(&self) -> bool {
         self.draws.is_empty()
-            && self.glyph_draws.is_empty()
             && self.sprite_draws.is_empty()
             && self.polyline_draws.is_empty()
             && !self.has_plugin_pick
@@ -912,15 +890,6 @@ impl ViewportRenderer {
         if mask.intersects(PickMask::POLY_NODE) {
             self.resources.ensure_pick_node_pipeline(device);
         }
-        let glyph_wanted = PickItemType::Glyph.satisfies(mask);
-        let has_pickable_glyphs = glyph_wanted
-            && self
-                .glyph_gpu_data
-                .iter()
-                .any(|g| g.pick_id != PickId::NONE && g.instance_count > 0);
-        if has_pickable_glyphs {
-            self.resources.ensure_glyph_pick_pipeline(device);
-        }
         let has_pickable_sprites = PickItemType::Sprite.satisfies(mask)
             && self
                 .sprite_gpu_data
@@ -988,7 +957,6 @@ impl ViewportRenderer {
         };
 
         PickPipelineFlags {
-            has_pickable_glyphs,
             has_pickable_sprites,
             has_pickable_polylines,
             decal_cube,
@@ -1016,7 +984,6 @@ impl ViewportRenderer {
         scene_items: &'a [SceneRenderItem],
         flags: &PickPipelineFlags,
     ) -> PickDrawSet<'a> {
-        let has_pickable_glyphs = flags.has_pickable_glyphs;
         let has_pickable_sprites = flags.has_pickable_sprites;
         let has_pickable_polylines = flags.has_pickable_polylines;
         let decal_cube = flags.decal_cube;
@@ -1172,63 +1139,6 @@ impl ViewportRenderer {
         // set builds a group-1 bind group (the set uniform + a per-set object-id
         // uniform) here so it outlives the render pass. The buffers behind the
         // bind group stay alive through it, so the temporary id buffer can drop.
-        let mut glyph_draws: Vec<GlyphPickDraw> = Vec::new();
-        if has_pickable_glyphs {
-            let id_bgl = self
-                .resources
-                .pick
-                .glyph_pick_id_bgl
-                .as_ref()
-                .expect("glyph pick id bgl");
-            let make_id_bg = |pick_id: PickId, uniform_buf: &crate::gpu::Buffer| {
-                let id_data = [pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("glyph_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("glyph_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 3,
-                            resource: id_buf.as_entire_binding(),
-                        },
-                    ],
-                })
-            };
-            if has_pickable_glyphs {
-                let pipeline = self
-                    .resources
-                    .pick
-                    .glyph_pipeline
-                    .as_ref()
-                    .expect("glyph pick pipeline");
-                for gpu in self
-                    .glyph_gpu_data
-                    .iter()
-                    .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
-                {
-                    glyph_draws.push(GlyphPickDraw {
-                        pipeline,
-                        id_bind_group: make_id_bg(gpu.pick_id, &gpu._uniform_buf),
-                        instance_bind_group: &gpu.instance_bind_group,
-                        vertex_buffer: &gpu.mesh_vertex_buffer,
-                        index_buffer: &gpu.mesh_index_buffer,
-                        index_count: gpu.mesh_index_count,
-                        instance_count: gpu.instance_count,
-                    });
-                }
-            }
-        }
-
         // Sprite sets draw with their own pipeline. Each set gets a group-2 bind
         // group holding its object id; the pipeline and camera bind group are
         // shared, so only the id, sprite bind group, and position buffer vary.
@@ -1318,7 +1228,7 @@ impl ViewportRenderer {
         // of those and a plugin has a non-empty collection this frame. Drawing
         // them under sub-object-only masks also keeps their geometry in the
         // depth test, so items behind a plugin item cannot be picked through it.
-        // Their draws are not in `draws`/`glyph_draws`/etc.; they are issued via
+        // Their draws are not in `draws`/`sprite_draws`/etc.; they are issued via
         // `dispatch_plugin_pick`.
         let has_plugin_pick = mask.intersects(
             PickMask::OBJECT
@@ -1340,7 +1250,6 @@ impl ViewportRenderer {
 
         PickDrawSet {
             draws,
-            glyph_draws,
             sprite_draws,
             polyline_draws,
             has_plugin_pick,
@@ -1591,19 +1500,6 @@ impl ViewportRenderer {
                     pick_pass.draw_indexed(0..*index_count, 0, slot..slot + 1);
                 }
             }
-        }
-
-        // Glyph / tensor-glyph sets: each draws its instanced base mesh with a
-        // dedicated pipeline that reuses the render vertex transform and writes
-        // the set's object id.
-        for gd in &draw_set.glyph_draws {
-            pick_pass.set_pipeline(gd.pipeline);
-            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-            pick_pass.set_bind_group(1, &gd.id_bind_group, &[]);
-            pick_pass.set_bind_group(2, gd.instance_bind_group, &[]);
-            pick_pass.set_vertex_buffer(0, gd.vertex_buffer.slice(..));
-            pick_pass.set_index_buffer(gd.index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-            pick_pass.draw_indexed(0..gd.index_count, 0, 0..gd.instance_count);
         }
 
         // Sprite sets: camera-facing quads expanded in the vertex shader. The
@@ -2628,13 +2524,6 @@ impl ViewportRenderer {
         }
 
         // Instanced families.
-        for gpu in self
-            .glyph_gpu_data
-            .iter()
-            .filter(|g| g.pick_id != PickId::NONE && g.instance_count > 0)
-        {
-            kinds.insert(gpu.pick_id.0, PickSubKind::Instance);
-        }
         for gpu in self
             .sprite_gpu_data
             .iter()

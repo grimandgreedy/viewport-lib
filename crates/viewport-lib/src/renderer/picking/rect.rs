@@ -251,30 +251,6 @@ impl ViewportRenderer {
         // 6. Instance picks (INSTANCE or OBJECT) for glyphs, tensor glyphs, sprites.
         let wants_instance = mask.intersects(PickMask::INSTANCE);
         if wants_instance || wants_object {
-            // Glyphs
-            for item in &self.pick_glyph_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let mvp = view_proj * model;
-                let id = item.settings.pick_id.0;
-                let mut item_hit = false;
-                for (i, pos) in item.positions.iter().enumerate() {
-                    if let Some((sx, sy)) = project(mvp, glam::Vec3::from(*pos)) {
-                        if in_rect(sx, sy) {
-                            if wants_instance {
-                                result.elements.push((id, SubObjectRef::Instance(i as u32)));
-                            }
-                            item_hit = true;
-                        }
-                    }
-                }
-                if wants_object && item_hit {
-                    result.objects.push(id);
-                }
-            }
-
             // Sprites
             for item in &self.pick_sprite_items {
                 if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {

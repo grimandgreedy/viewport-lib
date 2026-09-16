@@ -412,9 +412,8 @@ impl ViewportRenderer {
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
         let geometry_start = web_time::Instant::now();
-        Self::upload_geometry_glyphs(
+        Self::upload_sprites_and_particles(
             resources,
-            &mut self.glyph_gpu_data,
             &mut self.sprite_gpu_data,
             &mut self.particle_gpu_data,
             device,
