@@ -304,11 +304,6 @@ pub(crate) struct PickResources {
     pub(crate) gaussian_splat_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 2 layout for the Gaussian splat pick pipeline (per-item object-id uniform).
     pub(crate) gaussian_splat_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for image slices: reuses the render quad-from-vertex-index
-    /// expansion and writes the item's object id. Object-level.
-    pub(crate) image_slice_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the image slice pick pipeline (per-item object-id uniform).
-    pub(crate) image_slice_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Pick pipeline for volume surface slices: reuses the render mesh vertex
     /// buffer and writes the item's object id. Object-level.
     pub(crate) volume_surface_slice_pipeline: Option<crate::gpu::RenderPipeline>,
@@ -414,15 +409,6 @@ pub(crate) struct OutlineResources {
     pub(crate) composite_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) composite_bind_group: Option<crate::gpu::BindGroup>,
     pub(crate) composite_sampler: Option<crate::gpu::Sampler>,
-}
-
-/// Image slice render pipeline and layout. Lazily built.
-#[derive(Default)]
-pub(crate) struct ImageSliceResources {
-    /// Image slice render pipeline. None until first slice item is submitted.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Group 1 layout for image slice uniforms.
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Former name of [`DeviceResources`]. Renamed to reflect that this holds the
@@ -716,10 +702,6 @@ pub struct DeviceResources {
     pub(crate) streamtube: crate::resources::scivis::tube::StreamtubeResources,
     /// Ribbon pipelines (one per blend) and layout.
     pub(crate) ribbon: crate::resources::scivis::tube::RibbonResources,
-
-    // --- Image slice rendering (lazily created) ---
-    /// Image slice render pipeline and layout.
-    pub(crate) image_slice: ImageSliceResources,
 
     // --- volume rendering (lazily created) ---
     /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.

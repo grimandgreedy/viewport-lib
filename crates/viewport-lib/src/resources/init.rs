@@ -2501,7 +2501,6 @@ impl DeviceResources {
             polyline: crate::resources::scivis::polyline::PolylineResources::default(),
             streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
             ribbon: crate::resources::scivis::tube::RibbonResources::default(),
-            image_slice: crate::resources::types::ImageSliceResources::default(),
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
                 bgl: None,

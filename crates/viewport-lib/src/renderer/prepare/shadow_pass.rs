@@ -1160,7 +1160,7 @@ impl ViewportRenderer {
                 // with viewport + scissor + cascade bind group set up by
                 // the lib. The plugin map is read through a raw pointer
                 // captured before the mutable resources borrow split off.
-                if !plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
+                if !plugins.is_empty() {
                     for cascade in 0..light.effective_cascade_count {
                         let tile_col = (cascade % 2) as f32;
                         let tile_row = (cascade / 2) as f32;
@@ -1191,8 +1191,10 @@ impl ViewportRenderer {
                             frame_index: plugin_frame_index,
                         };
                         for (name, plugin) in plugins.iter() {
-                            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, items.as_ref());
+                            if let Some(items) =
+                                crate::renderer::item_plugins::plugin_items_for(frame, name)
+                            {
+                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, items);
                             }
                         }
                     }

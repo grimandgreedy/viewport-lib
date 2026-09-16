@@ -362,7 +362,6 @@ impl ViewportRenderer {
                 &self.streamtube_gpu_data,
                 camera_bg,
                 &self.tube_gpu_data,
-                &self.image_slice_gpu_data,
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
                 &self.volume_surface_slice_gpu_data,

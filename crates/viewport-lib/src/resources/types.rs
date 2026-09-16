@@ -1,7 +1,6 @@
 pub use crate::resources::device_resources::ContentResources;
 pub use crate::resources::device_resources::DeviceResources;
 pub(crate) use crate::resources::device_resources::DualPipeline;
-pub(crate) use crate::resources::device_resources::ImageSliceResources;
 pub(crate) use crate::resources::device_resources::ImplicitResources;
 pub(crate) use crate::resources::device_resources::OutlineResources;
 pub(crate) use crate::resources::device_resources::PickResources;
@@ -41,7 +40,6 @@ pub(crate) use crate::resources::overlay::highlight::CurveMeshOutlineItem;
 pub(crate) use crate::resources::overlay::highlight::OutlineEdgeUniform;
 pub(crate) use crate::resources::overlay::highlight::OutlineObjectBuffers;
 pub(crate) use crate::resources::overlay::highlight::OutlineUniform;
-pub(crate) use crate::resources::overlay::highlight::RawGeomOutlineBuffers;
 pub(crate) use crate::resources::overlay::highlight::ScreenRectOutlineBuffers;
 pub(crate) use crate::resources::overlay::highlight::SplatOutlineBuffers;
 pub(crate) use crate::resources::overlay::highlight::SplatOutlineMaskUniform;
@@ -83,7 +81,6 @@ pub use crate::resources::scivis::tube::StreamtubeGpuData;
 pub(crate) use crate::resources::volume::tetmesh::GpuProjectedTetMesh;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetChunk;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetUniform;
-pub(crate) use crate::resources::volume::volumes::ImageSliceGpuData;
 pub use crate::resources::volume::volumes::VolumeGpuData;
 pub(crate) use crate::resources::volume::volumes::VolumeSurfaceSliceGpuData;
 

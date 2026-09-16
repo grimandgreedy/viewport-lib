@@ -22,6 +22,7 @@ pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
 mod gpu_context;
 pub use gpu_context::GpuContext;
+pub(crate) mod item_plugins;
 pub(crate) mod picking;
 pub use picking::sub_object;
 pub use picking::{
@@ -143,8 +144,6 @@ pub(crate) struct SelectionOutlines {
     pub tensor_glyph_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Indices into `sprite_gpu_data` for selected sprite sets.
     pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
-    /// Per-frame inline quad outline buffers for selected image slices.
-    pub raw_geom_outline_buffers: Vec<crate::resources::RawGeomOutlineBuffers>,
     /// Per-frame NDC rect outline buffers for selected screen images.
     pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
     /// Indices into `implicit_gpu_data` for selected GPU implicit items.
@@ -430,8 +429,6 @@ pub struct ViewportRenderer {
     ribbon_selected_gpu_indices: Vec<usize>,
     /// Indices into polyline_gpu_data for selected user polylines (set in prepare_scene, consumed in prepare_viewport).
     polyline_selected_gpu_indices: Vec<usize>,
-    /// Per-frame image slice GPU data, rebuilt in prepare(), consumed in paint().
-    image_slice_gpu_data: Vec<crate::resources::ImageSliceGpuData>,
     /// Per-frame volume surface slice GPU data, rebuilt in prepare(), consumed in paint().
     volume_surface_slice_gpu_data: Vec<crate::resources::VolumeSurfaceSliceGpuData>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
@@ -640,8 +637,6 @@ pub struct ViewportRenderer {
     pick_tube_items: Vec<TubeItem>,
     /// Ribbon items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_ribbon_items: Vec<RibbonItem>,
-    /// Image slice items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_image_slice_items: Vec<ImageSliceItem>,
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_volume_surface_slice_items: Vec<VolumeSurfaceSliceItem>,
     /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -1047,7 +1042,7 @@ impl ViewportRenderer {
         resources
             .material_gpu_builder
             .set_bindless(material_texture_binding == MaterialTextureBinding::Bindless);
-        Self {
+        let mut renderer = Self {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: std::collections::HashMap::new(),
@@ -1072,7 +1067,6 @@ impl ViewportRenderer {
             tube_selected_gpu_indices: Vec::new(),
             ribbon_selected_gpu_indices: Vec::new(),
             polyline_selected_gpu_indices: Vec::new(),
-            image_slice_gpu_data: Vec::new(),
             volume_surface_slice_gpu_data: Vec::new(),
             sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
@@ -1138,7 +1132,6 @@ impl ViewportRenderer {
             pick_streamtube_items: Vec::new(),
             pick_tube_items: Vec::new(),
             pick_ribbon_items: Vec::new(),
-            pick_image_slice_items: Vec::new(),
             pick_volume_surface_slice_items: Vec::new(),
             pick_screen_image_items: Vec::new(),
             pick_decal_items: Vec::new(),
@@ -1170,7 +1163,9 @@ impl ViewportRenderer {
             degradation_effects_throttled: false,
             last_frustum_culled_lights: 0,
             last_cluster_stats: None,
-        }
+        };
+        renderer.register_internal_item_plugins(device);
+        renderer
     }
 
     /// Access the underlying GPU resources (e.g. for mesh uploads).
@@ -1993,17 +1988,22 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return Vec::new();
         }
         // Derivative renders (captures / bakes) dispatch too: they run their
         // own prepare and cull against the capture camera, so the matching
         // paint draws current, right-camera geometry, the same as built-in
         // item types. The presented frame re-prepares afterwards anyway.
+        //
+        // Plugin prepare runs before the rest of the lib's prepare, so the
+        // shared LUT set a plugin may resolve through the context has to be
+        // resident already; the call is a no-op after the first frame.
+        self.resources.ensure_colourmaps_initialized(device, queue);
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
                 // Constructed per plugin because `Jobs` borrows `&resources`
                 // and the borrow only needs to live for this iteration.
                 let ctx = crate::plugin_api::ItemFrameContext {
@@ -2017,7 +2017,7 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                 };
-                bufs.extend(plugin.prepare(device, queue, &ctx, items.as_ref()));
+                bufs.extend(plugin.prepare(device, queue, &ctx, items));
             }
         }
         bufs
@@ -2038,7 +2038,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         is_hdr: bool,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -2056,8 +2056,8 @@ impl ViewportRenderer {
             if !is_hdr && !plugin.draws_ldr() {
                 continue;
             }
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint(pass, &ctx, items.as_ref());
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.paint(pass, &ctx, items);
             }
         }
     }
@@ -2071,10 +2071,7 @@ impl ViewportRenderer {
     pub(crate) fn any_plugin_items_submitted(&self, frame: &FrameData) -> bool {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.keys().any(|name| {
-                frame
-                    .scene
-                    .plugin_items
-                    .get(*name)
+                crate::renderer::item_plugins::plugin_items_for(frame, name)
                     .is_some_and(|items| !items.is_empty())
             })
     }
@@ -2086,10 +2083,7 @@ impl ViewportRenderer {
         !frame.scene.foreground_items.is_empty()
             || self.item_type_plugins.iter().any(|(name, plugin)| {
                 plugin.draws_foreground()
-                    && frame
-                        .scene
-                        .plugin_items
-                        .get(*name)
+                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
                         .is_some_and(|items| !items.is_empty())
             })
     }
@@ -2106,7 +2100,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         camera: &RenderCamera,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -2120,8 +2114,8 @@ impl ViewportRenderer {
             if !plugin.draws_foreground() {
                 continue;
             }
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint_foreground(pass, &ctx, items.as_ref());
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.paint_foreground(pass, &ctx, items);
             }
         }
     }
@@ -2134,10 +2128,7 @@ impl ViewportRenderer {
         !self.item_type_plugins.is_empty()
             && self.item_type_plugins.iter().any(|(name, plugin)| {
                 plugin.draws_depth_read()
-                    && frame
-                        .scene
-                        .plugin_items
-                        .get(*name)
+                    && crate::renderer::item_plugins::plugin_items_for(frame, name)
                         .is_some_and(|items| !items.is_empty())
             })
     }
@@ -2159,7 +2150,7 @@ impl ViewportRenderer {
         scene_depth_sampler: &crate::gpu::Sampler,
         scene_depth_bind_group: &crate::gpu::BindGroup,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::DepthReadContext {
@@ -2175,8 +2166,8 @@ impl ViewportRenderer {
             if !plugin.draws_depth_read() {
                 continue;
             }
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint_depth_read(pass, &ctx, items.as_ref());
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.paint_depth_read(pass, &ctx, items);
             }
         }
     }
@@ -2193,7 +2184,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: crate::renderer::picking::PickMask,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PickPassContext {
@@ -2204,8 +2195,8 @@ impl ViewportRenderer {
             mask,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.render_pick(pass, &ctx, items.as_ref());
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.render_pick(pass, &ctx, items);
             }
         }
     }
@@ -2220,7 +2211,7 @@ impl ViewportRenderer {
         pass: &mut crate::gpu::RenderPass<'_>,
         frame: &FrameData,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -2231,8 +2222,8 @@ impl ViewportRenderer {
             target_format: crate::resources::HDR_COLOR_FORMAT,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.paint_transparent(pass, &ctx, items.as_ref());
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.paint_transparent(pass, &ctx, items);
             }
         }
     }
@@ -2253,7 +2244,7 @@ impl ViewportRenderer {
         cascade_idx: u32,
         light_view_proj: glam::Mat4,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::ShadowCastContext {
@@ -2264,8 +2255,8 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.cast_shadow_pass(pass, &ctx, items.as_ref());
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.cast_shadow_pass(pass, &ctx, items);
             }
         }
     }
@@ -2280,11 +2271,11 @@ impl ViewportRenderer {
         frustum: &crate::camera::frustum::Frustum,
         frame: &FrameData,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         for (name, plugin) in self.item_type_plugins.iter_mut() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
                 let ctx = crate::plugin_api::ItemFrameContext {
                     camera: &frame.camera.render_camera,
                     viewport_size: glam::Vec2::from(frame.camera.viewport_size),
@@ -2296,7 +2287,7 @@ impl ViewportRenderer {
                     outline_selected: frame.interaction.outline_selected,
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                 };
-                plugin.cull(frustum, &ctx, items.as_ref());
+                plugin.cull(frustum, &ctx, items);
             }
         }
     }
@@ -2314,7 +2305,7 @@ impl ViewportRenderer {
             return false;
         }
         self.item_type_plugins.keys().any(|name| {
-            frame.scene.plugin_items.get(*name).is_some_and(|items| {
+            crate::renderer::item_plugins::plugin_items_for(frame, name).is_some_and(|items| {
                 (0..items.len()).any(|i| {
                     let s = items.item_settings(i);
                     s.selected && !s.hidden
@@ -2328,7 +2319,7 @@ impl ViewportRenderer {
         pass: &mut crate::gpu::RenderPass<'_>,
         frame: &FrameData,
     ) {
-        if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
+        if self.item_type_plugins.is_empty() {
             return;
         }
         let ctx = crate::plugin_api::OutlineMaskContext {
@@ -2338,8 +2329,8 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                plugin.outline_mask(pass, &ctx, items.as_ref());
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.outline_mask(pass, &ctx, items);
             }
         }
     }
@@ -3293,7 +3284,6 @@ impl ViewportRenderer {
             &self.streamtube_gpu_data,
             camera_bg,
             &self.tube_gpu_data,
-            &self.image_slice_gpu_data,
             &self.tensor_glyph_gpu_data,
             &self.ribbon_gpu_data,
             &self.volume_surface_slice_gpu_data,

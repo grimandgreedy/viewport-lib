@@ -108,12 +108,31 @@ pub fn validate_shader_hashes(expected: &[(&str, u64)]) -> ShaderValidation {
 mod tests {
     use super::*;
 
-    /// Counts `.wgsl` files in `src/shaders/` to drive expected-count assertions
-    /// without needing manual updates as shaders are added or removed.
+    /// Counts `.wgsl` files across the two scan roots the build script reads
+    /// (`src/shaders/` flat, `src/renderer/item_plugins/` recursive) to drive
+    /// expected-count assertions without needing manual updates as shaders are
+    /// added or removed.
     fn count_shader_files_on_disk() -> usize {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let shaders_dir = std::path::Path::new(manifest_dir).join("src/shaders");
-        std::fs::read_dir(&shaders_dir)
+        fn count_recursive(dir: &std::path::Path) -> usize {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return 0;
+            };
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| {
+                    let path = e.path();
+                    if path.is_dir() {
+                        count_recursive(&path)
+                    } else if path.extension().and_then(|s| s.to_str()) == Some("wgsl") {
+                        1
+                    } else {
+                        0
+                    }
+                })
+                .sum()
+        }
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let flat = std::fs::read_dir(manifest_dir.join("src/shaders"))
             .expect("read src/shaders/")
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -123,7 +142,8 @@ mod tests {
                     .map(|s| s == "wgsl")
                     .unwrap_or(false)
             })
-            .count()
+            .count();
+        flat + count_recursive(&manifest_dir.join("src/renderer/item_plugins"))
     }
 
     #[test]
@@ -146,7 +166,7 @@ mod tests {
         let catalog = current_shader_hashes().len();
         assert_eq!(
             catalog, on_disk,
-            "catalog has {} entries but src/shaders/ contains {} .wgsl files",
+            "catalog has {} entries but the shader scan roots contain {} .wgsl files",
             catalog, on_disk
         );
     }

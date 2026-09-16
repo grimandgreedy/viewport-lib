@@ -485,7 +485,6 @@ impl ViewportRenderer {
         );
         Self::upload_slices(
             resources,
-            &mut self.image_slice_gpu_data,
             &mut self.volume_surface_slice_gpu_data,
             device,
             queue,
@@ -1078,7 +1077,7 @@ impl ViewportRenderer {
 
         // Run plugin culling for the current camera frustum so subsequent
         // plugin paint/shadow calls can skip culled items.
-        if !self.item_type_plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
+        if !self.item_type_plugins.is_empty() {
             let vp = frame.camera.render_camera.view_proj();
             let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
             self.dispatch_plugin_cull(&frustum, frame);

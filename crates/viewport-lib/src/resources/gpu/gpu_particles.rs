@@ -700,8 +700,8 @@ impl crate::resources::DeviceResources {
             .enumerate()
             .filter_map(|(i, slot)| {
                 let s = slot.as_ref()?;
-                let needs = s.alive
-                    && (verdict == Revalidate::RebuildAll || !s.draw_deps.resolves(self));
+                let needs =
+                    s.alive && (verdict == Revalidate::RebuildAll || !s.draw_deps.resolves(self));
                 needs.then_some(i)
             })
             .collect();
@@ -1372,7 +1372,8 @@ mod tests {
     /// the revalidation rebuilds it against the fallback view.
     #[test]
     fn freed_texture_rebuilds_draw_bind_group() {
-        let Some((device, queue, mut resources)) = crate::resources::test_support::try_make_resources()
+        let Some((device, queue, mut resources)) =
+            crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no GPU adapter available");
             return;
@@ -1380,7 +1381,8 @@ mod tests {
         let tex = resources
             .upload_texture(&device, &queue, srgb_texture(200))
             .expect("texture upload");
-        let _system = resources.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
+        let _system =
+            resources.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
 
         // Sync the gate so the assertion below isolates the free.
         resources.revalidate_particle_draw_bindings(&device);
@@ -1403,7 +1405,8 @@ mod tests {
     /// see, so it must rebuild unconditionally.
     #[test]
     fn replaced_texture_rebuilds_draw_bind_group() {
-        let Some((device, queue, mut resources)) = crate::resources::test_support::try_make_resources()
+        let Some((device, queue, mut resources)) =
+            crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no GPU adapter available");
             return;
@@ -1411,7 +1414,8 @@ mod tests {
         let tex = resources
             .upload_texture(&device, &queue, srgb_texture(40))
             .expect("texture upload");
-        let _system = resources.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
+        let _system =
+            resources.create_gpu_particle_system(&device, &queue, &sprite_config(Some(tex)));
 
         resources.revalidate_particle_draw_bindings(&device);
         let baseline = resources.particle.draw_bg_rebuilds;
@@ -1430,7 +1434,8 @@ mod tests {
     /// A system with no texture never rebuilds on someone else's free.
     #[test]
     fn untextured_system_survives_unrelated_free() {
-        let Some((device, queue, mut resources)) = crate::resources::test_support::try_make_resources()
+        let Some((device, queue, mut resources)) =
+            crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no GPU adapter available");
             return;
@@ -1446,8 +1451,7 @@ mod tests {
         resources.free_texture(unrelated);
         resources.revalidate_particle_draw_bindings(&device);
         assert_eq!(
-            resources.particle.draw_bg_rebuilds,
-            baseline,
+            resources.particle.draw_bg_rebuilds, baseline,
             "a free the system does not name must not rebuild its bind groups"
         );
     }

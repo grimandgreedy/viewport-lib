@@ -1023,105 +1023,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Image slice outlines: compute world-space quad corners and create inline vertex/index buffers.
-        let mut raw_geom_outline_buffers: Vec<crate::resources::RawGeomOutlineBuffers> = Vec::new();
-        if frame.interaction.outline_selected {
-            let resources = &self.resources;
-            for item in &frame.scene.image_slices {
-                if item.settings.hidden || !item.settings.selected {
-                    continue;
-                }
-                use crate::SliceAxis;
-                let [bmin, bmax] = [item.bbox_min, item.bbox_max];
-                let t = item.offset;
-                let (v0, v1, v2, v3) = match item.axis {
-                    SliceAxis::X => {
-                        let x = bmin[0] + t * (bmax[0] - bmin[0]);
-                        (
-                            [x, bmin[1], bmin[2]],
-                            [x, bmax[1], bmin[2]],
-                            [x, bmax[1], bmax[2]],
-                            [x, bmin[1], bmax[2]],
-                        )
-                    }
-                    SliceAxis::Y => {
-                        let y = bmin[1] + t * (bmax[1] - bmin[1]);
-                        (
-                            [bmin[0], y, bmin[2]],
-                            [bmax[0], y, bmin[2]],
-                            [bmax[0], y, bmax[2]],
-                            [bmin[0], y, bmax[2]],
-                        )
-                    }
-                    SliceAxis::Z => {
-                        let z = bmin[2] + t * (bmax[2] - bmin[2]);
-                        (
-                            [bmin[0], bmin[1], z],
-                            [bmax[0], bmin[1], z],
-                            [bmax[0], bmax[1], z],
-                            [bmin[0], bmax[1], z],
-                        )
-                    }
-                };
-                let verts: [[f32; 3]; 4] = [v0, v1, v2, v3];
-                let indices: [u32; 6] = [0, 1, 2, 0, 2, 3];
-                let vertex_buf =
-                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                        label: Some("image_slice_outline_verts"),
-                        contents: bytemuck::cast_slice(&verts),
-                        usage: crate::gpu::BufferUsages::VERTEX,
-                    });
-                let index_buf =
-                    device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                        label: Some("image_slice_outline_indices"),
-                        contents: bytemuck::cast_slice(&indices),
-                        usage: crate::gpu::BufferUsages::INDEX,
-                    });
-                let uniform = OutlineUniform {
-                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    colour: [0.0; 4],
-                    pixel_offset: 0.0,
-                    has_position_override: 0,
-                    position_override_base: 0,
-                    position_override_len: u32::MAX,
-                    deform_flags: 0,
-                    _deform_pad: [0; 3],
-                };
-                let uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("outline_mask_uniform_buf"),
-                    size: std::mem::size_of::<OutlineUniform>() as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&uniform_buf, 0, bytemuck::cast_slice(&[uniform]));
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("outline_mask_object_bg"),
-                    layout: &resources.outline.bind_group_layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: resources
-                                .content
-                                .fallback_position_override_buf
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
-                raw_geom_outline_buffers.push(crate::resources::RawGeomOutlineBuffers {
-                    vertex_buf,
-                    index_buf,
-                    index_count: 6,
-                    two_sided: true,
-                    _uniform_buf: uniform_buf,
-                    mask_bind_group: bg,
-                });
-            }
-        }
-
         // Screen image outlines: compute NDC bounds and create outline buffers.
         let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> =
             Vec::new();
@@ -1378,7 +1279,6 @@ impl ViewportRenderer {
             slot.selection_outlines.glyph_outline_indices = glyph_outline_indices;
             slot.selection_outlines.tensor_glyph_outline_indices = tensor_glyph_outline_indices;
             slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
-            slot.selection_outlines.raw_geom_outline_buffers = raw_geom_outline_buffers;
             slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
             slot.selection_outlines.implicit_outline_indices = implicit_outline_indices;
             slot.selection_outlines.mc_outline_data = mc_outline_data;
@@ -1459,10 +1359,6 @@ impl ViewportRenderer {
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
-                    .raw_geom_outline_buffers
-                    .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
                     .screen_rect_outline_buffers
                     .is_empty()
                 || !self.viewport_slots[vp_idx]
@@ -1532,8 +1428,6 @@ impl ViewportRenderer {
                     as *const Vec<(usize, Option<Vec<u32>>)>;
             let sprite_outline_idx_ptr = &slot_ref.selection_outlines.sprite_outline_indices
                 as *const Vec<(usize, Option<Vec<u32>>)>;
-            let raw_geom_outlines_ptr = &slot_ref.selection_outlines.raw_geom_outline_buffers
-                as *const Vec<crate::resources::RawGeomOutlineBuffers>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
             let implicit_outline_idx_ptr =
@@ -1576,7 +1470,6 @@ impl ViewportRenderer {
                 glyph_outline_indices,
                 tensor_glyph_outline_indices,
                 sprite_outline_indices,
-                raw_geom_outlines,
                 screen_rect_outlines,
                 implicit_outline_idxs,
                 mc_outlines,
@@ -1606,7 +1499,6 @@ impl ViewportRenderer {
                     &*glyph_outline_idx_ptr,
                     &*tensor_glyph_outline_idx_ptr,
                     &*sprite_outline_idx_ptr,
-                    &*raw_geom_outlines_ptr,
                     &*screen_rect_outlines_ptr,
                     &*implicit_outline_idx_ptr,
                     &*mc_outlines_ptr,
@@ -1835,26 +1727,6 @@ impl ViewportRenderer {
                             }
                         }
                     }
-                }
-
-                // Draw inline-geometry quads for image slices.
-                for raw in raw_geom_outlines {
-                    let pipeline = if raw.two_sided {
-                        &self.resources.outline.mask_two_sided_pipeline
-                    } else {
-                        &self.resources.outline.mask_pipeline
-                    };
-                    pass.set_pipeline(pipeline);
-                    pass.set_bind_group(0, camera_bg, &[]);
-                    pass.set_bind_group(1, &raw.mask_bind_group, &[]);
-                    bind_deform_group!(
-                        pass,
-                        self.resources,
-                        &self.resources.deform.dummy_bind_group
-                    );
-                    pass.set_vertex_buffer(0, raw.vertex_buf.slice(..));
-                    pass.set_index_buffer(raw.index_buf.slice(..), crate::gpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..raw.index_count, 0, 0..1);
                 }
 
                 // Draw screen-space rect outlines for screen images.

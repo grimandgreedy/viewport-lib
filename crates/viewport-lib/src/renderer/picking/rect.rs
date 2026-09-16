@@ -766,66 +766,8 @@ impl ViewportRenderer {
             }
         }
 
-        // 9. Image slice / volume surface slice / screen image object rect picks (OBJECT only).
+        // 9. Volume surface slice / screen image object rect picks (OBJECT only).
         if wants_object {
-            // Image slice: project all 4 quad corners and check containment/edge intersection.
-            for item in &self.pick_image_slice_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let [bmin, bmax] = [item.bbox_min, item.bbox_max];
-                let t = item.offset;
-                let corners: [[f32; 3]; 4] = match item.axis {
-                    SliceAxis::X => {
-                        let x = bmin[0] + t * (bmax[0] - bmin[0]);
-                        [
-                            [x, bmin[1], bmin[2]],
-                            [x, bmax[1], bmin[2]],
-                            [x, bmax[1], bmax[2]],
-                            [x, bmin[1], bmax[2]],
-                        ]
-                    }
-                    SliceAxis::Y => {
-                        let y = bmin[1] + t * (bmax[1] - bmin[1]);
-                        [
-                            [bmin[0], y, bmin[2]],
-                            [bmax[0], y, bmin[2]],
-                            [bmax[0], y, bmax[2]],
-                            [bmin[0], y, bmax[2]],
-                        ]
-                    }
-                    SliceAxis::Z => {
-                        let z = bmin[2] + t * (bmax[2] - bmin[2]);
-                        [
-                            [bmin[0], bmin[1], z],
-                            [bmax[0], bmin[1], z],
-                            [bmax[0], bmax[1], z],
-                            [bmin[0], bmax[1], z],
-                        ]
-                    }
-                };
-                let sc: Vec<Option<glam::Vec2>> = corners
-                    .iter()
-                    .map(|&c| {
-                        project(view_proj, glam::Vec3::from(c)).map(|(x, y)| glam::Vec2::new(x, y))
-                    })
-                    .collect();
-                let hit = sc.iter().any(|p| p.map_or(false, |p| in_rect(p.x, p.y)))
-                    || (0..4).any(|i| {
-                        let a = sc[i];
-                        let b = sc[(i + 1) % 4];
-                        match (a, b) {
-                            (Some(a), Some(b)) => segment_in_rect(a, b, rect_min, rect_max),
-                            (Some(a), None) => in_rect(a.x, a.y),
-                            (None, Some(b)) => in_rect(b.x, b.y),
-                            (None, None) => false,
-                        }
-                    });
-                if hit {
-                    result.objects.push(item.settings.pick_id.0);
-                }
-            }
-
             // Volume surface slice: project each mesh vertex (with model transform) and check.
             for item in &self.pick_volume_surface_slice_items {
                 if item.settings.pick_id == PickId::NONE {

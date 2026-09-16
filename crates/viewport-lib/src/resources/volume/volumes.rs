@@ -1136,16 +1136,6 @@ pub struct VolumeGpuData {
     pub(crate) pick_id: crate::renderer::PickId,
 }
 
-/// Per-frame GPU data for one image slice item, created in `prepare()`.
-pub(crate) struct ImageSliceGpuData {
-    /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.
-    pub(crate) bind_group: crate::gpu::BindGroup,
-    // Keep buffers/samplers alive.
-    pub(crate) _uniform_buf: crate::gpu::Buffer,
-    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
-    pub(crate) pick_id: crate::renderer::PickId,
-}
-
 /// Per-frame GPU data for one volume surface slice item, created in `prepare()`.
 pub(crate) struct VolumeSurfaceSliceGpuData {
     /// Bind group (group 1): uniform + 3D texture + sampler + LUT + LUT sampler.

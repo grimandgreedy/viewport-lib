@@ -24,10 +24,7 @@ impl ViewportRenderer {
         use std::sync::atomic::Ordering::Relaxed;
         let ldr_skipped_plugin = self.item_type_plugins.iter().any(|(name, plugin)| {
             !plugin.draws_ldr()
-                && frame
-                    .scene
-                    .plugin_items
-                    .get(*name)
+                && crate::renderer::item_plugins::plugin_items_for(frame, name)
                     .is_some_and(|items| !items.is_empty())
         });
         if ldr_skipped_plugin && !self.ldr_plugin_items_warned.swap(true, Relaxed) {
@@ -182,7 +179,6 @@ impl ViewportRenderer {
                 &self.streamtube_gpu_data,
                 camera_bg,
                 &self.tube_gpu_data,
-                &self.image_slice_gpu_data,
                 &self.tensor_glyph_gpu_data,
                 &self.ribbon_gpu_data,
                 &self.volume_surface_slice_gpu_data,

@@ -694,19 +694,6 @@ pub(crate) struct SplatOutlineBuffers {
     pub(crate) bind_group: crate::gpu::BindGroup,
 }
 
-/// Inline geometry outline buffers for flat world-space quads (image slices).
-///
-/// Unlike `OutlineObjectBuffers`, the vertex/index data is owned here rather than
-/// looked up via a `MeshId`.
-pub(crate) struct RawGeomOutlineBuffers {
-    pub vertex_buf: crate::gpu::Buffer,
-    pub index_buf: crate::gpu::Buffer,
-    pub index_count: u32,
-    pub two_sided: bool,
-    pub _uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
-}
-
 /// Per-frame outline item for a tube/streamtube/ribbon mesh.
 ///
 /// Holds an index into the per-frame gpu_data array and a mask bind group

@@ -993,55 +993,8 @@ impl ViewportRenderer {
             }
         }
 
-        // 10. Image slice / volume surface slice / screen image object picks (OBJECT only).
+        // 10. Volume surface slice / screen image object picks (OBJECT only).
         if wants_object {
-            // Image slice: axis-aligned quad ray intersection.
-            for item in &self.pick_image_slice_items {
-                if item.settings.pick_id == PickId::NONE {
-                    continue;
-                }
-                let [bmin, bmax] = [item.bbox_min, item.bbox_max];
-                let t = item.offset;
-                // Plane normal and position along the axis.
-                let (axis_idx, plane_pos) = match item.axis {
-                    SliceAxis::X => (0usize, bmin[0] + t * (bmax[0] - bmin[0])),
-                    SliceAxis::Y => (1usize, bmin[1] + t * (bmax[1] - bmin[1])),
-                    SliceAxis::Z => (2usize, bmin[2] + t * (bmax[2] - bmin[2])),
-                };
-                let plane_n = {
-                    let mut n = glam::Vec3::ZERO;
-                    n[axis_idx] = 1.0;
-                    n
-                };
-                let denom = plane_n.dot(ray_dir);
-                if denom.abs() < 1e-6 {
-                    continue;
-                }
-                let toi = (plane_pos - ray_origin[axis_idx]) / denom;
-                if toi <= 0.0 {
-                    continue;
-                }
-                let hit_pos = ray_origin + ray_dir * toi;
-                // Check that the hit is within the slice quad's other two dimensions.
-                let in_bounds = (0..3)
-                    .filter(|&i| i != axis_idx)
-                    .all(|i| hit_pos[i] >= bmin[i] - 1e-4 && hit_pos[i] <= bmax[i] + 1e-4);
-                if in_bounds {
-                    #[allow(deprecated)]
-                    consider(
-                        toi,
-                        PickHit {
-                            id: item.settings.pick_id.0,
-                            sub_object: None,
-                            world_pos: hit_pos,
-                            normal: plane_n,
-                            scalar_value: None,
-                            sub_object_world_pos: None,
-                        },
-                    );
-                }
-            }
-
             // Volume surface slice: ray/mesh intersection via mesh_store CPU data.
             for item in &self.pick_volume_surface_slice_items {
                 if item.settings.pick_id == PickId::NONE {

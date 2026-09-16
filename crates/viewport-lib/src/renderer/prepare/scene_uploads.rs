@@ -897,28 +897,11 @@ impl ViewportRenderer {
 
     pub(super) fn upload_slices(
         resources: &mut DeviceResources,
-        image_slice_gpu_data: &mut Vec<crate::resources::ImageSliceGpuData>,
         volume_surface_slice_gpu_data: &mut Vec<crate::resources::VolumeSurfaceSliceGpuData>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) {
-        // ------------------------------------------------------------------
-        // Image Slice GPU data upload.
-        // ------------------------------------------------------------------
-        image_slice_gpu_data.clear();
-        if !frame.scene.image_slices.is_empty() {
-            resources.ensure_image_slice_pipeline(device);
-            for item in &frame.scene.image_slices {
-                if item.settings.hidden {
-                    continue;
-                }
-                if let Some(gpu_data) = resources.upload_image_slice(device, queue, item) {
-                    image_slice_gpu_data.push(gpu_data);
-                }
-            }
-        }
-
         // ------------------------------------------------------------------
         // Volume Surface Slice GPU data upload.
         // ------------------------------------------------------------------
