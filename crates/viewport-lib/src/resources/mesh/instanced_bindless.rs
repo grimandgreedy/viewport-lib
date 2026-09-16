@@ -112,10 +112,11 @@ pub(crate) fn bindlessify(src: &str) -> String {
 
 /// Fixed size of the bindless texture array binding. A material's texture index
 /// is its slot in the texture store, so this caps the highest reachable slot.
-/// With `PARTIALLY_BOUND_BINDING_ARRAY` the bind group may supply fewer views
-/// than this; the layout just declares the ceiling. Generous for typical scenes;
-/// textures uploaded into a slot at or above this index are not reachable by the
-/// bindless path (they would need a larger array or a per-batch fallback).
+/// Every entry is bound, with a neutral fallback view where the store has no
+/// texture, so the array is never partially bound. Generous for typical scenes;
+/// a texture uploaded into a slot at or above this index is not reachable by the
+/// bindless path, and a material naming one loses that map rather than reading
+/// out of bounds (it would need a larger array or the per-batch binding).
 pub(crate) const BINDLESS_TEXTURE_CAPACITY: u32 = 1024;
 
 fn texture_array_entry(binding: u32) -> crate::gpu::BindGroupLayoutEntry {
@@ -215,23 +216,21 @@ pub(crate) fn bindless_cull_bgl(device: &crate::gpu::Device) -> crate::gpu::Bind
 }
 
 impl DeviceResources {
-    /// Build the dense list of texture views the bindless array binds, indexed by
+    /// Build the list of texture views the bindless array binds, indexed by
     /// texture-store slot: slot `i` gets its live view, or the white albedo
-    /// fallback when the slot is empty (a freed handle or a gap). Capped at
-    /// [`BINDLESS_TEXTURE_CAPACITY`]. A material's `tex_index*` indexes straight
-    /// into this list.
+    /// fallback when the slot is empty (a freed handle or a gap). A material's
+    /// `tex_index*` indexes straight into this list.
+    ///
+    /// Always [`BINDLESS_TEXTURE_CAPACITY`] entries, the count the layout
+    /// declares. Filling every entry rather than binding only the occupied prefix
+    /// means the array is never partially bound, so the device does not need
+    /// `PARTIALLY_BOUND_BINDING_ARRAY` to take this path, and an index the
+    /// material block should never produce lands on a neutral view instead of on
+    /// an unbound entry. The vector is rebuilt only when the bind group is, which
+    /// is a change in the instance generation, the slot count, or the free epoch.
     fn bindless_texture_views(&self) -> Vec<&crate::gpu::TextureView> {
         let fallback = &self.material.texture.view;
-        // Floor the length at 1 so the array binding is never empty (an untextured
-        // scene has no slots, but the binding must still resolve). Index 0 then
-        // holds the fallback white view, which no material references.
-        let count = self
-            .content
-            .textures
-            .slot_count()
-            .min(BINDLESS_TEXTURE_CAPACITY as usize)
-            .max(1);
-        (0..count)
+        (0..BINDLESS_TEXTURE_CAPACITY as usize)
             .map(|i| {
                 self.content
                     .textures

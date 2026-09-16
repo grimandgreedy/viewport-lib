@@ -1537,6 +1537,30 @@ impl ViewportRenderer {
         }
     }
 
+    /// Take the per-batch material-texture binding, whatever the device supports.
+    ///
+    /// The write side of [`material_texture_binding`](Self::material_texture_binding).
+    /// The renderer picks bindless whenever the device offers it, and the two
+    /// paths bind textures differently, so when output differs between machines
+    /// this is how to hold one of them still. Turning bindless off without it
+    /// means building the device with fewer features than the renderer asks for,
+    /// which changes more than this one choice.
+    ///
+    /// Call once, immediately after construction and before the first
+    /// [`prepare`](Self::prepare). There is no way back to bindless on the same
+    /// renderer: build another one.
+    ///
+    /// Expect fewer, larger instanced batches on the bindless path and more,
+    /// smaller ones here, since a per-batch bind group cannot span materials that
+    /// use different textures.
+    pub fn use_per_batch_material_textures(&mut self) {
+        use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+        self.resources.instancing.material_texture_binding = MaterialTextureBinding::PerBatch;
+        // The interner keys blocks on their bytes, and the texture indices are
+        // part of those bytes only on the bindless path, so it has to be told.
+        self.resources.material_gpu_builder.set_bindless(false);
+    }
+
     /// Returns the number of instanced batches prepared for the current frame.
     ///
     /// Zero when using the non-instanced path. Each batch corresponds to a distinct

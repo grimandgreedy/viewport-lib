@@ -142,6 +142,27 @@ fn a_freed_texture_handle_renders_as_an_unset_slot() {
     stale_handle_renders_as_unset(&mut h);
 }
 
+/// The per-batch opt-out reaches the renderer, and the invariant holds on the
+/// path it selects. Run on a bindless-capable device this is the only test here
+/// that exercises the per-batch path.
+#[test]
+fn the_per_batch_opt_out_is_honoured() {
+    let profile =
+        DeviceProfile::high_performance("stale_texture_handle_opt_out").with_recommended_features();
+    let Some(mut h) = Harness::with_profile(&profile) else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    h.renderer.use_per_batch_material_textures();
+    assert_eq!(
+        h.renderer.material_texture_binding(),
+        "per-batch",
+        "asking for the per-batch binding has to be enough on its own; a consumer \
+         should not have to drop device features to get it"
+    );
+    stale_handle_renders_as_unset(&mut h);
+}
+
 #[test]
 fn a_freed_texture_handle_renders_as_an_unset_slot_under_bindless() {
     let profile = DeviceProfile::high_performance("stale_texture_handle_bindless")
