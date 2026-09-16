@@ -11,8 +11,10 @@
 //! plugins that opt in via `draws_ldr`), `paint_transparent`
 //! (OIT), `outline_mask` (selection outline), `cast_shadow_pass` (shadow
 //! cascades), `cull` (per-frame frustum cull), and `pick` / `render_pick` (CPU
-//! and GPU picking). All hooks but `type_name` are default-empty; implement the
-//! ones an item type needs.
+//! and GPU picking). An item type whose work does not fit inside a pass the lib
+//! begins uses `encode` instead, which hands over the frame's command encoder
+//! at the points named by `encoder_scopes`. All hooks but `type_name` are
+//! default-empty; implement the ones an item type needs.
 
 use std::any::Any;
 
@@ -295,6 +297,101 @@ pub struct DepthReadContext<'a> {
     /// an existing group with [`scene_depth`](Self::scene_depth) +
     /// [`scene_depth_sampler`](Self::scene_depth_sampler) instead.
     pub scene_depth_bind_group: &'a crate::gpu::BindGroup,
+}
+
+/// Where in the HDR frame an [`encode`](ItemTypePlugin::encode) call is
+/// happening.
+///
+/// An item type that needs its own render or compute passes rather than draws
+/// inside one the lib begins names the points it wants through
+/// [`encoder_scopes`](ItemTypePlugin::encoder_scopes), and reads this off the
+/// context to tell them apart when it asks for more than one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum EncoderScope {
+    /// After the opaque scene, the built-in sprite passes and the depth-read
+    /// pass, and before the OIT resolve.
+    ///
+    /// The scene colour holds the fully lit opaque image and the depth buffer
+    /// is final for opaque geometry, so this is where a projection effect
+    /// (decal-style stamping) or an effect that samples the opaque image
+    /// (refraction) belongs. Writes here are visible to every later pass.
+    AfterOpaque,
+    /// After the OIT resolve and before the outline composite and foreground
+    /// pass.
+    ///
+    /// The scene colour now holds opaque plus resolved transparency, which is
+    /// what a participating-media or volumetric effect wants to composite
+    /// over. Depth is still opaque-only: the OIT pass writes none.
+    AfterTransparent,
+}
+
+/// Information forwarded to a plugin's [`encode`](ItemTypePlugin::encode).
+///
+/// Unlike the draw hooks, no render pass is begun: the plugin gets the command
+/// encoder and the scene attachments, and opens whatever passes it needs. That
+/// is the point of the hook: an item type whose work is several passes over
+/// intermediate targets of its own cannot be expressed as draw calls inside a
+/// pass the lib has already shaped.
+///
+/// The scene colour is handed over twice on purpose.
+/// [`scene_colour`](Self::scene_colour) is the view to attach when writing to
+/// it; [`scene_colour_texture`](Self::scene_colour_texture) is the texture to
+/// `copy_texture_to_texture` from when the effect has to *read* the image it is
+/// also writing, which a render pass cannot do in one step. Allocate the copy
+/// target once per viewport size rather than per frame.
+///
+/// Build pipelines that write the scene colour against
+/// [`opaque_target_desc`](crate::resources::DeviceResources::opaque_target_desc);
+/// it names the same formats and sample count these attachments have.
+#[non_exhaustive]
+pub struct EncoderScopeContext<'a> {
+    /// Which of the plugin's requested scopes this call is.
+    pub scope: EncoderScope,
+    /// The wgpu device, for passes, bind groups, and intermediate targets the
+    /// effect allocates. Per-viewport allocations should be cached on the
+    /// plugin and keyed by [`viewport_index`](Self::viewport_index) and
+    /// [`scene_size`](Self::scene_size), not rebuilt every frame.
+    pub device: &'a crate::gpu::Device,
+    /// The wgpu queue, for uniform writes ahead of the passes encoded here.
+    pub queue: &'a crate::gpu::Queue,
+    /// Active render-camera snapshot for this viewport: view and projection
+    /// matrices, eye position, near/far.
+    pub camera: &'a crate::RenderCamera,
+    /// Multi-viewport slot index. Effects with per-viewport state key on it.
+    pub viewport_index: usize,
+    /// Monotonically increasing frame counter assigned by the lib.
+    pub frame_index: u64,
+    /// Scene-resolution target size in pixels, render scale and SSAA applied.
+    /// The scene attachments below are this size.
+    pub scene_size: [u32; 2],
+    /// The shared group-0 bind group for this viewport, the same one the lib
+    /// binds before the draw hooks. Bind it at group 0 in passes of the
+    /// plugin's own so its shaders can use the shared camera, lighting and
+    /// clip declarations.
+    pub camera_bind_group: &'a crate::gpu::BindGroup,
+    /// The HDR scene colour target, as a view to attach and render into.
+    pub scene_colour: &'a crate::gpu::TextureView,
+    /// The same target as a texture, as the source for a
+    /// `copy_texture_to_texture` into a sampleable copy. An effect that reads
+    /// the lit image while writing to it needs that copy; wgpu cannot bind one
+    /// texture as both attachment and sampled resource in a pass.
+    pub scene_colour_texture: &'a crate::gpu::Texture,
+    /// The scene depth-stencil target, as a view to attach. Attach it with
+    /// `LoadOp::Load` and, for an effect that must not disturb later passes,
+    /// depth writes disabled.
+    pub scene_depth: &'a crate::gpu::TextureView,
+    /// Read-only depth-aspect view of the same target, for sampling scene
+    /// depth inside the effect's own shaders.
+    pub scene_depth_only: &'a crate::gpu::TextureView,
+    /// The frame's effects settings (`EffectsFrame`), read-only. An item type
+    /// with quality or mode knobs that live on the frame rather than on its
+    /// items reads them here; the built-in volumetric settings are the reason
+    /// this is on the context at all.
+    pub effects: &'a crate::EffectsFrame,
+    /// `true` when the frame budget asked for reduced quality this frame, the
+    /// same signal [`ItemFrameContext::quality_reduced`] carries.
+    pub quality_reduced: bool,
 }
 
 /// Information forwarded to a plugin's `cast_shadow_pass`.
@@ -601,6 +698,46 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
+        _items: &dyn PluginItemCollection,
+    ) {
+    }
+
+    /// The points in the HDR frame where this plugin wants an
+    /// [`encode`](Self::encode) call.
+    ///
+    /// Empty by default, which is the answer for every item type that draws
+    /// inside the passes the lib begins: those use `paint` and its siblings.
+    /// Return one or more [`EncoderScope`]s only when the work genuinely needs
+    /// passes of its own, and the renderer will call `encode` once per listed
+    /// scope, in the order the frame reaches them rather than the order listed.
+    ///
+    /// HDR-only, like the OIT, read-only-depth and foreground hooks: the LDR
+    /// path has no intermediate scene target to read or composite into, so a
+    /// plugin listing scopes is simply not called there.
+    fn encoder_scopes(&self) -> &[EncoderScope] {
+        &[]
+    }
+
+    /// Encode passes of this plugin's own into the frame's command encoder.
+    ///
+    /// Called once per scope named by [`encoder_scopes`](Self::encoder_scopes),
+    /// with no render pass begun: the plugin opens the passes it needs against
+    /// the scene attachments on `ctx`, or against intermediate targets it owns.
+    /// This is the hook for work that is several passes over its own textures
+    /// (march, resolve, composite) rather than draw calls inside a pass the lib
+    /// has shaped.
+    ///
+    /// The encoder is the frame's, so everything encoded here lands in frame
+    /// order between the neighbouring built-in passes. Two rules follow from
+    /// that: leave the scene attachments in the state the next pass expects
+    /// (attach with `LoadOp::Load`, and do not clear what you did not allocate),
+    /// and do not submit : the lib owns submission.
+    ///
+    /// Implementations skip hidden items, as everywhere else. Default no-op.
+    fn encode(
+        &self,
+        _encoder: &mut crate::gpu::CommandEncoder,
+        _ctx: &EncoderScopeContext<'_>,
         _items: &dyn PluginItemCollection,
     ) {
     }

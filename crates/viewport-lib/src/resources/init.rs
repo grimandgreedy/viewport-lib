@@ -2360,7 +2360,7 @@ impl DeviceResources {
             },
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
-                texture_slot_mismatches: Vec::new(),
+                texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
                 polyline_store: crate::resources::PolylineStore::new(),
                 streamtube_store: crate::resources::StreamtubeStore::new(),
@@ -2428,8 +2428,8 @@ impl DeviceResources {
             glyph: crate::resources::scivis::glyph::GlyphResources::new(device),
             tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::new(device),
             polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
-            streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
-            ribbon: crate::resources::scivis::tube::RibbonResources::default(),
+            streamtube: crate::resources::scivis::tube::StreamtubeResources::new(device),
+            ribbon: crate::resources::scivis::tube::RibbonResources::new(device),
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
                 bgl: None,

@@ -778,6 +778,32 @@ fn viewport_mask_fs() -> @location(0) f32 {
 }
 "#;
 
+/// Group-0 declarations for the shadow-cast pass.
+///
+/// The shadow pass binds its own camera at group 0 : a single dynamic-offset
+/// uniform holding the cascade's light view-projection, not the scene bind
+/// group every other pass uses. A shader for
+/// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass)
+/// therefore prepends this instead of [`SHARED_BINDINGS_WGSL`], and a pipeline
+/// built with
+/// [`build_shadow_pipeline`](crate::resources::DeviceResources::build_shadow_pipeline)
+/// matches it.
+///
+/// The pass is depth-only, so the shader needs a vertex stage and no fragment
+/// stage: pass `""` as the fragment entry point.
+pub const SHARED_SHADOW_BINDINGS_WGSL: &str = r#"
+// @viewport-wgsl-version: 1
+// Shared group-0 declarations for the shadow-cast pass. Do not re-declare
+// these bindings in plugin shaders, and do not mix this with
+// SHARED_BINDINGS_WGSL: the two describe different group-0 layouts.
+
+struct ViewportShadowCamera {
+    light_view_proj: mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> shadow_camera: ViewportShadowCamera;
+"#;
+
 /// Fragment helper for the pick-id pass.
 ///
 /// A plugin's pick pipeline reuses its scene-pass vertex stage (extended to

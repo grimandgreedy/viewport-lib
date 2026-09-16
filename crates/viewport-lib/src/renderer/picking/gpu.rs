@@ -15,10 +15,6 @@ enum PickItemType {
     /// Mesh-backed surfaces: scene surfaces and volume-mesh boundaries, resolved
     /// against `mesh_store`.
     Surface,
-    /// Tube-family geometry: streamtubes, tubes, and ribbons. These build an
-    /// owned connected mesh each frame into the renderer's tube gpu-data vecs
-    /// rather than living in `mesh_store`. Object-level only.
-    Curve,
     /// Sprite sets: camera-facing quads expanded in the vertex shader, drawn with
     /// a dedicated pick pipeline that reuses the render expansion. Object-level.
     Sprite,
@@ -128,11 +124,6 @@ impl PickItemType {
                     | PickMask::EDGE
                     | PickMask::CELL,
             ),
-            // Streamtubes, tubes, and ribbons answer the whole object mask plus
-            // the node/segment/strip levels a curve query may ask.
-            PickItemType::Curve => mask.intersects(
-                PickMask::OBJECT | PickMask::POLY_NODE | PickMask::SEGMENT | PickMask::STRIP,
-            ),
             // Sprite sets answer the object mask plus the per-instance level.
             PickItemType::Sprite => mask.intersects(PickMask::OBJECT | PickMask::INSTANCE),
         }
@@ -162,10 +153,6 @@ enum PickSubKind {
     Plugin(&'static str),
     /// Glyph, tensor-glyph, or sprite set: `instance_index` is the instance.
     Instance,
-    /// Streamtube, tube, or ribbon: `primitive_index` is a connected-mesh
-    /// triangle, mapped to a segment / strip through the item's `tri_segment` /
-    /// `tri_strip` tables.
-    Curve,
 }
 
 /// One sprite set to draw into the pick pass. The group-2 pick-id bind group is
@@ -176,23 +163,6 @@ struct SpritePickDraw<'a> {
     sprite_bind_group: &'a crate::gpu::BindGroup,
     vertex_buffer: &'a crate::gpu::Buffer,
     sprite_count: u32,
-}
-
-/// Geometry source for one surface-pipeline pick draw. Surfaces reference a mesh
-/// in `mesh_store`; tube-family items reference the owned per-frame buffers built
-/// during prepare.
-enum PickGeom<'a> {
-    /// A mesh handle resolved against `mesh_store`.
-    Mesh(crate::resources::mesh::mesh_store::MeshId),
-    /// Direct buffer references for a tube-family connected mesh.
-    Tube {
-        vertex_buffer: &'a crate::gpu::Buffer,
-        index_buffer: &'a crate::gpu::Buffer,
-        index_count: u32,
-        /// Per-triangle segment-endpoint payload for the POLY_NODE pick variant;
-        /// `None` when the item built no node data.
-        node_buffer: Option<&'a crate::gpu::Buffer>,
-    },
 }
 
 /// Which types have pickable geometry this frame, plus the shared proxy mesh
@@ -220,8 +190,6 @@ enum PickSublevelBind {
     /// Mesh vertex + index storage for the surface EDGE variant (same layout as
     /// `Vertex`, different pipeline).
     Edge(crate::gpu::BindGroup),
-    /// Per-triangle node payload for the curve POLY_NODE variant.
-    Node(crate::gpu::BindGroup),
 }
 
 /// Whether a surface / volume-mesh draw should write its nearest corner (global
@@ -246,15 +214,6 @@ fn surface_writes_edge(mask: PickMask, has_face_to_cell: bool, feature: bool) ->
         && mask.intersects(PickMask::EDGE)
         && !mask.intersects(PickMask::FACE | PickMask::VERTEX)
         && !(has_face_to_cell && mask.intersects(PickMask::CELL))
-}
-
-/// Whether a curve draw should write its nearest segment endpoint (global node
-/// index) instead of the hit triangle. True only when `POLY_NODE` is the finest
-/// curve level requested, matching the resolve priority STRIP > SEGMENT > NODE.
-fn curve_writes_node(mask: PickMask, feature: bool) -> bool {
-    feature
-        && mask.intersects(PickMask::POLY_NODE)
-        && !mask.intersects(PickMask::STRIP | PickMask::SEGMENT)
 }
 
 /// Boundary-face-to-cell maps for volume meshes, keyed by `pick_id`. Built from
@@ -288,7 +247,7 @@ fn build_surface_pick_meta(frame: &FrameData) -> SurfacePickMeta {
 /// query-shape-agnostic: it does not know whether the caller wants a single
 /// pixel or a whole rect region back, only which types answer `mask`.
 struct PickDrawSet<'a> {
-    draws: Vec<(PickGeom<'a>, PickInstance)>,
+    draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)>,
     sprite_draws: Vec<SpritePickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
@@ -851,17 +810,14 @@ impl ViewportRenderer {
     ) -> PickPipelineFlags {
         // --- lazy pipeline init ---
         self.resources.ensure_pick_pipeline(device);
-        // Surface VERTEX and curve POLY_NODE write their final sub-id per pixel
-        // from a dedicated pipeline variant. Build them when the mask asks for
-        // that level; each is a no-op without SHADER_PRIMITIVE_INDEX.
+        // Surface VERTEX and EDGE write their final sub-id per pixel from a
+        // dedicated pipeline variant. Build them when the mask asks for that
+        // level; each is a no-op without SHADER_PRIMITIVE_INDEX.
         if mask.intersects(PickMask::VERTEX) {
             self.resources.ensure_pick_vertex_pipeline(device);
         }
         if mask.intersects(PickMask::EDGE) {
             self.resources.ensure_pick_edge_pipeline(device);
-        }
-        if mask.intersects(PickMask::POLY_NODE) {
-            self.resources.ensure_pick_node_pipeline(device);
         }
         let has_pickable_sprites = PickItemType::Sprite.satisfies(mask)
             && self
@@ -981,14 +937,14 @@ impl ViewportRenderer {
             _pad: [0; 3],
         };
 
-        let mut draws: Vec<(PickGeom, PickInstance)> = Vec::new();
+        let mut draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)> = Vec::new();
 
         // Surfaces and volume-mesh boundaries draw through the Surface pipeline;
         // skip building their instance data when the mask asks for none of the
         // levels that type answers.
         if PickItemType::Surface.satisfies(mask) {
             for item in scene_items.iter().filter(|i| pickable(i)) {
-                draws.push((PickGeom::Mesh(item.mesh_id), to_instance(item)));
+                draws.push((item.mesh_id, to_instance(item)));
             }
             for ri in frame
                 .scene
@@ -997,34 +953,7 @@ impl ViewportRenderer {
                 .map(|vm| vm.to_render_item())
                 .filter(pickable)
             {
-                draws.push((PickGeom::Mesh(ri.mesh_id), to_instance(&ri)));
-            }
-        }
-
-        // Streamtubes, tubes, and ribbons build owned connected meshes into these
-        // vecs during prepare(); each entry carries its source item's pick_id and
-        // model. The streamtube shader applies the model to the buffer positions,
-        // so the pick pass uses the same matrix and its silhouette matches.
-        if PickItemType::Curve.satisfies(mask) {
-            for family in [
-                self.streamtube_gpu_data.as_slice(),
-                self.tube_gpu_data.as_slice(),
-                self.ribbon_gpu_data.as_slice(),
-            ] {
-                for gpu in family
-                    .iter()
-                    .filter(|g| g.pick_id != PickId::NONE && g.index_count > 0)
-                {
-                    draws.push((
-                        PickGeom::Tube {
-                            vertex_buffer: &gpu.vertex_buffer,
-                            index_buffer: &gpu.index_buffer,
-                            index_count: gpu.index_count,
-                            node_buffer: gpu.node_pick_buffer.as_ref(),
-                        },
-                        instance_from(gpu.model, gpu.pick_id),
-                    ));
-                }
+                draws.push((ri.mesh_id, to_instance(&ri)));
             }
         }
 
@@ -1047,10 +976,7 @@ impl ViewportRenderer {
                 {
                     continue;
                 }
-                draws.push((
-                    PickGeom::Mesh(cube_id),
-                    instance_from(d.transform, d.settings.pick_id),
-                ));
+                draws.push((cube_id, instance_from(d.transform, d.settings.pick_id)));
             }
         }
 
@@ -1077,7 +1003,7 @@ impl ViewportRenderer {
                     let model = glam::Mat4::from_translation((min + max) * 0.5)
                         * glam::Mat4::from_scale(extent);
                     draws.push((
-                        PickGeom::Mesh(cube_id),
+                        cube_id,
                         instance_from(model.to_cols_array_2d(), it.settings.pick_id),
                     ));
                 }
@@ -1091,7 +1017,7 @@ impl ViewportRenderer {
                     let model = glam::Mat4::from_translation(glam::Vec3::from(center))
                         * glam::Mat4::from_scale(glam::Vec3::splat(radius));
                     draws.push((
-                        PickGeom::Mesh(sphere_id),
+                        sphere_id,
                         instance_from(model.to_cols_array_2d(), it.settings.pick_id),
                     ));
                 }
@@ -1190,7 +1116,7 @@ impl ViewportRenderer {
         &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        draws: &[(PickGeom, PickInstance)],
+        draws: &[(crate::resources::mesh::mesh_store::MeshId, PickInstance)],
     ) -> (crate::gpu::Buffer, crate::gpu::BindGroup) {
         let pick_instances: Vec<PickInstance> = draws.iter().map(|(_, inst)| *inst).collect();
         let pick_instance_bytes = bytemuck::cast_slice(&pick_instances);
@@ -1272,60 +1198,42 @@ impl ViewportRenderer {
         draw_set
             .draws
             .iter()
-            .map(|(geom, inst)| match geom {
-                PickGeom::Mesh(mesh_id) => {
-                    let bgl = self.resources.pick.vertex_mesh_bgl.as_ref()?;
-                    let obj = inst.object_id as u64;
-                    let has_f2c = draw_set
-                        .surface_meta
-                        .get(&obj)
-                        .is_some_and(|m| !m.is_empty());
-                    // VERTEX and EDGE share the mesh vertex + index storage bind
-                    // group; only the pipeline differs. At most one fires (their
-                    // priority guards are exclusive).
-                    let want_vertex = surface_writes_vertex(draw_set.mask, has_f2c, feature)
-                        && self.resources.pick.vertex_pipeline.is_some();
-                    let want_edge = surface_writes_edge(draw_set.mask, has_f2c, feature)
-                        && self.resources.pick.edge_pipeline.is_some();
-                    if !want_vertex && !want_edge {
-                        return None;
-                    }
-                    let mesh = self.resources.mesh_store.get(*mesh_id)?;
-                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("pick_vertex_mesh_bg"),
-                        layout: bgl,
-                        entries: &[
-                            crate::gpu::BindGroupEntry {
-                                binding: 0,
-                                resource: self.resources.geometry.vertex_binding(mesh.vertex_span),
-                            },
-                            crate::gpu::BindGroupEntry {
-                                binding: 1,
-                                resource: self.resources.geometry.index_binding(mesh.index_span),
-                            },
-                        ],
-                    });
-                    if want_vertex {
-                        Some(PickSublevelBind::Vertex(bg))
-                    } else {
-                        Some(PickSublevelBind::Edge(bg))
-                    }
+            .map(|(mesh_id, inst)| {
+                let bgl = self.resources.pick.vertex_mesh_bgl.as_ref()?;
+                let obj = inst.object_id as u64;
+                let has_f2c = draw_set
+                    .surface_meta
+                    .get(&obj)
+                    .is_some_and(|m| !m.is_empty());
+                // VERTEX and EDGE share the mesh vertex + index storage bind
+                // group; only the pipeline differs. At most one fires (their
+                // priority guards are exclusive).
+                let want_vertex = surface_writes_vertex(draw_set.mask, has_f2c, feature)
+                    && self.resources.pick.vertex_pipeline.is_some();
+                let want_edge = surface_writes_edge(draw_set.mask, has_f2c, feature)
+                    && self.resources.pick.edge_pipeline.is_some();
+                if !want_vertex && !want_edge {
+                    return None;
                 }
-                PickGeom::Tube { node_buffer, .. } => {
-                    let bgl = self.resources.pick.node_bgl.as_ref()?;
-                    if !curve_writes_node(draw_set.mask, feature) {
-                        return None;
-                    }
-                    let node_buf = (*node_buffer)?;
-                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("pick_node_bg"),
-                        layout: bgl,
-                        entries: &[crate::gpu::BindGroupEntry {
+                let mesh = self.resources.mesh_store.get(*mesh_id)?;
+                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                    label: Some("pick_vertex_mesh_bg"),
+                    layout: bgl,
+                    entries: &[
+                        crate::gpu::BindGroupEntry {
                             binding: 0,
-                            resource: node_buf.as_entire_binding(),
-                        }],
-                    });
-                    Some(PickSublevelBind::Node(bg))
+                            resource: self.resources.geometry.vertex_binding(mesh.vertex_span),
+                        },
+                        crate::gpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.resources.geometry.index_binding(mesh.index_span),
+                        },
+                    ],
+                });
+                if want_vertex {
+                    Some(PickSublevelBind::Vertex(bg))
+                } else {
+                    Some(PickSublevelBind::Edge(bg))
                 }
             })
             .collect()
@@ -1343,14 +1251,14 @@ impl ViewportRenderer {
         sublevel: &'rp [Option<PickSublevelBind>],
         frame: &'rp FrameData,
     ) {
-        // Surface-pipeline draws: scene surfaces, volume-mesh boundaries, and
-        // tube-family geometry all rasterise with the shared pick pipeline.
-        // Type-level mask filtering already happened while building `draws`,
-        // so an unbuilt or unrequested type contributes nothing and reads
-        // back as no hit. Instance index in the storage buffer = position in
-        // `draws`. A draw with a `sublevel` bind group switches to the per-pixel
-        // VERTEX / NODE pipeline variant (writing the final sub-id into the
-        // primitive channel) instead of the default face / segment pipeline.
+        // Surface-pipeline draws: scene surfaces and volume-mesh boundaries
+        // rasterise with the shared pick pipeline. Type-level mask filtering
+        // already happened while building `draws`, so an unbuilt or unrequested
+        // type contributes nothing and reads back as no hit. Instance index in
+        // the storage buffer = position in `draws`. A draw with a `sublevel`
+        // bind group switches to the per-pixel VERTEX / EDGE pipeline variant
+        // (writing the final sub-id into the primitive channel) instead of the
+        // default face pipeline.
         let default_pipeline = self
             .resources
             .pick
@@ -1358,72 +1266,37 @@ impl ViewportRenderer {
             .as_ref()
             .expect("ensure_pick_pipeline must be called first");
 
-        for (instance_slot, (geom, _)) in draw_set.draws.iter().enumerate() {
+        for (instance_slot, (mesh_id, _)) in draw_set.draws.iter().enumerate() {
             let slot = instance_slot as u32;
             let variant = sublevel.get(instance_slot).and_then(|s| s.as_ref());
-            match geom {
-                PickGeom::Mesh(mesh_id) => {
-                    let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
-                        continue;
-                    };
-                    match variant {
-                        Some(PickSublevelBind::Vertex(bg)) => {
-                            pick_pass.set_pipeline(
-                                self.resources.pick.vertex_pipeline.as_ref().unwrap(),
-                            );
-                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
-                            pick_pass.set_bind_group(2, bg, &[]);
-                        }
-                        Some(PickSublevelBind::Edge(bg)) => {
-                            pick_pass
-                                .set_pipeline(self.resources.pick.edge_pipeline.as_ref().unwrap());
-                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
-                            pick_pass.set_bind_group(2, bg, &[]);
-                        }
-                        _ => {
-                            pick_pass.set_pipeline(default_pipeline);
-                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
-                        }
-                    }
-                    pick_pass.set_vertex_buffer(
-                        0,
-                        self.resources.geometry.vertex_slice(mesh.vertex_span),
-                    );
-                    pick_pass.set_index_buffer(
-                        self.resources.geometry.index_slice(mesh.index_span),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
+            let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
+                continue;
+            };
+            match variant {
+                Some(PickSublevelBind::Vertex(bg)) => {
+                    pick_pass.set_pipeline(self.resources.pick.vertex_pipeline.as_ref().unwrap());
+                    pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                    pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                    pick_pass.set_bind_group(2, bg, &[]);
                 }
-                PickGeom::Tube {
-                    vertex_buffer,
-                    index_buffer,
-                    index_count,
-                    ..
-                } => {
-                    match variant {
-                        Some(PickSublevelBind::Node(bg)) => {
-                            pick_pass
-                                .set_pipeline(self.resources.pick.node_pipeline.as_ref().unwrap());
-                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
-                            pick_pass.set_bind_group(2, bg, &[]);
-                        }
-                        _ => {
-                            pick_pass.set_pipeline(default_pipeline);
-                            pick_pass.set_bind_group(0, pick_camera_bg, &[]);
-                            pick_pass.set_bind_group(1, pick_instance_bg, &[]);
-                        }
-                    }
-                    pick_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                    pick_pass
-                        .set_index_buffer(index_buffer.slice(..), crate::gpu::IndexFormat::Uint32);
-                    pick_pass.draw_indexed(0..*index_count, 0, slot..slot + 1);
+                Some(PickSublevelBind::Edge(bg)) => {
+                    pick_pass.set_pipeline(self.resources.pick.edge_pipeline.as_ref().unwrap());
+                    pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                    pick_pass.set_bind_group(1, pick_instance_bg, &[]);
+                    pick_pass.set_bind_group(2, bg, &[]);
+                }
+                _ => {
+                    pick_pass.set_pipeline(default_pipeline);
+                    pick_pass.set_bind_group(0, pick_camera_bg, &[]);
+                    pick_pass.set_bind_group(1, pick_instance_bg, &[]);
                 }
             }
+            pick_pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
+            pick_pass.set_index_buffer(
+                self.resources.geometry.index_slice(mesh.index_span),
+                crate::gpu::IndexFormat::Uint32,
+            );
+            pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
         }
 
         // Sprite sets: camera-facing quads expanded in the vertex shader. The
@@ -2117,39 +1990,6 @@ impl ViewportRenderer {
                     None
                 }
             }
-            PickSubKind::Curve => {
-                // Curve sub-object picking needs the primitive index. Without the
-                // feature the GPU path stays object-level: no silent per-click CPU
-                // test.
-                if !primitive_index_supported {
-                    return None;
-                }
-                // The POLY_NODE variant wrote the final node index into the channel.
-                if curve_writes_node(mask, primitive_index_supported) {
-                    return Some(SubObjectRef::Point(sub_primitive));
-                }
-                // Otherwise the channel is the hit triangle; map it to the item's
-                // segment / strip through the persistent per-triangle tables.
-                let gpu = self
-                    .streamtube_gpu_data
-                    .iter()
-                    .chain(self.tube_gpu_data.iter())
-                    .chain(self.ribbon_gpu_data.iter())
-                    .find(|g| g.pick_id.0 == object_id)?;
-                if mask.intersects(PickMask::STRIP) {
-                    gpu.tri_strip
-                        .get(sub_primitive as usize)
-                        .copied()
-                        .map(SubObjectRef::Strip)
-                } else if mask.intersects(PickMask::SEGMENT) {
-                    gpu.tri_segment
-                        .get(sub_primitive as usize)
-                        .copied()
-                        .map(SubObjectRef::Segment)
-                } else {
-                    None
-                }
-            }
             PickSubKind::Surface => self.resolve_surface_sub_object(
                 object_id,
                 sub_primitive,
@@ -2238,34 +2078,6 @@ impl ViewportRenderer {
             PickSubKind::Instance => mask
                 .intersects(PickMask::INSTANCE)
                 .then_some(SubObjectRef::Instance(sub_primitive)),
-            PickSubKind::Curve => {
-                if !primitive_index_supported {
-                    return None;
-                }
-                // POLY_NODE variant: the channel is the final node index.
-                if curve_writes_node(mask, primitive_index_supported) {
-                    return Some(SubObjectRef::Point(sub_primitive));
-                }
-                let gpu = self
-                    .streamtube_gpu_data
-                    .iter()
-                    .chain(self.tube_gpu_data.iter())
-                    .chain(self.ribbon_gpu_data.iter())
-                    .find(|g| g.pick_id.0 == object_id)?;
-                if mask.intersects(PickMask::STRIP) {
-                    gpu.tri_strip
-                        .get(sub_primitive as usize)
-                        .copied()
-                        .map(SubObjectRef::Strip)
-                } else if mask.intersects(PickMask::SEGMENT) {
-                    gpu.tri_segment
-                        .get(sub_primitive as usize)
-                        .copied()
-                        .map(SubObjectRef::Segment)
-                } else {
-                    None
-                }
-            }
             PickSubKind::Surface => {
                 if !primitive_index_supported {
                     return None;
@@ -2390,20 +2202,6 @@ impl ViewportRenderer {
             let ri = vm.to_render_item();
             if !ri.settings.hidden && ri.settings.pick_id != PickId::NONE {
                 kinds.insert(ri.settings.pick_id.0, PickSubKind::Surface);
-            }
-        }
-
-        // Curve families.
-        for family in [
-            self.streamtube_gpu_data.as_slice(),
-            self.tube_gpu_data.as_slice(),
-            self.ribbon_gpu_data.as_slice(),
-        ] {
-            for gpu in family
-                .iter()
-                .filter(|g| g.pick_id != PickId::NONE && g.index_count > 0)
-            {
-                kinds.insert(gpu.pick_id.0, PickSubKind::Curve);
             }
         }
 

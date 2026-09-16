@@ -94,7 +94,6 @@ pub(crate) use self::scivis::curve_store::{
 pub use self::scivis::gaussian_splat::{GaussianSplatData, GaussianSplatId, ShDegree};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub(crate) use self::scivis::sprite::SpriteKey;
-pub(crate) use self::scivis::tube::RibbonKey;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;
@@ -109,16 +108,15 @@ pub(crate) use self::postprocess::lic::LIC_STRENGTH_ENCODE_MAX;
 pub(crate) use self::postprocess::producer::{PostStage, ProducerFrameInputs, ProducerTiming};
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
-    ContactShadowUniform, CurveMeshOutlineItem, DofUniform, DualPipeline, FrustumPlane,
-    FrustumUniform, GlyphBaseMesh, GlyphGpuData, GpuProjectedTetMesh, GridUniform,
-    GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData, LicAdvectUniform,
-    LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform, OutlineEdgeUniform,
-    OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu, OverlayShapeGpuData,
-    OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex, OverlayTextVertex,
-    OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ScreenRectOutlineBuffers,
-    ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform, SpriteGpuData, SsaoUniform,
-    StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData, ToneMapUniform, ViewportCullState,
-    ViewportHdrState,
+    ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform, GlyphBaseMesh,
+    GlyphGpuData, GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData,
+    LabelGpuData, LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData,
+    ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
+    OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
+    OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
+    ScreenRectOutlineBuffers, ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform,
+    SpriteGpuData, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData,
+    ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

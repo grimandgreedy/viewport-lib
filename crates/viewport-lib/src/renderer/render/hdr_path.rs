@@ -500,8 +500,7 @@ impl ViewportRenderer {
                 // Item-type plugins may draw into the OIT pass through
                 // `paint_transparent` (mirrors `has_transparent` below).
                 || self.any_plugin_items_submitted(frame)
-                || self.sprite_gpu_data.iter().any(|s| s.oit_eligible)
-                || self.ribbon_gpu_data.iter().any(|r| r.oit_eligible);
+                || self.sprite_gpu_data.iter().any(|s| s.oit_eligible);
             if needs_oit {
                 let hdr = self.viewport_slots[vp_idx].hdr.as_mut().unwrap();
                 let [sw, sh] = hdr.scene_size;
@@ -540,8 +539,28 @@ impl ViewportRenderer {
         self.hdr_decal_outline(&ctx, &mut encoder);
         self.hdr_sub_highlight(&ctx, &mut encoder);
         self.hdr_depth_read_pass(&ctx, &mut encoder);
+        // Item-type plugins that own passes rather than draws get the encoder
+        // here, with the opaque image and final opaque depth in hand.
+        self.dispatch_plugin_encode(
+            &mut encoder,
+            frame,
+            crate::plugin_api::EncoderScope::AfterOpaque,
+            device,
+            queue,
+            vp_idx,
+        );
         self.hdr_oit(&ctx, &mut encoder);
         self.hdr_scatter(&ctx, &mut encoder);
+        // The second scope: opaque plus resolved transparency, which is what a
+        // volumetric effect composites over.
+        self.dispatch_plugin_encode(
+            &mut encoder,
+            frame,
+            crate::plugin_api::EncoderScope::AfterTransparent,
+            device,
+            queue,
+            vp_idx,
+        );
         self.hdr_lic(&ctx, &mut encoder);
         self.hdr_outline_composite(&ctx, &mut encoder);
         self.hdr_foreground(&ctx, &mut encoder);
@@ -1503,8 +1522,7 @@ impl ViewportRenderer {
                 }
             }
 
-            // Scivis layers (point cloud, glyph, polyline, volume, streamtube,
-            // image slice, tensor glyph, ribbon, volume surface slice, sprites).
+            // The shared line substrate, mesh instances and sprites.
             //
             // Sprites are routed through a separate post-pass below when SSAA is
             // depth. The post-pass targets the ssaa_* attachments and samples
@@ -1515,10 +1533,7 @@ impl ViewportRenderer {
                 &self.resources,
                 &mut render_pass,
                 &self.polyline_gpu_data,
-                &self.streamtube_gpu_data,
                 camera_bg,
-                &self.tube_gpu_data,
-                &self.ribbon_gpu_data,
                 sprite_slice_for_inline,
                 &self.mesh_instance_gpu_data,
                 true
@@ -2734,8 +2749,7 @@ impl ViewportRenderer {
                 // `paint_transparent` for any registered plugin with a
                 // non-empty submitted collection (mirrors `needs_oit` above).
                 || self.any_plugin_items_submitted(frame)
-                || self.sprite_gpu_data.iter().any(|s| s.oit_eligible)
-                || self.ribbon_gpu_data.iter().any(|r| r.oit_eligible);
+                || self.sprite_gpu_data.iter().any(|s| s.oit_eligible);
 
         if has_transparent {
             // OIT targets already allocated in the pre-pass above.
@@ -3474,14 +3488,12 @@ impl ViewportRenderer {
                 // Item-type plugin transparent draws.
                 self.dispatch_plugin_paint_transparent(&mut oit_pass, frame);
 
-                // OIT-eligible sprite and ribbon draws. Only batches
-                // `SpriteGpuData::oit_eligible`/`StreamtubeGpuData::oit_eligible`
-                // flagged true reach here (AlphaBlend/Premultiplied, no
-                // depth_write, no soft-particle fade for sprites, not
-                // wireframe for ribbons); everything else keeps drawing
-                // through the ordinary sprite/ribbon passes elsewhere in this
-                // function, which skip these same batches (see the
-                // `!s.oit_eligible`/`!r.oit_eligible` filters there).
+                // OIT-eligible sprite draws. Only batches flagged
+                // `SpriteGpuData::oit_eligible` reach here (AlphaBlend or
+                // Premultiplied, no depth_write, no soft-particle fade);
+                // everything else keeps drawing through the ordinary sprite
+                // passes elsewhere in this function, which skip these same
+                // batches (see the `!s.oit_eligible` filters there).
                 for sprite in self.sprite_gpu_data.iter().filter(|s| s.oit_eligible) {
                     let (pipeline, pipeline_premultiplied) = if sprite.lit {
                         (
@@ -3516,23 +3528,6 @@ impl ViewportRenderer {
                     }
                     oit_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
                     oit_pass.draw(0..6, 0..sprite.sprite_count);
-                }
-                for ribbon in self.ribbon_gpu_data.iter().filter(|r| r.oit_eligible) {
-                    let pipeline = match ribbon.blend {
-                        crate::renderer::SpriteBlend::Premultiplied => {
-                            self.resources.ribbon.oit_pipeline_premultiplied.as_ref()
-                        }
-                        _ => self.resources.ribbon.oit_pipeline.as_ref(),
-                    };
-                    let Some(pipeline) = pipeline else { continue };
-                    oit_pass.set_pipeline(pipeline);
-                    oit_pass.set_bind_group(1, &ribbon.uniform_bind_group, &[]);
-                    oit_pass.set_vertex_buffer(0, ribbon.vertex_buffer.slice(..));
-                    oit_pass.set_index_buffer(
-                        ribbon.index_buffer.slice(..),
-                        crate::gpu::IndexFormat::Uint32,
-                    );
-                    oit_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
                 }
             }
         }
@@ -4105,9 +4100,6 @@ impl ViewportRenderer {
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
         if !slot.selection_outlines.outline_object_buffers.is_empty()
-            || !slot.selection_outlines.streamtube_outline_items.is_empty()
-            || !slot.selection_outlines.tube_outline_items.is_empty()
-            || !slot.selection_outlines.ribbon_outline_items.is_empty()
             || !slot.selection_outlines.polyline_outline_indices.is_empty()
             || !slot.selection_outlines.sprite_outline_indices.is_empty()
             || !slot

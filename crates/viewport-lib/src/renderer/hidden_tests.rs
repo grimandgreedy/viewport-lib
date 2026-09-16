@@ -21,6 +21,7 @@ use crate::camera::Camera;
 use crate::plugin_api::ItemTypePlugin as _;
 use crate::renderer::ImplicitPrimitive;
 use crate::renderer::PickId;
+use crate::renderer::item_plugins::curves::{RibbonPlugin, StreamtubePlugin, TubePlugin};
 use crate::renderer::item_plugins::glyph::GlyphPlugin;
 use crate::renderer::item_plugins::gpu_implicit::GpuImplicitPlugin;
 use crate::renderer::item_plugins::point_cloud::PointCloudPlugin;
@@ -258,8 +259,10 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
     // -----------------------------------------------------------------
     // Streamtube
     // -----------------------------------------------------------------
+    //
+    // The streamtube item type is an `ItemTypePlugin`, so the check drives the
+    // plugin's prepare directly instead of reading a renderer field.
     {
-        let mut fd = empty_frame();
         let mut vis = StreamtubeItem::default();
         vis.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         vis.strip_lengths = vec![2];
@@ -268,11 +271,28 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
-        fd.scene.streamtube_items.push(vis);
-        fd.scene.streamtube_items.push(hid);
-        let _ = renderer.prepare_callback(&device, &queue, &fd);
+        let items: Vec<StreamtubeItem> = vec![vis, hid];
+
+        let fd = empty_frame();
+        let resources = renderer.resources();
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &fd.camera.render_camera,
+            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
+            viewport_index: 0,
+            frame_index: 0,
+            jobs: crate::resources::Jobs::new(resources),
+            resources,
+            wireframe_mode: false,
+            outline_selected: false,
+            sub_selection: None,
+            clip_objects: &[],
+            quality_reduced: false,
+            ref_items: None,
+        };
+        let mut plugin = StreamtubePlugin::default();
+        let _ = plugin.prepare(&device, &queue, &ctx, &items);
         assert_eq!(
-            renderer.streamtube_gpu_data.len(),
+            plugin.drawn_count(),
             1,
             "streamtube: hidden item must not produce gpu data"
         );
@@ -281,8 +301,10 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
     // -----------------------------------------------------------------
     // Tube
     // -----------------------------------------------------------------
+    //
+    // The tube item type is an `ItemTypePlugin`, so the check drives the
+    // plugin's prepare directly instead of reading a renderer field.
     {
-        let mut fd = empty_frame();
         let mut vis = TubeItem::default();
         vis.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         vis.strip_lengths = vec![2];
@@ -291,11 +313,28 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
-        fd.scene.tube_items.push(vis);
-        fd.scene.tube_items.push(hid);
-        let _ = renderer.prepare_callback(&device, &queue, &fd);
+        let items: Vec<TubeItem> = vec![vis, hid];
+
+        let fd = empty_frame();
+        let resources = renderer.resources();
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &fd.camera.render_camera,
+            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
+            viewport_index: 0,
+            frame_index: 0,
+            jobs: crate::resources::Jobs::new(resources),
+            resources,
+            wireframe_mode: false,
+            outline_selected: false,
+            sub_selection: None,
+            clip_objects: &[],
+            quality_reduced: false,
+            ref_items: None,
+        };
+        let mut plugin = TubePlugin::default();
+        let _ = plugin.prepare(&device, &queue, &ctx, &items);
         assert_eq!(
-            renderer.tube_gpu_data.len(),
+            plugin.drawn_count(),
             1,
             "tube: hidden item must not produce gpu data"
         );
@@ -304,8 +343,10 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
     // -----------------------------------------------------------------
     // Ribbon
     // -----------------------------------------------------------------
+    //
+    // The ribbon item type is an `ItemTypePlugin`, so the check drives the
+    // plugin's prepare directly instead of reading a renderer field.
     {
-        let mut fd = empty_frame();
         let mut vis = RibbonItem::default();
         vis.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         vis.strip_lengths = vec![2];
@@ -314,11 +355,28 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
-        fd.scene.ribbon_items.push(vis);
-        fd.scene.ribbon_items.push(hid);
-        let _ = renderer.prepare_callback(&device, &queue, &fd);
+        let items: Vec<RibbonItem> = vec![vis, hid];
+
+        let fd = empty_frame();
+        let resources = renderer.resources();
+        let ctx = crate::plugin_api::ItemFrameContext {
+            camera: &fd.camera.render_camera,
+            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
+            viewport_index: 0,
+            frame_index: 0,
+            jobs: crate::resources::Jobs::new(resources),
+            resources,
+            wireframe_mode: false,
+            outline_selected: false,
+            sub_selection: None,
+            clip_objects: &[],
+            quality_reduced: false,
+            ref_items: None,
+        };
+        let mut plugin = RibbonPlugin::default();
+        let _ = plugin.prepare(&device, &queue, &ctx, &items);
         assert_eq!(
-            renderer.ribbon_gpu_data.len(),
+            plugin.drawn_count(),
             1,
             "ribbon: hidden item must not produce gpu data"
         );

@@ -203,3 +203,63 @@ fn prebuilt_sidecars_render() {
     assert_eq!(stats.triangles_submitted, expected_tris);
     assert_eq!(stats.pipelines_built_this_frame, 0);
 }
+
+/// The curve mesh pipelines belong to the streamtube, tube and ribbon item-type
+/// plugins, so neither `upload_streamtube` nor the first frame that draws one
+/// reports through `pipelines_built_this_frame`: that counter tracks the lib's
+/// own pipeline cache, and a plugin owns its pipelines outright.
+#[test]
+fn curve_pipelines_are_owned_by_the_plugins() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter");
+        return;
+    };
+    let mesh_id = h
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(&h.device, &meshes::stress_sphere(1.0, 3).into())
+        .expect("mesh upload");
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = mesh_id;
+    item.material = Material::from_colour([0.7, 0.7, 0.7]);
+    let base = mesh_frame(item.clone(), [200.0, 150.0]);
+    let _ = h.render_two_frames(&base, 200, 150);
+
+    let mut ribbon = viewport_lib::RibbonItem::default();
+    ribbon.positions = vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+    ribbon.strip_lengths = vec![3];
+    ribbon.width = 0.5;
+    let source = h
+        .renderer
+        .resources_mut()
+        .upload_ribbon(&h.device, &h.queue, &ribbon);
+
+    let _ = h.render(&base, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "upload_ribbon writes buffers and compiles nothing"
+    );
+
+    // The first frame that draws a curve builds the plugins' pipelines, but they
+    // are the plugins' own and so stay off this counter.
+    let mut with_curves = mesh_frame(item, [200.0, 150.0]);
+    with_curves
+        .scene
+        .ribbon_refs
+        .push(viewport_lib::RibbonRefItem::new(source));
+    let mut streamtube = viewport_lib::StreamtubeItem::default();
+    streamtube.positions = vec![[-1.0, 0.5, 0.0], [0.0, 0.5, 0.0], [1.0, 0.5, 0.0]];
+    streamtube.strip_lengths = vec![3];
+    with_curves.scene.streamtube_items.push(streamtube);
+    let mut tube = viewport_lib::TubeItem::default();
+    tube.positions = vec![[-1.0, -0.5, 0.0], [0.0, -0.5, 0.0], [1.0, -0.5, 0.0]];
+    tube.strip_lengths = vec![3];
+    with_curves.scene.tube_items.push(tube);
+    let _ = h.render(&with_curves, 200, 150);
+    assert_eq!(
+        h.stats().pipelines_built_this_frame,
+        0,
+        "plugin-owned pipelines are not counted in the lib's pipeline cache"
+    );
+}

@@ -1,7 +1,6 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 use crate::gpu::util::DeviceExt;
-use crate::resources::CurveMeshOutlineItem;
 
 mod instanced;
 mod lighting;
@@ -455,18 +454,6 @@ impl ViewportRenderer {
             queue,
             frame,
         );
-        Self::upload_tubes_ribbons(
-            resources,
-            &mut self.streamtube_gpu_data,
-            &mut self.streamtube_selected_gpu_indices,
-            &mut self.tube_gpu_data,
-            &mut self.tube_selected_gpu_indices,
-            &mut self.ribbon_gpu_data,
-            &mut self.ribbon_selected_gpu_indices,
-            device,
-            queue,
-            frame,
-        );
         let vp_size = frame.camera.viewport_size;
         // Surface LIC GPU data upload.
         // ------------------------------------------------------------------
@@ -844,7 +831,6 @@ impl ViewportRenderer {
             plugin_frame_index,
             lighting,
             scene_items,
-            &self.ribbon_gpu_data,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,

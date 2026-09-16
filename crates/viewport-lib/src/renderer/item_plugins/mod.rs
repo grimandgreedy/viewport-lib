@@ -11,6 +11,7 @@
 
 pub(crate) mod registry;
 
+pub(crate) mod curves;
 pub(crate) mod gaussian_splat;
 pub(crate) mod glyph;
 pub(crate) mod gpu_implicit;
@@ -33,6 +34,9 @@ pub(crate) fn plugin_items_for<'f>(
     name: &str,
 ) -> Option<&'f dyn PluginItemCollection> {
     match name {
+        curves::RIBBON_TYPE_NAME => Some(&frame.scene.ribbon_items),
+        curves::STREAMTUBE_TYPE_NAME => Some(&frame.scene.streamtube_items),
+        curves::TUBE_TYPE_NAME => Some(&frame.scene.tube_items),
         gaussian_splat::TYPE_NAME => Some(&frame.scene.gaussian_splats),
         gpu_implicit::TYPE_NAME => Some(&frame.scene.gpu_implicit),
         gpu_marching_cubes::TYPE_NAME => Some(&frame.scene.gpu_mc_items),
@@ -60,6 +64,9 @@ pub(crate) fn plugin_ref_items_for<'f>(
     name: &str,
 ) -> Option<&'f dyn PluginItemCollection> {
     match name {
+        curves::RIBBON_TYPE_NAME => Some(&frame.scene.ribbon_refs),
+        curves::STREAMTUBE_TYPE_NAME => Some(&frame.scene.streamtube_refs),
+        curves::TUBE_TYPE_NAME => Some(&frame.scene.tube_refs),
         glyph::TYPE_NAME => Some(&frame.scene.glyph_set_refs),
         point_cloud::TYPE_NAME => Some(&frame.scene.point_cloud_refs),
         polyline::TYPE_NAME => Some(&frame.scene.polyline_refs),
@@ -98,12 +105,15 @@ impl crate::renderer::ViewportRenderer {
         self.with_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
         self.with_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
         self.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
+        self.with_item_type_plugin(device, Box::new(curves::StreamtubePlugin::default()));
+        self.with_item_type_plugin(device, Box::new(curves::TubePlugin::default()));
         self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
         self.with_item_type_plugin(device, Box::new(tensor_glyph::TensorGlyphPlugin::default()));
         self.with_item_type_plugin(
             device,
             Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
         );
+        self.with_item_type_plugin(device, Box::new(curves::RibbonPlugin::default()));
         // Then the types that always had a draw site of their own.
         self.with_item_type_plugin(
             device,

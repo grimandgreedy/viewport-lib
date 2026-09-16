@@ -136,12 +136,6 @@ pub(crate) struct SelectionOutlines {
     pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Per-frame NDC rect outline buffers for selected screen images.
     pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
-    /// Outline items for selected streamtubes (index into streamtube_gpu_data + mask bind group).
-    pub streamtube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Outline items for selected tubes.
-    pub tube_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
-    /// Outline items for selected ribbons.
-    pub ribbon_outline_items: Vec<crate::resources::CurveMeshOutlineItem>,
     /// Indices into polyline_gpu_data for selected user polylines.
     pub polyline_outline_indices: Vec<usize>,
     /// True when an item-type plugin drew selection coverage into the outline
@@ -376,18 +370,7 @@ pub struct ViewportRenderer {
     /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
-    /// Per-frame streamtube GPU data, rebuilt in prepare(), consumed in paint().
-    streamtube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
     /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
-    tube_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Per-frame ribbon GPU data, rebuilt in prepare(), consumed in paint().
-    ribbon_gpu_data: Vec<crate::resources::StreamtubeGpuData>,
-    /// Indices into streamtube_gpu_data for selected streamtubes (set in prepare_scene, consumed in prepare_viewport).
-    streamtube_selected_gpu_indices: Vec<usize>,
-    /// Indices into tube_gpu_data for selected tubes (set in prepare_scene, consumed in prepare_viewport).
-    tube_selected_gpu_indices: Vec<usize>,
-    /// Indices into ribbon_gpu_data for selected ribbons (set in prepare_scene, consumed in prepare_viewport).
-    ribbon_selected_gpu_indices: Vec<usize>,
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
     /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
@@ -574,12 +557,6 @@ pub struct ViewportRenderer {
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_sprite_items: Vec<SpriteItem>,
-    /// Streamtube items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_streamtube_items: Vec<StreamtubeItem>,
-    /// Tube items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_tube_items: Vec<TubeItem>,
-    /// Ribbon items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_ribbon_items: Vec<RibbonItem>,
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_screen_image_items: Vec<ScreenImageItem>,
@@ -994,12 +971,6 @@ impl ViewportRenderer {
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             polyline_gpu_data: Vec::new(),
-            streamtube_gpu_data: Vec::new(),
-            tube_gpu_data: Vec::new(),
-            ribbon_gpu_data: Vec::new(),
-            streamtube_selected_gpu_indices: Vec::new(),
-            tube_selected_gpu_indices: Vec::new(),
-            ribbon_selected_gpu_indices: Vec::new(),
             sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             particle_gpu_data: Vec::new(),
@@ -1052,9 +1023,6 @@ impl ViewportRenderer {
             scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
             pick_sprite_items: Vec::new(),
-            pick_streamtube_items: Vec::new(),
-            pick_tube_items: Vec::new(),
-            pick_ribbon_items: Vec::new(),
             pick_screen_image_items: Vec::new(),
             pick_decal_items: Vec::new(),
             cpu_pick_cache_enabled: false,
@@ -2093,6 +2061,66 @@ impl ViewportRenderer {
             }
             if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
                 plugin.paint_depth_read(pass, &ctx, items);
+            }
+        }
+    }
+
+    /// Walk registered plugins and invoke `encode` for each one that asked for
+    /// `scope`, handing over the frame's command encoder rather than a begun
+    /// render pass.
+    ///
+    /// Called from the HDR path at each [`EncoderScope`] point. A plugin that
+    /// lists no scopes is skipped without building the context.
+    ///
+    /// [`EncoderScope`]: crate::plugin_api::EncoderScope
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn dispatch_plugin_encode(
+        &self,
+        encoder: &mut crate::gpu::CommandEncoder,
+        frame: &FrameData,
+        scope: crate::plugin_api::EncoderScope,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        vp_idx: usize,
+    ) {
+        if self.item_type_plugins.is_empty() {
+            return;
+        }
+        if !self
+            .item_type_plugins
+            .values()
+            .any(|p| p.encoder_scopes().contains(&scope))
+        {
+            return;
+        }
+        let Some(slot) = self.viewport_slots.get(vp_idx) else {
+            return;
+        };
+        let Some(slot_hdr) = slot.hdr.as_ref() else {
+            return;
+        };
+        let ctx = crate::plugin_api::EncoderScopeContext {
+            scope,
+            device,
+            queue,
+            camera: &frame.camera.render_camera,
+            viewport_index: vp_idx,
+            frame_index: self.plugin_frame_index,
+            scene_size: slot_hdr.scene_size,
+            camera_bind_group: &slot.camera_bind_group,
+            scene_colour: &slot_hdr.hdr_view,
+            scene_colour_texture: &slot_hdr.hdr_texture,
+            scene_depth: &slot_hdr.hdr_depth_view,
+            scene_depth_only: &slot_hdr.hdr_depth_only_view,
+            effects: &frame.effects,
+            quality_reduced: self.last_stats.volume_quality_reduced,
+        };
+        for (name, plugin) in self.item_type_plugins.iter() {
+            if !plugin.encoder_scopes().contains(&scope) {
+                continue;
+            }
+            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+                plugin.encode(encoder, &ctx, items);
             }
         }
     }
@@ -3234,10 +3262,7 @@ impl ViewportRenderer {
             &self.resources,
             &mut *render_pass,
             &self.polyline_gpu_data,
-            &self.streamtube_gpu_data,
             camera_bg,
-            &self.tube_gpu_data,
-            &self.ribbon_gpu_data,
             &self.sprite_gpu_data,
             &self.mesh_instance_gpu_data,
             false

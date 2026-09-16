@@ -256,13 +256,6 @@ pub(crate) struct PickResources {
     /// the primitive channel. Reuses `vertex_mesh_bgl` for group 2. Only built with
     /// SHADER_PRIMITIVE_INDEX.
     pub(crate) edge_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Curve POLY_NODE pick pipeline: draws the tube/ribbon/streamtube mesh and
-    /// writes the nearer of the hit triangle's two segment endpoints (global node
-    /// index) into the primitive channel. Only built with SHADER_PRIMITIVE_INDEX.
-    pub(crate) node_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for `node_pipeline`: the per-triangle node payload buffer
-    /// (read-only storage).
-    pub(crate) node_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Screen-space image quad pipelines (plain + depth-composite) and the rect
@@ -378,8 +371,10 @@ pub struct ContentResources {
     /// recorded as (raw texture id, slot) where the binding is built and drained
     /// by `prepare` into a `TextureColourSpaceMismatch`. One entry per pair, so a
     /// scene that keeps redrawing does not grow it.
+    /// Behind a lock so a binding built from a shared borrow can record one:
+    /// item types prepare against `&DeviceResources`.
     pub(crate) texture_slot_mismatches:
-        Vec<(u64, crate::resources::material::textures::TextureSlot)>,
+        std::sync::Mutex<Vec<(u64, crate::resources::material::textures::TextureSlot)>>,
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,

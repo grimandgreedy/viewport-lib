@@ -694,12 +694,27 @@ impl DeviceResources {
     /// string to use a depth-only configuration with no fragment stage.
     /// Standard depth state: `LessEqual` test, depth write on, with the
     /// lib's standard depth bias.
+    ///
+    /// Group 0 is the shadow pass's own camera, not the scene bind group the
+    /// other builders use: the lib binds the cascade's light view-projection
+    /// as a single dynamic-offset uniform before calling
+    /// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass).
+    /// Declare it in the shader with
+    /// [`SHARED_SHADOW_BINDINGS_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SHADOW_BINDINGS_WGSL)
+    /// rather than `SHARED_BINDINGS_WGSL`.
     pub fn build_shadow_pipeline(
         &self,
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
+        // Group 0 in the shadow pass is the cascade-space camera the lib binds
+        // before calling `cast_shadow_pass`: a single dynamic-offset uniform,
+        // not the scene bind group the other passes use.
+        let mut bgls: Vec<&crate::gpu::BindGroupLayout> =
+            Vec::with_capacity(1 + opts.extra_bind_group_layouts.len());
+        bgls.push(&self.shadow.camera_bgl);
+        bgls.extend(opts.extra_bind_group_layouts.iter().copied());
+        let layout = crate::resources::builders::pipeline_layout(device, opts.label, &bgls);
         let desc = self.shadow_target_desc();
         let fragment = if opts.fs_entry.is_empty() {
             None

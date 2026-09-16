@@ -680,17 +680,6 @@ pub(crate) struct SplatOutlineMaskUniform {
     pub(crate) _pad: [f32; 9],       // 36 bytes  (total: 112)
 }
 
-/// Per-frame outline item for a tube/streamtube/ribbon mesh.
-///
-/// Holds an index into the per-frame gpu_data array and a mask bind group
-/// that supplies an identity model matrix to the outline_mask shader.
-pub(crate) struct CurveMeshOutlineItem {
-    pub index: usize,
-    pub two_sided: bool,
-    pub _mask_uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
-}
-
 /// NDC-space rect outline for screen image overlays.
 pub(crate) struct ScreenRectOutlineBuffers {
     pub _uniform_buf: crate::gpu::Buffer,

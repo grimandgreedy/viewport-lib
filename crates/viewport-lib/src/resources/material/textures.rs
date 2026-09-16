@@ -3104,8 +3104,11 @@ impl DeviceResources {
     /// Called where a texture id becomes a binding. A texture with no recorded
     /// space (an external caller-owned view) is passed: the store cannot see its
     /// format, so there is nothing to compare.
+    ///
+    /// Takes a shared borrow, so an item type preparing against
+    /// `&DeviceResources` can call it too.
     pub(crate) fn check_texture_slot(
-        &mut self,
+        &self,
         id: Option<crate::resources::TextureId>,
         slot: TextureSlot,
     ) {
@@ -3116,17 +3119,15 @@ impl DeviceResources {
         if found == slot.required_space() {
             return;
         }
+        let Ok(mut recorded) = self.content.texture_slot_mismatches.lock() else {
+            return;
+        };
         // One entry per (texture, slot): a mismatch reported every rebuild would
         // grow without bound while the scene keeps drawing.
-        if self
-            .content
-            .texture_slot_mismatches
-            .iter()
-            .any(|&(t, s)| t == id.raw() && s == slot)
-        {
+        if recorded.iter().any(|&(t, s)| t == id.raw() && s == slot) {
             return;
         }
-        self.content.texture_slot_mismatches.push((id.raw(), slot));
+        recorded.push((id.raw(), slot));
         tracing::error!("{}", slot_mismatch_error(id.raw(), slot));
     }
 
@@ -3134,10 +3135,13 @@ impl DeviceResources {
     ///
     /// Each pair is recorded once, the first time the texture is bound into that
     /// slot, and stays until [`clear_texture_slot_mismatches`](Self::clear_texture_slot_mismatches).
-    /// An empty slice means every texture drawn so far reached a slot that wants
+    /// An empty list means every texture drawn so far reached a slot that wants
     /// the space it was uploaded in.
-    pub fn texture_slot_mismatches(&self) -> &[(u64, TextureSlot)] {
-        &self.content.texture_slot_mismatches
+    pub fn texture_slot_mismatches(&self) -> Vec<(u64, TextureSlot)> {
+        match self.content.texture_slot_mismatches.lock() {
+            Ok(recorded) => recorded.clone(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// The first recorded slot mismatch, as an error naming the slot and the
@@ -3149,7 +3153,10 @@ impl DeviceResources {
     /// as it is seen, because it renders a plausible image and nothing else about
     /// the frame goes wrong.
     pub fn texture_slot_mismatch(&self) -> crate::error::ViewportResult<()> {
-        match self.content.texture_slot_mismatches.first() {
+        let Ok(recorded) = self.content.texture_slot_mismatches.lock() else {
+            return Ok(());
+        };
+        match recorded.first() {
             Some(&(raw, slot)) => Err(slot_mismatch_error(raw, slot)),
             None => Ok(()),
         }
@@ -3158,7 +3165,9 @@ impl DeviceResources {
     /// Forget the recorded slot mismatches, so a texture re-uploaded in the right
     /// space can be reported again if it is still wrong.
     pub fn clear_texture_slot_mismatches(&mut self) {
-        self.content.texture_slot_mismatches.clear();
+        if let Ok(recorded) = self.content.texture_slot_mismatches.get_mut() {
+            recorded.clear();
+        }
     }
 }
 

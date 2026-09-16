@@ -430,10 +430,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Curve mesh outline items: streamtubes, tubes, ribbons rendered via outline_mask_pipeline.
-        let mut streamtube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
-        let mut tube_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
-        let mut ribbon_outline_items: Vec<CurveMeshOutlineItem> = Vec::new();
         // Each entry is (gpu_data_index, instance_ranges).
         // None = draw all instances (object-level selection).
         // Some(vec) = draw only these specific instance indices (sub-object Instance selection).
@@ -469,60 +465,6 @@ impl ViewportRenderer {
                         }
                     }
                 }
-            }
-
-            // Streamtube / Tube / Ribbon outline items: use the actual triangle mesh
-            // geometry so the depth-buffer edge detection follows the tube silhouette.
-            let make_curve_item = |index: usize, two_sided: bool| -> CurveMeshOutlineItem {
-                let uniform = crate::resources::OutlineUniform {
-                    model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    colour: [1.0, 1.0, 1.0, 1.0],
-                    pixel_offset: 0.0,
-                    has_position_override: 0,
-                    position_override_base: 0,
-                    position_override_len: u32::MAX,
-                    deform_flags: 0,
-                    _deform_pad: [0; 3],
-                };
-                let buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                    label: Some("curve_outline_uniform_buf"),
-                    contents: bytemuck::cast_slice(&[uniform]),
-                    usage: crate::gpu::BufferUsages::UNIFORM,
-                });
-                let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("curve_outline_mask_bg"),
-                    layout: &self.resources.outline.bind_group_layout,
-                    entries: &[
-                        crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: buf.as_entire_binding(),
-                        },
-                        crate::gpu::BindGroupEntry {
-                            binding: 1,
-                            resource: self
-                                .resources
-                                .content
-                                .fallback_position_override_buf
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
-                CurveMeshOutlineItem {
-                    index,
-                    two_sided,
-                    _mask_uniform_buf: buf,
-                    mask_bind_group: bg,
-                }
-            };
-
-            for &idx in &self.streamtube_selected_gpu_indices {
-                streamtube_outline_items.push(make_curve_item(idx, false));
-            }
-            for &idx in &self.tube_selected_gpu_indices {
-                tube_outline_items.push(make_curve_item(idx, false));
-            }
-            for &idx in &self.ribbon_selected_gpu_indices {
-                ribbon_outline_items.push(make_curve_item(idx, true));
             }
         }
 
@@ -701,9 +643,6 @@ impl ViewportRenderer {
         {
             let slot = &mut self.viewport_slots[vp_idx];
             slot.selection_outlines.outline_object_buffers = outline_object_buffers;
-            slot.selection_outlines.streamtube_outline_items = streamtube_outline_items;
-            slot.selection_outlines.tube_outline_items = tube_outline_items;
-            slot.selection_outlines.ribbon_outline_items = ribbon_outline_items;
             slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
             slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
             slot.xray_object_buffers = xray_object_buffers;
@@ -745,18 +684,6 @@ impl ViewportRenderer {
                 .selection_outlines
                 .outline_object_buffers
                 .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .streamtube_outline_items
-                    .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .tube_outline_items
-                    .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .ribbon_outline_items
-                    .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
                     .sprite_outline_indices
@@ -805,24 +732,12 @@ impl ViewportRenderer {
             let slot_ref = &self.viewport_slots[vp_idx];
             let outlines_ptr = &slot_ref.selection_outlines.outline_object_buffers
                 as *const Vec<OutlineObjectBuffers>;
-            let streamtube_outline_items_ptr = &slot_ref.selection_outlines.streamtube_outline_items
-                as *const Vec<CurveMeshOutlineItem>;
-            let tube_outline_items_ptr =
-                &slot_ref.selection_outlines.tube_outline_items as *const Vec<CurveMeshOutlineItem>;
-            let ribbon_outline_items_ptr = &slot_ref.selection_outlines.ribbon_outline_items
-                as *const Vec<CurveMeshOutlineItem>;
             let sprite_outline_idx_ptr = &slot_ref.selection_outlines.sprite_outline_indices
                 as *const Vec<(usize, Option<Vec<u32>>)>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
             let sprite_gpu_ptr =
                 &self.sprite_gpu_data as *const Vec<crate::resources::SpriteGpuData>;
-            let streamtube_gpu_ptr =
-                &self.streamtube_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
-            let tube_gpu_ptr =
-                &self.tube_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
-            let ribbon_gpu_ptr =
-                &self.ribbon_gpu_data as *const Vec<crate::resources::StreamtubeGpuData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const crate::gpu::TextureView;
@@ -833,15 +748,9 @@ impl ViewportRenderer {
             // no other code modifies these fields here.
             let (
                 outlines,
-                streamtube_outline_items,
-                tube_outline_items,
-                ribbon_outline_items,
                 sprite_outline_indices,
                 screen_rect_outlines,
                 sprite_gpu_data,
-                streamtube_gpu_data,
-                tube_gpu_data,
-                ribbon_gpu_data,
                 camera_bg,
                 mask_view,
                 colour_view,
@@ -850,15 +759,9 @@ impl ViewportRenderer {
             ) = unsafe {
                 (
                     &*outlines_ptr,
-                    &*streamtube_outline_items_ptr,
-                    &*tube_outline_items_ptr,
-                    &*ribbon_outline_items_ptr,
                     &*sprite_outline_idx_ptr,
                     &*screen_rect_outlines_ptr,
                     &*sprite_gpu_ptr,
-                    &*streamtube_gpu_ptr,
-                    &*tube_gpu_ptr,
-                    &*ribbon_gpu_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*colour_view_ptr,
@@ -989,43 +892,6 @@ impl ViewportRenderer {
                     }
                 }
 
-                // Draw streamtube, tube, and ribbon mesh outlines. Streamtubes and
-                // tubes use the back-face-culled pipeline; ribbons use the two-sided
-                // pipeline because they are flat surfaces with no clear front face.
-                pass.set_bind_group(0, camera_bg, &[]);
-                bind_deform_group!(
-                    pass,
-                    self.resources,
-                    &self.resources.deform.dummy_bind_group
-                );
-                let curve_draw_groups = [
-                    (
-                        streamtube_outline_items as &[CurveMeshOutlineItem],
-                        streamtube_gpu_data as &[crate::resources::StreamtubeGpuData],
-                    ),
-                    (tube_outline_items, tube_gpu_data),
-                    (ribbon_outline_items, ribbon_gpu_data),
-                ];
-                for (items, gpu_data_slice) in &curve_draw_groups {
-                    for item in *items {
-                        let pipeline = if item.two_sided {
-                            &self.resources.outline.mask_two_sided_pipeline
-                        } else {
-                            &self.resources.outline.mask_pipeline
-                        };
-                        pass.set_pipeline(pipeline);
-                        if let Some(gpu) = gpu_data_slice.get(item.index) {
-                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
-                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-                            pass.set_index_buffer(
-                                gpu.index_buffer.slice(..),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
-                        }
-                    }
-                }
-
                 // Draw sprite billboards into the mask so the outline matches
                 // each sprite's actual quad shape and per-instance size.
                 if !sprite_outline_indices.is_empty() {
@@ -1063,43 +929,6 @@ impl ViewportRenderer {
                         for sr in screen_rect_outlines {
                             pass.set_bind_group(0, &sr.bind_group, &[]);
                             pass.draw(0..6, 0..1);
-                        }
-                    }
-                }
-
-                // Draw streamtube, tube, and ribbon mesh outlines. Streamtubes and
-                // tubes use the back-face-culled pipeline; ribbons use the two-sided
-                // pipeline because they are flat surfaces with no clear front face.
-                pass.set_bind_group(0, camera_bg, &[]);
-                bind_deform_group!(
-                    pass,
-                    self.resources,
-                    &self.resources.deform.dummy_bind_group
-                );
-                let curve_draw_groups = [
-                    (
-                        streamtube_outline_items as &[CurveMeshOutlineItem],
-                        streamtube_gpu_data as &[crate::resources::StreamtubeGpuData],
-                    ),
-                    (tube_outline_items, tube_gpu_data),
-                    (ribbon_outline_items, ribbon_gpu_data),
-                ];
-                for (items, gpu_data_slice) in &curve_draw_groups {
-                    for item in *items {
-                        let pipeline = if item.two_sided {
-                            &self.resources.outline.mask_two_sided_pipeline
-                        } else {
-                            &self.resources.outline.mask_pipeline
-                        };
-                        pass.set_pipeline(pipeline);
-                        if let Some(gpu) = gpu_data_slice.get(item.index) {
-                            pass.set_bind_group(1, &item.mask_bind_group, &[]);
-                            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-                            pass.set_index_buffer(
-                                gpu.index_buffer.slice(..),
-                                crate::gpu::IndexFormat::Uint32,
-                            );
-                            pass.draw_indexed(0..gpu.index_count, 0, 0..1);
                         }
                     }
                 }

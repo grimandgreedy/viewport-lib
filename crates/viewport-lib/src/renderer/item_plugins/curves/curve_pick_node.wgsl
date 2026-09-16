@@ -1,18 +1,22 @@
-// GPU curve POLY_NODE pick shader.
+// GPU POLY_NODE pick shader for the curve mesh item types.
 //
-// Draws the tube / ribbon / streamtube mesh and writes the global node index of
-// the segment endpoint nearer the fragment position into the primitive channel.
-// A POLY_NODE pick then reads the final node id straight from that channel with
-// no CPU refinement, at both point and rect.
+// Draws the same connected mesh as `curve_pick.wgsl` but writes the global node
+// index of the segment endpoint nearer the fragment into the primitive channel,
+// so a POLY_NODE pick reads the final node id straight off the target with no
+// CPU refinement, at both point and rect.
 //
 // Reads the hit triangle from `@builtin(primitive_index)` to index the
-// per-triangle node payload, so this variant is only built with
-// SHADER_PRIMITIVE_INDEX.
+// per-triangle node payload, so this variant is only built on a device with the
+// primitive-index feature.
+//
+// Group 0: the shared scene bind group.
+// Group 1: per-draw model matrix + object id.
+// Group 2: the item's per-triangle segment-endpoint payload.
 
 struct Camera {
     view_proj: mat4x4<f32>,
-    eye_pos: vec3<f32>,
-    _pad: f32,
+    eye_pos:   vec3<f32>,
+    _pad:      f32,
 };
 
 struct ClipVolumeEntry {
@@ -51,8 +55,8 @@ struct PickInstance {
     _pad2: u32,
 };
 
-// One triangle's segment endpoints: the two control points and their global node
-// indices. 32-byte stride (the vec3 keeps 16-byte alignment).
+// One triangle's segment endpoints: the two control points and their global
+// node indices. 32-byte stride (the vec3 keeps 16-byte alignment).
 struct NodePair {
     p0: vec3<f32>,
     i0: u32,
@@ -60,48 +64,43 @@ struct NodePair {
     i1: u32,
 };
 
-@group(0) @binding(0) var<uniform> camera: Camera;
+@group(0) @binding(0) var<uniform> camera:      Camera;
 @group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
-@group(1) @binding(0) var<storage, read> pick_instances: array<PickInstance>;
-@group(2) @binding(0) var<storage, read> tri_nodes: array<NodePair>;
 
 // #include "helpers/clip_volume_test.wgsl"
+
+@group(1) @binding(0) var<uniform> pick: PickInstance;
+@group(2) @binding(0) var<storage, read> tri_nodes: array<NodePair>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
 };
 
 struct VertexOut {
-    @builtin(position) clip_pos: vec4<f32>,
-    @location(0) @interpolate(flat) object_id: u32,
-    @location(1) world_pos: vec3<f32>,
-    @location(2) @interpolate(flat) instance_id: u32,
+    @builtin(position) clip_pos:  vec4<f32>,
+    @location(0)       world_pos: vec3<f32>,
 };
 
 @vertex
-fn vs_main(in: VertexIn, @builtin(instance_index) idx: u32) -> VertexOut {
-    let inst = pick_instances[idx];
-    let model = mat4x4<f32>(inst.model_c0, inst.model_c1, inst.model_c2, inst.model_c3);
+fn vs_main(in: VertexIn) -> VertexOut {
+    let model = mat4x4<f32>(pick.model_c0, pick.model_c1, pick.model_c2, pick.model_c3);
     let world = model * vec4<f32>(in.position, 1.0);
     var out: VertexOut;
-    out.clip_pos = camera.view_proj * world;
-    out.object_id = inst.object_id;
+    out.clip_pos  = camera.view_proj * world;
     out.world_pos = world.xyz;
-    out.instance_id = idx;
     return out;
 }
 
 struct FragOut {
-    @location(0) object_id: u32,
+    @location(0) object_id:    u32,
     @location(1) primitive_id: u32,
-    @location(2) depth: f32,
+    @location(2) depth:        f32,
 };
 
 @fragment
 fn fs_main(in: VertexOut, @builtin(primitive_index) prim: u32) -> FragOut {
     if !clip_volume_test(in.world_pos) { discard; }
-    let inst = pick_instances[in.instance_id];
-    let model = mat4x4<f32>(inst.model_c0, inst.model_c1, inst.model_c2, inst.model_c3);
+    let model = mat4x4<f32>(pick.model_c0, pick.model_c1, pick.model_c2, pick.model_c3);
 
     let np = tri_nodes[prim];
     let p0 = (model * vec4<f32>(np.p0, 1.0)).xyz;
@@ -110,7 +109,7 @@ fn fs_main(in: VertexOut, @builtin(primitive_index) prim: u32) -> FragOut {
     let d1 = distance(p1, in.world_pos);
 
     var out: FragOut;
-    out.object_id = in.object_id;
+    out.object_id = pick.object_id;
     out.primitive_id = select(np.i1, np.i0, d0 <= d1);
     out.depth = in.clip_pos.z;
     return out;

@@ -2,10 +2,12 @@
 //! pipeline builders.
 
 use crate::fixtures::CallLog;
-use viewport_lib::plugin_api::shared_wgsl::{SHARED_BINDINGS_WGSL, SHARED_PICK_WGSL};
+use viewport_lib::plugin_api::shared_wgsl::{
+    SHARED_BINDINGS_WGSL, SHARED_PICK_WGSL, SHARED_SHADOW_BINDINGS_WGSL,
+};
 use viewport_lib::plugin_api::{
-    ItemTypePlugin, PaintContext, PickPassContext, PluginItemCollection, ShadowCastContext,
-    SharedBindings,
+    EncoderScope, EncoderScopeContext, ItemTypePlugin, PaintContext, PickPassContext,
+    PluginItemCollection, ShadowCastContext, SharedBindings,
 };
 use viewport_lib::resources::{DeviceResources, PluginPipelineOpts};
 use viewport_lib::wgpu;
@@ -30,6 +32,10 @@ pub struct TriangleItemTypePlugin {
     type_name: &'static str,
     opaque: wgpu::RenderPipeline,
     pick: wgpu::RenderPipeline,
+    shadow: wgpu::RenderPipeline,
+    /// Drawn in `encode`, which opens its own pass over the scene colour
+    /// rather than drawing into one the lib began.
+    encode: wgpu::RenderPipeline,
     pick_id_layout: wgpu::BindGroupLayout,
     pick_id_group: Option<wgpu::BindGroup>,
 }
@@ -93,11 +99,43 @@ impl TriangleItemTypePlugin {
         pick_opts.extra_bind_group_layouts = &pick_layouts;
         let pick = resources.build_pick_pipeline(device, &pick_opts);
 
+        // The shadow pass binds a different group 0, so its stage lives in its
+        // own module with `SHARED_SHADOW_BINDINGS_WGSL` at the top.
+        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("triangle_item_shadow_shader"),
+            source: wgpu::ShaderSource::Wgsl(triangle_shadow_wgsl(centre).into()),
+        });
+        let shadow = resources.build_shadow_pipeline(
+            device,
+            &PluginPipelineOpts::new(
+                Some("triangle_item_shadow"),
+                &shadow_shader,
+                "vs_shadow",
+                "",
+                &[],
+            ),
+        );
+
+        // The encode pass targets the same HDR scene attachments the opaque
+        // pass does, so it is built from the same descriptor.
+        let encode = resources.build_opaque_pipeline(
+            device,
+            &PluginPipelineOpts::new(
+                Some("triangle_item_encode"),
+                &shader,
+                "vs_encode",
+                "fs_encode",
+                &[],
+            ),
+        );
+
         Self {
             log,
             type_name,
             opaque,
             pick,
+            shadow,
+            encode,
             pick_id_layout,
             pick_id_group: None,
         }
@@ -167,19 +205,65 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
 
     fn cast_shadow_pass(
         &self,
-        _pass: &mut wgpu::RenderPass<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
         ctx: &ShadowCastContext<'_>,
-        _items: &dyn PluginItemCollection,
+        items: &dyn PluginItemCollection,
     ) {
-        // Records the dispatch but does not draw. A pipeline from
-        // `build_shadow_pipeline` is laid out with the scene's group-0
-        // bindings, while the shadow pass binds a single dynamic-offset
-        // cascade uniform, so the draw fails wgpu validation; the shadow
-        // layout is not published either, so there is no way to build a
-        // compatible pipeline from outside the crate. Draw here once that is
-        // resolved.
         self.log
             .record(format!("cast_shadow_pass:cascade={}", ctx.cascade_idx));
+        if items.is_empty() || items.item_settings(0).hidden {
+            return;
+        }
+        // Group 0 (the cascade's light view-projection, at its dynamic offset)
+        // is bound by the renderer on pass entry.
+        pass.set_pipeline(&self.shadow);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn encoder_scopes(&self) -> &[EncoderScope] {
+        &[EncoderScope::AfterTransparent]
+    }
+
+    fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: &EncoderScopeContext<'_>,
+        items: &dyn PluginItemCollection,
+    ) {
+        self.log.record(format!("encode:scope={:?}", ctx.scope));
+        if items.is_empty() || items.item_settings(0).hidden {
+            return;
+        }
+        // Open a pass of the plugin's own over the scene attachments. Both
+        // load: everything already drawn has to survive.
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("triangle_item_encode_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: ctx.scene_colour,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: ctx.scene_depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&self.encode);
+        pass.set_bind_group(0, ctx.camera_bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 
     fn render_pick(
@@ -252,6 +336,48 @@ fn vs_pick(@builtin(vertex_index) vi: u32) -> PickVsOut {{
     out.clip_pos = camera.view_proj * vec4<f32>(triangle_world(vi), 1.0);
     out.pick_id = pick.id.x;
     return out;
+}}
+
+// The encode stage draws the same triangle offset along +X, so a test can
+// tell the encode pass's pixels from the opaque pass's by position.
+@vertex
+fn vs_encode(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {{
+    let world = triangle_world(vi) + vec3<f32>(1.6, 0.0, 0.0);
+    return camera.view_proj * vec4<f32>(world, 1.0);
+}}
+
+@fragment
+fn fs_encode() -> @location(0) vec4<f32> {{
+    return vec4<f32>({b:?}, {r:?}, {g:?}, 1.0);
+}}
+"
+    )
+}
+
+/// The shadow-cast stage, in its own module: the shadow pass binds a different
+/// group 0 from every other pass, so its declarations come from
+/// `SHARED_SHADOW_BINDINGS_WGSL` and this cannot share a module with the rest.
+///
+/// Depth-only, so there is no fragment stage.
+fn triangle_shadow_wgsl(centre: glam::Vec3) -> String {
+    let [cx, cy, cz] = centre.to_array();
+    format!(
+        "{SHARED_SHADOW_BINDINGS_WGSL}
+
+fn triangle_world(vertex_index: u32) -> vec3<f32> {{
+    let centre = vec3<f32>({cx:?}, {cy:?}, {cz:?});
+    var offsets = array<vec2<f32>, 3>(
+        vec2<f32>(-0.6, -0.5),
+        vec2<f32>(0.6, -0.5),
+        vec2<f32>(0.0, 0.7),
+    );
+    let o = offsets[vertex_index];
+    return centre + vec3<f32>(o.x, o.y, 0.0);
+}}
+
+@vertex
+fn vs_shadow(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {{
+    return shadow_camera.light_view_proj * vec4<f32>(triangle_world(vi), 1.0);
 }}
 "
     )

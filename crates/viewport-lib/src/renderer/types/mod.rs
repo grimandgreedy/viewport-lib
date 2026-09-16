@@ -1062,9 +1062,6 @@ macro_rules! emit_outline_composite {
         let render_pass = $render_pass;
         if let Some(slot) = $vp_slot {
             if !slot.selection_outlines.outline_object_buffers.is_empty()
-                || !slot.selection_outlines.streamtube_outline_items.is_empty()
-                || !slot.selection_outlines.tube_outline_items.is_empty()
-                || !slot.selection_outlines.ribbon_outline_items.is_empty()
                 || !slot.selection_outlines.polyline_outline_indices.is_empty()
                 || !slot.selection_outlines.sprite_outline_indices.is_empty()
                 || slot.selection_outlines.plugin_outline_present
@@ -1085,11 +1082,12 @@ macro_rules! emit_outline_composite {
     }};
 }
 
-/// Draw glyph and curve items from per-frame GPU data prepared in `prepare()`.
+/// Draw the line substrate, mesh instances and sprites from per-frame GPU
+/// data prepared in `prepare()`.
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $polyline_gpu_data:expr, $streamtube_gpu_data:expr, $camera_bg:expr, $tube_gpu_data:expr, $ribbon_gpu_data:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $polyline_gpu_data:expr, $camera_bg:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
@@ -1130,134 +1128,6 @@ macro_rules! emit_scivis_draw_calls {
                     render_pass.set_bind_group(1, &pl.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
                     render_pass.draw(0..6, 0..pl.segment_count);
-                }
-            }
-        }
-
-        // Streamtube pass: connected tube mesh per strip set).
-        if !$streamtube_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for tube in $streamtube_gpu_data.iter() {
-                if tube.index_count == 0 && tube.edge_index_count == 0 {
-                    continue;
-                }
-                let pipeline = if tube.wireframe {
-                    resources
-                        .streamtube
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .streamtube
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
-                    if tube.wireframe {
-                        render_pass.set_index_buffer(
-                            tube.edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
-                    } else {
-                        render_pass.set_index_buffer(
-                            tube.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // General tube pass (uses same streamtube pipeline, per-vertex colour).
-        if !$tube_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for tube in $tube_gpu_data.iter() {
-                if tube.index_count == 0 && tube.edge_index_count == 0 {
-                    continue;
-                }
-                let pipeline = if tube.wireframe {
-                    resources
-                        .streamtube
-                        .wireframe_pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                } else {
-                    resources
-                        .streamtube
-                        .pipeline
-                        .as_ref()
-                        .map(|d| d.for_format(_is_hdr))
-                };
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &tube.uniform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, tube.vertex_buffer.slice(..));
-                    if tube.wireframe {
-                        render_pass.set_index_buffer(
-                            tube.edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.edge_index_count, 0, 0..1);
-                    } else {
-                        render_pass.set_index_buffer(
-                            tube.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..tube.index_count, 0, 0..1);
-                    }
-                }
-            }
-        }
-
-        // Ribbon pass (flat quad strips, two-sided pipeline). Blend mode
-        // routes through the matching pipeline variant; the default
-        // AlphaBlend path is unchanged.
-        if !$ribbon_gpu_data.is_empty() {
-            render_pass.set_bind_group(0, camera_bg, &[]);
-            for ribbon in $ribbon_gpu_data.iter() {
-                if ribbon.index_count == 0 && ribbon.edge_index_count == 0 {
-                    continue;
-                }
-                // OIT-eligible ribbons draw through the HDR path's dedicated
-                // `oit_pass` instead (see `hdr_path.rs`); this is HDR-only,
-                // so the LDR path (`_is_hdr == false`) still draws them here
-                // -- there is no OIT pass to route them to on that path.
-                if _is_hdr && ribbon.oit_eligible {
-                    continue;
-                }
-                let key = crate::resources::RibbonKey {
-                    blend: ribbon.blend,
-                    wireframe: ribbon.wireframe,
-                };
-                let pipeline = resources
-                    .ribbon
-                    .pipelines
-                    .as_ref()
-                    .map(|ps| ps.get(key).for_format(_is_hdr));
-                if let Some(pipeline) = pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(1, &ribbon.uniform_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, ribbon.vertex_buffer.slice(..));
-                    if ribbon.wireframe {
-                        render_pass.set_index_buffer(
-                            ribbon.edge_index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..ribbon.edge_index_count, 0, 0..1);
-                    } else {
-                        render_pass.set_index_buffer(
-                            ribbon.index_buffer.slice(..),
-                            crate::gpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..ribbon.index_count, 0, 0..1);
-                    }
                 }
             }
         }
