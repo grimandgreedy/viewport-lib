@@ -7,7 +7,8 @@
 //! [`SceneFrame::submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items).
 //!
 //! Surface: registration, per-frame `prepare`, and drawing hooks the lib calls
-//! inside its own passes: `paint` (opaque HDR scene), `paint_transparent`
+//! inside its own passes: `paint` (opaque scene, HDR always and LDR for
+//! plugins that opt in via `draws_ldr`), `paint_transparent`
 //! (OIT), `outline_mask` (selection outline), `cast_shadow_pass` (shadow
 //! cascades), `cull` (per-frame frustum cull), and `pick` / `render_pick` (CPU
 //! and GPU picking). All hooks but `type_name` are default-empty; implement the
@@ -33,6 +34,51 @@ pub struct PickRay {
     /// World-space direction. Not required to be unit-length; plugins
     /// should normalize if their hit test depends on it.
     pub direction: glam::Vec3,
+}
+
+/// Query information forwarded alongside the ray to a plugin's
+/// [`ItemTypePlugin::pick`].
+///
+/// The ray is enough for solid geometry, but item types whose pick
+/// tolerance lives in screen space (thin lines, point markers, screen-sized
+/// handles) need the click position, viewport extent, and view-projection
+/// to run a pixel-space proximity test; the helpers in
+/// [`pick_helpers`](crate::plugin_api::pick_helpers) consume exactly these
+/// fields. `mask` carries the query's requested levels so a plugin can
+/// return `None` cheaply when the query asks for nothing its items answer.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct PickContext {
+    /// Click position in the same pixel coordinates as `viewport_size`
+    /// (origin top-left, y down).
+    pub click_pos: glam::Vec2,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Combined view-projection matrix the ray was derived from.
+    pub view_proj: glam::Mat4,
+    /// The query's pick mask.
+    pub mask: crate::renderer::PickMask,
+}
+
+/// Query information forwarded to a plugin's [`ItemTypePlugin::pick_rect`].
+///
+/// `rect_min` / `rect_max` are in pixel coordinates (origin top-left, y
+/// down), the same space
+/// [`project_to_screen`](crate::plugin_api::pick_helpers::project_to_screen)
+/// maps into.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct RectPickContext {
+    /// Rectangle minimum corner in pixels.
+    pub rect_min: glam::Vec2,
+    /// Rectangle maximum corner in pixels.
+    pub rect_max: glam::Vec2,
+    /// Viewport extent in logical pixels.
+    pub viewport_size: glam::Vec2,
+    /// Combined view-projection matrix.
+    pub view_proj: glam::Mat4,
+    /// The query's pick mask.
+    pub mask: crate::renderer::PickMask,
 }
 
 /// Per-frame item collection owned by the consumer and read by the lib.
@@ -103,14 +149,43 @@ pub struct ItemFrameContext<'a> {
     /// `ctx.jobs.take::<T>(id)` to retrieve the result once the matching
     /// `status` returns `Ready`.
     pub jobs: crate::resources::Jobs<'a>,
+    /// Read-only view of the renderer's device resources for the duration of
+    /// this call: texture views and samplers by id
+    /// ([`texture_view`](crate::resources::DeviceResources::texture_view) /
+    /// [`has_texture`](crate::resources::DeviceResources::has_texture)),
+    /// colourmap LUT views
+    /// ([`colourmap_view`](crate::resources::DeviceResources::colourmap_view)),
+    /// the shared glyph base meshes
+    /// ([`glyph_base_mesh`](crate::resources::DeviceResources::glyph_base_mesh)),
+    /// and the target descriptors and samplers the pipeline builders expose.
+    /// Borrows taken from it must not outlive `prepare` / `cull`; bake what
+    /// the draw hooks need into the plugin's own bind groups here.
+    pub resources: &'a crate::resources::DeviceResources,
+    /// The frame's global wireframe toggle
+    /// (`ViewportFrame::wireframe_mode`). Plugins whose item types have a
+    /// wireframe representation switch pipelines on it the way the built-in
+    /// types do; others ignore it.
+    pub wireframe_mode: bool,
+    /// Whether selected items should render the selection outline this frame
+    /// (`InteractionFrame::outline_selected`). When `false`, a plugin can
+    /// skip preparing outline-mask state entirely.
+    pub outline_selected: bool,
+    /// The frame's sub-object selection, when the host submitted one
+    /// (`InteractionFrame::sub_selection`). Plugins that support sub-object
+    /// highlighting read their own items' entries out of it.
+    pub sub_selection: Option<&'a crate::renderer::SubSelectionRef>,
 }
 
 /// Information forwarded to a plugin's `paint`.
 ///
-/// The render pass is the lib's `hdr_scene_pass` with the shared group-0
-/// bind group already bound. Plugin pipelines built via
+/// The render pass is the lib's scene pass (HDR or LDR) with the shared
+/// group-0 bind group already bound. Plugin pipelines built via
 /// [`build_opaque_pipeline`](crate::resources::DeviceResources::build_opaque_pipeline)
-/// drop in without further setup.
+/// drop into the HDR pass without further setup; a plugin that also opts
+/// into the LDR pass via [`ItemTypePlugin::draws_ldr`] keeps a second
+/// pipeline built against
+/// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc)
+/// and selects between the two by [`target_format`](Self::target_format).
 #[non_exhaustive]
 pub struct PaintContext<'a> {
     /// Active render-camera snapshot for this viewport.
@@ -121,6 +196,12 @@ pub struct PaintContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter.
     pub frame_index: u64,
+    /// Colour format of the pass's first colour target: the HDR scene format
+    /// (`Rgba16Float`) in `paint` on the HDR path and in `paint_transparent`
+    /// (the OIT accumulation target) and `paint_foreground`; the renderer's
+    /// configured output format in `paint` on the LDR path. Use it to select
+    /// the matching pipeline variant.
+    pub target_format: crate::gpu::TextureFormat,
 }
 
 /// Information forwarded to a plugin's `paint_depth_read`.
@@ -327,21 +408,45 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
         Vec::new()
     }
 
-    /// Issue draw calls inside the lib's HDR scene pass.
+    /// Issue draw calls inside the lib's scene pass.
     ///
-    /// Called after built-in opaque geometry and before the skybox. The
-    /// pass has the shared group-0 bind group bound on entry; plugins
-    /// must restore it if they rebind group 0 themselves.
+    /// On the HDR path, called after built-in opaque geometry and the skybox.
+    /// On the LDR path (`PipelineMode::Direct`, `paint`, `paint_to`,
+    /// `paint_viewport`), called after the built-in scene content, but only
+    /// for plugins that opt in via [`draws_ldr`](Self::draws_ldr); the two
+    /// paths use different colour formats, and
+    /// [`PaintContext::target_format`] names the active one. The pass has
+    /// the shared group-0 bind group bound on entry; plugins must restore it
+    /// if they rebind group 0 themselves.
     ///
     /// Implementations should treat hidden items
     /// (`items.item_settings(i).hidden == true`) as drawn-nothing; the
     /// lib does not pre-filter the collection.
-    fn paint<'a>(
-        &'a self,
-        _pass: &mut crate::gpu::RenderPass<'a>,
-        _ctx: &PaintContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn paint(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PaintContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
+    }
+
+    /// `true` when this plugin's `paint` also draws on the LDR path.
+    ///
+    /// The LDR scene pass targets the renderer's configured output format
+    /// rather than the HDR scene format, so a plugin that returns `true`
+    /// must keep a pipeline for that format (built against
+    /// [`ldr_opaque_target_desc`](crate::resources::DeviceResources::ldr_opaque_target_desc))
+    /// and pick it when [`PaintContext::target_format`] is not the HDR
+    /// format. Plugins that leave this `false` are skipped on the LDR path
+    /// (and the renderer warns once), never handed a pass their pipeline
+    /// cannot draw into.
+    ///
+    /// Only `paint` runs on the LDR path: the OIT, read-only-depth, and
+    /// foreground passes exist on the HDR path alone, so
+    /// `paint_transparent`, `paint_depth_read`, and `paint_foreground` are
+    /// HDR-only regardless of this value.
+    fn draws_ldr(&self) -> bool {
+        false
     }
 
     /// Issue draw calls for transparent items in the OIT pass.
@@ -355,11 +460,11 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// writing both `@location(0)` (accum) and `@location(1)` (reveal).
     ///
     /// Plugins that ship only opaque items leave this empty.
-    fn paint_transparent<'a>(
-        &'a self,
-        _pass: &mut crate::gpu::RenderPass<'a>,
-        _ctx: &PaintContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn paint_transparent(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PaintContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
     }
 
@@ -396,11 +501,11 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     ///
     /// Only called when [`draws_depth_read`](Self::draws_depth_read) returns
     /// `true`.
-    fn paint_depth_read<'a>(
-        &'a self,
-        _pass: &mut crate::gpu::RenderPass<'a>,
-        _ctx: &DepthReadContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn paint_depth_read(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &DepthReadContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
     }
 
@@ -427,11 +532,11 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     ///
     /// Only called when [`draws_foreground`](Self::draws_foreground)
     /// returns `true`.
-    fn paint_foreground<'a>(
-        &'a self,
-        _pass: &mut crate::gpu::RenderPass<'a>,
-        _ctx: &PaintContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn paint_foreground(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PaintContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
     }
 
@@ -448,11 +553,11 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     ///
     /// Plugins that do not participate in the outline highlight leave
     /// this empty.
-    fn outline_mask<'a>(
-        &'a self,
-        _pass: &mut crate::gpu::RenderPass<'a>,
-        _ctx: &OutlineMaskContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn outline_mask(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &OutlineMaskContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
     }
 
@@ -486,11 +591,11 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// Implementations skip items where `item_settings(i).cast_shadows`
     /// is false. Default no-op: plugins that do not cast shadows leave
     /// this empty.
-    fn cast_shadow_pass<'a>(
-        &'a self,
-        _pass: &mut crate::gpu::RenderPass<'a>,
-        _ctx: &ShadowCastContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn cast_shadow_pass(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &ShadowCastContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
     }
 
@@ -499,7 +604,13 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     ///
     /// Called from the renderer's pick router after the built-in CPU and
     /// GPU pick paths. The router compares the returned `t` against every
-    /// other candidate and chooses the closest.
+    /// other candidate and chooses the closest. `ctx` carries the click
+    /// position, viewport size, view-projection, and the query's mask, so
+    /// item types with screen-space pick tolerances (thin lines, markers)
+    /// can run pixel-space proximity tests via
+    /// [`pick_helpers`](crate::plugin_api::pick_helpers) instead of pure
+    /// ray-casts; a screen-space hit still returns a world-space `t` along
+    /// the ray so it competes fairly with the other candidates.
     ///
     /// Implementations typically cache the world-space AABBs (or per-item
     /// geometry) on their own state during [`prepare`](Self::prepare); the
@@ -513,8 +624,28 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// ([`pick_object`](crate::renderer::ViewportRenderer::pick_object) with
     /// [`PickBackend::Gpu`](crate::renderer::PickBackend::Gpu)) returns their
     /// items with no CPU ray-cast.
-    fn pick(&self, _ray: &PickRay) -> Option<(f32, PickHit)> {
+    fn pick(&self, _ray: &PickRay, _ctx: &PickContext) -> Option<(f32, PickHit)> {
         None
+    }
+
+    /// Return the pick ids of this plugin's items inside a screen-space
+    /// rectangle (CPU box select).
+    ///
+    /// Called from the renderer's CPU
+    /// [`pick_rect`](crate::renderer::ViewportRenderer::pick_rect) after the
+    /// built-in item types. Implementations project their items with
+    /// [`project_to_screen`](crate::plugin_api::pick_helpers::project_to_screen)
+    /// (and
+    /// [`segment_in_rect`](crate::plugin_api::pick_helpers::segment_in_rect)
+    /// for edges), and return the ids of items touching the rectangle,
+    /// skipping hidden items and [`PickId::NONE`]. Like [`pick`](Self::pick),
+    /// the plugin answers from state cached in [`prepare`](Self::prepare).
+    ///
+    /// The GPU rect path needs no counterpart: items drawn in
+    /// [`render_pick`](Self::render_pick) are decoded there per pixel.
+    /// Default: no items, matching plugins that only implement GPU picking.
+    fn pick_rect(&self, _ctx: &RectPickContext) -> Vec<PickId> {
+        Vec::new()
     }
 
     /// Issue draw calls into the lib's pick-id pass.
@@ -546,11 +677,11 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE), and
     /// implement [`resolve_sub_object`](Self::resolve_sub_object) to map the
     /// read-back triangle index to the item's own sub-object ids.
-    fn render_pick<'a>(
-        &'a self,
-        _pass: &mut crate::gpu::RenderPass<'a>,
-        _ctx: &PickPassContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn render_pick(
+        &self,
+        _pass: &mut crate::gpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
     }
 
@@ -568,15 +699,21 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// pick mask; answer the highest-priority level in it that the item type
     /// supports.
     ///
-    /// The plugin owns its geometry, so only it can map a triangle index to a
-    /// face / vertex / edge id. Return `None` for levels the item type does
-    /// not answer; the hit then stays object-level. Default: `None` (all
-    /// plugin picking stays object-level, as before this hook existed).
+    /// The plugin owns its geometry, so only it can map the channel value to
+    /// a face / vertex / edge / instance id. Return `None` for levels the
+    /// item type does not answer; the hit then stays object-level. Default:
+    /// `None` (all plugin picking stays object-level, as before this hook
+    /// existed).
     ///
-    /// Only called when the device has
-    /// [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE);
-    /// without it the primitive channel is all zeros and no refinement runs,
-    /// matching the built-in surface fallback.
+    /// The mesh levels (`FACE`, `VERTEX`, `EDGE`, `CELL`) decode
+    /// `@builtin(primitive_index)` and are only forwarded when the device
+    /// has [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE);
+    /// without it the renderer strips them from `mask` before this call, so
+    /// a constant-0 channel is never misread as a triangle index. The
+    /// `INSTANCE` level decodes a shader-written instance index
+    /// ([`SHARED_PICK_INSTANCE_WGSL`](crate::plugin_api::shared_wgsl::SHARED_PICK_INSTANCE_WGSL))
+    /// and is forwarded on every device, matching the built-in instanced
+    /// pick path.
     fn resolve_sub_object(
         &self,
         _pick_id: PickId,

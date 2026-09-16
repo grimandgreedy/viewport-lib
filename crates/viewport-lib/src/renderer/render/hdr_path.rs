@@ -1616,7 +1616,7 @@ impl ViewportRenderer {
 
             // Item-type plugin paint: after built-in opaques and the skybox.
             // Standard group-0 bindings are already bound.
-            self.dispatch_plugin_paint(&mut render_pass, frame);
+            self.dispatch_plugin_paint(&mut render_pass, frame, true);
         }
     }
 

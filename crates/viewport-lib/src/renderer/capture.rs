@@ -1427,11 +1427,15 @@ mod tests {
 
     struct MockPlugin {
         calls: std::sync::Arc<PluginCalls>,
+        draws_ldr: bool,
     }
 
     impl crate::plugin_api::ItemTypePlugin for MockPlugin {
         fn type_name(&self) -> &'static str {
             "mock"
+        }
+        fn draws_ldr(&self) -> bool {
+            self.draws_ldr
         }
         fn prepare(
             &mut self,
@@ -1455,11 +1459,11 @@ mod tests {
                 .cull
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        fn paint<'a>(
-            &'a self,
-            _pass: &mut crate::gpu::RenderPass<'a>,
-            _ctx: &crate::plugin_api::PaintContext<'a>,
-            _items: &'a dyn crate::plugin_api::PluginItemCollection,
+        fn paint(
+            &self,
+            _pass: &mut crate::gpu::RenderPass<'_>,
+            _ctx: &crate::plugin_api::PaintContext<'_>,
+            _items: &dyn crate::plugin_api::PluginItemCollection,
         ) {
             self.calls
                 .paint
@@ -1483,15 +1487,16 @@ mod tests {
         }
     }
 
-    // A derivative render (bake) must not dispatch any item-type plugin hook:
-    // not the `&mut self` prepare / cull (which advance plugin state), nor the
-    // draw passes (which would render stale, wrong-camera geometry, since cull
-    // was skipped). A presented render dispatches all three.
+    // A derivative render (bake) dispatches the same plugin hooks as a
+    // presented render: each capture face runs its own prepare and cull
+    // against the capture camera, so the matching paint draws current,
+    // right-camera geometry and plugin items appear in probes and captures
+    // the same way built-in item types do.
     #[test]
-    fn bake_does_not_dispatch_item_type_plugins() {
+    fn bake_dispatches_item_type_plugins() {
         use std::sync::atomic::Ordering::Relaxed;
         let Some((device, queue)) = headless_device() else {
-            eprintln!("skipping bake_does_not_dispatch_item_type_plugins: no GPU adapter");
+            eprintln!("skipping bake_dispatches_item_type_plugins: no GPU adapter");
             return;
         };
         let mut renderer =
@@ -1501,6 +1506,7 @@ mod tests {
             &device,
             Box::new(MockPlugin {
                 calls: calls.clone(),
+                draws_ldr: false,
             }),
         );
 
@@ -1553,22 +1559,82 @@ mod tests {
             calls.paint.load(Relaxed),
         );
 
-        // The bake is a derivative render: no plugin hook should fire.
+        // The bake renders capture faces; each one dispatches the full hook set.
         let _ = renderer.bake_light_probes(&device, &queue, &mut fd, &[[0.0, 0.0, 0.0]], 8, 8);
-        assert_eq!(
-            calls.prepare.load(Relaxed),
-            p,
-            "bake must not call plugin prepare"
+        assert!(calls.prepare.load(Relaxed) > p, "bake calls plugin prepare");
+        assert!(calls.cull.load(Relaxed) > c, "bake calls plugin cull");
+        assert!(calls.paint.load(Relaxed) > pt, "bake calls plugin paint");
+    }
+
+    // The LDR pipeline (PipelineMode::Direct) dispatches plugin paint only
+    // for plugins that opt in via draws_ldr; prepare and cull run for every
+    // plugin on both paths.
+    #[test]
+    fn ldr_render_paints_only_opted_in_plugins() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("skipping ldr_render_paints_only_opted_in_plugins: no GPU adapter");
+            return;
+        };
+        let mut renderer =
+            ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+        let calls = std::sync::Arc::new(PluginCalls::default());
+        renderer.with_item_type_plugin(
+            &device,
+            Box::new(MockPlugin {
+                calls: calls.clone(),
+                draws_ldr: false,
+            }),
         );
-        assert_eq!(
-            calls.cull.load(Relaxed),
-            c,
-            "bake must not call plugin cull"
+
+        let mut fd = empty_frame();
+        fd.effects.display.mode = crate::renderer::types::PipelineMode::Direct;
+        fd.scene.submit_plugin_items(
+            "mock",
+            MockItems {
+                settings: crate::scene::material::ItemSettings::default(),
+            },
         );
+
+        let target = device.create_texture(&crate::gpu::TextureDescriptor {
+            label: Some("ldr_plugin_target"),
+            size: crate::gpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::gpu::TextureDimension::D2,
+            format: crate::gpu::TextureFormat::Bgra8UnormSrgb,
+            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let cmd = renderer.render(&device, &queue, &view, &fd);
+        queue.submit(std::iter::once(cmd));
+
+        assert!(calls.prepare.load(Relaxed) >= 1, "LDR render runs prepare");
+        assert!(calls.cull.load(Relaxed) >= 1, "LDR render runs cull");
         assert_eq!(
             calls.paint.load(Relaxed),
-            pt,
-            "bake must not call plugin paint"
+            0,
+            "a plugin without draws_ldr is not painted on the LDR path"
+        );
+
+        // Re-register as an opted-in plugin: paint now runs.
+        renderer.with_item_type_plugin(
+            &device,
+            Box::new(MockPlugin {
+                calls: calls.clone(),
+                draws_ldr: true,
+            }),
+        );
+        let cmd = renderer.render(&device, &queue, &view, &fd);
+        queue.submit(std::iter::once(cmd));
+        assert!(
+            calls.paint.load(Relaxed) >= 1,
+            "an opted-in plugin is painted on the LDR path"
         );
     }
 }

@@ -27,11 +27,11 @@ mod memory;
 pub mod mesh;
 pub(crate) mod mesh_sidecar;
 pub(crate) mod overlay;
-pub(crate) mod resource_deps;
 /// Lazy GPU pick-pipeline construction (`ensure_*_pick_pipeline` methods).
 mod pick_pipelines;
 mod plugin_builders;
 mod postprocess;
+pub(crate) mod resource_deps;
 /// Group-0/1 camera, per-object, and clip bind plumbing.
 pub(crate) mod scene_bindings;
 /// Core scene mesh pipelines (base LDR set plus HDR variants).
@@ -77,8 +77,8 @@ pub use self::mesh_sidecar::shade::{
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
-    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT,
-    PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
+    GlyphBaseMeshRef, HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, PICK_COLOR_FORMAT,
+    PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
 };
 pub use self::scivis::curve_store::{
     GlyphSetId, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,

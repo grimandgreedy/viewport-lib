@@ -328,7 +328,7 @@ impl DeviceResources {
 
     /// Ensure a glyph base mesh is cached for the given [`GlyphType`].
     /// Creates and uploads the mesh on first call for that type.
-    fn ensure_glyph_mesh(
+    pub(crate) fn ensure_glyph_mesh(
         &mut self,
         device: &crate::gpu::Device,
         glyph_type: crate::renderer::GlyphType,

@@ -17,6 +17,27 @@ pub(super) fn warn_pick_cache_disabled() {
     });
 }
 
+/// Project a world-space point to pixel coordinates (origin top-left, y
+/// down), or `None` when the point is behind the camera (`clip.w <= 0`).
+///
+/// This is the projection every CPU pick proximity test uses; plugin pick
+/// implementations use it so their screen-space tolerances agree with the
+/// built-in item types'.
+pub fn project_to_screen(
+    world: glam::Vec3,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+) -> Option<glam::Vec2> {
+    let clip = view_proj * world.extend(1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+    Some(glam::Vec2::new(
+        (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x,
+        (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y,
+    ))
+}
+
 /// Ray versus the local unit box `[-0.5, 0.5]^3`, used for decal projection
 /// volumes. `origin` and `dir` are the ray in the box's local space (the world
 /// ray transformed by the inverse of the box's model matrix).
@@ -26,7 +47,7 @@ pub(super) fn warn_pick_cache_disabled() {
 /// parameter on the local ray, the returned `t` is directly comparable to the
 /// world-space `time_of_impact` used by the other pick sections. If the origin
 /// is inside the box, returns `0.0`.
-pub(super) fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f32> {
+pub fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f32> {
     const HALF: f32 = 0.5;
     let mut t_enter = f32::NEG_INFINITY;
     let mut t_exit = f32::INFINITY;
@@ -81,7 +102,7 @@ pub(super) fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
 /// are treated as world-space (polylines are always submitted without a model
 /// transform). The hit position is the closest point on the segment in 3D,
 /// interpolated at the same screen-space parameter `t` as the closest screen point.
-pub(super) fn pick_closest_polyline_segment(
+pub fn pick_closest_polyline_segment(
     click_pos: glam::Vec2,
     viewport_size: glam::Vec2,
     view_proj: glam::Mat4,
@@ -90,14 +111,7 @@ pub(super) fn pick_closest_polyline_segment(
     threshold_px: f32,
 ) -> Option<(u32, glam::Vec3)> {
     let project = |p: [f32; 3]| -> Option<glam::Vec2> {
-        let clip = view_proj * glam::Vec4::new(p[0], p[1], p[2], 1.0);
-        if clip.w <= 0.0 {
-            return None;
-        }
-        Some(glam::Vec2::new(
-            (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x,
-            (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y,
-        ))
+        project_to_screen(p.into(), view_proj, viewport_size)
     };
 
     let mut best_dist = threshold_px;
@@ -145,7 +159,7 @@ pub(super) fn pick_closest_polyline_segment(
 }
 
 /// Returns `true` if the 2D segment [a, b] touches or crosses the axis-aligned rect.
-pub(super) fn segment_in_rect(
+pub fn segment_in_rect(
     a: glam::Vec2,
     b: glam::Vec2,
     rect_min: glam::Vec2,
@@ -204,7 +218,7 @@ pub(super) fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
 /// Returns the ray parameter `t > 0` on hit, or `None` on miss or backface cull.
 /// Call twice with reversed winding to test both faces.
 #[inline]
-pub(super) fn ray_triangle(
+pub fn ray_triangle(
     ray_orig: glam::Vec3,
     ray_dir: glam::Vec3,
     v0: glam::Vec3,

@@ -1843,7 +1843,12 @@ impl ViewportRenderer {
         // Their draws are not in `draws`/`glyph_draws`/etc.; they are issued via
         // `dispatch_plugin_pick`.
         let has_plugin_pick = mask.intersects(
-            PickMask::OBJECT | PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL,
+            PickMask::OBJECT
+                | PickMask::FACE
+                | PickMask::VERTEX
+                | PickMask::EDGE
+                | PickMask::CELL
+                | PickMask::INSTANCE,
         ) && self.any_plugin_items_submitted(frame);
 
         let kinds = self.build_pick_sub_kinds(frame, scene_items);
@@ -3050,10 +3055,17 @@ impl ViewportRenderer {
     }
 
     /// Refine a hit on a plugin-drawn item through the owning plugin's
-    /// `resolve_sub_object` hook. Needs `SHADER_PRIMITIVE_INDEX` (without it
-    /// the plugin's pick fragment wrote a constant 0) and the hit's
-    /// reconstructed world position. A plugin without the hook returns `None`
-    /// and the hit stays object-level.
+    /// `resolve_sub_object` hook, forwarding the hit's reconstructed world
+    /// position. A plugin without the hook returns `None` and the hit stays
+    /// object-level.
+    ///
+    /// Mesh-level refinement (face / vertex / edge / cell) decodes
+    /// `@builtin(primitive_index)` and needs `SHADER_PRIMITIVE_INDEX`;
+    /// without the feature those bits are stripped from the mask before the
+    /// plugin sees it, so a constant-0 channel is never misread as a
+    /// triangle index. Instance-level refinement decodes a shader-written
+    /// instance index (`viewport_pick_instance_fs`) and needs no feature,
+    /// matching the built-in instanced pick path.
     fn resolve_plugin_sub_object(
         &self,
         name: &'static str,
@@ -3063,14 +3075,17 @@ impl ViewportRenderer {
         primitive_index_supported: bool,
         world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
-        if !primitive_index_supported {
-            return None;
-        }
-        if !mask.intersects(PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL) {
+        let mesh_sub = PickMask::FACE | PickMask::VERTEX | PickMask::EDGE | PickMask::CELL;
+        let effective_mask = if primitive_index_supported {
+            mask
+        } else {
+            mask.difference(mesh_sub)
+        };
+        if !effective_mask.intersects(mesh_sub | PickMask::INSTANCE) {
             return None;
         }
         let plugin = self.item_type_plugins.get(name)?;
-        plugin.resolve_sub_object(PickId(object_id), sub_primitive, world_pos?, mask)
+        plugin.resolve_sub_object(PickId(object_id), sub_primitive, world_pos?, effective_mask)
     }
 
     /// Decode a read-back `(object_id, sub_primitive)` into a [`SubObjectRef`]

@@ -93,6 +93,7 @@
 pub mod cull;
 pub mod install;
 pub mod item_type;
+pub mod pick_helpers;
 pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
@@ -101,7 +102,8 @@ pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{
     DepthReadContext, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
-    PickPassContext, PickRay, PluginItemCollection, ShadowCastContext,
+    PickContext, PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ShadowCastContext,
 };
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,

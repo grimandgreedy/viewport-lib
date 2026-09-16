@@ -33,6 +33,25 @@ pub const PICK_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureForm
 pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat =
     crate::gpu::TextureFormat::R32Float;
 
+/// Read-only borrows of one cached glyph base mesh, from
+/// [`DeviceResources::glyph_base_mesh`].
+///
+/// Vertices use the lib's full 64-byte `Vertex` layout; `edge_index_buffer`
+/// holds deduplicated line-list pairs for wireframe rendering.
+#[non_exhaustive]
+pub struct GlyphBaseMeshRef<'a> {
+    /// Vertex buffer (64-byte `Vertex` stride).
+    pub vertex_buffer: &'a crate::gpu::Buffer,
+    /// Triangle index buffer (`Uint32`).
+    pub index_buffer: &'a crate::gpu::Buffer,
+    /// Number of triangle indices.
+    pub index_count: u32,
+    /// Edge index buffer for LineList wireframe rendering (`Uint32`).
+    pub edge_index_buffer: &'a crate::gpu::Buffer,
+    /// Number of edge indices.
+    pub edge_index_count: u32,
+}
+
 impl DeviceResources {
     // ------------------------------------------------------------------
     // Target descriptors and SharedBindings accessor
@@ -51,6 +70,23 @@ impl DeviceResources {
     pub fn opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: HDR_COLOR_FORMAT,
+            depth_format: SCENE_DEPTH_FORMAT,
+            sample_count: self.sample_count,
+        }
+    }
+
+    /// Render-target descriptor for the LDR scene pass
+    /// (`PipelineMode::Direct`): the renderer's configured output format
+    /// instead of the HDR scene format, otherwise identical to
+    /// [`opaque_target_desc`](Self::opaque_target_desc). A plugin that opts
+    /// into LDR painting via
+    /// [`ItemTypePlugin::draws_ldr`](crate::plugin_api::ItemTypePlugin::draws_ldr)
+    /// builds its second `paint` pipeline against this and selects it when
+    /// [`PaintContext::target_format`](crate::plugin_api::PaintContext::target_format)
+    /// matches.
+    pub fn ldr_opaque_target_desc(&self) -> OpaqueTargetDesc {
+        OpaqueTargetDesc {
+            color_format: self.target_format,
             depth_format: SCENE_DEPTH_FORMAT,
             sample_count: self.sample_count,
         }
@@ -215,6 +251,75 @@ impl DeviceResources {
     /// IDs from async uploads may sit at the high end.
     pub fn texture_count(&self) -> usize {
         self.content.textures.len()
+    }
+
+    /// `true` when `id` refers to a live texture slot.
+    ///
+    /// Cheaper than [`texture_view`](Self::texture_view) when only the
+    /// liveness answer is needed, for example when deciding whether a cached
+    /// bind group must be rebuilt against the fallback.
+    pub fn has_texture(&self, id: crate::resources::TextureId) -> bool {
+        self.content.textures.get(id).is_some()
+    }
+
+    /// Borrow the GPU LUT view for a colourmap uploaded via
+    /// [`upload_colourmap`](Self::upload_colourmap), or a builtin id from
+    /// [`builtin_colourmap_id`](Self::builtin_colourmap_id).
+    ///
+    /// Returns `None` when `id` is out of range (fall back to
+    /// [`fallback_colourmap_view`](Self::fallback_colourmap_view)). Pair the
+    /// view with [`lut_sampler`](Self::lut_sampler); the same lifetime
+    /// contract as [`texture_view`](Self::texture_view) applies.
+    pub fn colourmap_view(&self, id: crate::ColourmapId) -> Option<&crate::gpu::TextureView> {
+        self.content.colourmap_views.get(id.0)
+    }
+
+    /// The 1x1 white LUT view the lib binds when an item names no colourmap
+    /// (or a stale id). Bind it wherever a pipeline layout requires a LUT
+    /// but the item has none, so plugin behaviour matches the built-in
+    /// item types.
+    pub fn fallback_colourmap_view(&self) -> &crate::gpu::TextureView {
+        &self.content.fallback_lut_view
+    }
+
+    /// Read-only borrow of the shared cached base mesh (vertex + index
+    /// buffers) for a glyph shape.
+    ///
+    /// `None` until the mesh has been built: call
+    /// [`ensure_glyph_base_mesh`](Self::ensure_glyph_base_mesh) once (for
+    /// example at plugin install time, via
+    /// [`ViewportRenderer::resources_mut`](crate::renderer::ViewportRenderer::resources_mut))
+    /// and the borrow is available every frame after. Vertices use the lib's
+    /// full 64-byte `Vertex` layout, the same one the built-in glyph
+    /// pipelines consume.
+    pub fn glyph_base_mesh(
+        &self,
+        glyph_type: crate::renderer::GlyphType,
+    ) -> Option<GlyphBaseMeshRef<'_>> {
+        use crate::renderer::GlyphType;
+        let mesh = match glyph_type {
+            GlyphType::Arrow => self.glyph.arrow_mesh.as_ref(),
+            GlyphType::Sphere => self.glyph.sphere_mesh.as_ref(),
+            GlyphType::Cube => self.glyph.cube_mesh.as_ref(),
+        }?;
+        Some(GlyphBaseMeshRef {
+            vertex_buffer: &mesh.vertex_buffer,
+            index_buffer: &mesh.index_buffer,
+            index_count: mesh.index_count,
+            edge_index_buffer: &mesh.edge_index_buffer,
+            edge_index_count: mesh.edge_index_count,
+        })
+    }
+
+    /// Build (on first call) and cache the shared base mesh for a glyph
+    /// shape, so [`glyph_base_mesh`](Self::glyph_base_mesh) returns it.
+    /// Idempotent and cheap once cached.
+    pub fn ensure_glyph_base_mesh(
+        &mut self,
+        device: &crate::gpu::Device,
+        glyph_type: crate::renderer::GlyphType,
+    ) {
+        self.ensure_glyph_mesh(device, glyph_type);
     }
 
     // ------------------------------------------------------------------

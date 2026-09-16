@@ -254,7 +254,8 @@ pub(crate) fn ev100_to_exposure(ev100: f32) -> f32 {
 /// host-owned render passes (`paint_to` / `paint_viewport`, which always use it)
 /// and cheap inline rendering. `Direct` omits the HDR target and therefore
 /// exposure, tone mapping, every post effect, OIT (so transparency is
-/// order-dependent), the skybox, and item-type plugins. Transparent volume
+/// order-dependent), the skybox, and item-type plugins that have not opted
+/// into LDR painting via `ItemTypePlugin::draws_ldr`. Transparent volume
 /// meshes (`SceneFrame::transparent_volume_meshes`) require `Hdr`.
 // NOT #[non_exhaustive]: a closed, consumer-selected binary (cf. `ToneMapping`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

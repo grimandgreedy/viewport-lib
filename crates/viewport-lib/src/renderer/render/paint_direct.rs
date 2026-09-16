@@ -135,6 +135,9 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Item-type plugin paint (LDR opt-in only): after all built-in scene
+        // content, mirroring the HDR scene-pass position.
+        self.dispatch_plugin_paint(render_pass, frame, false);
         // Outline composite after all scene content so translucent layers don't overdraw.
         emit_outline_composite!(&self.resources, &mut *render_pass, vp_slot);
         // Sub-object highlight (LDR path) : face fill, edge lines, vertex/point sprites.

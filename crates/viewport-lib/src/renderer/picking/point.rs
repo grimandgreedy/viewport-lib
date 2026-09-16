@@ -1220,8 +1220,14 @@ impl ViewportRenderer {
                 origin: ray_origin,
                 direction: ray_dir,
             };
+            let plugin_ctx = crate::plugin_api::PickContext {
+                click_pos,
+                viewport_size,
+                view_proj,
+                mask,
+            };
             for plugin in self.item_type_plugins.values() {
-                if let Some((t, hit)) = plugin.pick(&plugin_ray) {
+                if let Some((t, hit)) = plugin.pick(&plugin_ray, &plugin_ctx) {
                     consider(t, hit);
                 }
             }

@@ -1601,11 +1601,11 @@ impl ItemTypePlugin for MockPickPlugin {
         Vec::new()
     }
 
-    fn render_pick<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &PickPassContext<'a>,
-        items: &'a dyn PluginItemCollection,
+    fn render_pick(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        items: &dyn PluginItemCollection,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;
@@ -1870,11 +1870,11 @@ impl ItemTypePlugin for SubPickPlugin {
         Vec::new()
     }
 
-    fn render_pick<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &PickPassContext<'a>,
-        items: &'a dyn PluginItemCollection,
+    fn render_pick(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        items: &dyn PluginItemCollection,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;

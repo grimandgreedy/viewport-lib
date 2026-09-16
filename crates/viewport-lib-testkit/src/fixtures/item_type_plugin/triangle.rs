@@ -150,11 +150,11 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         Vec::new()
     }
 
-    fn paint<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &PaintContext<'a>,
-        items: &'a dyn PluginItemCollection,
+    fn paint(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &PaintContext<'_>,
+        items: &dyn PluginItemCollection,
     ) {
         self.log.record("paint");
         if items.is_empty() || items.item_settings(0).hidden {
@@ -165,11 +165,11 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         pass.draw(0..3, 0..1);
     }
 
-    fn cast_shadow_pass<'a>(
-        &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
-        ctx: &ShadowCastContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn cast_shadow_pass(
+        &self,
+        _pass: &mut wgpu::RenderPass<'_>,
+        ctx: &ShadowCastContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
         // Records the dispatch but does not draw. A pipeline from
         // `build_shadow_pipeline` is laid out with the scene's group-0
@@ -182,11 +182,11 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
             .record(format!("cast_shadow_pass:cascade={}", ctx.cascade_idx));
     }
 
-    fn render_pick<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &PickPassContext<'a>,
-        items: &'a dyn PluginItemCollection,
+    fn render_pick(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        items: &dyn PluginItemCollection,
     ) {
         self.log.record("render_pick");
         let Some(group) = self.pick_id_group.as_ref() else {

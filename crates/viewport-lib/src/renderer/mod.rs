@@ -22,7 +22,7 @@ pub use capture::{CapturedHdr, CapturedHdrGpu};
 pub use paths::{OwnedPath, PassPath, PassView};
 mod gpu_context;
 pub use gpu_context::GpuContext;
-mod picking;
+pub(crate) mod picking;
 pub use picking::sub_object;
 pub use picking::{
     CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickMask, PickPoll, PickRectResult,
@@ -1996,14 +1996,10 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return Vec::new();
         }
-        // A derivative render (capture / bake) reads resident state: it must not
-        // run a plugin's `&mut self` prepare, which would advance the plugin's
-        // own per-frame state, nor bump the plugin frame index. The draw passes
-        // are skipped in the same way (see `dispatch_plugin_paint`), so plugin
-        // geometry is absent from a bake rather than drawn stale.
-        if !self.render_advances_state() {
-            return Vec::new();
-        }
+        // Derivative renders (captures / bakes) dispatch too: they run their
+        // own prepare and cull against the capture camera, so the matching
+        // paint draws current, right-camera geometry, the same as built-in
+        // item types. The presented frame re-prepares afterwards anyway.
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
@@ -2016,6 +2012,10 @@ impl ViewportRenderer {
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
                     jobs: crate::resources::Jobs::new(&self.resources),
+                    resources: &self.resources,
+                    wireframe_mode: frame.viewport.wireframe_mode,
+                    outline_selected: frame.interaction.outline_selected,
+                    sub_selection: frame.interaction.sub_selection.as_ref(),
                 };
                 bufs.extend(plugin.prepare(device, queue, &ctx, items.as_ref()));
             }
@@ -2026,22 +2026,19 @@ impl ViewportRenderer {
     /// Walk registered item-type plugins and invoke `paint` for each one
     /// that has a matching collection submitted on `frame.scene`.
     ///
-    /// Called from inside the lib's HDR scene pass between built-in
-    /// opaques and the skybox.
-    pub(crate) fn dispatch_plugin_paint<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    /// Called from inside the lib's HDR scene pass after built-in opaques
+    /// and the skybox (`is_hdr` true), and from the LDR scene positions
+    /// after the built-in scene content (`is_hdr` false). On the LDR path
+    /// only plugins that opt in via `draws_ldr` are invoked: the pass
+    /// targets the renderer's output format, and a plugin without a
+    /// pipeline for it must be skipped, not handed an incompatible pass.
+    pub(crate) fn dispatch_plugin_paint(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        is_hdr: bool,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // A derivative render (capture / bake) does not draw plugin items. Their
-        // draw passes read visibility / LOD that `cull` sets against the
-        // presented camera (skipped here), so painting them would render stale,
-        // wrong-camera geometry into the bake. Plugin geometry is absent from
-        // bakes rather than partially present.
-        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -2049,8 +2046,16 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            target_format: if is_hdr {
+                crate::resources::HDR_COLOR_FORMAT
+            } else {
+                self.resources.target_format
+            },
         };
         for (name, plugin) in self.item_type_plugins.iter() {
+            if !is_hdr && !plugin.draws_ldr() {
+                continue;
+            }
             if let Some(items) = frame.scene.plugin_items.get(*name) {
                 plugin.paint(pass, &ctx, items.as_ref());
             }
@@ -2095,17 +2100,13 @@ impl ViewportRenderer {
     /// Called from inside the foreground pass after the built-in item
     /// draws. `camera` carries the foreground projection so plugin-side
     /// math agrees with the bound group-0 camera.
-    pub(crate) fn dispatch_plugin_paint_foreground<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
-        camera: &'rp RenderCamera,
+    pub(crate) fn dispatch_plugin_paint_foreground(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        camera: &RenderCamera,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -2113,6 +2114,7 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            target_format: crate::resources::HDR_COLOR_FORMAT,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if !plugin.draws_foreground() {
@@ -2149,19 +2151,15 @@ impl ViewportRenderer {
     /// instead of writing it. The caller hands over the view + sampler and a
     /// prebuilt bind group so the plugin can either bake the depth into a group
     /// of its own or bind the ready-made group at a spare slot.
-    pub(crate) fn dispatch_plugin_paint_depth_read<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
-        scene_depth: &'rp crate::gpu::TextureView,
-        scene_depth_sampler: &'rp crate::gpu::Sampler,
-        scene_depth_bind_group: &'rp crate::gpu::BindGroup,
+    pub(crate) fn dispatch_plugin_paint_depth_read(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
+        scene_depth: &crate::gpu::TextureView,
+        scene_depth_sampler: &crate::gpu::Sampler,
+        scene_depth_bind_group: &crate::gpu::BindGroup,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::DepthReadContext {
@@ -2189,10 +2187,10 @@ impl ViewportRenderer {
     /// Called from inside the GPU pick pass after the built-in draws. The
     /// caller has bound the shared group-0 camera bind group; plugins that
     /// rebind group 0 must restore it.
-    pub(crate) fn dispatch_plugin_pick<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_pick(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
         mask: crate::renderer::picking::PickMask,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
@@ -2217,16 +2215,12 @@ impl ViewportRenderer {
     ///
     /// Called from inside the lib's OIT render pass, after built-in
     /// transparent draws.
-    pub(crate) fn dispatch_plugin_paint_transparent<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_paint_transparent(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::PaintContext {
@@ -2234,6 +2228,7 @@ impl ViewportRenderer {
             viewport_size: glam::Vec2::from(frame.camera.viewport_size),
             viewport_index: frame.camera.viewport_index,
             frame_index: self.plugin_frame_index,
+            target_format: crate::resources::HDR_COLOR_FORMAT,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
             if let Some(items) = frame.scene.plugin_items.get(*name) {
@@ -2251,18 +2246,14 @@ impl ViewportRenderer {
     /// alongside the other dispatchers as the natural shape; a future
     /// refactor that splits the resources borrow can switch back.
     #[allow(dead_code)]
-    pub(crate) fn dispatch_plugin_shadow<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_shadow(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
         cascade_idx: u32,
         light_view_proj: glam::Mat4,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::ShadowCastContext {
@@ -2292,12 +2283,6 @@ impl ViewportRenderer {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
             return;
         }
-        // Skip during a derivative render: `cull` is `&mut self` and would
-        // advance the plugin's own per-frame visibility state. See
-        // `dispatch_plugin_prepare`.
-        if !self.render_advances_state() {
-            return;
-        }
         for (name, plugin) in self.item_type_plugins.iter_mut() {
             if let Some(items) = frame.scene.plugin_items.get(*name) {
                 let ctx = crate::plugin_api::ItemFrameContext {
@@ -2306,6 +2291,10 @@ impl ViewportRenderer {
                     viewport_index: frame.camera.viewport_index,
                     frame_index: self.plugin_frame_index,
                     jobs: crate::resources::Jobs::new(&self.resources),
+                    resources: &self.resources,
+                    wireframe_mode: frame.viewport.wireframe_mode,
+                    outline_selected: frame.interaction.outline_selected,
+                    sub_selection: frame.interaction.sub_selection.as_ref(),
                 };
                 plugin.cull(frustum, &ctx, items.as_ref());
             }
@@ -2334,16 +2323,12 @@ impl ViewportRenderer {
         })
     }
 
-    pub(crate) fn dispatch_plugin_outline_mask<'rp>(
-        &'rp self,
-        pass: &mut crate::gpu::RenderPass<'rp>,
-        frame: &'rp FrameData,
+    pub(crate) fn dispatch_plugin_outline_mask(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        frame: &FrameData,
     ) {
         if self.item_type_plugins.is_empty() || frame.scene.plugin_items.is_empty() {
-            return;
-        }
-        // See `dispatch_plugin_paint`: a derivative render draws no plugin items.
-        if !self.render_advances_state() {
             return;
         }
         let ctx = crate::plugin_api::OutlineMaskContext {
@@ -3352,6 +3337,9 @@ impl ViewportRenderer {
                 }
             }
         }
+        // Item-type plugin paint (LDR opt-in only): after all built-in scene
+        // content, mirroring the HDR scene-pass position.
+        self.dispatch_plugin_paint(render_pass, frame, false);
         // Shadow atlas viewer overlay.
         if frame.effects.debug.show_shadow_atlas {
             render_pass.set_pipeline(&self.resources.shadow.atlas_viewer_pipeline);

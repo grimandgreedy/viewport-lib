@@ -816,6 +816,48 @@ fn viewport_pick_fs(
 }
 "#;
 
+/// Fragment helper for the pick-id pass that reports the hit instance.
+///
+/// Same contract as [`SHARED_PICK_WGSL`]'s `viewport_pick_fs`, except the
+/// primitive channel carries an instance index the vertex stage passes
+/// through: declare `@builtin(instance_index)` in the vertex input and
+/// forward it flat-interpolated at `@location(1)` of the fragment input.
+/// Unlike [`SHARED_PICK_PRIM_WGSL`], this needs no device feature, matching
+/// the built-in instanced pick path, so instanced plugin items stay
+/// instance-pickable on every device. The renderer hands the read-back
+/// index to the plugin's
+/// [`resolve_sub_object`](crate::plugin_api::ItemTypePlugin::resolve_sub_object)
+/// when the query mask holds `INSTANCE`.
+pub const SHARED_PICK_INSTANCE_WGSL: &str = r#"
+// @viewport-wgsl-version: 1
+// Pick-id fragment helper for the three-target pick pass, instance variant.
+// The vertex stage must provide a flat-interpolated pick_id at @location(0)
+// and a flat-interpolated instance index at @location(1) of the fragment
+// input (forward @builtin(instance_index) from the vertex input).
+//
+// Targets: @location(0) R32Uint object id, @location(1) R32Uint instance
+// index, @location(2) R32Float depth.
+
+struct ViewportPickInstOut {
+    @location(0) object_id: u32,
+    @location(1) primitive_id: u32,
+    @location(2) depth: f32,
+};
+
+@fragment
+fn viewport_pick_instance_fs(
+    @builtin(position) frag_pos: vec4<f32>,
+    @location(0) @interpolate(flat) pick_id: u32,
+    @location(1) @interpolate(flat) instance_id: u32,
+) -> ViewportPickInstOut {
+    var out: ViewportPickInstOut;
+    out.object_id = pick_id;
+    out.primitive_id = instance_id;
+    out.depth = frag_pos.z;
+    return out;
+}
+"#;
+
 /// Fullscreen-triangle vertex stage for post-effect passes.
 ///
 /// Prepend to a fragment-only post shader and build with

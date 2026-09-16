@@ -17,16 +17,25 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
     ) -> crate::gpu::CommandBuffer {
-        // The LDR pipeline has no post chain: item-type plugins and the OIT pass
-        // (needed for transparent volume meshes) only exist on the HDR path.
+        // The LDR pipeline has no post chain: the OIT pass (needed for
+        // transparent volume meshes) only exists on the HDR path, and
+        // item-type plugins draw here only when they opt in via `draws_ldr`.
         // Report each dropped feature once instead of silently omitting it.
         use std::sync::atomic::Ordering::Relaxed;
-        if !frame.scene.plugin_items.is_empty() && !self.ldr_plugin_items_warned.swap(true, Relaxed)
-        {
+        let ldr_skipped_plugin = self.item_type_plugins.iter().any(|(name, plugin)| {
+            !plugin.draws_ldr()
+                && frame
+                    .scene
+                    .plugin_items
+                    .get(*name)
+                    .is_some_and(|items| !items.is_empty())
+        });
+        if ldr_skipped_plugin && !self.ldr_plugin_items_warned.swap(true, Relaxed) {
             tracing::warn!(
-                "item-type plugin items are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): the plugin paint dispatch only runs in the HDR \
-                 pipeline. Set effects.display.mode = PipelineMode::Hdr to render them."
+                "some item-type plugin items are not drawn on the LDR pipeline \
+                 (PipelineMode::Direct): their plugins do not opt into it via \
+                 ItemTypePlugin::draws_ldr. Opt in (with an LDR-format pipeline) or set \
+                 effects.display.mode = PipelineMode::Hdr to render them."
             );
         }
         if frame
@@ -244,6 +253,9 @@ impl ViewportRenderer {
                     }
                 }
             }
+            // Item-type plugin paint (LDR opt-in only): after all built-in
+            // scene content, mirroring the HDR scene-pass position.
+            self.dispatch_plugin_paint(&mut render_pass, frame, false);
             // Outline composite after all scene content.
             emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
             // Screen-space image overlays.

@@ -1,6 +1,6 @@
 use super::*;
 
-mod helpers;
+pub(crate) mod helpers;
 use helpers::*;
 mod gpu;
 pub(crate) use gpu::PendingPick;

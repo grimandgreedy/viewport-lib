@@ -1045,6 +1045,26 @@ impl ViewportRenderer {
             }
         }
 
+        // Consult registered item-type plugins after the built-in types.
+        // Each plugin answers from state cached in its own prepare, the
+        // same as the point pick.
+        if !self.item_type_plugins.is_empty() {
+            let plugin_ctx = crate::plugin_api::RectPickContext {
+                rect_min,
+                rect_max,
+                viewport_size,
+                view_proj,
+                mask,
+            };
+            for plugin in self.item_type_plugins.values() {
+                for id in plugin.pick_rect(&plugin_ctx) {
+                    if id != PickId::NONE {
+                        result.objects.push(id.0);
+                    }
+                }
+            }
+        }
+
         result
     }
 }
