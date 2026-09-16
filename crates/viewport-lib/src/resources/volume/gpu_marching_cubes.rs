@@ -117,38 +117,8 @@ impl McVolumeGpuData {
     }
 }
 
-/// Per-frame data for one MC item, consumed by the render phase.
-pub(crate) struct McFrameData {
-    pub volume_idx: usize,
-    pub render_bg: crate::gpu::BindGroup,
-    /// True if this item was submitted with `appearance.wireframe = true`.
-    pub wireframe: bool,
-    /// Per-slab bind groups for the wireframe pipeline (binding 0 = vertex storage buffer).
-    pub wire_slab_bgs: Vec<crate::gpu::BindGroup>,
-    /// Object pick id from the item's `settings.pick_id`. `PickId::NONE` (0) when
-    /// the item is not pickable. Used by the GPU pick pass to tag the isosurface.
-    pub pick_id: crate::renderer::PickId,
-    /// Set from the item's `settings.cast_shadows`. Read by the shadow pass's
-    /// MC caster loop; always casts through the solid `vertex_buf`/`indirect_buf`
-    /// slab data regardless of `wireframe` (shadows reflect the actual surface,
-    /// not its display mode).
-    pub cast_shadows: bool,
-}
-
-/// Per-selected MC item data for the outline mask pass.
-pub(crate) struct McOutlineItem {
-    /// Index into `mc_gpu_data` (frame-level array of processed MC items).
-    pub mc_gpu_idx: usize,
-    pub _uniform_buf: crate::gpu::Buffer,
-    pub mask_bind_group: crate::gpu::BindGroup,
-}
-
 // ---------------------------------------------------------------------------
-// Lookup table helpers
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Pipeline init and volume upload (impl DeviceResources)
+// Volume upload (impl DeviceResources)
 // ---------------------------------------------------------------------------
 
 impl DeviceResources {

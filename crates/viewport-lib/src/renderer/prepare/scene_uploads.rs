@@ -490,7 +490,7 @@ impl ViewportRenderer {
         }
     }
 
-    pub(super) fn upload_decals_mc(
+    pub(super) fn upload_decals(
         resources: &mut DeviceResources,
         decal_gpu_data: &mut Vec<crate::resources::decal::DecalGpuItem>,
         decal_cache: &mut std::collections::HashMap<
@@ -503,7 +503,6 @@ impl ViewportRenderer {
         decal_deps_gate: &mut crate::resources::resource_deps::DepsGate,
         decal_exclude_items: &mut Vec<crate::resources::decal::DecalExcludeGpuItem>,
         device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
         frame: &FrameData,
     ) -> DecalCacheStats {
         // ------------------------------------------------------------------

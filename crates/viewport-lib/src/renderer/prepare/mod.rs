@@ -447,14 +447,13 @@ impl ViewportRenderer {
             queue,
             frame,
         );
-        let decal_cache_stats = Self::upload_decals_mc(
+        let decal_cache_stats = Self::upload_decals(
             resources,
             &mut self.decal_gpu_data,
             &mut self.decal_cache,
             &mut self.decal_deps_gate,
             &mut self.decal_exclude_items,
             device,
-            queue,
             frame,
         );
         // Refresh any deform slots bound to a same-device consumer buffer,
