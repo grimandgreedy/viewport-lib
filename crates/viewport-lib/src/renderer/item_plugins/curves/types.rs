@@ -4,7 +4,7 @@
 //! family, so they share a module the way the plugins that draw them do.
 
 use crate::renderer::SpriteBlend;
-use crate::renderer::types::items::common::IDENTITY_MAT4;
+use crate::renderer::types::items::IDENTITY_MAT4;
 use crate::resources::ColourmapId;
 use crate::scene::material::ItemSettings;
 

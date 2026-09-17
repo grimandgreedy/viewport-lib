@@ -26,8 +26,9 @@ pub(crate) mod item_plugins;
 pub(crate) mod picking;
 pub use picking::sub_object;
 pub use picking::{
-    CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickMask, PickPoll, PickRectResult,
-    PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, VolumeSelectionInfo,
+    CellSelectionInfo, GpuPickHit, PickBackend, PickHit, PickId, PickMask, PickPoll,
+    PickRectResult, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
+    VolumeSelectionInfo,
 };
 mod capture;
 mod overlay_buffers;
@@ -74,17 +75,17 @@ pub use self::types::{
     OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor, OverlayAnimation, OverlayAnimations, OverlayEasing,
     OverlayFill, OverlayFrame, OverlayGeometryId, OverlayPolylineItem, OverlayShape,
     OverlayShapeItem, OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathSegment,
-    PathTrack, PickId, PipelineMode, PointCloudItem, PointCloudRefItem, PointRenderMode,
-    PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
-    SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
-    SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath,
-    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
-    ViewportFrame, VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    PathTrack, PipelineMode, PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode,
+    PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera,
+    RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings,
+    ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer,
+    ShadowSettings, SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem,
+    SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode,
+    StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
+    TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
+    TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
+    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.

@@ -8,22 +8,25 @@
 //! batch, volume mesh, external instances), which is not an item type, plus the
 //! bits the item structs share.
 
-pub(crate) mod common;
 mod compute_filter;
 mod external_instances;
 mod mesh;
 mod mesh_instance;
 mod volume_mesh;
 
-pub use self::common::*;
+/// 4x4 identity matrix, the default `model` for an item that carries a
+/// per-frame transform. Taken from glam rather than restated so it cannot drift
+/// from the column-major convention the rest of the renderer uses.
+pub(crate) const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
+
 pub use self::compute_filter::*;
 pub use self::external_instances::*;
-pub use crate::renderer::item_plugins::decal::types::*;
-pub use crate::renderer::item_plugins::gaussian_splat::types::*;
 pub use self::mesh::*;
 pub use self::mesh_instance::*;
 pub use self::volume_mesh::*;
 pub use crate::renderer::item_plugins::curves::types::*;
+pub use crate::renderer::item_plugins::decal::types::*;
+pub use crate::renderer::item_plugins::gaussian_splat::types::*;
 pub use crate::renderer::item_plugins::glyph::types::*;
 pub use crate::renderer::item_plugins::gpu_implicit::types::*;
 pub use crate::renderer::item_plugins::gpu_marching_cubes::types::*;

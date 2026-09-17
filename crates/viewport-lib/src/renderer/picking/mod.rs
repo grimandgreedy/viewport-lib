@@ -16,10 +16,14 @@ mod rect;
 pub use crate::interaction::query::pick_result::{GpuPickHit, PickHit, PickRectResult, SnapHit};
 pub use crate::interaction::select::sub_object;
 pub use pick_mask::PickMask;
+// The id a consumer stamps on an item to make it pickable. Defined in
+// `viewport-lib-types` so a consumer can build a scene without the renderer,
+// and re-exported here beside the rest of the picking vocabulary.
 pub use sub_object::{
     CellSelectionInfo, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
     VolumeSelectionInfo,
 };
+pub use viewport_lib_types::ids::PickId;
 
 impl ViewportRenderer {
     /// Copy this frame's pickable items into the CPU pick caches so `pick()` and

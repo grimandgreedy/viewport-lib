@@ -1,6 +1,6 @@
 //! Per-frame reference to a pre-uploaded tensor glyph set.
 
-use crate::renderer::types::items::common::IDENTITY_MAT4;
+use crate::renderer::types::items::IDENTITY_MAT4;
 use crate::scene::material::ItemSettings;
 
 /// Per-frame reference to a pre-uploaded tensor glyph set. See [`PolylineRefItem`].
