@@ -119,17 +119,18 @@ use crate::resources::{
     ShadowAtlasUniform, SingleLightUniform,
 };
 
-/// Per-frame selection-outline state for one viewport, one entry per scene-item
-/// kind, rebuilt in prepare(). Each kind either owns dedicated outline buffers or
-/// records indices into that kind's `*_gpu_data`; the outline mask/edge passes and
-/// the composite walk these. Grouped so `ViewportSlot` carries one field instead of
-/// a dozen parallel ones.
+/// Per-frame selection-outline state for one viewport, rebuilt in prepare().
+///
+/// Two sources feed the outline mask: the geometry substrate, whose selected
+/// surfaces and volume-mesh boundaries get dedicated mask buffers here, and the
+/// item-type plugins, which draw their own coverage through
+/// [`ItemTypePlugin::outline_mask`](crate::plugin_api::ItemTypePlugin::outline_mask)
+/// and are tracked only by the flag below. The mask, edge and composite passes
+/// gate on both.
 #[derive(Default)]
 pub(crate) struct SelectionOutlines {
     /// Per-frame outline buffers for selected objects.
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Indices into polyline_gpu_data for selected user polylines.
-    pub polyline_outline_indices: Vec<usize>,
     /// True when an item-type plugin drew selection coverage into the outline
     /// mask this frame. Plugin outline coverage is not tracked in the per-kind
     /// buffers above, so the mask/edge pass and the composite also gate on this.

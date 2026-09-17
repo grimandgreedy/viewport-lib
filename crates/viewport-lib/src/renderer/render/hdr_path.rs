@@ -2821,7 +2821,6 @@ impl ViewportRenderer {
         // pass with no depth attachment, so the composite pipeline is compatible.
         // -----------------------------------------------------------------------
         if !slot.selection_outlines.outline_object_buffers.is_empty()
-            || !slot.selection_outlines.polyline_outline_indices.is_empty()
             || slot.selection_outlines.plugin_outline_present
         {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.

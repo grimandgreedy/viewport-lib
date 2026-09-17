@@ -1062,7 +1062,6 @@ macro_rules! emit_outline_composite {
         let render_pass = $render_pass;
         if let Some(slot) = $vp_slot {
             if !slot.selection_outlines.outline_object_buffers.is_empty()
-                || !slot.selection_outlines.polyline_outline_indices.is_empty()
                 || slot.selection_outlines.plugin_outline_present
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
