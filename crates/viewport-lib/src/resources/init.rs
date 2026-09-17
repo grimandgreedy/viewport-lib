@@ -2462,7 +2462,7 @@ impl DeviceResources {
             pick: crate::resources::types::PickResources::default(),
             mc: crate::resources::volume::gpu_marching_cubes::McResources::default(),
 
-            particle: crate::resources::gpu::gpu_particles::ParticleResources::default(),
+            particle: crate::resources::gpu::gpu_particles::ParticleResources::new(device),
             external_instances:
                 crate::resources::gpu::external_instances::ExternalInstancesResources::default(),
             screen_image: crate::resources::types::ScreenImageResources::default(),

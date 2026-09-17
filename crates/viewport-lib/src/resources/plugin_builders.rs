@@ -889,6 +889,21 @@ impl<'a> MeshDraw<'a> {
     /// nothing instead of drawing the wrong geometry. The pipeline and any
     /// bind groups are the caller's to set first.
     pub fn draw_indexed(&self, pass: &mut crate::gpu::RenderPass<'_>, mesh_id: MeshId) -> bool {
+        self.draw_indexed_instanced(pass, mesh_id, 1)
+    }
+
+    /// The same draw with an instance count, for an item type that draws one
+    /// uploaded mesh many times and composes each instance's transform in its
+    /// own vertex stage rather than from a per-instance vertex buffer.
+    ///
+    /// Returns `false` without touching the pass when `mesh_id` is stale, the
+    /// same as [`draw_indexed`](Self::draw_indexed).
+    pub fn draw_indexed_instanced(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        mesh_id: MeshId,
+        instances: u32,
+    ) -> bool {
         let Some(mesh) = self.resources.mesh_store.get(mesh_id) else {
             return false;
         };
@@ -897,7 +912,7 @@ impl<'a> MeshDraw<'a> {
             self.resources.geometry.index_slice(mesh.index_span),
             crate::gpu::IndexFormat::Uint32,
         );
-        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+        pass.draw_indexed(0..mesh.index_count, 0, 0..instances);
         true
     }
 

@@ -147,27 +147,6 @@ impl ViewportRenderer {
         (resolved, switches, culled, reduced)
     }
 
-    pub(super) fn upload_particles(
-        resources: &mut DeviceResources,
-        particle_gpu_data: &mut Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-        sink: &mut crate::renderer::SubmitSink,
-    ) {
-        // Mesh-instance batches are uploaded by `upload_mesh_instances`, called
-        // separately so it can resolve LOD groups per instance.
-
-        // ------------------------------------------------------------------
-        // GPU particle systems: dispatch emit + sim compute passes.
-        // ------------------------------------------------------------------
-        particle_gpu_data.clear();
-        if !frame.scene.gpu_particle_systems.is_empty() {
-            *particle_gpu_data =
-                resources.run_particle_jobs(device, queue, &frame.scene.gpu_particle_systems, sink);
-        }
-    }
-
     pub(super) fn upload_polylines(
         resources: &mut DeviceResources,
         polyline_gpu_data: &mut Vec<crate::resources::PolylineGpuData>,

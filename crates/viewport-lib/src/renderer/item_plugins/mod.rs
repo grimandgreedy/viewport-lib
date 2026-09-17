@@ -16,6 +16,7 @@ pub(crate) mod gaussian_splat;
 pub(crate) mod glyph;
 pub(crate) mod gpu_implicit;
 pub(crate) mod gpu_marching_cubes;
+pub(crate) mod gpu_particles;
 pub(crate) mod image_slice;
 pub(crate) mod point_cloud;
 pub(crate) mod polyline;
@@ -42,6 +43,7 @@ pub(crate) fn plugin_items_for<'f>(
         gaussian_splat::TYPE_NAME => Some(&frame.scene.gaussian_splats),
         gpu_implicit::TYPE_NAME => Some(&frame.scene.gpu_implicit),
         gpu_marching_cubes::TYPE_NAME => Some(&frame.scene.gpu_mc_items),
+        gpu_particles::TYPE_NAME => Some(&frame.scene.gpu_particle_systems),
         image_slice::TYPE_NAME => Some(&frame.scene.image_slices),
         glyph::TYPE_NAME => Some(&frame.scene.glyphs),
         point_cloud::TYPE_NAME => Some(&frame.scene.point_clouds),
@@ -131,7 +133,12 @@ impl crate::renderer::ViewportRenderer {
             device,
             Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
         );
-        // Sprites drew after every other non-mesh type, so they register last.
+        // Sprites drew after every other non-mesh type, so they register last,
+        // with the particles that shared their pass right behind them.
         self.with_item_type_plugin(device, Box::new(sprite::SpritePlugin::default()));
+        self.with_item_type_plugin(
+            device,
+            Box::new(gpu_particles::GpuParticlesPlugin::default()),
+        );
     }
 }

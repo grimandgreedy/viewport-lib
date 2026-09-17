@@ -382,8 +382,6 @@ pub struct ViewportRenderer {
     decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
-    /// Per-frame GPU particle systems, dispatched in prepare(), consumed in paint().
-    particle_gpu_data: Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
     external_instances_gpu_data:
         Vec<crate::resources::gpu::external_instances::ExternalInstancesGpuData>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
@@ -952,7 +950,6 @@ impl ViewportRenderer {
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             polyline_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
-            particle_gpu_data: Vec::new(),
             external_instances_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             decal_gpu_data: Vec::new(),

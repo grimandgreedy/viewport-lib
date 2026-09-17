@@ -17,7 +17,6 @@
 //! position for dead slots so they cost nothing in the rasteriser. Compaction
 //! would require a prefix sum each frame and is not worth the cost at the
 //! particle counts the API targets (1k - 200k).
-use crate::resources::VertexBufferLayoutExt;
 
 use crate::gpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};
@@ -27,7 +26,6 @@ use crate::renderer::{ParticleMeshAlign, SpriteBlend, SpriteLitParams, SpriteSiz
 /// GPU particle-system compute/draw pipelines, their layouts, and the live
 /// systems. All pipelines are lazily built; `systems` holds the persistent
 /// per-system GPU state, indexed by `GpuParticleSystemId`.
-#[derive(Default)]
 pub(crate) struct ParticleResources {
     /// Live particle systems. Slots can be reused after `drop_gpu_particle_system`.
     pub(crate) systems: Vec<Option<ParticleSystem>>,
@@ -39,34 +37,185 @@ pub(crate) struct ParticleResources {
     /// Draw bind groups rebuilt by revalidation since startup, for tests and
     /// diagnostics.
     pub(crate) draw_bg_rebuilds: u64,
-    /// Layout for the emit + sim compute pipelines (group 1).
-    pub(crate) sim_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// The layouts each system's own bind groups are built over.
+    pub(crate) layouts: ParticleLayouts,
+}
+
+impl ParticleResources {
+    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+        Self {
+            systems: Vec::new(),
+            deps_gate: crate::resources::resource_deps::DepsGate::default(),
+            draw_bg_rebuilds: 0,
+            layouts: ParticleLayouts::new(device),
+        }
+    }
+}
+
+/// The bind group layouts a particle system's own bind groups are built over.
+///
+/// Built once at startup rather than lazily: `create_gpu_particle_system` is
+/// public and builds a system's persistent bind groups immediately, which can
+/// happen long before the first frame that draws one. The pipelines that
+/// consume these layouts live with the item type under
+/// `renderer/item_plugins/gpu_particles/`.
+pub(crate) struct ParticleLayouts {
     /// Layout for emit/sim params (group 0).
-    pub(crate) params_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) params_bgl: crate::gpu::BindGroupLayout,
+    /// Layout for the emit + sim compute pipelines (group 1).
+    pub(crate) sim_bgl: crate::gpu::BindGroupLayout,
     /// Layout for the particle-sprite draw pipeline (group 1).
-    pub(crate) draw_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Compute pipeline that pops free-list slots and writes new particles.
-    pub(crate) emit_pipeline: Option<crate::gpu::ComputePipeline>,
-    /// Compute pipeline that integrates forces and decrements lifetime.
-    pub(crate) sim_pipeline: Option<crate::gpu::ComputePipeline>,
-    /// Draw pipeline variants for the particle-sprite shader, keyed by blend.
-    pub(crate) sprite_pipeline_alpha: Option<crate::resources::DualPipeline>,
-    pub(crate) sprite_pipeline_additive: Option<crate::resources::DualPipeline>,
-    pub(crate) sprite_pipeline_premultiplied: Option<crate::resources::DualPipeline>,
-    /// Lit variants of the GPU particle sprite pipelines.
-    pub(crate) sprite_lit_pipeline_alpha: Option<crate::resources::DualPipeline>,
-    pub(crate) sprite_lit_pipeline_additive: Option<crate::resources::DualPipeline>,
-    pub(crate) sprite_lit_pipeline_premultiplied: Option<crate::resources::DualPipeline>,
-    /// Group 2 BGL for the lit particle path: optional normal map + sampler.
-    pub(crate) sprite_lit_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Fallback bind group for the lit particle normal-map binding (group 2).
-    pub(crate) sprite_lit_fallback_bg: Option<crate::gpu::BindGroup>,
+    pub(crate) draw_bgl: crate::gpu::BindGroupLayout,
+    /// Group 2 layout for the lit particle path: optional normal map + sampler.
+    pub(crate) sprite_lit_bgl: crate::gpu::BindGroupLayout,
     /// Layout for the mesh-route particle draw pipeline (group 1).
-    pub(crate) mesh_draw_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Draw pipeline variants for the particle-mesh shader, keyed by blend.
-    pub(crate) mesh_pipeline_alpha: Option<crate::resources::DualPipeline>,
-    pub(crate) mesh_pipeline_additive: Option<crate::resources::DualPipeline>,
-    pub(crate) mesh_pipeline_premultiplied: Option<crate::resources::DualPipeline>,
+    pub(crate) mesh_draw_bgl: crate::gpu::BindGroupLayout,
+}
+
+impl ParticleLayouts {
+    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+        // Group 0: emit/sim params (uniform).
+        let params_bgl = crate::resources::builders::uniform_bgl(
+            device,
+            "gpu_particle_params_bgl",
+            crate::gpu::ShaderStages::COMPUTE,
+        );
+
+        // Group 1 (sim/emit): the particle buffer.
+        let sim_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("gpu_particle_sim_bgl"),
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::COMPUTE,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        // Group 1 (draw): sprite uniform + texture + sampler + particle buffer.
+        let draw_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("gpu_particle_draw_bgl"),
+            entries: &[
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: crate::gpu::ShaderStages::VERTEX
+                        | crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Texture {
+                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: crate::gpu::ShaderStages::VERTEX,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let lit_bgl = crate::resources::builders::texture_sampler_bgl(
+            device,
+            "gpu_particle_lit_bgl",
+            crate::gpu::ShaderStages::FRAGMENT,
+        );
+
+        let mesh_draw_bgl =
+            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("gpu_particle_mesh_draw_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::VERTEX
+                            | crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Sampler(
+                            crate::gpu::SamplerBindingType::Filtering,
+                        ),
+                        count: None,
+                    },
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: crate::gpu::ShaderStages::VERTEX,
+                        ty: crate::gpu::BindingType::Buffer {
+                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        Self {
+            params_bgl,
+            sim_bgl,
+            draw_bgl,
+            sprite_lit_bgl: lit_bgl,
+            mesh_draw_bgl,
+        }
+    }
+}
+
+/// Per-frame emission bookkeeping for one system.
+#[derive(Default)]
+pub(crate) struct EmitState {
+    /// Frame count since creation; seeds the emit RNG so a freshly created
+    /// system gets a different sequence from one that has been running.
+    pub frame_counter: u32,
+    /// First slot the next frame's spawn window covers. Advanced by that
+    /// frame's spawn count and wrapped, so successive frames recycle the
+    /// buffer in order.
+    pub emit_cursor: u32,
+    /// Fractional spawn accumulator. `rate * dt` rarely lands on an integer
+    /// per frame; the remainder rolls over so the long-term average emission
+    /// matches the configured rate.
+    pub spawn_accumulator: f32,
 }
 
 pub use viewport_lib_types::ids::GpuParticleSystemId;
@@ -282,18 +431,9 @@ pub(crate) struct ParticleSystem {
     pub draw_deps: crate::resources::resource_deps::ResourceDeps,
     /// Whether the slot is in use. The slot is reused lazily by future creates.
     pub alive: bool,
-    /// Frame count since creation; used to seed the emit RNG so a freshly
-    /// created system gets a different sequence from one that has been
-    /// running for a while.
-    pub frame_counter: u32,
-    /// First slot the next frame's spawn window covers. Advanced by that
-    /// frame's spawn count and wrapped, so successive frames recycle the buffer
-    /// in order instead of racing for whichever slots happen to be free.
-    pub emit_cursor: u32,
-    /// Fractional spawn accumulator. `rate * dt` rarely lands on an integer
-    /// per frame; the fractional remainder rolls over to the next frame so
-    /// the long-term average emission matches the configured rate.
-    pub spawn_accumulator: f32,
+    /// Per-frame emission bookkeeping, behind a lock because the item type
+    /// advances it from a shared borrow of the resources.
+    pub emit: std::sync::Mutex<EmitState>,
 }
 
 /// Which draw family the render loop should dispatch for this system.
@@ -305,19 +445,6 @@ pub(crate) enum ParticleDrawRoute {
     Mesh {
         mesh_id: crate::resources::mesh::mesh_store::MeshId,
     },
-}
-
-/// Per-frame data for one particle system, populated in prepare and consumed
-/// in render.
-pub(crate) struct ParticleFrameData {
-    /// Index into `particle_systems`.
-    pub system_idx: usize,
-    /// Picked at submit time; consumed by the draw pipeline router.
-    pub blend: SpriteBlend,
-    /// Whether to skip the draw (hidden item).
-    pub hidden: bool,
-    /// Which draw family to dispatch.
-    pub route: ParticleDrawRoute,
 }
 
 impl crate::resources::DeviceResources {
@@ -332,8 +459,6 @@ impl crate::resources::DeviceResources {
         queue: &crate::gpu::Queue,
         config: &GpuParticleSystemConfig,
     ) -> GpuParticleSystemId {
-        self.ensure_particle_pipelines(device);
-
         {
             use crate::resources::TextureSlot;
             match &config.render {
@@ -367,11 +492,7 @@ impl crate::resources::DeviceResources {
 
         let _ = queue; // queue currently unused; reserved for textures upload paths
 
-        let sim_bgl = self
-            .particle
-            .sim_bgl
-            .as_ref()
-            .expect("ensure_particle_pipelines failed to create sim BGL");
+        let sim_bgl = &self.particle.layouts.sim_bgl;
         let sim_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("gpu_particle_sim_bg"),
             layout: sim_bgl,
@@ -382,11 +503,7 @@ impl crate::resources::DeviceResources {
         });
 
         // Persistent params uniforms + bind groups, rewritten per frame.
-        let params_bgl = self
-            .particle
-            .params_bgl
-            .as_ref()
-            .expect("ensure_particle_pipelines failed to create params BGL");
+        let params_bgl = &self.particle.layouts.params_bgl;
         let emit_params_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("gpu_particle_emit_params"),
             size: std::mem::size_of::<EmitParamsGpu>() as u64,
@@ -433,9 +550,7 @@ impl crate::resources::DeviceResources {
             draw_uniform_buf: bindings.draw_uniform_buf,
             draw_deps: bindings.draw_deps,
             alive: true,
-            frame_counter: 0,
-            emit_cursor: 0,
-            spawn_accumulator: 0.0,
+            emit: std::sync::Mutex::new(EmitState::default()),
         };
 
         if let Some(idx) = self
@@ -524,11 +639,7 @@ impl crate::resources::DeviceResources {
                 } else {
                     &self.content.fallback_lut_view
                 };
-                let draw_bgl = self
-                    .particle
-                    .draw_bgl
-                    .as_ref()
-                    .expect("ensure_particle_pipelines failed to create draw BGL");
+                let draw_bgl = &self.particle.layouts.draw_bgl;
                 out.draw_bg = Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("gpu_particle_draw_bg"),
                     layout: draw_bgl,
@@ -552,11 +663,7 @@ impl crate::resources::DeviceResources {
                     ],
                 }));
                 if *lit {
-                    let lit_bgl = self
-                        .particle
-                        .sprite_lit_bgl
-                        .as_ref()
-                        .expect("ensure_particle_pipelines failed to create lit BGL");
+                    let lit_bgl = &self.particle.layouts.sprite_lit_bgl;
                     let normal_view = if normal_live {
                         &self
                             .content
@@ -633,11 +740,7 @@ impl crate::resources::DeviceResources {
                 } else {
                     &self.material.texture.view
                 };
-                let mesh_bgl = self
-                    .particle
-                    .mesh_draw_bgl
-                    .as_ref()
-                    .expect("ensure_particle_pipelines failed to create mesh draw BGL");
+                let mesh_bgl = &self.particle.layouts.mesh_draw_bgl;
                 out.draw_bg_mesh =
                     Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                         label: Some("gpu_particle_mesh_draw_bg"),
@@ -753,470 +856,9 @@ impl crate::resources::DeviceResources {
             .as_mut()
             .filter(|s| s.alive)
     }
-
-    /// Lazily create the compute + draw pipelines used by every particle
-    /// system. No-op once the bind group layouts are present.
-    pub(crate) fn ensure_particle_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.particle.sim_bgl.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-
-        // Group 0: emit/sim params (uniform).
-        let params_bgl = crate::resources::builders::uniform_bgl(
-            device,
-            "gpu_particle_params_bgl",
-            crate::gpu::ShaderStages::COMPUTE,
-        );
-
-        // Group 1 (sim/emit): the particle buffer.
-        let sim_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("gpu_particle_sim_bgl"),
-            entries: &[crate::gpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: crate::gpu::ShaderStages::COMPUTE,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        // Group 1 (draw): sprite uniform + texture + sampler + particle buffer.
-        let draw_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("gpu_particle_draw_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        // Compute pipelines.
-        let emit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "particle_emit_shader",
-            crate::resources::builders::wgsl_source!("particle_emit"),
-        );
-        let sim_shader = crate::resources::builders::wgsl_module(
-            device,
-            "particle_sim_shader",
-            crate::resources::builders::wgsl_source!("particle_sim"),
-        );
-
-        let compute_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "particle_compute_layout",
-            &[&params_bgl, &sim_bgl],
-        );
-
-        let emit_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "particle_emit_pipeline",
-            &compute_layout,
-            &emit_shader,
-            "emit_main",
-        );
-
-        let sim_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "particle_sim_pipeline",
-            &compute_layout,
-            &sim_shader,
-            "sim_main",
-        );
-
-        // Draw pipelines: three blend variants of the same shader.
-        let sprite_shader = crate::resources::builders::wgsl_module(
-            device,
-            "particle_sprite_shader",
-            crate::resources::builders::wgsl_source!("particle_sprite"),
-        );
-
-        let draw_layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "particle_draw_layout",
-            &self.binds.camera_bgl,
-            &draw_bgl,
-        );
-
-        let sample_count = self.sample_count;
-        let ldr_format = self.target_format;
-        let alpha = crate::gpu::BlendState::ALPHA_BLENDING;
-        let additive = crate::resources::builders::ADDITIVE_BLEND;
-        let premul = crate::resources::builders::PREMULTIPLIED_BLEND;
-
-        // Particle sprites are billboards: `Less` depth test, no depth write, no
-        // culling. Only the blend mode varies across the three variants.
-        let make_draw = |blend: crate::gpu::BlendState, label: &str| {
-            crate::resources::builders::build_dual_pipeline(
-                device,
-                &crate::resources::builders::DualPipelineDesc {
-                    label,
-                    layout: &draw_layout,
-                    shader: &sprite_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[],
-                    blend: Some(blend),
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write: false,
-                    depth_compare: crate::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        self.particle.sprite_pipeline_alpha = Some(make_draw(alpha, "particle_sprite_alpha"));
-        self.particle.sprite_pipeline_additive =
-            Some(make_draw(additive, "particle_sprite_additive"));
-        self.particle.sprite_pipeline_premultiplied =
-            Some(make_draw(premul, "particle_sprite_premultiplied"));
-
-        // Lit GPU particle sprite pipelines. Same vertex inputs and draw BGL
-        // as the emissive path; group 2 adds the optional normal-map binding
-        // and the shader pulls scene lighting via the camera bind group.
-        let lit_bgl = crate::resources::builders::texture_sampler_bgl(
-            device,
-            "gpu_particle_lit_bgl",
-            crate::gpu::ShaderStages::FRAGMENT,
-        );
-
-        let lit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "particle_sprite_lit_shader",
-            crate::resources::builders::wgsl_source!("particle_sprite_lit"),
-        );
-
-        let lit_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "particle_draw_lit_layout",
-            &[&self.binds.camera_bgl, &draw_bgl, &lit_bgl],
-        );
-
-        let make_lit_draw = |blend: crate::gpu::BlendState, label: &str| {
-            crate::resources::builders::build_dual_pipeline(
-                device,
-                &crate::resources::builders::DualPipelineDesc {
-                    label,
-                    layout: &lit_layout,
-                    shader: &lit_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[],
-                    blend: Some(blend),
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write: false,
-                    depth_compare: crate::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        self.particle.sprite_lit_pipeline_alpha =
-            Some(make_lit_draw(alpha, "particle_sprite_lit_alpha"));
-        self.particle.sprite_lit_pipeline_additive =
-            Some(make_lit_draw(additive, "particle_sprite_lit_additive"));
-        self.particle.sprite_lit_pipeline_premultiplied =
-            Some(make_lit_draw(premul, "particle_sprite_lit_premultiplied"));
-
-        let lit_fallback_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("gpu_particle_lit_fallback_bg"),
-            layout: &lit_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        &self.material.normal_map_view,
-                    ),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                },
-            ],
-        });
-
-        self.particle.sprite_lit_bgl = Some(lit_bgl);
-        self.particle.sprite_lit_fallback_bg = Some(lit_fallback_bg);
-
-        // Mesh-route draw pipelines. Same blend variants as the sprite route,
-        // but the vertex stage consumes the mesh's standard `Vertex` layout
-        // on slot 0 and composes the per-instance transform inline from the
-        // bound particle storage buffer.
-        let mesh_draw_bgl =
-            device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-                label: Some("gpu_particle_mesh_draw_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::VERTEX
-                            | crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Texture {
-                            sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: crate::gpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: crate::gpu::ShaderStages::FRAGMENT,
-                        ty: crate::gpu::BindingType::Sampler(
-                            crate::gpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let mesh_shader = crate::resources::builders::wgsl_module(
-            device,
-            "particle_mesh_shader",
-            crate::resources::builders::wgsl_source!("particle_mesh"),
-        );
-
-        let mesh_layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "particle_mesh_draw_layout",
-            &self.binds.camera_bgl,
-            &mesh_draw_bgl,
-        );
-
-        // Particle meshes are closed solids, so back-face culled; still no depth
-        // write since particles draw transparently after the opaque pass.
-        let make_mesh_draw = |blend: crate::gpu::BlendState, label: &str| {
-            crate::resources::builders::build_dual_pipeline(
-                device,
-                &crate::resources::builders::DualPipelineDesc {
-                    label,
-                    layout: &mesh_layout,
-                    shader: &mesh_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &[crate::resources::types::Vertex::buffer_layout()],
-                    blend: Some(blend),
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(crate::gpu::Face::Back),
-                    depth_write: false,
-                    depth_compare: crate::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        self.particle.mesh_pipeline_alpha = Some(make_mesh_draw(alpha, "particle_mesh_alpha"));
-        self.particle.mesh_pipeline_additive =
-            Some(make_mesh_draw(additive, "particle_mesh_additive"));
-        self.particle.mesh_pipeline_premultiplied =
-            Some(make_mesh_draw(premul, "particle_mesh_premultiplied"));
-        self.particle.mesh_draw_bgl = Some(mesh_draw_bgl);
-
-        self.particle.params_bgl = Some(params_bgl);
-        self.particle.sim_bgl = Some(sim_bgl);
-        self.particle.draw_bgl = Some(draw_bgl);
-        self.particle.emit_pipeline = Some(emit_pipeline);
-        self.particle.sim_pipeline = Some(sim_pipeline);
-    }
-
-    /// Run emit + sim compute passes for every particle system referenced this
-    /// frame. Returns per-job draw metadata for the render phase.
-    pub(crate) fn run_particle_jobs(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        items: &[crate::renderer::GpuParticleSystemItem],
-        sink: &mut crate::renderer::SubmitSink,
-    ) -> Vec<ParticleFrameData> {
-        if items.is_empty() {
-            return Vec::new();
-        }
-        self.ensure_particle_pipelines(device);
-        // A free or replace since the last frame invalidates the texture views
-        // baked into the systems' draw bind groups; rebuild the affected ones
-        // before this frame's draws reference them.
-        self.revalidate_particle_draw_bindings(device);
-
-        let emit_pipeline = self
-            .particle
-            .emit_pipeline
-            .as_ref()
-            .expect("particle pipelines should exist after ensure")
-            .clone();
-        let sim_pipeline = self
-            .particle
-            .sim_pipeline
-            .as_ref()
-            .expect("particle pipelines should exist after ensure")
-            .clone();
-        // Stage every system's uniform writes first, then encode all the
-        // dispatches into one compute pass. Params buffers and bind groups
-        // are persistent per system; the per-frame device work is three
-        // `write_buffer` calls and the dispatch encoding.
-        struct Staged {
-            workgroups: u32,
-            spawn: bool,
-            sim_bg: crate::gpu::BindGroup,
-            emit_params_bg: crate::gpu::BindGroup,
-            sim_params_bg: crate::gpu::BindGroup,
-        }
-        let mut frame_data: Vec<ParticleFrameData> = Vec::with_capacity(items.len());
-        let mut staged: Vec<Staged> = Vec::with_capacity(items.len());
-
-        for item in items {
-            let idx = item.system_id.index();
-            let (blend, route) = match self.particle.systems.get(idx).and_then(|s| s.as_ref()) {
-                Some(s) if s.alive => match &s.render {
-                    ParticleRender::Sprite { blend, lit, .. } => {
-                        (*blend, ParticleDrawRoute::Sprite { lit: *lit })
-                    }
-                    ParticleRender::Mesh { blend, mesh_id, .. } => {
-                        (*blend, ParticleDrawRoute::Mesh { mesh_id: *mesh_id })
-                    }
-                },
-                _ => continue,
-            };
-
-            let hidden = item.settings.hidden;
-            let system = self.particle.systems[idx].as_mut().unwrap();
-            let dt = item.time_step.max(0.0);
-            system.spawn_accumulator += item.emitter.rate * dt;
-            let spawn_count = system.spawn_accumulator.floor() as u32;
-            system.spawn_accumulator -= spawn_count as f32;
-            system.frame_counter = system.frame_counter.wrapping_add(1);
-            let capacity = system.capacity;
-
-            if spawn_count > 0 {
-                let emit_params = build_emit_params(
-                    &item.emitter,
-                    capacity,
-                    spawn_count,
-                    system.frame_counter,
-                    system.emit_cursor,
-                );
-                queue.write_buffer(&system.emit_params_buf, 0, bytemuck::bytes_of(&emit_params));
-                // Next frame starts where this one stopped, so the buffer is
-                // recycled in order.
-                if capacity > 0 {
-                    system.emit_cursor = (system.emit_cursor + spawn_count) % capacity;
-                }
-            }
-            let sim_params = build_sim_params(item.time_step, capacity, &item.forces);
-            queue.write_buffer(&system.sim_params_buf, 0, bytemuck::bytes_of(&sim_params));
-
-            staged.push(Staged {
-                workgroups: capacity.div_ceil(64),
-                spawn: spawn_count > 0,
-                // Bind group clones are cheap (Arc inside).
-                sim_bg: system.sim_bg.clone(),
-                emit_params_bg: system.emit_params_bg.clone(),
-                sim_params_bg: system.sim_params_bg.clone(),
-            });
-            frame_data.push(ParticleFrameData {
-                system_idx: idx,
-                blend,
-                hidden,
-                route,
-            });
-        }
-
-        if staged.is_empty() {
-            return frame_data;
-        }
-
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("particle_compute_encoder"),
-        });
-        {
-            // One pass for every system. All emits run first, then all sims;
-            // dispatches within a pass are ordered, so each system's emit
-            // still precedes its sim.
-            let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
-                label: Some("particle_compute_pass"),
-                timestamp_writes: None,
-            });
-            if staged.iter().any(|s| s.spawn) {
-                pass.set_pipeline(&emit_pipeline);
-                for s in staged.iter().filter(|s| s.spawn) {
-                    pass.set_bind_group(0, &s.emit_params_bg, &[]);
-                    pass.set_bind_group(1, &s.sim_bg, &[]);
-                    pass.dispatch_workgroups(s.workgroups, 1, 1);
-                }
-            }
-            pass.set_pipeline(&sim_pipeline);
-            for s in &staged {
-                pass.set_bind_group(0, &s.sim_params_bg, &[]);
-                pass.set_bind_group(1, &s.sim_bg, &[]);
-                pass.dispatch_workgroups(s.workgroups, 1, 1);
-            }
-        }
-        sink.push(encoder.finish());
-        frame_data
-    }
 }
 
-fn build_emit_params(
+pub(crate) fn build_emit_params(
     e: &crate::renderer::EmitterConfig,
     capacity: u32,
     spawn_count: u32,
@@ -1291,7 +933,7 @@ fn build_emit_params(
     out
 }
 
-fn build_sim_params(
+pub(crate) fn build_sim_params(
     dt: f32,
     capacity: u32,
     forces: &[crate::renderer::ForceField],
@@ -1442,155 +1084,6 @@ mod tests {
         assert_eq!(
             resources.particle.draw_bg_rebuilds, baseline,
             "a free the system does not name must not rebuild its bind groups"
-        );
-    }
-}
-
-#[cfg(test)]
-mod emission_tests {
-    use super::*;
-    use crate::resources::DeviceResources;
-
-    /// Read every slot's lifetime back off the GPU.
-    fn lifetimes(
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        resources: &DeviceResources,
-        id: GpuParticleSystemId,
-    ) -> Vec<f32> {
-        let system = resources.particle_system(id).expect("live system");
-        let size = (system.capacity as u64) * std::mem::size_of::<GpuParticle>() as u64;
-        let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("particle_readback"),
-            size,
-            usage: crate::gpu::BufferUsages::MAP_READ | crate::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
-            label: Some("particle_readback_encoder"),
-        });
-        encoder.copy_buffer_to_buffer(&system.particle_buf, 0, &staging, 0, size);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        let slice = staging.slice(..);
-        slice.map_async(crate::gpu::MapMode::Read, |_| {});
-        let _ = device.poll(crate::gpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(std::time::Duration::from_secs(5)),
-        });
-        let out = {
-            let data = crate::gpu::mapped_range(slice);
-            bytemuck::cast_slice::<u8, GpuParticle>(&data)
-                .iter()
-                .map(|p| p.lifetime)
-                .collect()
-        };
-        staging.unmap();
-        out
-    }
-
-    fn steady_emitter(rate: f32) -> crate::renderer::EmitterConfig {
-        let mut e = crate::renderer::EmitterConfig::default();
-        e.rate = rate;
-        // A single lifetime, so "how many are alive" is a function of how many
-        // were emitted rather than of the lifetime draw.
-        e.lifetime = (100.0, 100.0);
-        e
-    }
-
-    fn run_frames(
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        resources: &mut DeviceResources,
-        id: GpuParticleSystemId,
-        rate: f32,
-        dt: f32,
-        frames: usize,
-    ) {
-        for _ in 0..frames {
-            let mut item = crate::renderer::GpuParticleSystemItem::new(id, dt);
-            item.emitter = steady_emitter(rate);
-            let mut sink = crate::renderer::SubmitSink::inline(queue);
-            let _ =
-                resources.run_particle_jobs(device, queue, std::slice::from_ref(&item), &mut sink);
-        }
-    }
-
-    /// Every frame must emit exactly the budget the configured rate asks for
-    /// while the system has slots to spare. The emit kernel picks slots by a
-    /// wrapping window rather than by racing, so this is the check that the
-    /// window does not quietly skip spawns.
-    #[test]
-    fn emission_matches_the_configured_rate() {
-        let Some((device, queue, mut resources)) =
-            crate::resources::test_support::try_make_resources()
-        else {
-            eprintln!("skipping: no GPU adapter available");
-            return;
-        };
-        let mut config = GpuParticleSystemConfig::default();
-        config.capacity = 256;
-        let id = resources.create_gpu_particle_system(&device, &queue, &config);
-
-        // 10 per frame for 5 frames, well inside a 256-slot buffer.
-        run_frames(&device, &queue, &mut resources, id, 10.0, 1.0, 5);
-        let live = lifetimes(&device, &queue, &resources, id)
-            .iter()
-            .filter(|l| **l > 0.0)
-            .count();
-        assert_eq!(live, 50, "5 frames at 10 per frame should leave 50 alive");
-    }
-
-    /// The window wraps past the end of the buffer without losing a frame's
-    /// spawns: 30 frames of 10 against 256 slots crosses the end once.
-    #[test]
-    fn emission_survives_the_window_wrapping() {
-        let Some((device, queue, mut resources)) =
-            crate::resources::test_support::try_make_resources()
-        else {
-            eprintln!("skipping: no GPU adapter available");
-            return;
-        };
-        let mut config = GpuParticleSystemConfig::default();
-        config.capacity = 256;
-        let id = resources.create_gpu_particle_system(&device, &queue, &config);
-
-        run_frames(&device, &queue, &mut resources, id, 10.0, 1.0, 30);
-        let live = lifetimes(&device, &queue, &resources, id)
-            .iter()
-            .filter(|l| **l > 0.0)
-            .count();
-        // 300 spawns into 256 slots with nothing dying: the buffer fills and
-        // the rest land on slots that are still alive, which are skipped.
-        assert_eq!(live, 256, "the buffer should fill and stay full");
-    }
-
-    /// Two systems given identical configuration and identical frames must end
-    /// up with identical particles. Selecting slots by racing them through an
-    /// atomic made this fail: which slots won was down to GPU scheduling, and
-    /// every particle attribute is seeded from its slot index.
-    #[test]
-    fn emission_is_reproducible() {
-        let Some((device, queue, mut resources)) =
-            crate::resources::test_support::try_make_resources()
-        else {
-            eprintln!("skipping: no GPU adapter available");
-            return;
-        };
-        let mut config = GpuParticleSystemConfig::default();
-        config.capacity = 512;
-        let a = resources.create_gpu_particle_system(&device, &queue, &config);
-        let b = resources.create_gpu_particle_system(&device, &queue, &config);
-
-        run_frames(&device, &queue, &mut resources, a, 40.0, 0.5, 4);
-        run_frames(&device, &queue, &mut resources, b, 40.0, 0.5, 4);
-
-        let la = lifetimes(&device, &queue, &resources, a);
-        let lb = lifetimes(&device, &queue, &resources, b);
-        assert_eq!(la, lb, "identical input must produce identical particles");
-        assert!(
-            la.iter().any(|l| *l > 0.0),
-            "the test is vacuous if nothing was emitted"
         );
     }
 }

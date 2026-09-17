@@ -18,6 +18,7 @@
 - **`ItemTypePlugin::pick` takes a `PickContext`** - the click position, viewport size, view-projection, and the query's `PickMask` now arrive alongside the ray, so an item type with a screen-space pick tolerance can test in pixels the way the built-in types do.
 
 ### Changes
+- **GPU particles draw with the opaque scene rather than in a pass of their own** - the particle item type moved onto the same hooks every other non-mesh type uses, so its draw now happens inside the scene pass instead of after the hi-z depth store and the external instance pass. Particles composite before external instances rather than after; nothing else moves, and particles never wrote depth so occlusion culling is unaffected.
 - **Soft-particle sprites draw at scene resolution under supersampling** - the sprite item type now draws through the shared plugin hooks rather than a pass of its own, which puts its soft-particle batches after the SSAA resolve. With `ssaa_factor` above 1 their edges against intersecting geometry are slightly harder than before: measured at one channel step across 10% of the frame, with 65 pixels of 120000 moving by more than 32/255. Depth-writing, OIT and refractive sprites are unaffected, and nothing changes when supersampling is off.
 
 ### Features
