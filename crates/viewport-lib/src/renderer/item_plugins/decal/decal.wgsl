@@ -189,18 +189,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // extracted from rows of inv_transform via inverse-transpose).
     let decal_Z = normalize(vec3<f32>(u.inv_transform[0][2], u.inv_transform[1][2], u.inv_transform[2][2]));
 
-    // Planar-only: reject fragments where the surface or camera doesn't face
-    // the decal projection axis.  Skipped for tri-planar (all axes are used).
+    // Planar-only: reject fragments on surfaces that do not face the decal
+    // projection axis. Skipped for tri-planar, which uses all three axes.
     //
-    // The surface-normal check (N_recv . decal_Z) keeps the projection off
-    // geometry that is perpendicular to the projection direction, where the UV
-    // collapses to a constant coordinate and the decal smears into a uniform
-    // stripe instead of showing its texture.
-    // A threshold of 0.1 rejects surfaces more than ~84 degrees off-axis while
-    // allowing slightly curved or low-angle receivers.
+    // This keeps the projection off geometry perpendicular to the projection
+    // direction, where the UV collapses to a constant coordinate and the decal
+    // smears into a uniform stripe instead of showing its texture. A threshold
+    // of 0.1 rejects surfaces more than ~84 degrees off-axis while allowing
+    // slightly curved or low-angle receivers.
+    //
+    // It also covers the back-facing case on its own. A visible surface always
+    // presents the side that faces the camera, so when the eye is behind the
+    // receiver the reconstructed normal points away from the projection axis
+    // and this test rejects it. Deciding that from the camera position instead
+    // would suppress the decal on receivers that are still correctly oriented,
+    // which is a different thing entirely.
     if u.projection == 0u {
         if dot(N_recv, decal_Z) < 0.1 { discard; }
-        if dot(view_dir, decal_Z) < 0.05 { discard; }
     }
 
     // Cylindrical facing check.
