@@ -91,6 +91,9 @@ fn expected(name: &str) -> Option<Expected> {
         // A texture-driven volume beside a noise-driven one, against a single
         // backdrop slab.
         "scatter_textured" => e(1, 1, 1, 0, 0, 12),
+        // Scrolling noise and heat-haze refraction at a pinned clock, over a
+        // wall and four struts for the shimmer to bend.
+        "scatter_animated" => e(5, 5, 2, 2, 0, 60),
         "decals" => e(2, 2, 2, 2, 0, 24),
         // The decal scene again with supersampling on: same content and same
         // draw structure, only the resolution differs.

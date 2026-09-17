@@ -1,18 +1,21 @@
-//! Scatter-volume paths the golden gate cannot cover.
+//! Scatter-volume paths a single golden image cannot cover.
 //!
-//! Two of the scatter passes animate from the wall clock and so have no still
-//! frame to hold a golden against. The refraction shader takes elapsed seconds
-//! in its uniform and offsets its noise field by it unconditionally, with no
-//! consumer knob to freeze it. Temporal accumulation blends against a history
-//! slot built over previous frames, so its result depends on how many frames
-//! have run rather than on the scene alone.
+//! Most of the scatter passes are goldened in the catalogue, including the two
+//! that are functions of the animation clock: `ScatterSettings::time_seconds`
+//! is a consumer input, so pinning it makes scrolling noise and the refraction
+//! shimmer reproducible (see the `scatter_animated` scene).
 //!
-//! Both still have a property worth gating: that they run at all, that they
-//! change the image, and that they survive a resize and a second viewport.
-//! Those are the failure modes of a pass whose bind groups or targets are
-//! wrong, and none of them need a stable pixel value to detect. Each test here
-//! compares against a frame rendered without the feature rather than against a
-//! recorded image.
+//! What is left here is what one recorded frame cannot express. Temporal
+//! accumulation blends against a history slot built by previous frames, so it
+//! is a property of a sequence rather than of a frame. Resizing and toggling
+//! the downsample mode reallocate the per-viewport targets, and what matters
+//! there is that the bind groups over the scene's own attachments get rebuilt,
+//! which shows up as a validation error rather than as pixels. The refraction
+//! test stays alongside its golden because it asserts something different and
+//! backend-independent: that turning the pass on changes the image at all.
+//!
+//! Each test compares against the same scene rendered with the feature off,
+//! rather than against a recorded image.
 
 use glam::Vec3;
 use viewport_lib::{

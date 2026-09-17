@@ -43,6 +43,7 @@ impl PluginItemCollection for Vec<ScatterVolumeItem> {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct ScatterVolumePlugin {
     gpu: pipeline::ScatterGpu,
     /// This frame's visible volumes with their per-item opacity and flags, in
@@ -59,22 +60,6 @@ pub(crate) struct ScatterVolumePlugin {
     /// `encode` runs from a shared borrow but allocates on resize and advances
     /// the history ping-pong.
     viewports: std::sync::Mutex<Vec<Option<pipeline::ScatterViewportState>>>,
-    /// Origin for the animation clock the noise and refraction shaders read.
-    start: web_time::Instant,
-}
-
-impl Default for ScatterVolumePlugin {
-    fn default() -> Self {
-        Self {
-            gpu: pipeline::ScatterGpu::default(),
-            draws: Vec::new(),
-            refraction_draws: Vec::new(),
-            per_volume_tex_bgs: Vec::new(),
-            pick_items: Vec::new(),
-            viewports: std::sync::Mutex::new(Vec::new()),
-            start: web_time::Instant::now(),
-        }
-    }
 }
 
 impl ItemTypePlugin for ScatterVolumePlugin {
@@ -161,14 +146,10 @@ impl ItemTypePlugin for ScatterVolumePlugin {
                 .ensure_refraction_pipeline(device, &res.binds.camera_bgl, TARGET_FORMAT);
             self.gpu
                 .ensure_refraction_blit_pipeline(device, TARGET_FORMAT);
-            let time_seconds = self.start.elapsed().as_secs_f32();
-            let n_ref = self.gpu.write_refraction_per_volume_buffer(
-                device,
-                queue,
-                &self.refraction_draws,
-                time_seconds,
-            );
-            self.refraction_draws.truncate(n_ref as usize);
+            // Sized here; filled at encode time, where the frame's animation
+            // clock is readable.
+            self.gpu
+                .ensure_refraction_per_volume_buffer(device, self.refraction_draws.len());
         }
 
         Vec::new()
@@ -223,10 +204,9 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         // distorted image rather than under it.
         self.encode_refraction(encoder, ctx, state);
 
-        let time_seconds = self.start.elapsed().as_secs_f32();
         self.gpu.write_frame_uniform(
             ctx.queue,
-            time_seconds,
+            settings.time_seconds,
             settings.quality.default_steps(),
             settings.blue_noise_jitter,
             ctx.frame_index,
@@ -333,6 +313,17 @@ impl ScatterVolumePlugin {
         if self.refraction_draws.is_empty() {
             return;
         }
+        // Pack the refraction params at this frame's animation clock. A volume
+        // whose strength is zero packs nothing, so the count of slots actually
+        // written is what the draw loop below runs over.
+        let n_ref = self.gpu.write_refraction_per_volume_buffer(
+            ctx.queue,
+            &self.refraction_draws,
+            ctx.effects.scatter.time_seconds,
+        );
+        if n_ref == 0 {
+            return;
+        }
         // The copy is at scene resolution, not at the scatter intermediates'
         // resolution, because it stands in for the scene colour itself.
         state.ensure_refraction_source(ctx.device, ctx.scene_size);
@@ -391,7 +382,7 @@ impl ScatterVolumePlugin {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, ctx.camera_bind_group, &[]);
             pass.set_bind_group(2, &source_bg, &[]);
-            for i in 0..self.refraction_draws.len() as u32 {
+            for i in 0..n_ref {
                 pass.set_bind_group(1, per_vol_bg, &[i * self.gpu.refraction_per_volume_stride]);
                 pass.draw(0..6, 0..1);
             }

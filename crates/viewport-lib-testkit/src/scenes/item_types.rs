@@ -123,6 +123,11 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_scatter_textured,
         },
         NamedScene {
+            name: "scatter_animated",
+            cameras: standard_cameras(Vec3::ZERO, 7.0),
+            build: build_scatter_animated,
+        },
+        NamedScene {
             name: "decals",
             cameras: standard_cameras(Vec3::ZERO, 8.0),
             build: build_decals,
@@ -1009,6 +1014,94 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     BuiltScene {
         items: vec![wall],
         scatter_volumes: vec![textured_item, noisy_item],
+        scatter_settings: Some(scatter_settings),
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // The two scatter paths that are functions of the animation clock: noise
+    // that scrolls with time, and the refraction shimmer, whose offset is
+    // driven by sines of it. Both are pinned by `ScatterSettings::time_seconds`
+    // below. The clock is a consumer input rather than something the renderer
+    // reads off the wall, so a fixed value here renders the same frame every
+    // time, which is what lets these be held to a golden at all.
+    let backdrop = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(9.0, 0.3, 6.0))
+        .expect("backdrop upload");
+    let mut wall = viewport_lib::SceneRenderItem::default();
+    wall.mesh_id = backdrop;
+    wall.model = Mat4::from_translation(Vec3::new(0.0, 2.8, 0.0)).to_cols_array_2d();
+    wall.material = Material::pbr([0.75, 0.3, 0.25], 0.0, 0.85);
+
+    // Struts in front of the wall, so the refraction has hard edges to bend.
+    let strut = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(0.35, 0.35, 4.5))
+        .expect("strut upload");
+    let mut posts = Vec::new();
+    for (i, x) in [-2.2f32, -0.7, 0.8, 2.3].iter().enumerate() {
+        let mut post = viewport_lib::SceneRenderItem::default();
+        post.mesh_id = strut;
+        post.model = Mat4::from_translation(Vec3::new(*x, 1.9, 0.0)).to_cols_array_2d();
+        let t = i as f32 / 3.0;
+        post.material = Material::pbr([0.3 + 0.5 * t, 0.55, 0.85 - 0.4 * t], 0.1, 0.5);
+        posts.push(post);
+    }
+
+    // Smoke drifting along +X: at a non-zero clock the sample position has
+    // moved, so a scene that ignored the clock would not match this image.
+    let mut smoke = ScatterVolume::box_uniform(
+        Aabb {
+            min: Vec3::new(-3.2, -1.0, -1.6),
+            max: Vec3::new(0.2, 1.0, 1.8),
+        },
+        0.9,
+        [0.72, 0.76, 0.85],
+    );
+    let mut noise = viewport_lib::NoiseDriver::default();
+    noise.scale = 1.1;
+    noise.octaves = 3;
+    noise.scroll_velocity = [0.9, 0.0, 0.35];
+    noise.time_scale = 0.4;
+    smoke.noise = Some(noise);
+
+    // Heat haze: refraction strength well above the threshold so the shimmer
+    // is a visible displacement rather than a sub-pixel wobble.
+    let mut heat = ScatterVolume::box_uniform(
+        Aabb {
+            min: Vec3::new(0.6, -1.0, -1.6),
+            max: Vec3::new(3.2, 1.0, 1.8),
+        },
+        0.35,
+        [1.0, 0.85, 0.7],
+    );
+    let mut refraction = viewport_lib::RefractionParams::default();
+    refraction.strength = 0.035;
+    refraction.density_threshold = 0.0;
+    refraction.noise_scale = 1.6;
+    heat.refraction = Some(refraction);
+
+    let mut smoke_item = ScatterVolumeItem::new(smoke);
+    smoke_item.settings.pick_id = PickId(1623);
+    let heat_item = ScatterVolumeItem::new(heat);
+
+    let mut scatter_settings = ScatterSettings::default();
+    scatter_settings.temporal = false;
+    scatter_settings.blue_noise_jitter = false;
+    scatter_settings.downsample = false;
+    scatter_settings.quality = ScatterQuality::High;
+    // Deliberately not zero: zero is the default, so it would not distinguish
+    // a clock that is read from one that is ignored.
+    scatter_settings.time_seconds = 3.75;
+
+    let mut items = vec![wall];
+    items.extend(posts);
+    BuiltScene {
+        items,
+        scatter_volumes: vec![smoke_item, heat_item],
         scatter_settings: Some(scatter_settings),
         lighting: rigs::from_above(),
         ..Default::default()

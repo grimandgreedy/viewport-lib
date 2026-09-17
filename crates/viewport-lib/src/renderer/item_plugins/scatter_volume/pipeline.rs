@@ -983,19 +983,18 @@ impl ScatterGpu {
         self.refraction_blit_pipeline = Some(pipeline);
     }
 
-    /// Pack visible refractive volumes into the dynamic-offset uniform buffer.
-    /// Returns the number of slots written.
-    pub(crate) fn write_refraction_per_volume_buffer(
+    /// Size the refraction per-volume buffer and its bind group for `count`
+    /// volumes. Separate from the write below so the write, which needs the
+    /// frame's animation clock, can run from a shared borrow at encode time.
+    pub(crate) fn ensure_refraction_per_volume_buffer(
         &mut self,
         device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        volumes: &[(ScatterVolume, f32)],
-        time_seconds: f32,
-    ) -> u32 {
+        count: usize,
+    ) {
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
         let struct_size = std::mem::size_of::<GpuRefractionVolume>() as u64;
         let stride = ((struct_size + align - 1) / align * align).max(struct_size) as u32;
-        let capacity = volumes.len().min(MAX_SCATTER_VOLUMES).max(1) as u32;
+        let capacity = count.min(MAX_SCATTER_VOLUMES).max(1) as u32;
         let buffer_size = (stride as u64) * (capacity as u64);
 
         let need_realloc = self.refraction_per_volume_buffer.is_none()
@@ -1032,11 +1031,25 @@ impl ScatterGpu {
             });
             self.refraction_per_volume_bg = Some(bg);
         }
+    }
 
-        let mut bytes = vec![0u8; buffer_size as usize];
+    /// Pack visible refractive volumes into the dynamic-offset uniform buffer
+    /// at the frame's animation clock. Returns the number of slots written.
+    pub(crate) fn write_refraction_per_volume_buffer(
+        &self,
+        queue: &crate::gpu::Queue,
+        volumes: &[(ScatterVolume, f32)],
+        time_seconds: f32,
+    ) -> u32 {
+        let stride = self.refraction_per_volume_stride;
+        if stride == 0 {
+            return 0;
+        }
+        let capacity = self.refraction_per_volume_capacity as usize;
+        let mut bytes = vec![0u8; stride as usize * capacity.max(1)];
         let mut n: u32 = 0;
         for (volume, _) in volumes.iter() {
-            if n as usize >= MAX_SCATTER_VOLUMES {
+            if n as usize >= capacity.min(MAX_SCATTER_VOLUMES) {
                 break;
             }
             if let Some(packed) = GpuRefractionVolume::pack(volume, time_seconds) {

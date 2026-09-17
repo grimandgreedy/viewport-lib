@@ -7,6 +7,12 @@
 //! (step count, half-resolution rendering, temporal accumulation). A toggle
 //! moves the camera inside the global volume to verify the
 //! camera-inside-volume rendering path.
+//!
+//! The animated parts (scrolling noise, heat-haze shimmer) run off a clock this
+//! showcase keeps itself and passes in as `ScatterSettings::time_seconds`. The
+//! renderer has no clock of its own, so that accumulation in `frame()` is what
+//! makes the smoke drift; drop it and the volumes render exactly as they do now
+//! but hold still.
 
 use crate::App;
 use crate::eframe::egui;
@@ -83,6 +89,12 @@ pub(crate) struct SvolState {
     pub sky_colour: [f32; 3],
     pub ground_colour: [f32; 3],
     pub hemisphere_intensity: f32,
+
+    /// Seconds since this showcase started, accumulated from the frame delta
+    /// and handed to the renderer as the scatter animation clock. The library
+    /// keeps no clock of its own, so the drifting smoke and the heat shimmer
+    /// advance only because this is fed in each frame.
+    pub elapsed: f32,
 
     pub quality: ScatterQuality,
     pub blue_noise_jitter: bool,
@@ -262,6 +274,7 @@ impl Default for SvolState {
             blue_noise_jitter: true,
             downsample: false,
             temporal: false,
+            elapsed: 0.0,
             temporal_blend: 0.85,
             fire_step_budget_override: false,
             fire_step_budget: 24,
@@ -749,13 +762,11 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
     // Lighting consistency (Showcase 49): push all non-mesh items.
     if app.svol_state.built {
+        app.svol_state.elapsed += ctx.dt;
+        fd.effects.scatter.time_seconds = app.svol_state.elapsed;
         fd.effects.scatter.quality = app.svol_state.quality;
         fd.effects.scatter.blue_noise_jitter = app.svol_state.blue_noise_jitter;
         fd.effects.scatter.downsample = app.svol_state.downsample;
@@ -772,30 +783,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -836,13 +839,23 @@ impl crate::Showcase for ScScatterVolumes {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -851,7 +864,12 @@ impl crate::Showcase for ScScatterVolumes {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_svol(app, ui)
     }
 }
