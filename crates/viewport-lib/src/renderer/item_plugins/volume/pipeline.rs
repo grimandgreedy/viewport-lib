@@ -129,7 +129,7 @@ impl VolumeGpu {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "volume_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &bgl,
         );
         let pipeline = crate::resources::builders::build_dual_pipeline(

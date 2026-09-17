@@ -454,6 +454,11 @@ impl GaussianSplatPlugin {
     ) {
         use crate::gpu::util::DeviceExt;
         let resources = ctx.resources;
+        // Cloned (wgpu layouts are handles) so the closure below does not hold
+        // a borrow of `self.gpu` across the outline buffer writes.
+        let Some(mask_bgl) = self.gpu.as_ref().map(|g| g.mask_bgl.clone()) else {
+            return;
+        };
         let view_proj = ctx.camera.view_proj();
         let (vp_w, vp_h) = (ctx.viewport_size.x, ctx.viewport_size.y);
         let cam_right = ctx.camera.view.row(0).truncate().normalize();
@@ -476,20 +481,11 @@ impl GaussianSplatPlugin {
         let make_bind_group = |uniform_buf: &crate::gpu::Buffer, label| {
             device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some(label),
-                layout: &resources.outline.bind_group_layout,
-                entries: &[
-                    crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buf.as_entire_binding(),
-                    },
-                    crate::gpu::BindGroupEntry {
-                        binding: 1,
-                        resource: resources
-                            .content
-                            .fallback_position_override_buf
-                            .as_entire_binding(),
-                    },
-                ],
+                layout: &mask_bgl,
+                entries: &[crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                }],
             })
         };
 

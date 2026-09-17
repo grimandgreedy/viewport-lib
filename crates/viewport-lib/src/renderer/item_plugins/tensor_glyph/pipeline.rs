@@ -40,7 +40,7 @@ impl TensorGlyphGpu {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "tensor_glyph_pipeline_layout",
-            &[&resources.binds.camera_bgl, bgl, instance_bgl],
+            &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
         );
         let pipeline = crate::resources::builders::build_dual_pipeline(
             device,
@@ -146,7 +146,7 @@ impl TensorGlyphGpu {
         let mask_layout = crate::resources::builders::pipeline_layout(
             device,
             "tensor_glyph_outline_mask_pipeline_layout",
-            &[&resources.binds.camera_bgl, bgl, instance_bgl],
+            &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
         );
         let mask_pipeline = crate::resources::builders::build_outline_mask_pipeline(
             device,

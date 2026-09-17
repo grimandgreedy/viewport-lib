@@ -100,7 +100,7 @@ impl Pipelines {
             device,
             "glyph_pipeline_layout",
             &[
-                &resources.binds.camera_bgl,
+                resources.shared_bindings().group0_layout,
                 &resources.glyph.bgl,
                 &resources.glyph.instance_bgl,
             ],

@@ -118,7 +118,7 @@ impl SpriteGpu {
         // This is the lib's shared depth-read layout rather than one of our
         // own: the entries are identical, and matching it means the ready-made
         // `DepthReadContext::scene_depth_bind_group` binds here directly.
-        let soft_bgl = &resources.material.depth_read_bgl;
+        let soft_bgl = resources.depth_read_bind_group_layout();
 
         let fallback_tex = device.create_texture(&crate::gpu::TextureDescriptor {
             label: Some("sprite_soft_fallback_tex"),
@@ -149,9 +149,7 @@ impl SpriteGpu {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(
-                        &resources.material.depth_read_sampler,
-                    ),
+                    resource: crate::gpu::BindingResource::Sampler(resources.depth_read_sampler()),
                 },
             ],
         });
@@ -165,7 +163,7 @@ impl SpriteGpu {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_pipeline_layout",
-            &[&resources.binds.camera_bgl, bgl, soft_bgl],
+            &[resources.shared_bindings().group0_layout, bgl, soft_bgl],
         );
 
         // Position vertex buffer: one vec3 per sprite, Instance stepping.
@@ -241,7 +239,11 @@ impl SpriteGpu {
         let refraction_layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_refraction_pipeline_layout",
-            &[&resources.binds.camera_bgl, bgl_ref, &refraction_bgl],
+            &[
+                resources.shared_bindings().group0_layout,
+                bgl_ref,
+                &refraction_bgl,
+            ],
         );
 
         let refraction_pipeline = crate::resources::builders::render_pipeline(
@@ -302,7 +304,7 @@ impl SpriteGpu {
             device,
             "sprite_lit_pipeline_layout",
             &[
-                &resources.binds.camera_bgl,
+                resources.shared_bindings().group0_layout,
                 sprite_bgl_ref,
                 soft_bgl_ref,
                 lit_bgl,
@@ -355,12 +357,13 @@ impl SpriteGpu {
                 crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &resources.material.normal_map_view,
+                        resources
+                            .fallback_texture_view(crate::scene::material::TextureSlot::Normal),
                     ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(&resources.material.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(resources.material_sampler()),
                 },
             ],
         });
@@ -396,14 +399,17 @@ impl SpriteGpu {
         let oit_layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_oit_pipeline_layout",
-            &[&resources.binds.camera_bgl, sprite_bgl_for_oit],
+            &[
+                resources.shared_bindings().group0_layout,
+                sprite_bgl_for_oit,
+            ],
         );
         let lit_bgl_for_oit = lit_bgl;
         let oit_lit_layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_lit_oit_pipeline_layout",
             &[
-                &resources.binds.camera_bgl,
+                resources.shared_bindings().group0_layout,
                 sprite_bgl_for_oit,
                 lit_bgl_for_oit,
             ],
@@ -486,7 +492,7 @@ impl SpriteGpu {
         let mask_layout = crate::resources::builders::standard_scene_layout(
             device,
             "sprite_outline_mask_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             bgl,
         );
 
@@ -535,7 +541,7 @@ impl SpriteGpu {
         let pick_layout = crate::resources::builders::pipeline_layout(
             device,
             "sprite_pick_pipeline_layout",
-            &[&resources.binds.camera_bgl, bgl, &pick_id_bgl],
+            &[resources.shared_bindings().group0_layout, bgl, &pick_id_bgl],
         );
 
         // Position vertex buffer: one vec3 per sprite, instance-stepped, exactly

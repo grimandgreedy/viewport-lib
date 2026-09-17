@@ -50,6 +50,9 @@ pub(super) struct SplatGpu {
     pub(super) pick_pipeline: crate::gpu::RenderPipeline,
     pub(super) pick_id_bgl: crate::gpu::BindGroupLayout,
     pub(super) mask_pipeline: crate::gpu::RenderPipeline,
+    /// Group 1 of the outline mask pipeline: the single uniform
+    /// `splat_outline_mask.wgsl` reads.
+    pub(super) mask_bgl: crate::gpu::BindGroupLayout,
 }
 
 /// Per-(set, viewport) sort scratch and the render bind group built over it.
@@ -122,7 +125,7 @@ impl SplatGpu {
         let render_layout = crate::resources::builders::standard_scene_layout(
             device,
             "gaussian_splat_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &bgl,
         );
         // No MSAA for Gaussian splats (alpha blending requires single-sample).
@@ -303,13 +306,17 @@ impl SplatGpu {
             "splat_outline_mask_shader",
             crate::resources::builders::wgsl_source!("splat_outline_mask"),
         );
+        let mask_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("gaussian_splat_mask_bgl"),
+            entries: &[crate::resources::builders::uniform_entry(
+                0,
+                crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            )],
+        });
         let mask_layout = crate::resources::builders::pipeline_layout(
             device,
             "gaussian_splat_mask_layout",
-            &[
-                &resources.binds.camera_bgl,
-                &resources.outline.bind_group_layout,
-            ],
+            &[resources.shared_bindings().group0_layout, &mask_bgl],
         );
         let mask_pos_attrs = [crate::gpu::VertexAttribute {
             offset: 0,
@@ -381,6 +388,7 @@ impl SplatGpu {
             pick_pipeline,
             pick_id_bgl,
             mask_pipeline,
+            mask_bgl,
         }
     }
 

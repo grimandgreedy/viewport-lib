@@ -122,7 +122,7 @@ impl PolylineGpu {
         let mask_layout = crate::resources::builders::standard_scene_layout(
             device,
             "polyline_outline_mask_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &resources.polyline.bgl,
         );
         let mask_attrs = instance_attributes(false);

@@ -102,7 +102,7 @@ impl SliceGpu {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "volume_surface_slice_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &bgl,
         );
         let pipeline = crate::resources::builders::build_dual_pipeline(

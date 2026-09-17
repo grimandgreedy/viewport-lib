@@ -15,6 +15,9 @@ pub(super) struct PointCloudGpu {
     pub(super) pick_pipeline: crate::gpu::RenderPipeline,
     pub(super) pick_id_bgl: crate::gpu::BindGroupLayout,
     pub(super) mask_pipeline: crate::gpu::RenderPipeline,
+    /// Group 1 of the outline mask pipeline: the single uniform
+    /// `splat_outline_mask.wgsl` reads.
+    pub(super) mask_bgl: crate::gpu::BindGroupLayout,
 }
 
 /// One item's draw state for this frame.
@@ -61,7 +64,7 @@ impl PointCloudGpu {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "point_cloud_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             bgl,
         );
         let pipeline = crate::resources::builders::build_dual_pipeline(
@@ -123,21 +126,26 @@ impl PointCloudGpu {
             },
         );
 
-        // Outline mask: point-sprite discs over the shared outline bind group
-        // layout. Depth is tested so points behind opaque geometry drop out,
-        // but not written, so every visible point contributes to the mask.
+        // Outline mask: point-sprite discs over a group-1 layout of our own,
+        // holding the single uniform `splat_outline_mask.wgsl` reads. Depth is
+        // tested so points behind opaque geometry drop out, but not written, so
+        // every visible point contributes to the mask.
         let mask_shader = crate::resources::builders::wgsl_module(
             device,
             "point_cloud_outline_mask_shader",
             crate::resources::builders::wgsl_source!("splat_outline_mask"),
         );
+        let mask_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("point_cloud_outline_mask_bgl"),
+            entries: &[crate::resources::builders::uniform_entry(
+                0,
+                crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            )],
+        });
         let mask_layout = crate::resources::builders::pipeline_layout(
             device,
             "point_cloud_outline_mask_layout",
-            &[
-                &resources.binds.camera_bgl,
-                &resources.outline.bind_group_layout,
-            ],
+            &[resources.shared_bindings().group0_layout, &mask_bgl],
         );
         let mask_size_attrs = [crate::gpu::VertexAttribute {
             offset: 0,
@@ -191,6 +199,7 @@ impl PointCloudGpu {
             pick_pipeline,
             pick_id_bgl,
             mask_pipeline,
+            mask_bgl,
         }
     }
 
@@ -223,7 +232,6 @@ impl PointCloudGpu {
     pub(super) fn outline_entry(
         &self,
         device: &crate::gpu::Device,
-        resources: &DeviceResources,
         model: [[f32; 4]; 4],
         viewport_size: glam::Vec2,
         pixel_radius: f32,
@@ -245,20 +253,11 @@ impl PointCloudGpu {
         });
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("pc_outline_bg"),
-            layout: &resources.outline.bind_group_layout,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: resources
-                        .content
-                        .fallback_position_override_buf
-                        .as_entire_binding(),
-                },
-            ],
+            layout: &self.mask_bgl,
+            entries: &[crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            }],
         });
         let position_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("pc_outline_pos_buf"),

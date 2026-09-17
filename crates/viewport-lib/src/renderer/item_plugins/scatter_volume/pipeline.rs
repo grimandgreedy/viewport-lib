@@ -707,23 +707,17 @@ impl ScatterGpu {
         let lut_sampler = self.colourmap_sampler.as_ref().unwrap();
         let density_sampler = self.depth_sampler.as_ref().unwrap();
         let lut_view: &crate::gpu::TextureView = if lut_id == usize::MAX {
-            &res.content.fallback_lut_view
+            res.fallback_colourmap_view()
         } else {
-            res.content
-                .colourmap_views
-                .get(lut_id)
-                .unwrap_or(&res.content.fallback_lut_view)
+            res.colourmap_view(crate::ColourmapId(lut_id))
+                .unwrap_or(res.fallback_colourmap_view())
         };
         let density_fallback = self.density_fallback_view.as_ref().unwrap();
         let density_view: &crate::gpu::TextureView =
             if density == crate::resources::VolumeId::INVALID {
                 density_fallback
             } else {
-                res.content
-                    .volume_textures
-                    .get(density)
-                    .map(|(_, v)| v)
-                    .unwrap_or(density_fallback)
+                res.volume_view(density).unwrap_or(density_fallback)
             };
         let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("scatter_per_volume_tex_bg"),

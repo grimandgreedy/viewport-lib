@@ -184,6 +184,22 @@ impl DeviceResources {
         self.content.textures.get(id).map(|t| &t.sampler)
     }
 
+    /// The 1x1 neutral view the lib binds when a material slot names no
+    /// texture: white for albedo and AO, a flat tangent-space normal, `[0, 1,
+    /// 1]` for metallic-roughness so the scalar factors pass through, and black
+    /// for emissive.
+    ///
+    /// Bind it wherever a pipeline layout requires a texture but the item has
+    /// none, so the same layout is honoured either way and the slot contributes
+    /// nothing of its own. Pair it with
+    /// [`material_sampler`](Self::material_sampler).
+    pub fn fallback_texture_view(
+        &self,
+        slot: crate::scene::material::TextureSlot,
+    ) -> &crate::gpu::TextureView {
+        self.material.slot_view(slot)
+    }
+
     /// Shared linear-repeat sampler used by the lib's material pipelines.
     ///
     /// Use this when building a plugin bind group that samples user
@@ -739,15 +755,13 @@ impl DeviceResources {
                 depth_stencil: Some(crate::gpu::DepthStencilState {
                     format: desc.depth_format,
                     depth_write_enabled: crate::resources::builders::dwrite(true),
-                    depth_compare: crate::resources::builders::dcompare(
-                        crate::gpu::CompareFunction::LessEqual,
-                    ),
+                    depth_compare: crate::resources::builders::dcompare(opts.depth_compare),
                     stencil: crate::gpu::StencilState::default(),
-                    bias: crate::gpu::DepthBiasState {
+                    bias: opts.depth_bias.unwrap_or(crate::gpu::DepthBiasState {
                         constant: 2,
                         slope_scale: 2.0,
                         clamp: 0.0,
-                    },
+                    }),
                 }),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -812,9 +826,18 @@ pub struct PluginPipelineOpts<'a> {
     /// Whether the opaque builder writes depth. Ignored by the other
     /// builders. Default `true`.
     pub depth_write: bool,
-    /// Depth-compare function for the opaque builder. Ignored by the other
-    /// builders.
+    /// Depth-compare function for the opaque and shadow builders. Ignored by
+    /// the others.
     pub depth_compare: crate::gpu::CompareFunction,
+    /// Depth bias for the shadow builder. Ignored by the others.
+    ///
+    /// `None` uses a mild default suited to solid, closed geometry. Thin or
+    /// two-sided geometry self-shadows badly under it and wants a much larger
+    /// one: the lib's own casters use `constant: 2, slope_scale: 0.0` for
+    /// single-sided meshes and `constant: 1000, slope_scale: 8.0` where the
+    /// shadow pass does not cull, which is what the curve and isosurface item
+    /// types pass here.
+    pub depth_bias: Option<crate::gpu::DepthBiasState>,
 }
 
 impl<'a> PluginPipelineOpts<'a> {
@@ -844,6 +867,7 @@ impl<'a> PluginPipelineOpts<'a> {
             color_blend: None,
             depth_write: true,
             depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_bias: None,
         }
     }
 }

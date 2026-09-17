@@ -134,15 +134,14 @@ struct RibbonGpu {
 impl RibbonGpu {
     fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
         use crate::resources::builders::{
-            DualPipelineDesc, build_dual_pipeline, pipeline_layout, standard_scene_layout,
-            wgsl_module, wgsl_source,
+            DualPipelineDesc, build_dual_pipeline, standard_scene_layout, wgsl_module, wgsl_source,
         };
 
         let shader = wgsl_module(device, "ribbon_shader", wgsl_source!("ribbon"));
         let layout = standard_scene_layout(
             device,
             "ribbon_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &resources.ribbon.bgl,
         );
 
@@ -254,16 +253,28 @@ impl RibbonGpu {
             )
         };
 
-        let shadow_layout = pipeline_layout(
-            device,
-            "ribbon_shadow_pipeline_layout",
-            &[&resources.shadow.camera_bgl, &resources.ribbon.bgl],
-        );
         let shadow_shader = wgsl_module(
             device,
             "ribbon_shadow_shader",
             wgsl_source!("ribbon_shadow"),
         );
+        let shadow_vertex_layouts = [super::pipeline::position_only_layout()];
+        let mut shadow_opts = crate::resources::PluginPipelineOpts::new(
+            Some("ribbon_shadow_pipeline"),
+            &shadow_shader,
+            "vs_main",
+            "",
+            &shadow_vertex_layouts,
+        );
+        let shadow_extra: [&crate::gpu::BindGroupLayout; 1] = [&resources.ribbon.bgl];
+        shadow_opts.extra_bind_group_layouts = &shadow_extra;
+        shadow_opts.primitive.cull_mode = None;
+        shadow_opts.depth_compare = crate::gpu::CompareFunction::Less;
+        // A ribbon is a thin open surface, so it self-shadows badly under the
+        // mild default. Same bias the lib uses where the shadow pass does not
+        // cull.
+        shadow_opts.depth_bias =
+            Some(crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED);
 
         Self {
             pipelines,
@@ -272,14 +283,7 @@ impl RibbonGpu {
                 "fs_oit_premultiplied",
                 "ribbon_oit_pipeline_premultiplied",
             ),
-            shadow_pipeline: crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                device,
-                &shadow_layout,
-                &shadow_shader,
-                None,
-                false,
-                None,
-            ),
+            shadow_pipeline: resources.build_shadow_pipeline(device, &shadow_opts),
             pick: CurvePickGpu::new(device, resources, "ribbon", true),
         }
     }

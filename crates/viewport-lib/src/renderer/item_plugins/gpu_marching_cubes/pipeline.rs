@@ -205,7 +205,7 @@ impl McGpu {
         let surface_layout = crate::resources::builders::standard_scene_layout(
             device,
             "mc_surface_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &render_bgl,
         );
 
@@ -238,46 +238,21 @@ impl McGpu {
             "mc_shadow_shader",
             crate::resources::builders::wgsl_source!("mc_shadow"),
         );
-        let mc_shadow_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "mc_shadow_pipeline_layout",
-            &[&resources.shadow.camera_bgl],
+        let mut mc_shadow_opts = crate::resources::PluginPipelineOpts::new(
+            Some("mc_shadow_pipeline"),
+            &mc_shadow_shader,
+            "vs_main",
+            "",
+            std::slice::from_ref(&vertex_layout),
         );
-        let mc_shadow_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "mc_shadow_pipeline",
-                layout: &mc_shadow_layout,
-                vertex_module: &mc_shadow_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[vertex_layout.clone()],
-                fragment: None,
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: crate::gpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: crate::gpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(crate::gpu::DepthStencilState {
-                    format: crate::gpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: crate::resources::builders::dwrite(true),
-                    depth_compare: crate::resources::builders::dcompare(
-                        crate::gpu::CompareFunction::Less,
-                    ),
-                    stencil: crate::gpu::StencilState::default(),
-                    bias: crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED,
-                }),
-                multisample: crate::gpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: None,
-            },
-        );
+        mc_shadow_opts.primitive.cull_mode = None;
+        mc_shadow_opts.depth_compare = crate::gpu::CompareFunction::Less;
+        // The isosurface is an open, thin shell, so it self-shadows badly under
+        // the mild default. Same bias the lib uses where the shadow pass does
+        // not cull.
+        mc_shadow_opts.depth_bias =
+            Some(crate::resources::mesh::mesh_pipelines::CSM_SHADOW_BIAS_TWO_SIDED);
+        let mc_shadow_pipeline = resources.build_shadow_pipeline(device, &mc_shadow_opts);
 
         // ----------------------------------------------------------------
         // Wireframe render pipeline.
@@ -305,7 +280,7 @@ impl McGpu {
         let wireframe_layout = crate::resources::builders::standard_scene_layout(
             device,
             "mc_wireframe_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &wireframe_render_bgl,
         );
         // ----------------------------------------------------------------

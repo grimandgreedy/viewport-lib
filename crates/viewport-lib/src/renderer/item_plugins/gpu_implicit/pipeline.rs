@@ -58,7 +58,7 @@ impl GpuImplicitGpu {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "implicit_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &bgl,
         );
         // depth_write is on so later depth-tested passes occlude against the surface.

@@ -21,7 +21,7 @@ use crate::resources::{
 
 /// Vertex layout for the pick and mask pipelines: the lib's 64-byte `Vertex`
 /// stride with only position declared.
-fn position_only_layout() -> crate::gpu::VertexBufferLayout<'static> {
+pub(super) fn position_only_layout() -> crate::gpu::VertexBufferLayout<'static> {
     const ATTRS: [crate::gpu::VertexAttribute; 1] = [crate::gpu::VertexAttribute {
         offset: 0,
         shader_location: 0,
@@ -184,7 +184,7 @@ impl CurvePickGpu {
         let mask_layout = pipeline_layout(
             device,
             mask_layout_label.as_str(),
-            &[&resources.binds.camera_bgl, &instance_bgl],
+            &[resources.shared_bindings().group0_layout, &instance_bgl],
         );
         let mask_pipeline = crate::resources::builders::build_outline_mask_pipeline(
             device,
@@ -287,7 +287,7 @@ impl CurveMeshGpu {
         let layout = standard_scene_layout(
             device,
             &layout_label,
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &resources.streamtube.bgl,
         );
         let vertex_buffers = [Vertex::buffer_layout()];

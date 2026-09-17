@@ -41,7 +41,7 @@ impl GlyphGpu {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "glyph_pipeline_layout",
-            &[&resources.binds.camera_bgl, bgl, instance_bgl],
+            &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
         );
         let pipeline = crate::resources::builders::build_dual_pipeline(
             device,
@@ -145,7 +145,7 @@ impl GlyphGpu {
         let mask_layout = crate::resources::builders::pipeline_layout(
             device,
             "glyph_outline_mask_pipeline_layout",
-            &[&resources.binds.camera_bgl, bgl, instance_bgl],
+            &[resources.shared_bindings().group0_layout, bgl, instance_bgl],
         );
         let mask_pipeline = crate::resources::builders::build_outline_mask_pipeline(
             device,

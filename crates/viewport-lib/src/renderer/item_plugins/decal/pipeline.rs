@@ -124,7 +124,7 @@ pub(crate) struct DecalExcludeGpuItem {
 /// the content hash used to cache GPU resources across frames.
 pub(crate) fn decal_uniform_raw(
     item: &crate::renderer::DecalItem,
-    textures: &crate::resources::material::texture_store::TextureStore,
+    texture_is_resident: &dyn Fn(crate::resources::TextureId) -> bool,
 ) -> DecalUniformRaw {
     let model = glam::Mat4::from_cols_array_2d(&item.transform);
     let inv_transform = model.inverse().to_cols_array_2d();
@@ -155,9 +155,8 @@ pub(crate) fn decal_uniform_raw(
     // what makes them agree: a handle whose slot has been freed does not
     // resolve, the slot binds its fallback, and the flag says to use the scalar
     // instead of sampling it.
-    let live = |id: Option<crate::resources::TextureId>| {
-        id.and_then(|id| textures.get(id)).is_some() as u32
-    };
+    let live =
+        |id: Option<crate::resources::TextureId>| id.is_some_and(&texture_is_resident) as u32;
     let has_normal = live(item.normal_texture_id);
     let has_roughness_tex = live(item.roughness_texture_id);
     let has_metallic_tex = live(item.metallic_texture_id);
@@ -199,10 +198,10 @@ pub(crate) fn decal_uniform_raw(
 /// can reuse one across frames instead of rebuilding a buffer and bind group.
 pub(crate) fn hash_decal_item(
     item: &crate::renderer::DecalItem,
-    textures: &crate::resources::material::texture_store::TextureStore,
+    texture_is_resident: &dyn Fn(crate::resources::TextureId) -> bool,
 ) -> u64 {
     use std::hash::Hasher as _;
-    let raw = decal_uniform_raw(item, textures);
+    let raw = decal_uniform_raw(item, texture_is_resident);
     let mut h = std::collections::hash_map::DefaultHasher::new();
     h.write(bytemuck::bytes_of(&raw));
     h.write_u8(item.blend_mode as u8);
@@ -648,7 +647,7 @@ impl DecalGpu {
         item: &crate::renderer::DecalItem,
     ) -> DecalGpuItem {
         let model = glam::Mat4::from_cols_array_2d(&item.transform);
-        let raw = decal_uniform_raw(item, &res.content.textures);
+        let raw = decal_uniform_raw(item, &|id| res.has_texture(id));
 
         let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("decal_uniform_buf"),
@@ -656,18 +655,12 @@ impl DecalGpu {
             usage: crate::gpu::BufferUsages::UNIFORM,
         });
 
+        let fallback = res.fallback_texture_view(crate::scene::material::TextureSlot::Albedo);
         let resolve_tex = |id: Option<crate::resources::TextureId>| -> &crate::gpu::TextureView {
-            id.and_then(|i| res.content.textures.get(i))
-                .map(|t| &t.view)
-                .unwrap_or(&res.material.texture.view)
+            id.and_then(|i| res.texture_view(i)).unwrap_or(fallback)
         };
 
-        let tex_view = res
-            .content
-            .textures
-            .get(item.texture_id)
-            .map(|t| &t.view)
-            .unwrap_or(&res.material.texture.view);
+        let tex_view = res.texture_view(item.texture_id).unwrap_or(fallback);
         let normal_view = resolve_tex(item.normal_texture_id);
         let roughness_view = resolve_tex(item.roughness_texture_id);
         let metallic_view = resolve_tex(item.metallic_texture_id);
@@ -870,10 +863,10 @@ mod tests {
     use super::hash_decal_item;
     use crate::renderer::{DecalBlendMode, DecalItem};
 
-    /// An empty store: every id in these items is unresolvable, which is what
-    /// the hash sees for a decal whose textures were never uploaded.
-    fn no_textures() -> crate::resources::material::texture_store::TextureStore {
-        crate::resources::material::texture_store::TextureStore::new()
+    /// Nothing is resident, so every id in these items is unresolvable: the
+    /// state the hash sees for a decal whose textures were never uploaded.
+    fn no_textures() -> impl Fn(crate::resources::TextureId) -> bool {
+        |_| false
     }
 
     #[test]

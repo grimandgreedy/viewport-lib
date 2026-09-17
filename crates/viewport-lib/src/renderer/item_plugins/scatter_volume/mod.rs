@@ -120,7 +120,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
 
         let res = ctx.resources;
         self.gpu
-            .ensure_pipeline(device, &res.binds.camera_bgl, TARGET_FORMAT);
+            .ensure_pipeline(device, res.shared_bindings().group0_layout, TARGET_FORMAT);
         self.gpu.ensure_composite_pipeline(device, TARGET_FORMAT);
         self.gpu.ensure_temporal_resolve_pipeline(device);
         self.gpu.ensure_frame_uniform_buffer(device);
@@ -143,8 +143,11 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         self.draws.truncate(n as usize);
 
         if !self.refraction_draws.is_empty() {
-            self.gpu
-                .ensure_refraction_pipeline(device, &res.binds.camera_bgl, TARGET_FORMAT);
+            self.gpu.ensure_refraction_pipeline(
+                device,
+                res.shared_bindings().group0_layout,
+                TARGET_FORMAT,
+            );
             self.gpu
                 .ensure_refraction_blit_pipeline(device, TARGET_FORMAT);
             // Sized here; filled at encode time, where the frame's animation

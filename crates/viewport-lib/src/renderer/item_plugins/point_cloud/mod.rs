@@ -343,7 +343,6 @@ fn build_outlines(
         if item.settings.selected {
             outlines.push(gpu.outline_entry(
                 device,
-                ctx.resources,
                 item.model,
                 ctx.viewport_size,
                 pixel_radius,
@@ -369,7 +368,6 @@ fn build_outlines(
             }
             outlines.push(gpu.outline_entry(
                 device,
-                ctx.resources,
                 item.model,
                 ctx.viewport_size,
                 pixel_radius,

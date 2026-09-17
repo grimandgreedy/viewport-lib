@@ -73,7 +73,7 @@ impl ParticleGpu {
         let draw_layout = crate::resources::builders::standard_scene_layout(
             device,
             "particle_draw_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &layouts.draw_bgl,
         );
 
@@ -120,7 +120,7 @@ impl ParticleGpu {
             device,
             "particle_draw_lit_layout",
             &[
-                &resources.binds.camera_bgl,
+                resources.shared_bindings().group0_layout,
                 &layouts.draw_bgl,
                 &layouts.sprite_lit_bgl,
             ],
@@ -159,12 +159,13 @@ impl ParticleGpu {
                 crate::gpu::BindGroupEntry {
                     binding: 0,
                     resource: crate::gpu::BindingResource::TextureView(
-                        &resources.material.normal_map_view,
+                        resources
+                            .fallback_texture_view(crate::scene::material::TextureSlot::Normal),
                     ),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(&resources.material.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(resources.material_sampler()),
                 },
             ],
         });
@@ -178,7 +179,7 @@ impl ParticleGpu {
         let mesh_layout = crate::resources::builders::standard_scene_layout(
             device,
             "particle_mesh_draw_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &layouts.mesh_draw_bgl,
         );
 

@@ -103,7 +103,7 @@ impl ImageSliceGpu {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "image_slice_pipeline_layout",
-            &resources.binds.camera_bgl,
+            resources.shared_bindings().group0_layout,
             &bgl,
         );
         let pipeline = crate::resources::builders::build_dual_pipeline(
@@ -214,7 +214,7 @@ impl ImageSliceGpu {
         item: &ImageSliceItem,
     ) -> Option<ImageSliceFrame> {
         // Check volume exists before allocating anything.
-        let vol_view = &resources.content.volume_textures.get(item.volume_id)?.1;
+        let vol_view = resources.volume_view(item.volume_id)?;
 
         let axis_u32 = match item.axis {
             crate::renderer::SliceAxis::X => 0u32,
@@ -241,16 +241,13 @@ impl ImageSliceGpu {
 
         // Resolve the LUT: the item's colourmap, defaulting to Viridis, with
         // the 1x1 fallback when the builtin set is not resident.
-        let lut_view = resources
-            .content
-            .builtin_colourmap_ids
-            .and_then(|ids| {
-                let preset_id = item
-                    .colour_lut
-                    .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                resources.content.colourmap_views.get(preset_id.0)
-            })
-            .unwrap_or(&resources.content.fallback_lut_view);
+        // An item that names a colourmap gets that one or the neutral fallback;
+        // a stale id does not silently fall back to the default preset.
+        let lut_view = match item.colour_lut {
+            Some(id) => resources.colourmap_view(id),
+            None => resources.builtin_colourmap_view(crate::resources::BuiltinColourmap::Viridis),
+        }
+        .unwrap_or(resources.fallback_colourmap_view());
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("image_slice_bg"),

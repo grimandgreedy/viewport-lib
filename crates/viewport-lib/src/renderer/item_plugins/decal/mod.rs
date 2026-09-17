@@ -147,7 +147,8 @@ impl ItemTypePlugin for DecalPlugin {
             self.cache.clear();
         } else {
             self.gpu.ensure_shared(device);
-            self.gpu.ensure_pipeline(device, &res.binds.camera_bgl);
+            self.gpu
+                .ensure_pipeline(device, res.shared_bindings().group0_layout);
             // Cached entries hold bind groups over texture views, so a free or
             // a replace since the last frame invalidates them: a free drops
             // only the entries whose deps no longer resolve, a replace drops
@@ -172,7 +173,7 @@ impl ItemTypePlugin for DecalPlugin {
                 // Apply appearance.opacity on top of the item's own alpha.
                 let mut effective = item.clone();
                 effective.alpha *= item.settings.opacity;
-                let key = pipeline::hash_decal_item(&effective, &res.content.textures);
+                let key = pipeline::hash_decal_item(&effective, &|id| res.has_texture(id));
                 match self.cache.entry(key) {
                     std::collections::hash_map::Entry::Occupied(e) => {
                         // `selected` is not part of the cache key, so refresh it
@@ -234,7 +235,7 @@ impl ItemTypePlugin for DecalPlugin {
         self.exclude_draws.clear();
         if !ctx.decal_excluded_surfaces.is_empty() {
             self.gpu
-                .ensure_exclude_pipeline(device, &res.binds.camera_bgl);
+                .ensure_exclude_pipeline(device, res.shared_bindings().group0_layout);
             for &(mesh_id, model) in ctx.decal_excluded_surfaces {
                 self.exclude_draws
                     .push(self.gpu.upload_exclude_item(device, mesh_id, model));
@@ -246,7 +247,7 @@ impl ItemTypePlugin for DecalPlugin {
         // selected rather than inside `encode`.
         if self.draws.iter().any(|g| g.selected) {
             self.gpu
-                .ensure_outline_pipelines(device, &res.binds.camera_bgl);
+                .ensure_outline_pipelines(device, res.shared_bindings().group0_layout);
         }
 
         Vec::new()
