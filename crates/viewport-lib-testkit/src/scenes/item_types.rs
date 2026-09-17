@@ -17,7 +17,7 @@ use viewport_lib::{
     VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
 
-use super::{BuildCtx, BuiltScene, NamedScene, rigs, standard_cameras};
+use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
 
 /// The item-type scenes appended to the main catalogue.
 pub fn scenes() -> Vec<NamedScene> {
@@ -121,6 +121,37 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "supersampled_decals",
             cameras: standard_cameras(Vec3::ZERO, 8.0),
             build: build_supersampled_decals,
+        },
+        NamedScene {
+            name: "refraction_over_soft_sprite",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_refraction_over_soft_sprite,
+        },
+        NamedScene {
+            name: "decal_on_non_mesh",
+            cameras: standard_cameras(Vec3::ZERO, 7.0),
+            build: build_decal_on_non_mesh,
+        },
+        NamedScene {
+            name: "decal_on_curves",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_decal_on_curves,
+        },
+        NamedScene {
+            name: "decal_from_below",
+            // Deliberately a low camera: the first entry is what the snapshot
+            // renders, and this scene exists to pin what a decal on a curved
+            // receiver does when the eye drops below the projection plane.
+            cameras: vec![NamedCamera {
+                name: "low",
+                camera: orbit_camera(Vec3::ZERO, 7.0, 0.6, 1.95),
+            }],
+            build: build_decal_on_non_mesh,
+        },
+        NamedScene {
+            name: "decal_under_soft_sprite",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_decal_under_soft_sprite,
         },
         NamedScene {
             name: "mesh_instances",
@@ -909,6 +940,207 @@ fn build_supersampled_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     post.ssaa_factor = 2;
     scene.post_process = Some(post);
     scene
+}
+
+fn build_refraction_over_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Refractive sprites in front of a sheet of soft-particle billboards. The
+    // two draw in different passes, so this scene pins whether the refraction
+    // samples the soft particles or the bare backdrop behind them.
+    let slab = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(7.0, 7.0, 0.4))
+        .expect("slab upload");
+    let backdrop_tex = checker_texture(ctx, [230, 80, 60], [235, 225, 205]);
+    let mut ground = viewport_lib::SceneRenderItem::default();
+    ground.mesh_id = slab;
+    ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).to_cols_array_2d();
+    ground.material = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.85);
+    ground.material.texture_id = Some(backdrop_tex);
+
+    // Soft particles hugging the slab, so they fade where they intersect it.
+    let soft_tex = checker_texture(ctx, [80, 140, 255], [20, 30, 90]);
+    let mut haze = SpriteItem::default();
+    haze.texture_id = Some(soft_tex);
+    haze.positions = (0..6)
+        .map(|i| {
+            let t = i as f32 / 6.0 * std::f32::consts::TAU;
+            [1.9 * t.cos(), 1.9 * t.sin(), -0.75]
+        })
+        .collect();
+    haze.default_size = 2.2;
+    haze.default_colour = [1.0, 1.0, 1.0, 0.85].into();
+    haze.size_mode = SpriteSizeMode::WorldSpace;
+    haze.depth_write = false;
+    haze.soft_particle_distance = Some(0.8);
+
+    // Refractive bubbles nearer the camera, overlapping the haze on screen.
+    let warp_tex = checker_texture(ctx, [255, 40, 40], [40, 255, 40]);
+    let mut bubbles = SpriteItem::default();
+    bubbles.texture_id = Some(warp_tex);
+    bubbles.positions = (0..5)
+        .map(|i| {
+            let t = i as f32 / 5.0 * std::f32::consts::TAU;
+            [1.5 * t.cos(), 1.5 * t.sin(), 0.3]
+        })
+        .collect();
+    bubbles.default_size = 1.2;
+    bubbles.default_colour = [1.0, 1.0, 1.0, 1.0].into();
+    bubbles.size_mode = SpriteSizeMode::WorldSpace;
+    bubbles.depth_write = false;
+    bubbles.refraction_strength = Some(30.0);
+
+    BuiltScene {
+        items: vec![ground],
+        sprite_items: vec![haze, bubbles],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_decal_on_curves(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Tube, streamtube and ribbon side by side under one decal box, all three
+    // flat along X so the decal projects straight down onto them. The curve
+    // types share a draw path, so a decal landing on some but not others is a
+    // property of the type rather than of the placement.
+    let line = |y: f32| -> Vec<[f32; 3]> {
+        (0..24)
+            .map(|i| {
+                let t = i as f32 / 23.0;
+                [-2.6 + t * 5.2, y, 0.0]
+            })
+            .collect()
+    };
+
+    let mut tube = TubeItem::default();
+    tube.positions = line(-1.4);
+    tube.strip_lengths = vec![24];
+    tube.radius = 0.28;
+    tube.colour = [0.75, 0.75, 0.78, 1.0].into();
+
+    let mut st = StreamtubeItem::default();
+    st.positions = line(0.0);
+    st.strip_lengths = vec![24];
+    st.radius = 0.28;
+    st.colour = [0.75, 0.75, 0.78, 1.0].into();
+
+    let mut rb = RibbonItem::default();
+    rb.positions = line(1.4);
+    rb.strip_lengths = vec![24];
+    rb.width = 0.28;
+    // Face the ribbon straight up, so it is the best possible receiver for a
+    // top-down projection rather than an edge-on one.
+    rb.twist_attribute = Some(vec![[0.0, 0.0, 1.0]; 24]);
+    rb.colour = [0.75, 0.75, 0.78, 1.0].into();
+
+    let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
+    let mut decal = DecalItem::default();
+    decal.transform = (Mat4::from_translation(Vec3::ZERO)
+        * Mat4::from_scale(Vec3::new(7.0, 7.0, 4.0)))
+    .to_cols_array_2d();
+    decal.texture_id = checker;
+    decal.blend_mode = DecalBlendMode::Replace;
+    decal.alpha = 1.0;
+
+    BuiltScene {
+        tube_items: vec![tube],
+        streamtube_items: vec![st],
+        ribbon_items: vec![rb],
+        decals: vec![decal],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // A decal box enclosing both a mesh and a GPU implicit surface. The decal
+    // pass reconstructs its receiver from the depth buffer, so it lands on
+    // anything that wrote depth; the implicit surface does, and unlike the mesh
+    // it has no `receives_decals` to decline with.
+    let ball = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
+        .expect("sphere upload");
+    let mut mesh = viewport_lib::SceneRenderItem::default();
+    mesh.mesh_id = ball;
+    mesh.model = Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0)).to_cols_array_2d();
+    mesh.material = Material::pbr([0.55, 0.55, 0.58], 0.1, 0.6);
+    // The mesh declines the decal. Nothing else in the library can: the flag
+    // lives on `SceneRenderItem` alone, so the implicit surface beside it takes
+    // the projection whether it wants to or not.
+    mesh.receives_decals = false;
+
+    let mut sphere = ImplicitPrimitive::zeroed();
+    sphere.kind = 1;
+    sphere.blend = 0.3;
+    sphere.params[..3].copy_from_slice(&[1.6, 0.0, 0.0]);
+    sphere.params[3] = 1.0;
+    sphere.colour = [0.55, 0.55, 0.58, 1.0].into();
+    let mut implicit = GpuImplicitItem::default();
+    implicit.primitives = vec![sphere];
+    implicit.blend_mode = ImplicitBlendMode::SmoothUnion;
+
+    let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
+    let mut decal = DecalItem::default();
+    decal.transform = (Mat4::from_translation(Vec3::ZERO)
+        * Mat4::from_scale(Vec3::new(6.0, 6.0, 4.0)))
+    .to_cols_array_2d();
+    decal.texture_id = checker;
+    decal.blend_mode = DecalBlendMode::Replace;
+    decal.alpha = 1.0;
+
+    BuiltScene {
+        items: vec![mesh],
+        gpu_implicit: vec![implicit],
+        decals: vec![decal],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_decal_under_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // A decal on the slab with a sheet of soft-particle billboards hanging
+    // directly over it. The two are drawn by different passes, so this scene
+    // is what pins their order against each other.
+    let slab = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
+        .expect("slab upload");
+    let mut ground = viewport_lib::SceneRenderItem::default();
+    ground.mesh_id = slab;
+    ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+    ground.material = Material::pbr([0.62, 0.6, 0.58], 0.0, 0.8);
+
+    let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);
+    let mut decal = DecalItem::default();
+    decal.transform = (Mat4::from_translation(Vec3::ZERO)
+        * Mat4::from_scale(Vec3::new(4.0, 4.0, 2.0)))
+    .to_cols_array_2d();
+    decal.texture_id = checker;
+    decal.blend_mode = DecalBlendMode::Replace;
+    decal.alpha = 1.0;
+
+    let sprite_tex = checker_texture(ctx, [255, 200, 80], [60, 40, 160]);
+    let mut sheet = SpriteItem::default();
+    sheet.texture_id = Some(sprite_tex);
+    sheet.positions = (0..8)
+        .map(|i| {
+            let theta = i as f32 / 8.0 * std::f32::consts::TAU;
+            [1.4 * theta.cos(), 1.4 * theta.sin(), 0.10]
+        })
+        .collect();
+    sheet.default_size = 1.3;
+    sheet.default_colour = [1.0, 0.95, 0.8, 0.75].into();
+    sheet.size_mode = SpriteSizeMode::WorldSpace;
+    sheet.depth_write = false;
+    sheet.soft_particle_distance = Some(0.6);
+
+    BuiltScene {
+        items: vec![ground],
+        sprite_items: vec![sheet],
+        decals: vec![decal],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
 }
 
 fn build_mesh_instances(ctx: &mut BuildCtx<'_>) -> BuiltScene {

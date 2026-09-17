@@ -3,6 +3,8 @@
 //! Files are numbered for ordering (`01_objects.rs`, ...). Module identifiers
 //! cannot start with a digit, so each is attached with `#[path]`.
 
+#[path = "07_decal_coverage.rs"]
+pub mod decal_coverage;
 #[path = "05_light_probes.rs"]
 pub mod light_probes;
 #[path = "06_lightmap_bake.rs"]
@@ -27,5 +29,6 @@ pub fn all() -> Vec<Box<dyn Showcase>> {
         Box::new(picking::PickingShowcase::new()),
         Box::new(light_probes::IndirectLightingShowcase::new()),
         Box::new(lightmap_bake::LightmapBakeShowcase::new()),
+        Box::new(decal_coverage::DecalCoverageShowcase::new()),
     ]
 }

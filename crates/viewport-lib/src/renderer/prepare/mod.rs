@@ -431,15 +431,6 @@ impl ViewportRenderer {
         lod_culled += inst_culled;
         lod_items_reduced += inst_reduced;
         Self::upload_polylines(resources, &mut self.polyline_gpu_data, device, queue, frame);
-        let decal_cache_stats = Self::upload_decals(
-            resources,
-            &mut self.decal_gpu_data,
-            &mut self.decal_cache,
-            &mut self.decal_deps_gate,
-            &mut self.decal_exclude_items,
-            device,
-            frame,
-        );
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
         resources.run_deform_slot_copies(device, queue);
@@ -766,6 +757,9 @@ impl ViewportRenderer {
                 .filter(|(item, inst)| !item.settings.hidden && !**inst)
                 .count() as u32;
 
+            let decal_cache_stats = self
+                .decal_cache_stats
+                .load(std::sync::atomic::Ordering::Relaxed);
             self.last_stats = crate::renderer::stats::FrameStats {
                 total_objects: total,
                 visible_objects: visible,
@@ -776,8 +770,8 @@ impl ViewportRenderer {
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
-                decal_uploads: decal_cache_stats.uploads,
-                decal_reused: decal_cache_stats.reused,
+                decal_uploads: (decal_cache_stats >> 32) as u32,
+                decal_reused: decal_cache_stats as u32,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0,    // Updated below in shadow pass.
                 shadow_draw_commands: 0, // Updated below in shadow pass.
@@ -984,6 +978,20 @@ impl ViewportRenderer {
     ) -> crate::renderer::stats::FrameStats {
         let prepare_start = web_time::Instant::now();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
+
+        // Resolve which surfaces opted out of decal projection before any
+        // plugin prepare runs: the flag lives on mesh items, so a projection
+        // item type can only get it from here.
+        self.decal_excluded_surfaces.clear();
+        {
+            let crate::SurfaceSubmission::Flat(ref surfaces) = frame.scene.surfaces;
+            self.decal_excluded_surfaces.extend(
+                surfaces
+                    .iter()
+                    .filter(|item| !item.receives_decals && !item.settings.hidden)
+                    .map(|item| (item.mesh_id, item.model)),
+            );
+        }
 
         let plugin_start = web_time::Instant::now();
 

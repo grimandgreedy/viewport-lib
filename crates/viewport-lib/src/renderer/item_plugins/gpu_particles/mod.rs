@@ -333,6 +333,7 @@ mod emission_tests {
                 sub_selection: None,
                 clip_objects: &[],
                 quality_reduced: false,
+                decal_excluded_surfaces: &[],
                 ref_items: [None, None],
             };
             let bufs = plugin.prepare(device, queue, &ctx, &items);
@@ -346,8 +347,7 @@ mod emission_tests {
     /// window does not quietly skip spawns.
     #[test]
     fn emission_matches_the_configured_rate() {
-        let Some((device, queue, resources)) =
-            crate::resources::test_support::try_make_resources()
+        let Some((device, queue, resources)) = crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no GPU adapter available");
             return;
@@ -371,8 +371,7 @@ mod emission_tests {
     /// spawns: 30 frames of 10 against 256 slots crosses the end once.
     #[test]
     fn emission_survives_the_window_wrapping() {
-        let Some((device, queue, resources)) =
-            crate::resources::test_support::try_make_resources()
+        let Some((device, queue, resources)) = crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no GPU adapter available");
             return;
@@ -399,8 +398,7 @@ mod emission_tests {
     /// every particle attribute is seeded from its slot index.
     #[test]
     fn emission_is_reproducible() {
-        let Some((device, queue, resources)) =
-            crate::resources::test_support::try_make_resources()
+        let Some((device, queue, resources)) = crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no GPU adapter available");
             return;

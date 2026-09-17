@@ -355,25 +355,14 @@ pub struct ViewportRenderer {
     /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
     /// Per-frame Surface LIC GPU data, rebuilt in prepare(), consumed in paint().
     lic_gpu_data: Vec<crate::resources::LicSurfaceGpuData>,
-    /// Per-frame decal draw list, rebuilt in prepare(), consumed in paint().
-    /// Entries are cheap clones of cached GPU handles from `decal_cache`.
-    decal_gpu_data: Vec<crate::resources::decal::DecalGpuItem>,
-    /// Decal GPU resources cached across frames, keyed by decal content hash
-    /// and validated against the resources each entry names. Decals are static
-    /// per submission, so this skips rebuilding a uniform buffer and bind
-    /// group for each decal every frame. Entries not seen in a frame are
-    /// evicted so removed decals do not leak.
-    decal_cache: std::collections::HashMap<
-        u64,
-        (
-            crate::resources::decal::DecalGpuItem,
-            crate::resources::resource_deps::ResourceDeps,
-        ),
-    >,
-    /// Resource epochs the decal cache was last validated against.
-    decal_deps_gate: crate::resources::resource_deps::DepsGate,
-    /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint().
-    decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
+    /// This frame's decal resource-cache tallies, packed `(uploads << 32) |
+    /// reused`. Shared with the decal item type, which is where the cache
+    /// lives; the renderer only reads it back into `FrameStats`.
+    decal_cache_stats: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Opaque surfaces that opted out of decal projection, resolved at the top
+    /// of prepare() and handed to item-type plugins on their frame context.
+    /// `receives_decals` lives on mesh items, which no plugin can see.
+    decal_excluded_surfaces: Vec<(crate::MeshId, [[f32; 4]; 4])>,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     external_instances_gpu_data:
@@ -529,7 +518,6 @@ pub struct ViewportRenderer {
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_decal_items: Vec<DecalItem>,
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
     /// scenes that never call `pick()`/`pick_rect()` avoid a per-frame deep copy
     /// of all inline geometry. Enable with `set_cpu_pick_cache(true)`.
@@ -942,10 +930,8 @@ impl ViewportRenderer {
             mesh_instance_gpu_data: Vec::new(),
             external_instances_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
-            decal_gpu_data: Vec::new(),
-            decal_cache: std::collections::HashMap::new(),
-            decal_deps_gate: crate::resources::resource_deps::DepsGate::default(),
-            decal_exclude_items: Vec::new(),
+            decal_cache_stats: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            decal_excluded_surfaces: Vec::new(),
             label_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
@@ -986,7 +972,6 @@ impl ViewportRenderer {
             prepared_refraction_volumes: Vec::new(),
             scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
-            pick_decal_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
             decal_pick_cube: None,
@@ -1868,6 +1853,7 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
+                    decal_excluded_surfaces: &self.decal_excluded_surfaces,
                     ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
                 };
                 bufs.extend(plugin.prepare(device, queue, &ctx, items));
@@ -2077,7 +2063,11 @@ impl ViewportRenderer {
             scene_colour_texture: &slot_hdr.hdr_texture,
             scene_depth: &slot_hdr.hdr_depth_view,
             scene_depth_only: &slot_hdr.hdr_depth_only_view,
+            scene_stencil_only: &slot_hdr.hdr_stencil_only_view,
             effects: &frame.effects,
+            outline_colour: frame.interaction.outline_colour,
+            outline_width_px: frame.interaction.outline_width_px,
+            meshes: crate::resources::MeshDraw::new(&self.resources),
             quality_reduced: self.last_stats.volume_quality_reduced,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
@@ -2208,6 +2198,7 @@ impl ViewportRenderer {
                     sub_selection: frame.interaction.sub_selection.as_ref(),
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
+                    decal_excluded_surfaces: &self.decal_excluded_surfaces,
                     ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
                 };
                 plugin.cull(frustum, &ctx, items);

@@ -2482,15 +2482,7 @@ impl DeviceResources {
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
-            decal: crate::resources::decal::DecalResources::default(),
         };
-        // Decal pipelines are built here rather than on the first frame that
-        // submits a decal: decals tend to appear mid-session (impact marks,
-        // scorches), and a lazy build would stall that frame by the compile
-        // cost (~8 ms measured on a desktop GPU).
-        resources.ensure_decal_shared(device);
-        resources.ensure_decal_pipeline(device);
-        mark("decal_pipelines");
         // Pipelines built during construction are load-time cost, not a frame
         // hitch; keep them out of the first frame's stats.
         resources

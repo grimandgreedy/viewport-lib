@@ -197,6 +197,18 @@ pub struct ItemFrameContext<'a> {
     /// the previous frame's measurement, since this frame's has not been
     /// taken yet.
     pub quality_reduced: bool,
+    /// The opaque surfaces that opted out of decal projection this frame, as
+    /// `(mesh_id, model)` pairs, with hidden items already dropped.
+    ///
+    /// Crate-internal, like [`ref_items`](Self::ref_items), and for the same
+    /// reason: the opt-out is `SceneRenderItem::receives_decals`, a field on
+    /// the mesh family that nothing outside this crate can populate for an
+    /// item type of its own. Exposing it would be public surface no external
+    /// plugin could use. The built-in decal type reads it to build its stencil
+    /// mask; if a second projection effect ever needs the same thing, the
+    /// question to settle first is what the general opt-out looks like on
+    /// `SceneRenderItem`, not how to widen this field.
+    pub(crate) decal_excluded_surfaces: &'a [(crate::MeshId, [[f32; 4]; 4])],
     /// Per-frame references to pre-uploaded content of this same item type,
     /// for the built-in types that have a reference form (`point_clouds` has
     /// `point_cloud_refs`, and so on). The reference items carry their own
@@ -331,13 +343,27 @@ pub struct DepthReadContext<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum EncoderScope {
+    /// Right after the opaque scene and its supersample resolve, and before
+    /// the selection sub-highlight and the depth-read pass.
+    ///
+    /// The scene colour holds the fully lit opaque image and the depth buffer
+    /// is final for opaque geometry, but nothing non-opaque has drawn yet.
+    /// A projection effect that stamps onto opaque surfaces (decals, projected
+    /// textures) belongs here: its output is part of how the surface looks, so
+    /// it has to sit underneath the selection affordances and the depth-read
+    /// transparency that follow. Stamping at
+    /// [`AfterOpaque`](Self::AfterOpaque) instead paints over soft particles
+    /// and sub-object highlights that overlap the receiving surface.
+    OnOpaqueSurfaces,
     /// After the opaque scene, the built-in sprite passes and the depth-read
     /// pass, and before the OIT resolve.
     ///
-    /// The scene colour holds the fully lit opaque image and the depth buffer
-    /// is final for opaque geometry, so this is where a projection effect
-    /// (decal-style stamping) or an effect that samples the opaque image
-    /// (refraction) belongs. Writes here are visible to every later pass.
+    /// The scene colour holds the lit opaque image plus the selection
+    /// sub-highlight and the depth-read pass's output, so this is where an
+    /// effect that samples the finished opaque image (refraction) belongs.
+    /// Writes here are visible to every later pass. For an effect that
+    /// composites onto surfaces rather than sampling them, use
+    /// [`OnOpaqueSurfaces`](Self::OnOpaqueSurfaces).
     AfterOpaque,
     /// After the OIT resolve and before the outline composite and foreground
     /// pass.
@@ -413,7 +439,35 @@ pub struct EncoderScopeContext<'a> {
     /// with quality or mode knobs that live on the frame rather than on its
     /// items reads them here; the built-in volumetric settings are the reason
     /// this is on the context at all.
+    /// The stencil aspect of the scene depth buffer, sampleable.
+    ///
+    /// A projection effect that masks itself against surfaces it must not
+    /// touch writes the mask into the stencil in a pass of its own, then
+    /// samples it here while compositing. Paired with
+    /// [`scene_depth_only`](Self::scene_depth_only), which reconstructs the
+    /// receiving surface's position.
+    pub scene_stencil_only: &'a crate::gpu::TextureView,
+    /// The frame's effects settings (`EffectsFrame`), read-only. An item type
+    /// with quality or mode knobs that live on the frame rather than on its
+    /// items reads them here; the built-in volumetric settings are the reason
+    /// this is on the context at all.
     pub effects: &'a crate::EffectsFrame,
+    /// Selection outline colour and width in pixels, as the consumer set them
+    /// on `InteractionFrame`.
+    ///
+    /// For an item type that draws its own selection affordance here rather
+    /// than through [`outline_mask`](ItemTypePlugin::outline_mask): the shared
+    /// mask pass traces a ring around world-space geometry, which a
+    /// screen-space projection has none of. Match these so a bespoke ring
+    /// looks like the one the lib draws for everything else.
+    pub outline_colour: crate::Colour,
+    /// See [`outline_colour`](Self::outline_colour).
+    pub outline_width_px: f32,
+    /// Draw handle for consumer-uploaded meshes, for a pass that rasterises
+    /// scene geometry rather than geometry of its own: the decal exclude pass
+    /// stamps the surfaces named by
+    /// [`ItemFrameContext::decal_excluded_surfaces`] into the stencil buffer.
+    pub meshes: crate::resources::MeshDraw<'a>,
     /// `true` when the frame budget asked for reduced quality this frame, the
     /// same signal [`ItemFrameContext::quality_reduced`] carries.
     pub quality_reduced: bool,

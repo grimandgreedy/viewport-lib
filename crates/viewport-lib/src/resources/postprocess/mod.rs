@@ -1574,9 +1574,6 @@ impl DeviceResources {
             self.post.foreground_stamp_bgl = Some(bgl);
             self.post.foreground_stamp_pipeline = Some(pipeline);
         }
-
-        // --- Decal shared resources ---
-        self.ensure_decal_shared(device);
     }
 
     /// Create a fresh [`ViewportHdrState`] for the given viewport dimensions.
@@ -2459,9 +2456,6 @@ impl DeviceResources {
             (None, None, None)
         };
 
-        let decal_depth_bg =
-            self.create_decal_depth_bg(device, &hdr_depth_only_view, &hdr_stencil_only_view);
-
         // Auto-exposure compute bind group. Metering reads the sharp scene HDR
         // (`hdr_view`), never the DOF-blurred copy. The buffers are allocated
         // earlier so the tone-map bind group can bind `exposure_state_buf`.
@@ -2573,7 +2567,6 @@ impl DeviceResources {
             upscale_texture,
             upscale_view,
             upscale_bind_group,
-            decal_depth_bg,
         }
     }
 

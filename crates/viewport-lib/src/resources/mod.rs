@@ -2,8 +2,6 @@
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
 pub(crate) mod custom_data;
-/// Screen-space decal pipeline.
-pub(crate) mod decal;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;
 /// GPU compute resources: clustered shading, hierarchical-Z, particles, and dynamic resolution.

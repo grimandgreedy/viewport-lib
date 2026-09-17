@@ -2,12 +2,65 @@
 //! the stencil pass that marks surfaces the decals must not land on.
 
 use crate::gpu::util::DeviceExt as _;
+use crate::resources::DeviceResources;
 use crate::resources::mesh::mesh_store::MeshId;
-use crate::resources::{DeviceResources, DualPipeline};
 
 // ---------------------------------------------------------------------------
 // GPU-internal types
 // ---------------------------------------------------------------------------
+
+/// Screen-space scissor for one decal's fullscreen quad.
+pub(crate) enum DecalScissor {
+    /// The decal projects entirely off screen: skip the draw.
+    Skip,
+    /// A box corner is at or behind the near plane (camera inside/straddling
+    /// the decal), so the screen bound is unreliable: use the full framebuffer.
+    Full,
+    /// Tight scissor rect (x, y, w, h) in framebuffer pixels.
+    Rect(u32, u32, u32, u32),
+}
+
+/// Project the decal's unit-cube corners and return a scissor rect bounding
+/// their screen extent. The decal fragment shader still runs a fullscreen quad,
+/// but the scissor confines rasterization to the decal's actual footprint,
+/// removing the per-decal fullscreen overdraw. `vp_w`/`vp_h` are the decal-pass
+/// target dimensions.
+pub(crate) fn decal_scissor(
+    model: &glam::Mat4,
+    view_proj: &glam::Mat4,
+    vp_w: u32,
+    vp_h: u32,
+) -> DecalScissor {
+    let mvp = *view_proj * *model;
+    let mut min = glam::Vec2::splat(f32::MAX);
+    let mut max = glam::Vec2::splat(f32::MIN);
+    for cz in [-0.5f32, 0.5] {
+        for cy in [-0.5f32, 0.5] {
+            for cx in [-0.5f32, 0.5] {
+                let clip = mvp * glam::Vec4::new(cx, cy, cz, 1.0);
+                if clip.w <= 1e-4 {
+                    return DecalScissor::Full;
+                }
+                let ndc = glam::Vec2::new(clip.x / clip.w, clip.y / clip.w);
+                min = min.min(ndc);
+                max = max.max(ndc);
+            }
+        }
+    }
+    // NDC (y up) -> framebuffer pixels (y down), clamped to the target.
+    let (fw, fh) = (vp_w as f32, vp_h as f32);
+    let x0 = ((min.x * 0.5 + 0.5) * fw).floor().clamp(0.0, fw);
+    let x1 = ((max.x * 0.5 + 0.5) * fw).ceil().clamp(0.0, fw);
+    let y0 = ((0.5 - max.y * 0.5) * fh).floor().clamp(0.0, fh);
+    let y1 = ((0.5 - min.y * 0.5) * fh).ceil().clamp(0.0, fh);
+    let w = (x1 - x0) as u32;
+    let h = (y1 - y0) as u32;
+    if w == 0 || h == 0 {
+        DecalScissor::Skip
+    } else {
+        DecalScissor::Rect(x0 as u32, y0 as u32, w, h)
+    }
+}
 
 /// Flat uniform buffer matching the WGSL `DecalUniform` struct (144 bytes).
 #[repr(C)]
@@ -180,13 +233,13 @@ pub(crate) fn hash_decal_item(
 /// `ensure_decal_pipeline`, the exclude pipeline by `ensure_decal_exclude_pipeline`,
 /// and `depth_bgl` / `sampler` by `ensure_hdr_shared`.
 #[derive(Default)]
-pub(crate) struct DecalResources {
+pub(crate) struct DecalGpu {
     /// Replace-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) replace_pipeline: Option<DualPipeline>,
+    pub(crate) replace_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Multiply-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) multiply_pipeline: Option<DualPipeline>,
+    pub(crate) multiply_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Additive-blend decal pipeline (LDR + HDR). None until first decal is submitted.
-    pub(crate) additive_pipeline: Option<DualPipeline>,
+    pub(crate) additive_pipeline: Option<crate::gpu::RenderPipeline>,
     /// BGL for group 1 of the decal pass: depth texture + stencil texture bindings.
     pub(crate) depth_bgl: Option<crate::gpu::BindGroupLayout>,
     /// BGL for group 2 of the decal pass: uniform buffer + albedo texture + sampler.
@@ -206,9 +259,6 @@ pub(crate) struct DecalResources {
     pub(crate) outline_edge_pipeline: Option<crate::gpu::RenderPipeline>,
     /// BGL for the edge-detect pass: mask texture + sampler + edge uniform.
     pub(crate) outline_edge_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Cached outline-mask target and edge bind group, rebuilt only when the
-    /// viewport size changes so the outline pass allocates nothing per frame.
-    pub(crate) outline_targets: Option<DecalOutlineTargets>,
 }
 
 /// Persistent GPU resources for the decal outline pass, keyed by viewport size.
@@ -231,11 +281,11 @@ pub(crate) struct DecalOutlineTargets {
 // Pipeline init and upload (impl DeviceResources)
 // ---------------------------------------------------------------------------
 
-impl DeviceResources {
+impl DecalGpu {
     /// Create the decal depth bind group layout and sampler if missing. These
     /// carry no target-size state, so they can be built at renderer creation.
-    pub(crate) fn ensure_decal_shared(&mut self, device: &crate::gpu::Device) {
-        if self.decal.depth_bgl.is_none() {
+    pub(crate) fn ensure_shared(&mut self, device: &crate::gpu::Device) {
+        if self.depth_bgl.is_none() {
             let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("decal_depth_bgl"),
                 entries: &[
@@ -261,16 +311,16 @@ impl DeviceResources {
                     },
                 ],
             });
-            self.decal.depth_bgl = Some(bgl);
+            self.depth_bgl = Some(bgl);
         }
-        if self.decal.sampler.is_none() {
+        if self.sampler.is_none() {
             // Repeat address mode so UV scroll animation tiles correctly.
             let sampler = crate::resources::builders::repeat_linear_sampler(
                 device,
                 "decal_sampler",
                 crate::gpu::FilterMode::Nearest,
             );
-            self.decal.sampler = Some(sampler);
+            self.sampler = Some(sampler);
         }
     }
 
@@ -280,8 +330,12 @@ impl DeviceResources {
     /// by [`ensure_decal_shared`](Self::ensure_decal_shared)). Called at
     /// renderer creation so the first decal in a scene does not pay a pipeline
     /// compile mid-session.
-    pub(crate) fn ensure_decal_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.decal.replace_pipeline.is_some() {
+    pub(crate) fn ensure_pipeline(
+        &mut self,
+        device: &crate::gpu::Device,
+        camera_bgl: &crate::gpu::BindGroupLayout,
+    ) {
+        if self.replace_pipeline.is_some() {
             return;
         }
         // Decals need a third bind group (group 2: per-item uniforms + textures).
@@ -291,7 +345,6 @@ impl DeviceResources {
         if device.limits().max_bind_groups < 3 {
             return;
         }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -346,7 +399,6 @@ impl DeviceResources {
         });
 
         let depth_bgl = self
-            .decal
             .depth_bgl
             .as_ref()
             .expect("decal_depth_bgl must exist before ensure_decal_pipeline");
@@ -354,7 +406,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::pipeline_layout(
             device,
             "decal_pipeline_layout",
-            &[&self.binds.camera_bgl, depth_bgl, &item_bgl],
+            &[camera_bgl, depth_bgl, &item_bgl],
         );
 
         // No depth attachment: decals read depth as a texture, they do not write
@@ -399,19 +451,12 @@ impl DeviceResources {
             },
         };
 
-        self.decal.item_bgl = Some(item_bgl);
-        self.decal.replace_pipeline = Some(DualPipeline {
-            ldr: make(self.target_format, replace_blend),
-            hdr: make(crate::gpu::TextureFormat::Rgba16Float, replace_blend),
-        });
-        self.decal.multiply_pipeline = Some(DualPipeline {
-            ldr: make(self.target_format, multiply_blend),
-            hdr: make(crate::gpu::TextureFormat::Rgba16Float, multiply_blend),
-        });
-        self.decal.additive_pipeline = Some(DualPipeline {
-            ldr: make(self.target_format, additive_blend),
-            hdr: make(crate::gpu::TextureFormat::Rgba16Float, additive_blend),
-        });
+        // HDR only: decals are composited between the opaque scene and the
+        // transparency passes, which exist on the HDR path alone.
+        self.item_bgl = Some(item_bgl);
+        self.replace_pipeline = Some(make(crate::gpu::TextureFormat::Rgba16Float, replace_blend));
+        self.multiply_pipeline = Some(make(crate::gpu::TextureFormat::Rgba16Float, multiply_blend));
+        self.additive_pipeline = Some(make(crate::gpu::TextureFormat::Rgba16Float, additive_blend));
     }
 
     /// Lazily create the decal outline mask + edge-detect pipelines.
@@ -420,17 +465,19 @@ impl DeviceResources {
     /// first (it creates `item_bgl`) and `depth_bgl` to exist (created by
     /// `ensure_hdr_shared`). The mask pipeline reuses the decal colour pass's
     /// three bind groups, so no new per-decal resources are needed.
-    pub(crate) fn ensure_decal_outline_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.decal.outline_mask_pipeline.is_some() {
+    pub(crate) fn ensure_outline_pipelines(
+        &mut self,
+        device: &crate::gpu::Device,
+        camera_bgl: &crate::gpu::BindGroupLayout,
+    ) {
+        if self.outline_mask_pipeline.is_some() {
             return;
         }
 
-        if self.decal.depth_bgl.is_none() || self.decal.item_bgl.is_none() {
+        if self.depth_bgl.is_none() || self.item_bgl.is_none() {
             return;
         }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let (Some(depth_bgl), Some(item_bgl)) =
-            (self.decal.depth_bgl.as_ref(), self.decal.item_bgl.as_ref())
+        let (Some(depth_bgl), Some(item_bgl)) = (self.depth_bgl.as_ref(), self.item_bgl.as_ref())
         else {
             return;
         };
@@ -444,7 +491,7 @@ impl DeviceResources {
         let mask_layout = crate::resources::builders::pipeline_layout(
             device,
             "decal_outline_mask_layout",
-            &[&self.binds.camera_bgl, depth_bgl, item_bgl],
+            &[camera_bgl, depth_bgl, item_bgl],
         );
         let mask_pipeline = crate::resources::builders::build_fullscreen_pipeline(
             device,
@@ -483,9 +530,9 @@ impl DeviceResources {
             Some(crate::gpu::BlendState::ALPHA_BLENDING),
         );
 
-        self.decal.outline_mask_pipeline = Some(mask_pipeline);
-        self.decal.outline_edge_pipeline = Some(edge_pipeline);
-        self.decal.outline_edge_bgl = Some(edge_bgl);
+        self.outline_mask_pipeline = Some(mask_pipeline);
+        self.outline_edge_pipeline = Some(edge_pipeline);
+        self.outline_edge_bgl = Some(edge_bgl);
     }
 
     /// Ensure the persistent decal-outline mask target and edge bind group exist
@@ -493,21 +540,21 @@ impl DeviceResources {
     /// pass allocation-free per frame: only the edge uniform contents are
     /// refreshed (by the caller, via `queue.write_buffer`). Call after
     /// `ensure_decal_outline_pipelines`.
-    pub(crate) fn ensure_decal_outline_targets(
-        &mut self,
+    pub(crate) fn ensure_outline_targets(
+        &self,
         device: &crate::gpu::Device,
+        slot: &mut Option<DecalOutlineTargets>,
         w: u32,
         h: u32,
     ) {
-        if let Some(t) = &self.decal.outline_targets {
+        if let Some(t) = slot.as_ref() {
             if t.width == w && t.height == h {
                 return;
             }
         }
-        let (Some(edge_bgl), Some(sampler)) = (
-            self.decal.outline_edge_bgl.as_ref(),
-            self.decal.sampler.as_ref(),
-        ) else {
+        let (Some(edge_bgl), Some(sampler)) =
+            (self.outline_edge_bgl.as_ref(), self.sampler.as_ref())
+        else {
             return;
         };
 
@@ -551,7 +598,7 @@ impl DeviceResources {
                 },
             ],
         });
-        self.decal.outline_targets = Some(DecalOutlineTargets {
+        *slot = Some(DecalOutlineTargets {
             width: w,
             height: h,
             mask_view,
@@ -563,16 +610,15 @@ impl DeviceResources {
 
     /// Create the per-viewport depth+stencil bind group used by the decal pass.
     ///
-    /// Must be called after `ensure_hdr_shared` (which creates `decal_depth_bgl`).
-    /// Rebuilt when the viewport is resized.
-    pub(crate) fn create_decal_depth_bg(
+    /// Rebuilt every frame: the HDR attachments can be reallocated at the same
+    /// size, which would leave a cached bind group pointing at a dead view.
+    pub(crate) fn create_depth_bg(
         &self,
         device: &crate::gpu::Device,
         depth_only_view: &crate::gpu::TextureView,
         stencil_only_view: &crate::gpu::TextureView,
     ) -> crate::gpu::BindGroup {
         let bgl = self
-            .decal
             .depth_bgl
             .as_ref()
             .expect("decal_depth_bgl not created");
@@ -595,13 +641,14 @@ impl DeviceResources {
     /// Upload one [`DecalItem`](crate::renderer::DecalItem) to GPU and return the per-draw data.
     ///
     /// Panics if called before `ensure_decal_pipeline`.
-    pub(crate) fn upload_decal_item(
+    pub(crate) fn upload_item(
         &self,
         device: &crate::gpu::Device,
+        res: &DeviceResources,
         item: &crate::renderer::DecalItem,
     ) -> DecalGpuItem {
         let model = glam::Mat4::from_cols_array_2d(&item.transform);
-        let raw = decal_uniform_raw(item, &self.content.textures);
+        let raw = decal_uniform_raw(item, &res.content.textures);
 
         let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
             label: Some("decal_uniform_buf"),
@@ -610,33 +657,28 @@ impl DeviceResources {
         });
 
         let resolve_tex = |id: Option<crate::resources::TextureId>| -> &crate::gpu::TextureView {
-            id.and_then(|i| self.content.textures.get(i))
+            id.and_then(|i| res.content.textures.get(i))
                 .map(|t| &t.view)
-                .unwrap_or(&self.material.texture.view)
+                .unwrap_or(&res.material.texture.view)
         };
 
-        let tex_view = self
+        let tex_view = res
             .content
             .textures
             .get(item.texture_id)
             .map(|t| &t.view)
-            .unwrap_or(&self.material.texture.view);
+            .unwrap_or(&res.material.texture.view);
         let normal_view = resolve_tex(item.normal_texture_id);
         let roughness_view = resolve_tex(item.roughness_texture_id);
         let metallic_view = resolve_tex(item.metallic_texture_id);
         let emissive_view = resolve_tex(item.emissive_texture_id);
 
         let bgl = self
-            .decal
             .item_bgl
             .as_ref()
             .expect("ensure_decal_pipeline not called");
 
-        let sampler = self
-            .decal
-            .sampler
-            .as_ref()
-            .expect("decal_sampler not created");
+        let sampler = self.sampler.as_ref().expect("decal_sampler not created");
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("decal_item_bg"),
@@ -685,11 +727,14 @@ impl DeviceResources {
     /// Lazily create the decal exclude pipeline and its object BGL.
     ///
     /// No-op if already created. Must be called after `camera_bind_group_layout` exists.
-    pub(crate) fn ensure_decal_exclude_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.decal.exclude_pipeline.is_some() {
+    pub(crate) fn ensure_exclude_pipeline(
+        &mut self,
+        device: &crate::gpu::Device,
+        camera_bgl: &crate::gpu::BindGroupLayout,
+    ) {
+        if self.exclude_pipeline.is_some() {
             return;
         }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
 
         let shader = crate::resources::builders::wgsl_module(
             device,
@@ -706,7 +751,7 @@ impl DeviceResources {
         let layout = crate::resources::builders::standard_scene_layout(
             device,
             "decal_exclude_pipeline_layout",
-            &self.binds.camera_bgl,
+            camera_bgl,
             &obj_bgl,
         );
 
@@ -779,14 +824,14 @@ impl DeviceResources {
             },
         );
 
-        self.decal.exclude_obj_bgl = Some(obj_bgl);
-        self.decal.exclude_pipeline = Some(pipeline);
+        self.exclude_obj_bgl = Some(obj_bgl);
+        self.exclude_pipeline = Some(pipeline);
     }
 
     /// Upload one non-receiver surface for the decal exclude pass and return per-draw data.
     ///
     /// Panics if called before `ensure_decal_exclude_pipeline`.
-    pub(crate) fn upload_decal_exclude_item(
+    pub(crate) fn upload_exclude_item(
         &self,
         device: &crate::gpu::Device,
         mesh_id: MeshId,
@@ -799,7 +844,6 @@ impl DeviceResources {
         });
 
         let bgl = self
-            .decal
             .exclude_obj_bgl
             .as_ref()
             .expect("ensure_decal_exclude_pipeline not called");
@@ -881,5 +925,58 @@ mod tests {
             hash_decal_item(&base, &no_textures()),
             hash_decal_item(&moved, &no_textures())
         );
+    }
+}
+
+#[cfg(test)]
+mod decal_scissor_tests {
+    use super::{DecalScissor, decal_scissor};
+    use glam::{Mat4, Vec3};
+
+    fn view_proj() -> Mat4 {
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 16.0 / 9.0, 0.1, 1000.0);
+        // Z-up camera 10 units back on -Y, looking at the origin.
+        let view = Mat4::look_at_rh(Vec3::new(0.0, -10.0, 2.0), Vec3::ZERO, Vec3::Z);
+        proj * view
+    }
+
+    #[test]
+    fn centered_box_yields_subrect() {
+        let model = Mat4::from_scale(Vec3::splat(1.0));
+        match decal_scissor(&model, &view_proj(), 1920, 1080) {
+            DecalScissor::Rect(x, y, w, h) => {
+                assert!(w > 0 && h > 0);
+                assert!(
+                    w < 1920 && h < 1080,
+                    "small distant box should not fill the screen"
+                );
+                assert!(
+                    x + w <= 1920 && y + h <= 1080,
+                    "rect must stay within the target"
+                );
+            }
+            _ => panic!("expected a sub-rect for a centered box"),
+        }
+    }
+
+    #[test]
+    fn far_offscreen_box_skips() {
+        // Far off to the +X side but still in front of the camera.
+        let model = Mat4::from_translation(Vec3::new(500.0, 100.0, 0.0));
+        assert!(matches!(
+            decal_scissor(&model, &view_proj(), 1920, 1080),
+            DecalScissor::Skip
+        ));
+    }
+
+    #[test]
+    fn box_enclosing_camera_falls_back_to_full() {
+        // A large box centred on the camera puts a corner behind the near plane.
+        let model =
+            Mat4::from_translation(Vec3::new(0.0, -10.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0));
+        assert!(matches!(
+            decal_scissor(&model, &view_proj(), 1920, 1080),
+            DecalScissor::Full
+        ));
     }
 }

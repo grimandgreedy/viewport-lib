@@ -88,6 +88,21 @@ fn expected(name: &str) -> Option<Expected> {
         // The decal scene again with supersampling on: same content and same
         // draw structure, only the resolution differs.
         "supersampled_decals" => e(2, 2, 2, 2, 0, 24),
+        // One slab receiving a decal, with soft-particle sprites over it: the
+        // scene that pins decal ordering against the depth-read pass.
+        "decal_under_soft_sprite" => e(1, 1, 1, 0, 0, 12),
+        // One slab with soft-particle sprites and refractive sprites over it:
+        // the scene that pins what the refraction samples.
+        "refraction_over_soft_sprite" => e(1, 1, 1, 0, 0, 12),
+        // A mesh that opted out of decals beside a GPU implicit surface that
+        // cannot: pins that decals land on any depth writer, not just meshes.
+        "decal_on_non_mesh" => e(1, 1, 1, 0, 0, 960),
+        // Tube, streamtube and ribbon under one decal. No mesh geometry: the
+        // curve types are the whole scene.
+        "decal_on_curves" => e(0, 0, 0, 0, 0, 0),
+        // The same scene from below the projection plane, where the shader's
+        // view-direction check currently removes the decal outright.
+        "decal_from_below" => e(1, 1, 1, 0, 0, 960),
         _ => return None,
     })
 }

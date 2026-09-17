@@ -150,11 +150,6 @@ pub(crate) struct ViewportHdrState {
     /// Effective scene resolution after render scale: [output_size * render_scale].
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
-
-    // --- Decal pass depth binding ---
-    /// Bind group for group 1 of the decal pass: reads hdr_depth_only_view as a depth texture.
-    /// Rebuilt on viewport resize alongside the other viewport-sized bind groups.
-    pub decal_depth_bg: crate::gpu::BindGroup,
 }
 /// Per-viewport scatter-pass intermediates: two RGBA16F ping-pong targets
 /// driven by the temporal-accumulation logic, plus the composite bind groups
@@ -470,7 +465,7 @@ pub struct ContentResources {
 }
 
 /// Device-shared GPU resources: pipelines, layouts, samplers, fallbacks, LUTs,
-/// and the per-feature pipeline clusters (`decal`, `scatter`, `volume`, ...).
+/// and the per-feature pipeline clusters (`scatter`, `volume`, ...).
 /// Created once at init and shared across every viewport.
 ///
 /// Typically stored in the host framework's resource container and accessed
@@ -741,10 +736,6 @@ pub struct DeviceResources {
     /// and indices. Default `true`. See
     /// `DeviceResources::set_retain_mesh_cpu_geometry`.
     pub(crate) retain_mesh_cpu_geometry: bool,
-
-    // --- Screen-space decal pipelines (lazily created) ---
-    /// Decal render/exclude pipelines and their bind group layouts.
-    pub(crate) decal: crate::resources::decal::DecalResources,
 
     // --- HiZ occlusion culling ---
     /// When true, the main-camera GPU cull runs the HiZ occlusion test on top

@@ -116,6 +116,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = PointCloudPlugin::default();
@@ -158,6 +159,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = GlyphPlugin::default();
@@ -203,6 +205,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = TensorGlyphPlugin::default();
@@ -245,6 +248,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = PolylinePlugin::default();
@@ -287,6 +291,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = StreamtubePlugin::default();
@@ -329,6 +334,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = TubePlugin::default();
@@ -371,6 +377,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = RibbonPlugin::default();
@@ -417,6 +424,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
+            decal_excluded_surfaces: &[],
             ref_items: [None, None],
         };
         let mut plugin = GpuImplicitPlugin::default();
