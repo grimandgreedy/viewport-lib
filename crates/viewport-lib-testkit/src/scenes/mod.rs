@@ -72,6 +72,12 @@ pub struct BuiltScene {
     pub ribbon_items: Vec<RibbonItem>,
     /// Sprite (billboard) items.
     pub sprite_items: Vec<SpriteItem>,
+    /// GPU particle systems advanced and drawn each frame. The simulation runs
+    /// on the GPU and carries state between frames, so a scene using these is
+    /// only reproducible because the emit RNG is seeded from a frame counter
+    /// rather than from the clock, and the harness pumps a fixed number of
+    /// frames.
+    pub gpu_particle_systems: Vec<viewport_lib::GpuParticleSystemItem>,
     /// Ray-marched volume items.
     pub volumes: Vec<VolumeItem>,
     /// Gaussian splat items.
@@ -186,6 +192,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     sf.streamtube_items = scene.streamtube_items.clone();
     sf.ribbon_items = scene.ribbon_items.clone();
     sf.sprite_items = scene.sprite_items.clone();
+    sf.gpu_particle_systems = scene.gpu_particle_systems.clone();
     sf.volumes = scene.volumes.clone();
     sf.gaussian_splats = scene.gaussian_splats.clone();
     sf.image_slices = scene.image_slices.clone();

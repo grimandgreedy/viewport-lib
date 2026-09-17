@@ -73,6 +73,11 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_supersampled_sprite_refraction,
         },
         NamedScene {
+            name: "gpu_particles",
+            cameras: standard_cameras(Vec3::ZERO, 11.0),
+            build: build_gpu_particles,
+        },
+        NamedScene {
             name: "volume",
             cameras: standard_cameras(Vec3::ZERO, 5.0),
             build: build_volume,
@@ -493,6 +498,65 @@ fn build_supersampled_sprite_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     post.ssaa_factor = 2;
     scene.post_process = Some(post);
     scene
+}
+
+/// A GPU particle system emitting textured billboards.
+///
+/// The simulation lives on the GPU and carries state from frame to frame, so
+/// this scene is only repeatable because nothing in it reads the clock: the
+/// emit RNG is seeded from the system's own frame counter, which starts at zero
+/// on a freshly created system, and `time_step` is a fixed number on the item
+/// rather than a measured delta. The harness renders a fixed number of frames,
+/// so the same pixels come back every run.
+///
+/// The emitter is an ordinary one, well under the system's capacity, so the
+/// scene covers the case a consumer actually writes rather than a corner of the
+/// parameter space. Two frames' worth of spawns land in two different windows
+/// of the particle buffer, so the wrap-around in the emit kernel's slot
+/// selection is part of what the reference pins.
+///
+/// The step is deliberately coarse. At a sixtieth of a second the particles
+/// would barely have left the spawn volume by the frame that gets captured,
+/// and the image would pin almost nothing.
+fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let tex = checker_texture(ctx, [255, 170, 60], [90, 40, 150]);
+    let mut config = viewport_lib::GpuParticleSystemConfig::default();
+    config.capacity = 2048;
+    config.render = viewport_lib::ParticleRender::Sprite {
+        texture_id: Some(tex),
+        blend: SpriteBlend::AlphaBlend,
+        size_mode: SpriteSizeMode::WorldSpace,
+        depth_write: false,
+        lit: false,
+        lit_params: Default::default(),
+        normal_texture_id: None,
+    };
+    let system = ctx
+        .res
+        .create_gpu_particle_system(ctx.device, ctx.queue, &config);
+
+    let mut item = viewport_lib::GpuParticleSystemItem::new(system, 0.4);
+    item.emitter.rate = 400.0;
+    item.emitter.lifetime = (4.0, 6.0);
+    item.emitter.size = 0.3;
+    item.emitter.colour = [1.0, 1.0, 1.0, 0.9].into();
+    item.emitter.spawn_shape = viewport_lib::SpawnShape::Sphere {
+        center: [0.0, 0.0, -1.8],
+        radius: 0.25,
+    };
+    item.emitter.initial_velocity = viewport_lib::VelocityDist::UniformCone {
+        axis: [0.0, 0.0, 1.0],
+        half_angle: 0.6,
+        min_speed: 2.5,
+        max_speed: 5.5,
+    };
+    item.settings.pick_id = PickId(1609);
+
+    BuiltScene {
+        gpu_particle_systems: vec![item],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
 }
 
 fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {

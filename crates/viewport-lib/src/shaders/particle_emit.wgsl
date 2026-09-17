@@ -1,10 +1,18 @@
 // Particle emit kernel.
 //
-// One thread per slot in the particle buffer. Threads whose slot is dead
-// (lifetime <= 0) compete for the limited spawn budget via an atomic counter;
-// threads whose slot is still alive return immediately. Successful threads
-// write a fresh particle drawn from the emitter's spawn shape and velocity
-// distribution.
+// One thread per slot in the particle buffer. This frame's spawns go to the
+// `spawn_count` slots starting at `emit_cursor` and wrapping around the buffer;
+// a thread outside that window, or one whose slot is still alive, returns
+// immediately. The rest write a fresh particle drawn from the emitter's spawn
+// shape and velocity distribution.
+//
+// The window is what makes emission reproducible. Selecting slots by racing
+// them for a shared budget through an atomic left the winners up to GPU
+// scheduling, and since every attribute below is seeded from the slot index,
+// a different set of winners is a different set of particles: the same scene
+// rendered differently every run. A window costs one comparison instead of a
+// contended read-modify-write on a single address, which most of the dispatch
+// would otherwise be queueing behind.
 
 struct Particle {
     position:     vec3<f32>,
@@ -36,12 +44,11 @@ struct EmitParams {
     lifetime_min:     f32,
     lifetime_max:     f32,
     cone_max_speed:   f32,
-    _pad:             f32,
+    emit_cursor:      u32,
 };
 
 @group(0) @binding(0) var<uniform>             params:    EmitParams;
 @group(1) @binding(0) var<storage, read_write> particles: array<Particle>;
-@group(1) @binding(1) var<storage, read_write> emit_remaining: atomic<u32>;
 
 // PCG hash for cheap, decent-quality per-thread randomness.
 fn pcg(seed: u32) -> u32 {
@@ -60,16 +67,16 @@ fn emit_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let tid = gid.x;
     if tid >= params.capacity { return; }
 
+    // Distance from the cursor to this slot, wrapping. Slots inside the
+    // window spawn; the rest are this frame's non-emitters.
+    let offset = (tid + params.capacity - params.emit_cursor) % params.capacity;
+    if offset >= params.spawn_count { return; }
+
+    // A slot in the window that is still alive is simply not recycled this
+    // frame: its spawn is skipped rather than moved to some other slot, which
+    // is what keeps the choice independent of scheduling.
     let cur = particles[tid];
     if cur.lifetime > 0.0 { return; }
-
-    // Each emitting thread claims one spawn ticket. If we under-claim
-    // (counter hit 0) we restore it so the count stays correct.
-    let claim = atomicSub(&emit_remaining, 1u);
-    if claim == 0u || claim > params.spawn_count {
-        atomicAdd(&emit_remaining, 1u);
-        return;
-    }
 
     var rng = pcg(params.rng_seed ^ tid);
 

@@ -72,6 +72,8 @@ fn expected(name: &str) -> Option<Expected> {
         // resolution-independent, so they match it exactly.
         "supersampled_sprites" => e(2, 2, 2, 2, 0, 24),
         "supersampled_sprite_refraction" => e(1, 1, 1, 0, 0, 12),
+        // No mesh geometry: the particles are the whole scene.
+        "gpu_particles" => e(0, 0, 0, 0, 0, 0),
         "volume" => e(0, 0, 0, 0, 0, 0),
         "gaussian_splats" => e(0, 0, 0, 0, 0, 0),
         "image_slice" => e(0, 0, 0, 0, 0, 0),

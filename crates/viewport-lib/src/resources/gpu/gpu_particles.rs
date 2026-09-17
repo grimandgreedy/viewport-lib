@@ -197,7 +197,10 @@ pub(crate) struct EmitParamsGpu {
     pub lifetime_min: f32,
     pub lifetime_max: f32,
     pub cone_max_speed: f32,
-    pub _pad: f32,
+    /// First slot this frame's spawn window covers. The window wraps, so a
+    /// thread spawns when `(tid + capacity - emit_cursor) % capacity` is below
+    /// `spawn_count`.
+    pub emit_cursor: u32,
 }
 
 /// Maximum number of forces in a single sim dispatch. Forces are inlined into
@@ -243,13 +246,13 @@ struct ParticleDrawBindings {
 pub(crate) struct ParticleSystem {
     pub capacity: u32,
     pub render: ParticleRender,
-    /// `capacity` particles in `GpuParticle` layout. STORAGE + VERTEX usage;
+    /// `capacity` particles in `GpuParticle` layout. STORAGE + VERTEX usage,
+    /// plus COPY_SRC so tests can read the live set back;
     /// bound through `sim_bg` and the draw bind groups, which keep it alive.
     pub particle_buf: crate::gpu::Buffer,
     /// Single atomic u32 counter rewritten by the host before each emit
     /// dispatch and decremented by emit threads as they claim slots. Reused
     /// across frames; nothing is preserved between dispatches.
-    pub emit_counter_buf: crate::gpu::Buffer,
     /// Bind group for the sim/emit compute pipelines (group 1).
     pub sim_bg: crate::gpu::BindGroup,
     /// Persistent uniform rewritten via `write_buffer` before each emit
@@ -283,6 +286,10 @@ pub(crate) struct ParticleSystem {
     /// created system gets a different sequence from one that has been
     /// running for a while.
     pub frame_counter: u32,
+    /// First slot the next frame's spawn window covers. Advanced by that
+    /// frame's spawn count and wrapped, so successive frames recycle the buffer
+    /// in order instead of racing for whichever slots happen to be free.
+    pub emit_cursor: u32,
     /// Fractional spawn accumulator. `rate * dt` rarely lands on an integer
     /// per frame; the fractional remainder rolls over to the next frame so
     /// the long-term average emission matches the configured rate.
@@ -354,14 +361,8 @@ impl crate::resources::DeviceResources {
             contents: &zero_particles,
             usage: crate::gpu::BufferUsages::STORAGE
                 | crate::gpu::BufferUsages::VERTEX
-                | crate::gpu::BufferUsages::COPY_DST,
-        });
-
-        // Atomic counter rewritten per emit dispatch.
-        let emit_counter_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-            label: Some("gpu_particle_emit_counter"),
-            contents: bytemuck::bytes_of(&0u32),
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
+                | crate::gpu::BufferUsages::COPY_DST
+                | crate::gpu::BufferUsages::COPY_SRC,
         });
 
         let _ = queue; // queue currently unused; reserved for textures upload paths
@@ -374,16 +375,10 @@ impl crate::resources::DeviceResources {
         let sim_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("gpu_particle_sim_bg"),
             layout: sim_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: particle_buf.as_entire_binding(),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: emit_counter_buf.as_entire_binding(),
-                },
-            ],
+            entries: &[crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: particle_buf.as_entire_binding(),
+            }],
         });
 
         // Persistent params uniforms + bind groups, rewritten per frame.
@@ -427,7 +422,6 @@ impl crate::resources::DeviceResources {
             capacity,
             render: config.render.clone(),
             particle_buf,
-            emit_counter_buf,
             sim_bg,
             emit_params_buf,
             sim_params_buf,
@@ -440,6 +434,7 @@ impl crate::resources::DeviceResources {
             draw_deps: bindings.draw_deps,
             alive: true,
             frame_counter: 0,
+            emit_cursor: 0,
             spawn_accumulator: 0.0,
         };
 
@@ -774,31 +769,19 @@ impl crate::resources::DeviceResources {
             crate::gpu::ShaderStages::COMPUTE,
         );
 
-        // Group 1 (sim/emit): particle buffer + atomic emit counter.
+        // Group 1 (sim/emit): the particle buffer.
         let sim_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("gpu_particle_sim_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::COMPUTE,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+            entries: &[crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::COMPUTE,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::COMPUTE,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+                count: None,
+            }],
         });
 
         // Group 1 (draw): sprite uniform + texture + sampler + particle buffer.
@@ -1165,14 +1148,19 @@ impl crate::resources::DeviceResources {
             let capacity = system.capacity;
 
             if spawn_count > 0 {
-                queue.write_buffer(
-                    &system.emit_counter_buf,
-                    0,
-                    bytemuck::bytes_of(&spawn_count),
+                let emit_params = build_emit_params(
+                    &item.emitter,
+                    capacity,
+                    spawn_count,
+                    system.frame_counter,
+                    system.emit_cursor,
                 );
-                let emit_params =
-                    build_emit_params(&item.emitter, capacity, spawn_count, system.frame_counter);
                 queue.write_buffer(&system.emit_params_buf, 0, bytemuck::bytes_of(&emit_params));
+                // Next frame starts where this one stopped, so the buffer is
+                // recycled in order.
+                if capacity > 0 {
+                    system.emit_cursor = (system.emit_cursor + spawn_count) % capacity;
+                }
             }
             let sim_params = build_sim_params(item.time_step, capacity, &item.forces);
             queue.write_buffer(&system.sim_params_buf, 0, bytemuck::bytes_of(&sim_params));
@@ -1233,6 +1221,7 @@ fn build_emit_params(
     capacity: u32,
     spawn_count: u32,
     frame_counter: u32,
+    emit_cursor: u32,
 ) -> EmitParamsGpu {
     use crate::renderer::{SpawnShape, VelocityDist};
 
@@ -1251,11 +1240,11 @@ fn build_emit_params(
         spawn_count,
         capacity,
         rng_seed: frame_counter.wrapping_mul(0x9E3779B1),
+        emit_cursor,
         size: e.size,
         lifetime_min: e.lifetime.0,
         lifetime_max: e.lifetime.1,
         cone_max_speed: 0.0,
-        _pad: 0.0,
     };
 
     match e.spawn_shape {
@@ -1453,6 +1442,155 @@ mod tests {
         assert_eq!(
             resources.particle.draw_bg_rebuilds, baseline,
             "a free the system does not name must not rebuild its bind groups"
+        );
+    }
+}
+
+#[cfg(test)]
+mod emission_tests {
+    use super::*;
+    use crate::resources::DeviceResources;
+
+    /// Read every slot's lifetime back off the GPU.
+    fn lifetimes(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &DeviceResources,
+        id: GpuParticleSystemId,
+    ) -> Vec<f32> {
+        let system = resources.particle_system(id).expect("live system");
+        let size = (system.capacity as u64) * std::mem::size_of::<GpuParticle>() as u64;
+        let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
+            label: Some("particle_readback"),
+            size,
+            usage: crate::gpu::BufferUsages::MAP_READ | crate::gpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
+            label: Some("particle_readback_encoder"),
+        });
+        encoder.copy_buffer_to_buffer(&system.particle_buf, 0, &staging, 0, size);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        slice.map_async(crate::gpu::MapMode::Read, |_| {});
+        let _ = device.poll(crate::gpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        });
+        let out = {
+            let data = crate::gpu::mapped_range(slice);
+            bytemuck::cast_slice::<u8, GpuParticle>(&data)
+                .iter()
+                .map(|p| p.lifetime)
+                .collect()
+        };
+        staging.unmap();
+        out
+    }
+
+    fn steady_emitter(rate: f32) -> crate::renderer::EmitterConfig {
+        let mut e = crate::renderer::EmitterConfig::default();
+        e.rate = rate;
+        // A single lifetime, so "how many are alive" is a function of how many
+        // were emitted rather than of the lifetime draw.
+        e.lifetime = (100.0, 100.0);
+        e
+    }
+
+    fn run_frames(
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &mut DeviceResources,
+        id: GpuParticleSystemId,
+        rate: f32,
+        dt: f32,
+        frames: usize,
+    ) {
+        for _ in 0..frames {
+            let mut item = crate::renderer::GpuParticleSystemItem::new(id, dt);
+            item.emitter = steady_emitter(rate);
+            let mut sink = crate::renderer::SubmitSink::inline(queue);
+            let _ =
+                resources.run_particle_jobs(device, queue, std::slice::from_ref(&item), &mut sink);
+        }
+    }
+
+    /// Every frame must emit exactly the budget the configured rate asks for
+    /// while the system has slots to spare. The emit kernel picks slots by a
+    /// wrapping window rather than by racing, so this is the check that the
+    /// window does not quietly skip spawns.
+    #[test]
+    fn emission_matches_the_configured_rate() {
+        let Some((device, queue, mut resources)) =
+            crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut config = GpuParticleSystemConfig::default();
+        config.capacity = 256;
+        let id = resources.create_gpu_particle_system(&device, &queue, &config);
+
+        // 10 per frame for 5 frames, well inside a 256-slot buffer.
+        run_frames(&device, &queue, &mut resources, id, 10.0, 1.0, 5);
+        let live = lifetimes(&device, &queue, &resources, id)
+            .iter()
+            .filter(|l| **l > 0.0)
+            .count();
+        assert_eq!(live, 50, "5 frames at 10 per frame should leave 50 alive");
+    }
+
+    /// The window wraps past the end of the buffer without losing a frame's
+    /// spawns: 30 frames of 10 against 256 slots crosses the end once.
+    #[test]
+    fn emission_survives_the_window_wrapping() {
+        let Some((device, queue, mut resources)) =
+            crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut config = GpuParticleSystemConfig::default();
+        config.capacity = 256;
+        let id = resources.create_gpu_particle_system(&device, &queue, &config);
+
+        run_frames(&device, &queue, &mut resources, id, 10.0, 1.0, 30);
+        let live = lifetimes(&device, &queue, &resources, id)
+            .iter()
+            .filter(|l| **l > 0.0)
+            .count();
+        // 300 spawns into 256 slots with nothing dying: the buffer fills and
+        // the rest land on slots that are still alive, which are skipped.
+        assert_eq!(live, 256, "the buffer should fill and stay full");
+    }
+
+    /// Two systems given identical configuration and identical frames must end
+    /// up with identical particles. Selecting slots by racing them through an
+    /// atomic made this fail: which slots won was down to GPU scheduling, and
+    /// every particle attribute is seeded from its slot index.
+    #[test]
+    fn emission_is_reproducible() {
+        let Some((device, queue, mut resources)) =
+            crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut config = GpuParticleSystemConfig::default();
+        config.capacity = 512;
+        let a = resources.create_gpu_particle_system(&device, &queue, &config);
+        let b = resources.create_gpu_particle_system(&device, &queue, &config);
+
+        run_frames(&device, &queue, &mut resources, a, 40.0, 0.5, 4);
+        run_frames(&device, &queue, &mut resources, b, 40.0, 0.5, 4);
+
+        let la = lifetimes(&device, &queue, &resources, a);
+        let lb = lifetimes(&device, &queue, &resources, b);
+        assert_eq!(la, lb, "identical input must produce identical particles");
+        assert!(
+            la.iter().any(|l| *l > 0.0),
+            "the test is vacuous if nothing was emitted"
         );
     }
 }

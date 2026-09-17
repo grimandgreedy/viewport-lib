@@ -35,7 +35,8 @@ fn every_scene_builds_and_renders() {
             || !built.gpu_mc_items.is_empty()
             || !built.scatter_volumes.is_empty()
             || !built.decals.is_empty()
-            || !built.mesh_instances.is_empty();
+            || !built.mesh_instances.is_empty()
+            || !built.gpu_particle_systems.is_empty();
         assert!(has_content, "{}: built no content", scene.name);
         assert!(!scene.cameras.is_empty(), "{}: no cameras", scene.name);
 
