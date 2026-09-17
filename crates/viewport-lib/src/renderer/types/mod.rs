@@ -78,6 +78,7 @@ pub(crate) struct InstancedBatch {
 }
 
 mod clip;
+mod compute_filter;
 pub mod debug;
 mod frame;
 pub(crate) mod items;
@@ -86,6 +87,7 @@ mod overlay;
 mod postprocess;
 
 pub use self::clip::*;
+pub use self::compute_filter::*;
 pub use self::debug::{AtlasViewerCorner, DebugOutputMode, DebugQuantity, DebugVis};
 pub use self::frame::*;
 pub use self::items::*;

@@ -1,3 +1,12 @@
+//! Submission types for the GPU compute filter: an operation that compacts an
+//! uploaded mesh's index buffer rather than an item that draws.
+//!
+//! A [`ComputeFilterItem`] names a mesh already in the store and asks for the
+//! triangles failing a clip plane, box, sphere or scalar range to be dropped.
+//! `prepare` runs the dispatch and the mesh draw binds the compacted buffer in
+//! place of the mesh's own. The pipeline and its `ComputeFilterResult` output
+//! live in `resources/gpu/compute_filter.rs`.
+
 /// Whether a filter runs on CPU or GPU compute shader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FilterMode {

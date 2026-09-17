@@ -6,9 +6,8 @@
 //! `items::` path resolve unchanged. What is declared here rather than
 //! re-exported belongs to the geometry substrate (surface mesh, mesh-instance
 //! batch, volume mesh, external instances), which is not an item type, plus the
-//! bits the item structs share.
+//! identity transform the item structs default to.
 
-mod compute_filter;
 mod external_instances;
 mod mesh;
 mod mesh_instance;
@@ -19,7 +18,6 @@ mod volume_mesh;
 /// from the column-major convention the rest of the renderer uses.
 pub(crate) const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
-pub use self::compute_filter::*;
 pub use self::external_instances::*;
 pub use self::mesh::*;
 pub use self::mesh_instance::*;
