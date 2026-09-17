@@ -62,6 +62,12 @@ fn expected(name: &str) -> Option<Expected> {
         "streamtubes" => e(0, 0, 0, 0, 0, 0),
         "ribbons" => e(0, 0, 0, 0, 0, 0),
         "sprites" => e(0, 0, 0, 0, 0, 0),
+        // The extra sprite scenes carry mesh geometry for the sprites to draw
+        // against: a ground slab and a cube for the soft fade, a cube for the
+        // OIT overlaps, and a textured ground for the refraction to distort.
+        "sprites_soft" => e(2, 2, 2, 2, 0, 24),
+        "sprites_oit" => e(1, 1, 1, 0, 0, 12),
+        "sprites_refraction" => e(1, 1, 1, 0, 0, 12),
         "volume" => e(0, 0, 0, 0, 0, 0),
         "gaussian_splats" => e(0, 0, 0, 0, 0, 0),
         "image_slice" => e(0, 0, 0, 0, 0, 0),

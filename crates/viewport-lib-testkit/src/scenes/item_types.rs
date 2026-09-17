@@ -13,8 +13,8 @@ use viewport_lib::{
     GaussianSplatItem, GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, ImplicitBlendMode,
     ImplicitPrimitive, Material, MeshInstanceItem, PickId, RibbonItem, ScatterQuality,
     ScatterSettings, ScatterVolume, ScatterVolumeItem, ScreenImageItem, ShDegree, SliceAxis,
-    SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData, TubeItem, VolumeData,
-    VolumeItem, VolumeSurfaceSliceItem, primitives,
+    SpriteBlend, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData,
+    TubeItem, VolumeData, VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedScene, rigs, standard_cameras};
@@ -46,6 +46,21 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "sprites",
             cameras: standard_cameras(Vec3::ZERO, 6.0),
             build: build_sprites,
+        },
+        NamedScene {
+            name: "sprites_soft",
+            cameras: standard_cameras(Vec3::ZERO, 6.0),
+            build: build_sprites_soft,
+        },
+        NamedScene {
+            name: "sprites_oit",
+            cameras: standard_cameras(Vec3::ZERO, 6.0),
+            build: build_sprites_oit,
+        },
+        NamedScene {
+            name: "sprites_refraction",
+            cameras: standard_cameras(Vec3::ZERO, 6.0),
+            build: build_sprites_refraction,
         },
         NamedScene {
             name: "volume",
@@ -306,6 +321,174 @@ fn build_sprites(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     BuiltScene {
         sprite_items: vec![ring, sel],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+/// Soft particles: sprites that fade out where they meet opaque geometry.
+///
+/// These draw in the read-only-depth half of the sprite work, which is a
+/// different place in the frame from the depth-writing sprites in `sprites`
+/// and reads the scene depth buffer rather than writing it. The slab and the
+/// cube are here to be intersected: without geometry to fade against, the soft
+/// distance has no effect and the scene would not tell the two halves apart.
+/// One batch is lit so the lit variant of the same path is in the pixels too.
+fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let slab = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
+        .expect("slab upload");
+    let mut ground = viewport_lib::SceneRenderItem::default();
+    ground.mesh_id = slab;
+    ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
+    ground.material = Material::pbr([0.62, 0.6, 0.58], 0.0, 0.8);
+
+    let box_mesh = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cube(1.6))
+        .expect("cube upload");
+    let mut cube = viewport_lib::SceneRenderItem::default();
+    cube.mesh_id = box_mesh;
+    cube.model = Mat4::from_translation(Vec3::new(-1.3, 0.9, 0.8)).to_cols_array_2d();
+    cube.material = Material::pbr([0.45, 0.5, 0.65], 0.2, 0.5);
+
+    let tex = checker_texture(ctx, [255, 200, 80], [60, 40, 160]);
+
+    // A low sheet of billboards straddling the slab, so each one is partly
+    // faded by the surface it intersects.
+    let mut sheet = SpriteItem::default();
+    sheet.texture_id = Some(tex);
+    sheet.positions = (0..12)
+        .map(|i| {
+            let theta = i as f32 / 12.0 * std::f32::consts::TAU;
+            [1.8 * theta.cos(), 1.8 * theta.sin(), 0.12]
+        })
+        .collect();
+    sheet.default_size = 1.1;
+    sheet.default_colour = [1.0, 0.95, 0.8, 0.75].into();
+    sheet.size_mode = SpriteSizeMode::WorldSpace;
+    sheet.depth_write = false;
+    sheet.soft_particle_distance = Some(0.6);
+    sheet.settings.pick_id = PickId(1606);
+
+    // The same path with lighting on, which swaps in the lit pipeline and the
+    // normal bind group (falling back to the shared one, since no normal map
+    // is set here).
+    let mut lit = SpriteItem::default();
+    lit.positions = vec![[0.0, 0.0, 0.45], [1.1, -0.6, 0.45]];
+    lit.default_size = 0.9;
+    lit.default_colour = [0.4, 0.8, 1.0, 0.7].into();
+    lit.size_mode = SpriteSizeMode::WorldSpace;
+    lit.depth_write = false;
+    lit.soft_particle_distance = Some(0.5);
+    lit.lit = true;
+
+    BuiltScene {
+        items: vec![ground, cube],
+        sprite_items: vec![sheet, lit],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+/// Order-independent transparency: sprites that composite through the OIT pass
+/// instead of the sprite passes.
+///
+/// A sprite reaches OIT only when it blends, does not write depth, has no soft
+/// distance and no refraction, so this scene pins that combination
+/// deliberately: change any one of those fields and the batch leaves this pass
+/// for another. Both blend modes that qualify are present, overlapping, and one
+/// batch is lit so the lit OIT pipeline is covered as well.
+fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let box_mesh = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cube(1.4))
+        .expect("cube upload");
+    let mut cube = viewport_lib::SceneRenderItem::default();
+    cube.mesh_id = box_mesh;
+    cube.material = Material::pbr([0.5, 0.45, 0.4], 0.1, 0.6);
+
+    let tex = checker_texture(ctx, [255, 120, 90], [40, 70, 180]);
+
+    // Overlapping alpha-blended quads at staggered depths, so the pass has
+    // something to sort.
+    let mut blended = SpriteItem::default();
+    blended.texture_id = Some(tex);
+    blended.positions = (0..6)
+        .map(|i| {
+            let t = i as f32 / 6.0;
+            [1.2 * (t * 6.0).cos(), 1.2 * (t * 6.0).sin(), -0.8 + t * 1.6]
+        })
+        .collect();
+    blended.default_size = 1.3;
+    blended.default_colour = [1.0, 1.0, 1.0, 0.55].into();
+    blended.size_mode = SpriteSizeMode::WorldSpace;
+    blended.depth_write = false;
+    blended.blend = SpriteBlend::AlphaBlend;
+    blended.settings.pick_id = PickId(1607);
+
+    let mut premultiplied = SpriteItem::default();
+    premultiplied.positions = vec![[-0.9, 0.5, 0.3], [0.9, -0.5, -0.3]];
+    premultiplied.default_size = 1.0;
+    premultiplied.default_colour = [0.3, 0.55, 0.25, 0.55].into();
+    premultiplied.size_mode = SpriteSizeMode::WorldSpace;
+    premultiplied.depth_write = false;
+    premultiplied.blend = SpriteBlend::Premultiplied;
+    premultiplied.lit = true;
+
+    BuiltScene {
+        items: vec![cube],
+        sprite_items: vec![blended, premultiplied],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+/// Refractive sprites: billboards that distort the image behind them.
+///
+/// These skip the ordinary sprite passes entirely and draw against a copy of
+/// the scene colour taken after the opaque image is complete, which is a third
+/// place in the frame again. The textured slab behind them is what makes the
+/// distortion legible: over a flat colour a refractive sprite and a plain one
+/// look the same.
+fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let slab = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(7.0, 7.0, 0.4))
+        .expect("slab upload");
+    let backdrop_tex = checker_texture(ctx, [230, 80, 60], [235, 225, 205]);
+    let mut ground = viewport_lib::SceneRenderItem::default();
+    ground.mesh_id = slab;
+    ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -1.2)).to_cols_array_2d();
+    ground.material = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.85);
+    ground.material.texture_id = Some(backdrop_tex);
+
+    // The sprite's own texture is the displacement map: red and green become a
+    // signed screen-space offset, and the alpha gates how much of it shows. A
+    // refractive sprite with no texture displaces by nothing and samples the
+    // scene straight back, so it has to be textured to be visible at all.
+    let warp_tex = checker_texture(ctx, [255, 40, 40], [40, 255, 40]);
+
+    let mut bubbles = SpriteItem::default();
+    bubbles.texture_id = Some(warp_tex);
+    bubbles.positions = (0..5)
+        .map(|i| {
+            let t = i as f32 / 5.0 * std::f32::consts::TAU;
+            [1.5 * t.cos(), 1.5 * t.sin(), 0.3]
+        })
+        .collect();
+    bubbles.default_size = 1.2;
+    bubbles.default_colour = [1.0, 1.0, 1.0, 1.0].into();
+    bubbles.size_mode = SpriteSizeMode::WorldSpace;
+    bubbles.depth_write = false;
+    // In pixels of screen-space displacement, not a 0-to-1 fraction.
+    bubbles.refraction_strength = Some(30.0);
+    bubbles.settings.pick_id = PickId(1608);
+
+    BuiltScene {
+        items: vec![ground],
+        sprite_items: vec![bubbles],
         lighting: rigs::from_above(),
         ..Default::default()
     }
