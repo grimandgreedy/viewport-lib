@@ -39,6 +39,16 @@ fn gpu_pick_point_cloud_resolves_point() {
     let hit = hit.expect("centre point should be hit");
     assert_eq!(hit.id, 444);
     assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
+    // The snap position comes back from the point cloud itself, which indexes
+    // its own positions: point 1 is at the origin, not merely somewhere on the
+    // splat the ray struck.
+    let snap = hit
+        .sub_object_world_pos
+        .expect("point pick should fill the snap position");
+    assert!(
+        snap.length() < 1e-4,
+        "point 1 should be at the origin, got {snap:?}"
+    );
 }
 
 #[test]

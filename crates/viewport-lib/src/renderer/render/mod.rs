@@ -316,14 +316,7 @@ impl ViewportRenderer {
                 &self.prepared_surfaces,
                 self.per_object_bundle.as_ref()
             );
-            emit_scivis_draw_calls!(
-                &self.resources,
-                &mut render_pass,
-                &self.polyline_gpu_data,
-                camera_bg,
-                &self.mesh_instance_gpu_data,
-                false
-            );
+            self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
             // TransparentVolumeMesh boundary wireframe overlay.
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
@@ -1377,6 +1370,130 @@ impl ViewportRenderer {
                     render_pass.set_bind_group(1, clip_bg, &[]);
                     render_pass.set_vertex_buffer(0, vbuf.slice(..));
                     render_pass.draw(0..sd.blur_vertex_count, 0..1);
+                }
+            }
+        }
+    }
+}
+
+impl crate::renderer::ViewportRenderer {
+    /// Draw the line substrate and the mesh-instance batches from the per-frame
+    /// GPU data `prepare()` built.
+    ///
+    /// Both are core rather than item-type plugins, and deliberately so: the
+    /// line substrate is shared machinery with several producers (isolines,
+    /// scatter and volume bounds, clip outlines, the splat and sprite
+    /// wireframes), and a mesh-instance batch rides the scene graph's own
+    /// instanced pipeline. Every item type that used to draw from here has
+    /// moved to [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin).
+    ///
+    /// `is_hdr` selects the pipeline variant matching the pass's colour target.
+    pub(crate) fn draw_line_and_instance_layers(
+        &self,
+        render_pass: &mut crate::gpu::RenderPass<'_>,
+        camera_bg: &crate::gpu::BindGroup,
+        is_hdr: bool,
+    ) {
+        // Polyline pass : screen-space thick lines via instanced quad expansion.
+        // Each segment instance is drawn as 6 vertices (2 triangles).
+        // Items with skip_clip=true (clip object wireframe overlays) use the clip-exempt
+        // pipeline so they are always fully visible regardless of active clip volumes.
+        // Items with wireframe=true use the thin 1px LineList pipeline instead, still
+        // honouring skip_clip (see `PolylineKey`).
+        if !self.polyline_gpu_data.is_empty() && self.resources.polyline.pipelines.get().is_some() {
+            let polyline_pipelines = self.resources.polyline.pipelines.get();
+            for pl in self.polyline_gpu_data.iter() {
+                if pl.segment_count == 0 {
+                    continue;
+                }
+                let key = crate::resources::PolylineKey {
+                    skip_clip: pl.skip_clip,
+                    wireframe: pl.wireframe,
+                };
+                if pl.wireframe {
+                    if let (Some(wf_pipeline), Some(wf_bg)) = (
+                        polyline_pipelines.map(|ps| ps.get(key).for_format(is_hdr)),
+                        pl.wireframe_bind_group.as_ref(),
+                    ) {
+                        render_pass.set_pipeline(wf_pipeline);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        render_pass.set_bind_group(1, wf_bg, &[]);
+                        render_pass.draw(0..2, 0..pl.segment_count);
+                    }
+                    continue;
+                }
+                if let Some(pipeline) = polyline_pipelines.map(|ps| ps.get(key).for_format(is_hdr))
+                {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, camera_bg, &[]);
+                    render_pass.set_bind_group(1, &pl.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, pl.vertex_buffer.slice(..));
+                    render_pass.draw(0..6, 0..pl.segment_count);
+                }
+            }
+        }
+
+        // Mesh-instance pass: one draw call per host-built batch, routed by
+        // blend mode. Reuses the scene-graph instanced mesh pipeline family.
+        if !self.mesh_instance_gpu_data.is_empty() {
+            let mesh_buckets: [(
+                crate::renderer::SpriteBlend,
+                Option<&crate::gpu::RenderPipeline>,
+            ); 3] = [
+                (
+                    crate::renderer::SpriteBlend::AlphaBlend,
+                    self.resources.instancing.hdr_transparent_pipeline.as_ref(),
+                ),
+                (
+                    crate::renderer::SpriteBlend::Additive,
+                    self.resources.instancing.hdr_additive_pipeline.as_ref(),
+                ),
+                (
+                    crate::renderer::SpriteBlend::Premultiplied,
+                    self.resources
+                        .instancing
+                        .hdr_premultiplied_pipeline
+                        .as_ref(),
+                ),
+            ];
+            for (blend, pipeline) in mesh_buckets {
+                let Some(pipeline) = pipeline else { continue };
+                let mut set = false;
+                for batch in self.mesh_instance_gpu_data.iter() {
+                    if batch.blend != blend {
+                        continue;
+                    }
+                    let Some(mesh) = self.resources.mesh_store.get(batch.mesh_id) else {
+                        continue;
+                    };
+                    if mesh.index_count == 0 {
+                        continue;
+                    }
+                    if !set {
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, camera_bg, &[]);
+                        set = true;
+                    }
+                    render_pass.set_bind_group(1, &batch.bind_group, &[]);
+                    // mesh_instanced.wgsl's pipeline layout includes the deform
+                    // bind group at index 2. MeshInstanceItem does not expose
+                    // per-instance deform handles, so bind the per-mesh
+                    // fallback (or the dummy group when the mesh has no
+                    // attached deform data).
+                    let deform_bg = self
+                        .resources
+                        .deform
+                        .instance_bind_group_for(batch.mesh_id, None);
+                    bind_deform_group!(render_pass, self.resources, deform_bg);
+                    render_pass.set_vertex_buffer(
+                        0,
+                        self.resources.geometry.vertex_slice(mesh.vertex_span),
+                    );
+                    render_pass.set_index_buffer(
+                        self.resources.geometry.index_slice(mesh.index_span),
+                        crate::gpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instance_count);
                 }
             }
         }

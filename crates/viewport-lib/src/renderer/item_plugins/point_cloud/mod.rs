@@ -302,6 +302,19 @@ impl ItemTypePlugin for PointCloudPlugin {
         mask.intersects(PickMask::CLOUD_POINT)
             .then_some(SubObjectRef::Point(primitive_index))
     }
+    fn sub_object_position(
+        &self,
+        items: &dyn PluginItemCollection,
+        pick_id: PickId,
+        sub_object: SubObjectRef,
+    ) -> Option<glam::Vec3> {
+        crate::renderer::picking::helpers::inline_point_position(
+            items,
+            pick_id,
+            sub_object,
+            |item: &PointCloudItem| (item.settings.pick_id, &item.positions, &item.model),
+        )
+    }
 }
 
 #[cfg(test)]

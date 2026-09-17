@@ -237,10 +237,13 @@ impl ViewportRenderer {
                 let p = mesh.cpu_positions.as_ref()?.get(i as usize)?;
                 Some(glam::Mat4::from_cols_array_2d(&model).transform_point3(glam::Vec3::from(*p)))
             }
-            // A curve control node or a point-cloud point: the index is into the
-            // item's inline positions. Falls back to the hit point for ref items
-            // (positions not inline on the frame).
-            SubObjectRef::Point(i) => self.pick_element_position(id, i, frame).or(Some(world_pos)),
+            // A curve control node or a point-cloud point: the owning item type
+            // resolves the index against its own positions. Falls back to the
+            // hit point when it cannot (a ref item, whose positions live in an
+            // upload store rather than on the frame).
+            point @ SubObjectRef::Point(_) => self
+                .plugin_sub_object_position(id, point, frame)
+                .or(Some(world_pos)),
             // The closest point on the hit edge to the cursor hit point. The edge
             // id is `face * 3 + local_edge` (see `pick_edge.wgsl`).
             SubObjectRef::Edge(e) => {
@@ -294,37 +297,24 @@ impl ViewportRenderer {
         None
     }
 
-    /// World position of node / point `i` of a curve control polyline or a point
-    /// cloud named by `pick_id`, from its inline positions times the item model.
-    /// `None` for ref items (positions live in the store, not on the frame).
-    fn pick_element_position(&self, id: u64, i: u32, frame: &FrameData) -> Option<glam::Vec3> {
-        let idx = i as usize;
-        let at = |positions: &[[f32; 3]], model: &[[f32; 4]; 4]| -> Option<glam::Vec3> {
-            positions.get(idx).map(|p| {
-                glam::Mat4::from_cols_array_2d(model).transform_point3(glam::Vec3::from(*p))
-            })
-        };
-        for it in &frame.scene.streamtube_items {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        for it in &frame.scene.tube_items {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        for it in &frame.scene.ribbon_items {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        for it in &frame.scene.point_clouds {
-            if it.settings.pick_id.0 == id {
-                return at(&it.positions, &it.model);
-            }
-        }
-        None
+    /// World position of the sub-object feature named by `pick_id`, asked of
+    /// the item-type plugin that owns it.
+    ///
+    /// The renderer cannot answer this itself: where a feature sits is a
+    /// function of the item type's own geometry. Every registered plugin is
+    /// offered the question and the first to answer wins, which is
+    /// unambiguous because a pick id names one item. `None` when no plugin
+    /// owns the id or the owner has no snap point for that feature.
+    fn plugin_sub_object_position(
+        &self,
+        id: u64,
+        sub_object: SubObjectRef,
+        frame: &FrameData,
+    ) -> Option<glam::Vec3> {
+        self.item_type_plugins.iter().find_map(|(name, plugin)| {
+            let items = crate::renderer::item_plugins::plugin_items_for(frame, name)?;
+            plugin.sub_object_position(items, crate::renderer::PickId(id), sub_object)
+        })
     }
 
     /// Whether this device can resolve GPU sub-object picking for triangle-meshed

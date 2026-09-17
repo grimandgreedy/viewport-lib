@@ -269,3 +269,32 @@ pub fn ray_triangle(
     let t = f * e2.dot(q);
     if t > 0.0 { Some(t) } else { None }
 }
+
+/// Shared body for [`ItemTypePlugin::sub_object_position`] on the item types
+/// whose point-like features are indices into per-item inline positions: the
+/// curve family's control nodes and a point cloud's points.
+///
+/// `parts` yields `(pick_id, positions, model)` for one item. The item owning
+/// `pick_id` is found by scan, which is what the renderer did before this moved
+/// behind the seam: the lists are short and the call happens once per pick, not
+/// per frame.
+///
+/// `None` when the feature is not a point, when no item carries the id, or when
+/// the index is out of range, which is the case for a reference item whose
+/// positions live in an upload store rather than on the frame.
+///
+/// [`ItemTypePlugin::sub_object_position`]: crate::plugin_api::ItemTypePlugin::sub_object_position
+pub(crate) fn inline_point_position<T: 'static>(
+    items: &dyn crate::plugin_api::PluginItemCollection,
+    pick_id: crate::renderer::PickId,
+    sub_object: crate::renderer::SubObjectRef,
+    parts: impl Fn(&T) -> (crate::renderer::PickId, &[[f32; 3]], &[[f32; 4]; 4]),
+) -> Option<glam::Vec3> {
+    let crate::renderer::SubObjectRef::Point(index) = sub_object else {
+        return None;
+    };
+    let items = items.as_any().downcast_ref::<Vec<T>>()?;
+    let (_, positions, model) = items.iter().map(&parts).find(|(id, _, _)| *id == pick_id)?;
+    let p = positions.get(index as usize)?;
+    Some(glam::Mat4::from_cols_array_2d(model).transform_point3(glam::Vec3::from(*p)))
+}

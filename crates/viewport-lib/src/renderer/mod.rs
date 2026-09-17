@@ -3190,14 +3190,7 @@ impl ViewportRenderer {
             &self.prepared_surfaces,
             self.per_object_bundle.as_ref()
         );
-        emit_scivis_draw_calls!(
-            &self.resources,
-            &mut *render_pass,
-            &self.polyline_gpu_data,
-            camera_bg,
-            &self.mesh_instance_gpu_data,
-            false
-        );
+        self.draw_line_and_instance_layers(&mut *render_pass, camera_bg, false);
         // TransparentVolumeMesh boundary wireframe overlay.
         if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
             if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {

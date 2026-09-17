@@ -612,6 +612,19 @@ impl ItemTypePlugin for RibbonPlugin {
     ) -> Option<SubObjectRef> {
         resolve_curve_sub_object(&self.frame, pick_id, primitive_index, mask)
     }
+    fn sub_object_position(
+        &self,
+        items: &dyn PluginItemCollection,
+        pick_id: PickId,
+        sub_object: SubObjectRef,
+    ) -> Option<glam::Vec3> {
+        crate::renderer::picking::helpers::inline_point_position(
+            items,
+            pick_id,
+            sub_object,
+            |item: &RibbonItem| (item.settings.pick_id, &item.positions, &item.model),
+        )
+    }
 }
 
 /// Walk the swept quads of a ribbon, calling `f(segment, c0, c1, c2, c3)` with

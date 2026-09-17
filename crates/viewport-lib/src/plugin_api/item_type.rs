@@ -988,4 +988,32 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     ) -> Option<crate::renderer::SubObjectRef> {
         None
     }
+
+    /// World-space position of a resolved sub-object feature, for snapping a
+    /// gizmo to it.
+    ///
+    /// Called after [`resolve_sub_object`](Self::resolve_sub_object) (or the
+    /// CPU [`pick`](Self::pick)) has named the feature, with the same
+    /// `sub_object` it returned and the collection submitted this frame. Only
+    /// the plugin knows where its features are, so a type that resolves
+    /// [`SubObjectRef::Point`](crate::renderer::SubObjectRef::Point) answers
+    /// with the point's world position: its index into the item's own
+    /// positions, times the item's model.
+    ///
+    /// Return `None` for features with no single snap point (a cell, a
+    /// segment, a strip) and for items whose positions are not reachable (a
+    /// reference item whose data lives in an upload store rather than on the
+    /// frame). The hit then keeps the pick's own world position, which lies on
+    /// the feature but not at its centre.
+    ///
+    /// Default: `None`, which is the behaviour of every item type that has no
+    /// point-like feature to snap to.
+    fn sub_object_position(
+        &self,
+        _items: &dyn PluginItemCollection,
+        _pick_id: PickId,
+        _sub_object: crate::renderer::SubObjectRef,
+    ) -> Option<glam::Vec3> {
+        None
+    }
 }
