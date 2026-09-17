@@ -124,6 +124,9 @@ impl DeviceResources {
     /// Returns `Err(ViewportError::McBufferTooLarge)` if any required buffer exceeds
     /// the device's `max_buffer_size`; the caller should fall back to CPU isosurface
     /// extraction.
+    ///
+    /// Prefer [`ViewportRenderer::upload_volume_for_mc`](crate::renderer::ViewportRenderer::upload_volume_for_mc),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_volume_for_mc(
         &mut self,
         device: &crate::gpu::Device,
@@ -171,6 +174,9 @@ impl DeviceResources {
     /// [`ViewportError::McScalarSourceMismatch`](crate::error::ViewportError::McScalarSourceMismatch)
     /// if the offset is misaligned or the volume's scalars do not fit in the
     /// buffer past `offset_bytes`.
+    ///
+    /// Prefer [`ViewportRenderer::set_mc_scalar_source_buffer`](crate::renderer::ViewportRenderer::set_mc_scalar_source_buffer),
+    /// which stays reachable when an item type holds its own storage.
     pub fn set_mc_scalar_source_buffer(
         &mut self,
         id: McVolumeId,
@@ -215,6 +221,9 @@ impl DeviceResources {
     ///
     /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `id` does not resolve to a live volume.
+    ///
+    /// Prefer [`ViewportRenderer::clear_mc_scalar_source`](crate::renderer::ViewportRenderer::clear_mc_scalar_source),
+    /// which stays reachable when an item type holds its own storage.
     pub fn clear_mc_scalar_source(&mut self, id: McVolumeId) -> crate::ViewportResult<()> {
         let store_len = self.mc.volumes.slot_count();
         let vol = self
@@ -463,6 +472,9 @@ impl DeviceResources {
     /// buffers drops this volume out of [`resident_bytes`](Self::resident_bytes)
     /// immediately (wgpu defers the real GPU free until in-flight commands that
     /// reference the buffers complete).
+    ///
+    /// Prefer [`ViewportRenderer::free_mc_volume`](crate::renderer::ViewportRenderer::free_mc_volume),
+    /// which stays reachable when an item type holds its own storage.
     pub fn free_mc_volume(&mut self, id: McVolumeId) {
         self.mc.volumes.remove(id);
     }

@@ -453,6 +453,9 @@ impl crate::resources::DeviceResources {
     /// The returned [`GpuParticleSystemId`] stays valid until
     /// [`drop_gpu_particle_system`](Self::drop_gpu_particle_system) is called
     /// or the renderer is dropped.
+    ///
+    /// Prefer [`ViewportRenderer::create_gpu_particle_system`](crate::renderer::ViewportRenderer::create_gpu_particle_system),
+    /// which stays reachable when an item type holds its own storage.
     pub fn create_gpu_particle_system(
         &mut self,
         device: &crate::gpu::Device,
@@ -819,6 +822,9 @@ impl crate::resources::DeviceResources {
 
     /// Release a particle system. The handle becomes invalid; the slot is
     /// reused on the next `create_gpu_particle_system` call.
+    ///
+    /// Prefer [`ViewportRenderer::drop_gpu_particle_system`](crate::renderer::ViewportRenderer::drop_gpu_particle_system),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId) {
         self.particle.systems.remove(id);
     }

@@ -108,6 +108,9 @@ impl crate::resources::DeviceResources {
     /// if `config.positions` was created without `STORAGE` usage, or
     /// [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `config.mesh_id` is not registered.
+    ///
+    /// Prefer [`ViewportRenderer::create_external_instance_set`](crate::renderer::ViewportRenderer::create_external_instance_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn create_external_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -148,6 +151,9 @@ impl crate::resources::DeviceResources {
     /// if `positions` lacks `STORAGE` usage, or
     /// [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `id` does not resolve to a live set.
+    ///
+    /// Prefer [`ViewportRenderer::set_external_instance_set_buffer`](crate::renderer::ViewportRenderer::set_external_instance_set_buffer),
+    /// which stays reachable when an item type holds its own storage.
     pub fn set_external_instance_set_buffer(
         &mut self,
         id: ExternalInstanceSetId,
@@ -175,6 +181,9 @@ impl crate::resources::DeviceResources {
     /// Drop an external instance set. Items still submitted with its id are
     /// skipped. The consumer's buffer is released (the renderer's clone is
     /// dropped; the allocation lives while the consumer holds a handle).
+    ///
+    /// Prefer [`ViewportRenderer::drop_external_instance_set`](crate::renderer::ViewportRenderer::drop_external_instance_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_external_instance_set(&mut self, id: ExternalInstanceSetId) {
         self.external_instances.sets.remove(id);
     }

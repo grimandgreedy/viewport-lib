@@ -351,6 +351,9 @@ impl DeviceResources {
     /// Submit a [`StreamtubeRefItem`](crate::renderer::StreamtubeRefItem) on
     /// `SceneFrame::streamtube_refs` each frame to draw the tube at a
     /// per-frame model transform without rebuilding its mesh.
+    ///
+    /// Prefer [`ViewportRenderer::upload_streamtube`](crate::renderer::ViewportRenderer::upload_streamtube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -362,11 +365,17 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded streamtube.
+    ///
+    /// Prefer [`ViewportRenderer::drop_streamtube`](crate::renderer::ViewportRenderer::drop_streamtube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
         self.content.streamtube_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded streamtube, keeping the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_streamtube`](crate::renderer::ViewportRenderer::replace_streamtube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -722,6 +731,9 @@ impl DeviceResources {
     }
 
     /// Pre-upload a general tube and return a typed handle.
+    ///
+    /// Prefer [`ViewportRenderer::upload_tube`](crate::renderer::ViewportRenderer::upload_tube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -733,11 +745,17 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded tube.
+    ///
+    /// Prefer [`ViewportRenderer::drop_tube`](crate::renderer::ViewportRenderer::drop_tube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
         self.content.tube_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded tube, keeping the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_tube`](crate::renderer::ViewportRenderer::replace_tube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -1126,6 +1144,9 @@ impl DeviceResources {
     }
 
     /// Pre-upload a ribbon and return a typed handle.
+    ///
+    /// Prefer [`ViewportRenderer::upload_ribbon`](crate::renderer::ViewportRenderer::upload_ribbon),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -1137,11 +1158,17 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded ribbon.
+    ///
+    /// Prefer [`ViewportRenderer::drop_ribbon`](crate::renderer::ViewportRenderer::drop_ribbon),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
         self.content.ribbon_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded ribbon, keeping the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_ribbon`](crate::renderer::ViewportRenderer::replace_ribbon),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -1157,6 +1184,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous streamtube upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_streamtube`](crate::renderer::ViewportRenderer::begin_upload_streamtube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -1190,6 +1220,9 @@ impl DeviceResources {
 
     /// Take the [`StreamtubeId`](crate::resources::StreamtubeId) produced by a
     /// completed [`begin_upload_streamtube`](Self::begin_upload_streamtube) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_streamtube`](crate::renderer::ViewportRenderer::upload_result_streamtube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_streamtube(
         &mut self,
         id: crate::resources::JobId,
@@ -1217,6 +1250,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous tube upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_tube`](crate::renderer::ViewportRenderer::begin_upload_tube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -1249,6 +1285,9 @@ impl DeviceResources {
 
     /// Take the [`TubeId`](crate::resources::TubeId) produced by a completed
     /// [`begin_upload_tube`](Self::begin_upload_tube) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_tube`](crate::renderer::ViewportRenderer::upload_result_tube),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_tube(
         &mut self,
         id: crate::resources::JobId,
@@ -1276,6 +1315,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous ribbon upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_ribbon`](crate::renderer::ViewportRenderer::begin_upload_ribbon),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -1309,6 +1351,9 @@ impl DeviceResources {
 
     /// Take the [`RibbonId`](crate::resources::RibbonId) produced by a completed
     /// [`begin_upload_ribbon`](Self::begin_upload_ribbon) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_ribbon`](crate::renderer::ViewportRenderer::upload_result_ribbon),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_ribbon(
         &mut self,
         id: crate::resources::JobId,

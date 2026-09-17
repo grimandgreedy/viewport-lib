@@ -336,6 +336,9 @@ impl DeviceResources {
     }
 
     /// Pre-upload a point cloud and return a typed handle.
+    ///
+    /// Prefer [`ViewportRenderer::upload_point_cloud`](crate::renderer::ViewportRenderer::upload_point_cloud),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -347,11 +350,17 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded point cloud.
+    ///
+    /// Prefer [`ViewportRenderer::drop_point_cloud`](crate::renderer::ViewportRenderer::drop_point_cloud),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
         self.content.point_cloud_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded point cloud, keeping the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_point_cloud`](crate::renderer::ViewportRenderer::replace_point_cloud),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -370,6 +379,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous point cloud upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_point_cloud`](crate::renderer::ViewportRenderer::begin_upload_point_cloud),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -406,6 +418,9 @@ impl DeviceResources {
 
     /// Take the [`PointCloudId`](crate::resources::PointCloudId) produced by a
     /// completed [`begin_upload_point_cloud`](Self::begin_upload_point_cloud) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_point_cloud`](crate::renderer::ViewportRenderer::upload_result_point_cloud),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_point_cloud(
         &mut self,
         id: crate::resources::JobId,

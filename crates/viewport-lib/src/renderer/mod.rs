@@ -2514,6 +2514,555 @@ impl ViewportRenderer {
         self.resources.free_gaussian_splat(id);
     }
 
+    // -------------------------------------------------------------------------
+    // Uploads for the item types that hold their own content.
+    //
+    // Each of these forwards to the `DeviceResources` method of the same name.
+    // They live here because the renderer, not `DeviceResources`, owns the
+    // registered item types: an upload that has to reach a type's own storage
+    // can only be reached from this level.
+    // -------------------------------------------------------------------------
+
+    /// Upload a polyline for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_polyline(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::PolylineItem,
+    ) -> crate::resources::PolylineId {
+        self.resources.upload_polyline(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a polyline. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_polyline`](Self::upload_result_polyline).
+    pub fn begin_upload_polyline(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::PolylineItem,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_polyline(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_polyline`](Self::begin_upload_polyline) job.
+    pub fn upload_result_polyline(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::PolylineId> {
+        self.resources.upload_result_polyline(id)
+    }
+
+    /// Replace the geometry behind a polyline handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_polyline(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::PolylineId,
+        item: &crate::renderer::PolylineItem,
+    ) -> bool {
+        self.resources.replace_polyline(device, queue, id, item)
+    }
+
+    /// Release a polyline. `false` if the handle does not resolve.
+    pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
+        self.resources.drop_polyline(id)
+    }
+
+    /// Upload a streamtube for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_streamtube(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::StreamtubeItem,
+    ) -> crate::resources::StreamtubeId {
+        self.resources.upload_streamtube(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a streamtube. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_streamtube`](Self::upload_result_streamtube).
+    pub fn begin_upload_streamtube(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::StreamtubeItem,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_streamtube(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_streamtube`](Self::begin_upload_streamtube) job.
+    pub fn upload_result_streamtube(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::StreamtubeId> {
+        self.resources.upload_result_streamtube(id)
+    }
+
+    /// Replace the geometry behind a streamtube handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_streamtube(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::StreamtubeId,
+        item: &crate::renderer::StreamtubeItem,
+    ) -> bool {
+        self.resources.replace_streamtube(device, queue, id, item)
+    }
+
+    /// Release a streamtube. `false` if the handle does not resolve.
+    pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
+        self.resources.drop_streamtube(id)
+    }
+
+    /// Upload a tube for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_tube(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::TubeItem,
+    ) -> crate::resources::TubeId {
+        self.resources.upload_tube(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a tube. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_tube`](Self::upload_result_tube).
+    pub fn begin_upload_tube(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::TubeItem,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_tube(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_tube`](Self::begin_upload_tube) job.
+    pub fn upload_result_tube(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::TubeId> {
+        self.resources.upload_result_tube(id)
+    }
+
+    /// Replace the geometry behind a tube handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_tube(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::TubeId,
+        item: &crate::renderer::TubeItem,
+    ) -> bool {
+        self.resources.replace_tube(device, queue, id, item)
+    }
+
+    /// Release a tube. `false` if the handle does not resolve.
+    pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
+        self.resources.drop_tube(id)
+    }
+
+    /// Upload a ribbon for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_ribbon(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::RibbonItem,
+    ) -> crate::resources::RibbonId {
+        self.resources.upload_ribbon(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a ribbon. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_ribbon`](Self::upload_result_ribbon).
+    pub fn begin_upload_ribbon(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::RibbonItem,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_ribbon(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_ribbon`](Self::begin_upload_ribbon) job.
+    pub fn upload_result_ribbon(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::RibbonId> {
+        self.resources.upload_result_ribbon(id)
+    }
+
+    /// Replace the geometry behind a ribbon handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_ribbon(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::RibbonId,
+        item: &crate::renderer::RibbonItem,
+    ) -> bool {
+        self.resources.replace_ribbon(device, queue, id, item)
+    }
+
+    /// Release a ribbon. `false` if the handle does not resolve.
+    pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
+        self.resources.drop_ribbon(id)
+    }
+
+    /// Upload a point cloud for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_point_cloud(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::PointCloudItem,
+    ) -> crate::resources::PointCloudId {
+        self.resources.upload_point_cloud(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a point cloud. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_point_cloud`](Self::upload_result_point_cloud).
+    pub fn begin_upload_point_cloud(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::PointCloudItem,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_point_cloud(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_point_cloud`](Self::begin_upload_point_cloud) job.
+    pub fn upload_result_point_cloud(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::PointCloudId> {
+        self.resources.upload_result_point_cloud(id)
+    }
+
+    /// Replace the geometry behind a point cloud handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_point_cloud(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::PointCloudId,
+        item: &crate::renderer::PointCloudItem,
+    ) -> bool {
+        self.resources.replace_point_cloud(device, queue, id, item)
+    }
+
+    /// Release a point cloud. `false` if the handle does not resolve.
+    pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
+        self.resources.drop_point_cloud(id)
+    }
+
+    /// Upload a glyph set for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_glyph_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::GlyphItem,
+    ) -> crate::resources::GlyphSetId {
+        self.resources.upload_glyph_set(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a glyph set. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_glyph_set`](Self::upload_result_glyph_set).
+    pub fn begin_upload_glyph_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::GlyphItem,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_glyph_set(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_glyph_set`](Self::begin_upload_glyph_set) job.
+    pub fn upload_result_glyph_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::GlyphSetId> {
+        self.resources.upload_result_glyph_set(id)
+    }
+
+    /// Replace the geometry behind a glyph set handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_glyph_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::GlyphSetId,
+        item: &crate::renderer::GlyphItem,
+    ) -> bool {
+        self.resources.replace_glyph_set(device, queue, id, item)
+    }
+
+    /// Release a glyph set. `false` if the handle does not resolve.
+    pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
+        self.resources.drop_glyph_set(id)
+    }
+
+    /// Upload a tensor glyph set for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_tensor_glyph_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::TensorGlyphItem,
+    ) -> crate::resources::TensorGlyphSetId {
+        self.resources.upload_tensor_glyph_set(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a tensor glyph set. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_tensor_glyph_set`](Self::upload_result_tensor_glyph_set).
+    pub fn begin_upload_tensor_glyph_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::TensorGlyphItem,
+    ) -> crate::resources::JobId {
+        self.resources
+            .begin_upload_tensor_glyph_set(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_tensor_glyph_set`](Self::begin_upload_tensor_glyph_set) job.
+    pub fn upload_result_tensor_glyph_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::TensorGlyphSetId> {
+        self.resources.upload_result_tensor_glyph_set(id)
+    }
+
+    /// Replace the geometry behind a tensor glyph set handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_tensor_glyph_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::TensorGlyphSetId,
+        item: &crate::renderer::TensorGlyphItem,
+    ) -> bool {
+        self.resources
+            .replace_tensor_glyph_set(device, queue, id, item)
+    }
+
+    /// Release a tensor glyph set. `false` if the handle does not resolve.
+    pub fn drop_tensor_glyph_set(&mut self, id: crate::resources::TensorGlyphSetId) -> bool {
+        self.resources.drop_tensor_glyph_set(id)
+    }
+
+    /// Upload a sprite set for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_sprite_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::SpriteItem,
+    ) -> crate::resources::SpriteSetId {
+        self.resources.upload_sprite_set(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a sprite set. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_sprite_set`](Self::upload_result_sprite_set).
+    pub fn begin_upload_sprite_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::SpriteItem,
+    ) -> crate::resources::JobId {
+        self.resources.begin_upload_sprite_set(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_sprite_set`](Self::begin_upload_sprite_set) job.
+    pub fn upload_result_sprite_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::SpriteSetId> {
+        self.resources.upload_result_sprite_set(id)
+    }
+
+    /// Replace the geometry behind a sprite set handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_sprite_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::SpriteSetId,
+        item: &crate::renderer::SpriteItem,
+    ) -> bool {
+        self.resources.replace_sprite_set(device, queue, id, item)
+    }
+
+    /// Release a sprite set. `false` if the handle does not resolve.
+    pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
+        self.resources.drop_sprite_set(id)
+    }
+
+    /// Upload a sprite instance set for reuse across frames, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_sprite_instance_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: &crate::renderer::SpriteItem,
+    ) -> crate::resources::SpriteInstanceSetId {
+        self.resources
+            .upload_sprite_instance_set(device, queue, item)
+    }
+
+    /// Start an off-thread upload of a sprite instance set. Poll the returned job with
+    /// [`upload_status`](Self::upload_status) and take the handle from
+    /// [`upload_result_sprite_instance_set`](Self::upload_result_sprite_instance_set).
+    pub fn begin_upload_sprite_instance_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        item: crate::renderer::SpriteItem,
+    ) -> crate::resources::JobId {
+        self.resources
+            .begin_upload_sprite_instance_set(device, queue, item)
+    }
+
+    /// Take the handle from a finished [`begin_upload_sprite_instance_set`](Self::begin_upload_sprite_instance_set) job.
+    pub fn upload_result_sprite_instance_set(
+        &mut self,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<crate::resources::SpriteInstanceSetId> {
+        self.resources.upload_result_sprite_instance_set(id)
+    }
+
+    /// Replace the geometry behind a sprite instance set handle, keeping the handle valid.
+    /// `false` if the handle does not resolve.
+    pub fn replace_sprite_instance_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: crate::resources::SpriteInstanceSetId,
+        item: &crate::renderer::SpriteItem,
+    ) -> bool {
+        self.resources
+            .replace_sprite_instance_set(device, queue, id, item)
+    }
+
+    /// Release a sprite instance set. `false` if the handle does not resolve.
+    pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
+        self.resources.drop_sprite_instance_set(id)
+    }
+
+    /// Upload a scalar volume for GPU marching cubes, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn upload_volume_for_mc(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        vol: &crate::geometry::marching_cubes::VolumeData,
+    ) -> crate::ViewportResult<crate::resources::McVolumeId> {
+        self.resources.upload_volume_for_mc(device, queue, vol)
+    }
+
+    /// Release a marching-cubes volume and its slab buffers.
+    pub fn free_mc_volume(&mut self, id: crate::resources::McVolumeId) {
+        self.resources.free_mc_volume(id)
+    }
+
+    /// Feed a marching-cubes volume from a caller-supplied buffer, refreshed
+    /// before every dispatch so the isosurface tracks it with no CPU upload.
+    pub fn set_mc_scalar_source_buffer(
+        &mut self,
+        id: crate::resources::McVolumeId,
+        buffer: crate::gpu::Buffer,
+        offset_bytes: u64,
+    ) -> crate::ViewportResult<()> {
+        self.resources
+            .set_mc_scalar_source_buffer(id, buffer, offset_bytes)
+    }
+
+    /// Detach the external scalar source, freezing the isosurface at the last
+    /// field copied in.
+    pub fn clear_mc_scalar_source(
+        &mut self,
+        id: crate::resources::McVolumeId,
+    ) -> crate::ViewportResult<()> {
+        self.resources.clear_mc_scalar_source(id)
+    }
+
+    /// Create a persistent GPU particle system, returning its handle.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn create_gpu_particle_system(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        config: &crate::resources::GpuParticleSystemConfig,
+    ) -> crate::resources::GpuParticleSystemId {
+        self.resources
+            .create_gpu_particle_system(device, queue, config)
+    }
+
+    /// Release a GPU particle system. The handle stops resolving.
+    pub fn drop_gpu_particle_system(&mut self, id: crate::resources::GpuParticleSystemId) {
+        self.resources.drop_gpu_particle_system(id)
+    }
+
+    /// Create an instance set drawn from a caller-owned positions buffer.
+    ///
+    /// Prefer this over the [`DeviceResources`] method of the same name: it is
+    /// the call that keeps working once an item type owns its own storage.
+    pub fn create_external_instance_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        config: &crate::resources::ExternalInstanceSetConfig,
+    ) -> crate::error::ViewportResult<crate::resources::ExternalInstanceSetId> {
+        self.resources.create_external_instance_set(device, config)
+    }
+
+    /// Release an external instance set. Items still naming it are skipped.
+    pub fn drop_external_instance_set(&mut self, id: crate::resources::ExternalInstanceSetId) {
+        self.resources.drop_external_instance_set(id)
+    }
+
+    /// Re-point an external instance set at a different positions buffer.
+    pub fn set_external_instance_set_buffer(
+        &mut self,
+        id: crate::resources::ExternalInstanceSetId,
+        positions: crate::gpu::Buffer,
+    ) -> crate::error::ViewportResult<()> {
+        self.resources
+            .set_external_instance_set_buffer(id, positions)
+    }
+
     /// Upload an equirectangular HDR environment map and precompute IBL textures.
     ///
     /// `pixels` is row-major RGBA f32 data (4 floats per texel), `width`x`height`.

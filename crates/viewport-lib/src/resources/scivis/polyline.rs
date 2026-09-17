@@ -643,6 +643,9 @@ impl DeviceResources {
     /// The viewport size used for screen-space miter calculations is set
     /// from the most recent ref-item draw of this polyline. Stationary
     /// callers can rely on it being correct after the first frame.
+    ///
+    /// Prefer [`ViewportRenderer::upload_polyline`](crate::renderer::ViewportRenderer::upload_polyline),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -656,6 +659,9 @@ impl DeviceResources {
 
     /// Remove a pre-uploaded polyline. Returns `true` if a polyline was
     /// actually removed, `false` if the id was already invalid.
+    ///
+    /// Prefer [`ViewportRenderer::drop_polyline`](crate::renderer::ViewportRenderer::drop_polyline),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
         self.content.polyline_store.remove(id).is_some()
     }
@@ -665,6 +671,9 @@ impl DeviceResources {
     ///
     /// Returns `true` if the id was valid and the polyline was replaced,
     /// `false` if the slot was empty (call [`upload_polyline`](Self::upload_polyline) instead).
+    ///
+    /// Prefer [`ViewportRenderer::replace_polyline`](crate::renderer::ViewportRenderer::replace_polyline),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -689,6 +698,9 @@ impl DeviceResources {
     /// resulting handle.
     ///
     /// Ownership of `item` transfers into the worker.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_polyline`](crate::renderer::ViewportRenderer::begin_upload_polyline),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -724,6 +736,9 @@ impl DeviceResources {
 
     /// Take the [`PolylineId`](crate::resources::PolylineId) produced by a
     /// completed [`begin_upload_polyline`](Self::begin_upload_polyline) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_polyline`](crate::renderer::ViewportRenderer::upload_result_polyline),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_polyline(
         &mut self,
         id: crate::resources::JobId,

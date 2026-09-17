@@ -336,6 +336,8 @@ impl DeviceResources {
     /// Same bind group layout and vertex transform as the normal sprite pipeline but
     /// outputs a flat mask value.
 
+    /// Prefer [`ViewportRenderer::upload_sprite_set`](crate::renderer::ViewportRenderer::upload_sprite_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -347,11 +349,17 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded sprite set.
+    ///
+    /// Prefer [`ViewportRenderer::drop_sprite_set`](crate::renderer::ViewportRenderer::drop_sprite_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
         self.content.sprite_set_store.remove(id).is_some()
     }
 
     /// Replace the contents of a pre-uploaded sprite set, keeping the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_sprite_set`](crate::renderer::ViewportRenderer::replace_sprite_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -370,6 +378,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous sprite set upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_sprite_set`](crate::renderer::ViewportRenderer::begin_upload_sprite_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -403,6 +414,9 @@ impl DeviceResources {
 
     /// Take the [`SpriteSetId`] produced by a completed
     /// [`begin_upload_sprite_set`](Self::begin_upload_sprite_set) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_sprite_set`](crate::renderer::ViewportRenderer::upload_result_sprite_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_sprite_set(
         &mut self,
         id: crate::resources::JobId,
@@ -440,6 +454,9 @@ impl DeviceResources {
     /// The current implementation pre-bakes both the definition and the
     /// instance transforms; full per-frame instance transform override
     /// against a stable definition is a planned follow-up.
+    ///
+    /// Prefer [`ViewportRenderer::upload_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_sprite_instance_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -451,12 +468,18 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded sprite instance set.
+    ///
+    /// Prefer [`ViewportRenderer::drop_sprite_instance_set`](crate::renderer::ViewportRenderer::drop_sprite_instance_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
         self.content.sprite_instance_set_store.remove(id).is_some()
     }
 
     /// Replace the contents of a pre-uploaded sprite instance set, keeping
     /// the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_sprite_instance_set`](crate::renderer::ViewportRenderer::replace_sprite_instance_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -475,6 +498,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous sprite instance set upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_sprite_instance_set`](crate::renderer::ViewportRenderer::begin_upload_sprite_instance_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -511,6 +537,9 @@ impl DeviceResources {
 
     /// Take the [`SpriteInstanceSetId`] produced by a completed
     /// [`begin_upload_sprite_instance_set`](Self::begin_upload_sprite_instance_set) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_result_sprite_instance_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_sprite_instance_set(
         &mut self,
         id: crate::resources::JobId,

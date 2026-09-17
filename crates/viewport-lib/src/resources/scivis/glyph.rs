@@ -576,6 +576,9 @@ impl DeviceResources {
     }
 
     /// Pre-upload a glyph set and return a typed handle.
+    ///
+    /// Prefer [`ViewportRenderer::upload_glyph_set`](crate::renderer::ViewportRenderer::upload_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -587,11 +590,17 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded glyph set.
+    ///
+    /// Prefer [`ViewportRenderer::drop_glyph_set`](crate::renderer::ViewportRenderer::drop_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
         self.content.glyph_set_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded glyph set, keeping the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_glyph_set`](crate::renderer::ViewportRenderer::replace_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -610,6 +619,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous glyph set upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_glyph_set`](crate::renderer::ViewportRenderer::begin_upload_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -643,6 +655,9 @@ impl DeviceResources {
 
     /// Take the [`GlyphSetId`](crate::resources::GlyphSetId) produced by a
     /// completed [`begin_upload_glyph_set`](Self::begin_upload_glyph_set) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_glyph_set`](crate::renderer::ViewportRenderer::upload_result_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_glyph_set(
         &mut self,
         id: crate::resources::JobId,
@@ -670,6 +685,9 @@ impl DeviceResources {
     }
 
     /// Pre-upload a tensor glyph set and return a typed handle.
+    ///
+    /// Prefer [`ViewportRenderer::upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_tensor_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -681,11 +699,17 @@ impl DeviceResources {
     }
 
     /// Remove a pre-uploaded tensor glyph set.
+    ///
+    /// Prefer [`ViewportRenderer::drop_tensor_glyph_set`](crate::renderer::ViewportRenderer::drop_tensor_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn drop_tensor_glyph_set(&mut self, id: crate::resources::TensorGlyphSetId) -> bool {
         self.content.tensor_glyph_set_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded tensor glyph set, keeping the same id.
+    ///
+    /// Prefer [`ViewportRenderer::replace_tensor_glyph_set`](crate::renderer::ViewportRenderer::replace_tensor_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn replace_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -704,6 +728,9 @@ impl DeviceResources {
     }
 
     /// Start an asynchronous tensor glyph set upload.
+    ///
+    /// Prefer [`ViewportRenderer::begin_upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::begin_upload_tensor_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn begin_upload_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -740,6 +767,9 @@ impl DeviceResources {
 
     /// Take the [`TensorGlyphSetId`](crate::resources::TensorGlyphSetId) produced by a
     /// completed [`begin_upload_tensor_glyph_set`](Self::begin_upload_tensor_glyph_set) job.
+    ///
+    /// Prefer [`ViewportRenderer::upload_result_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_result_tensor_glyph_set),
+    /// which stays reachable when an item type holds its own storage.
     pub fn upload_result_tensor_glyph_set(
         &mut self,
         id: crate::resources::JobId,
