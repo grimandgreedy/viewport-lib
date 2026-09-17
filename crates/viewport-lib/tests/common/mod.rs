@@ -24,8 +24,8 @@ pub use viewport_lib::{
     GaussianSplatItem, GlyphItem, GlyphType, ImageSliceItem, IndirectLightSource, ItemSettings,
     LightKind, LightSource, Material, MeshId, OverrideBufferSlice, PickBackend, PickId, PickMask,
     PickPoll, PointCloudItem, PolylineItem, RibbonItem, ScatterVolume, ScatterVolumeItem, Scene,
-    ScreenImageItem, Selection, ShDegree, ShadingModel, SliceAxis, SpriteItem, SpriteSizeMode,
-    VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    Selection, ShDegree, ShadingModel, SliceAxis, SpriteItem, SpriteSizeMode, VolumeItem,
+    VolumeMeshItem, VolumeSurfaceSliceItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,

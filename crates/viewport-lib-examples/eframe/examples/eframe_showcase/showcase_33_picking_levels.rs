@@ -21,14 +21,14 @@ use viewport_lib as vpl;
 
 use crate::eframe::egui;
 use vpl::{
-    AnchorX, AnchorY, BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem,
-    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType,
-    GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
-    ImplicitPrimitive, ItemSettings, LightingSettings, Material, McVolumeId, MeshId, NodeId,
-    PickBackend, PickId, PickMask, PickRectResult, PointCloudItem, PolylineItem,
-    PolylineSelectionInfo, RibbonItem, SceneFrame, SceneRenderItem, ScreenImageItem, ShDegree,
-    SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef, TensorGlyphItem, TextureId,
-    TubeItem, ViewportRenderer, VolumeData, VolumeMeshData, VolumeMeshItem, VolumeSurfaceSliceItem,
+    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
+    GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
+    LightingSettings, Material, McVolumeId, MeshId, NodeId, PickBackend, PickId, PickMask,
+    PickRectResult, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneFrame,
+    SceneRenderItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
+    TensorGlyphItem, TextureId, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData,
+    VolumeMeshItem, VolumeSurfaceSliceItem,
 };
 
 use crate::App;
@@ -1515,7 +1515,6 @@ impl App {
             41 => Some("Tube"),
             42 => Some("Ribbon"),
             51 => Some("Surface Slice"),
-            52 => Some("Screen Image"),
             53 => Some("GPU Implicit"),
             54 => Some("GPU Marching Cubes"),
             60 => Some("Decal A"),
@@ -2145,33 +2144,6 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.unlit = false;
         fd.scene.volume_surface_slices.push(item);
     }
-    // Screen image (pick_id=52): checkerboard pinned to the top-right corner.
-    {
-        let iw = 48u32;
-        let ih = 48u32;
-        let pixels: Vec<[u8; 4]> = (0..iw * ih)
-            .map(|i| {
-                let x = i % iw;
-                let y = i / iw;
-                if (x / 6 + y / 6) % 2 == 0 {
-                    [255, 255, 255, 220]
-                } else {
-                    [0, 0, 0, 220]
-                }
-            })
-            .collect();
-        let mut img = ScreenImageItem::default();
-        img.pixels = pixels;
-        img.width = iw;
-        img.height = ih;
-        img.anchor_x = AnchorX::Right;
-        img.anchor_y = AnchorY::Top;
-        img.scale = 2.0;
-        img.settings.pick_id = PickId(52);
-        img.settings.selected = app.pl_state.selection.contains(52);
-        img.settings.unlit = false;
-        fd.scene.screen_images.push(img);
-    }
     // GPU implicit (pick_id=53): two smooth-blended spheres.
     {
         let centers: [[f32; 3]; 2] = [[13.0, 0.0, 0.0], [15.0, 0.0, 0.0]];
@@ -2375,7 +2347,6 @@ pub(crate) fn overlay(
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 
-
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
@@ -2409,13 +2380,12 @@ pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
                 if app.pl_state.unified_mode {
                     let device = app.device.clone();
                     let queue = app.queue.clone();
-                    let pick_frame =
-                        pl_build_pick_frame(
-                            app,
-                            cx.rect.width(),
-                            cx.rect.height(),
-                            cx.egui.pixels_per_point(),
-                        );
+                    let pick_frame = pl_build_pick_frame(
+                        app,
+                        cx.rect.width(),
+                        cx.rect.height(),
+                        cx.egui.pixels_per_point(),
+                    );
                     let rs = cx.frame.wgpu_render_state().expect("wgpu required");
                     let mut guard = rs.renderer.write();
                     if let Some(renderer) =
@@ -2451,15 +2421,11 @@ pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -2500,13 +2466,23 @@ impl crate::Showcase for ScPickingLevels {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn overlay(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+    fn overlay(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) {
         overlay(app, ui, cx)
     }
     fn on_click(&self, app: &mut crate::App, cx: &crate::ClickCtx) {
@@ -2515,7 +2491,12 @@ impl crate::Showcase for ScPickingLevels {
     fn drag_input(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         drag_input(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -2524,7 +2505,12 @@ impl crate::Showcase for ScPickingLevels {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_pick_levels(app, ui)
     }
 }

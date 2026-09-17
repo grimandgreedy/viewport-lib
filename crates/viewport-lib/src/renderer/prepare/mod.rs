@@ -443,13 +443,6 @@ impl ViewportRenderer {
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
         resources.run_deform_slot_copies(device, queue);
-        Self::upload_images(
-            resources,
-            &mut self.screen_image_gpu_data,
-            device,
-            queue,
-            frame,
-        );
         let vp_size = frame.camera.viewport_size;
         // Surface LIC GPU data upload.
         // ------------------------------------------------------------------

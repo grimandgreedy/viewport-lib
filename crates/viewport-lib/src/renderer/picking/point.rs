@@ -317,44 +317,6 @@ impl ViewportRenderer {
         let wants_instance = mask.intersects(PickMask::INSTANCE);
         if wants_instance || wants_object {}
 
-        // 10. Screen image object picks (OBJECT only).
-        if wants_object {
-            // Screen image: screen-space rect test. toi=0 so these win over any 3D hit.
-            for item in &self.pick_screen_image_items {
-                if item.settings.pick_id == PickId::NONE || item.width == 0 || item.height == 0 {
-                    continue;
-                }
-                let img_w = item.width as f32 * item.scale;
-                let img_h = item.height as f32 * item.scale;
-                let [sx, sy] = crate::renderer::types::viewport_anchored_top_left(
-                    item.anchor_x,
-                    item.anchor_y,
-                    [img_w, img_h],
-                    [viewport_size.x, viewport_size.y],
-                );
-                if click_pos.x >= sx
-                    && click_pos.x <= sx + img_w
-                    && click_pos.y >= sy
-                    && click_pos.y <= sy + img_h
-                {
-                    // No meaningful 3D position; place the hit at the near-plane.
-                    let world_pos = ray_origin + ray_dir * 0.001;
-                    #[allow(deprecated)]
-                    consider(
-                        0.0,
-                        PickHit {
-                            id: item.settings.pick_id.0,
-                            sub_object: None,
-                            world_pos,
-                            normal: -ray_dir,
-                            scalar_value: None,
-                            sub_object_world_pos: None,
-                        },
-                    );
-                }
-            }
-        }
-
         // 13. Decal picks (OBJECT only): ray versus the decal projection box.
         // A decal is the unit box [-0.5, 0.5]^3 mapped to world by `transform`.
         // The box front face typically hugs the receiver surface, so a decal

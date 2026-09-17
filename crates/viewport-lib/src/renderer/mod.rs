@@ -78,7 +78,7 @@ pub use self::types::{
     PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
     PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem,
     ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ScreenImageItem, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
+    ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
     SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
     SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath,
     SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
@@ -86,10 +86,6 @@ pub use self::types::{
     ViewportFrame, VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
     VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
 };
-
-// Crate-internal anchor resolution helpers (viewport corner placement), used by
-// the screen-image prepare/upload and picking paths outside `renderer::types`.
-pub(crate) use self::types::viewport_anchored_ndc;
 
 /// An opaque handle to a per-viewport GPU state slot.
 ///
@@ -132,8 +128,6 @@ use crate::resources::{
 pub(crate) struct SelectionOutlines {
     /// Per-frame outline buffers for selected objects.
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Per-frame NDC rect outline buffers for selected screen images.
-    pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
     /// Indices into polyline_gpu_data for selected user polylines.
     pub polyline_outline_indices: Vec<usize>,
     /// True when an item-type plugin drew selection coverage into the outline
@@ -384,8 +378,6 @@ pub struct ViewportRenderer {
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     external_instances_gpu_data:
         Vec<crate::resources::gpu::external_instances::ExternalInstancesGpuData>,
-    /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
-    screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
@@ -536,8 +528,6 @@ pub struct ViewportRenderer {
     /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
-    /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_screen_image_items: Vec<ScreenImageItem>,
     /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_decal_items: Vec<DecalItem>,
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
@@ -956,7 +946,6 @@ impl ViewportRenderer {
             decal_cache: std::collections::HashMap::new(),
             decal_deps_gate: crate::resources::resource_deps::DepsGate::default(),
             decal_exclude_items: Vec::new(),
-            screen_image_gpu_data: Vec::new(),
             label_gpu_data: None,
             overlay_shape_gpu_data: None,
             overlay_text_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_label_vbuf"),
@@ -997,7 +986,6 @@ impl ViewportRenderer {
             prepared_refraction_volumes: Vec::new(),
             scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
-            pick_screen_image_items: Vec::new(),
             pick_decal_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,

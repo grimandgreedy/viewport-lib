@@ -48,7 +48,6 @@ impl ViewportRenderer {
             .collect();
         self.pick_scatter_volume_items = frame.scene.scatter_volumes.clone();
         self.pick_volume_mesh_items = frame.scene.volume_meshes.clone();
-        self.pick_screen_image_items = frame.scene.screen_images.clone();
         self.pick_decal_items = frame.scene.decals.clone();
 
         // Refresh the revs that tell the surface pick BVH when to rebuild vs refit.
@@ -64,7 +63,6 @@ impl ViewportRenderer {
         self.pick_bvh_transform_rev = 0;
         self.pick_scatter_volume_items = Vec::new();
         self.pick_volume_mesh_items = Vec::new();
-        self.pick_screen_image_items = Vec::new();
         self.pick_decal_items = Vec::new();
     }
 }

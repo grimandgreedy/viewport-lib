@@ -1,7 +1,5 @@
 /// BVH-accelerated ray picking.
 pub mod bvh;
-/// CPU sphere-marching of implicit surfaces (signed-distance functions).
-pub mod implicit;
 /// CPU-side edge-walk isoline (contour line) extraction from triangulated surfaces.
 pub mod isoline;
 

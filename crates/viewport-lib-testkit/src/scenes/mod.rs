@@ -25,9 +25,8 @@ use viewport_lib::{
     BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GaussianSplatItem, GlyphItem,
     GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, LightingSettings, Material, MeshData,
     MeshId, MeshInstanceItem, PointCloudItem, PolylineItem, RibbonItem, ScatterSettings,
-    ScatterVolumeItem, SceneFrame, SceneRenderItem, ScreenImageItem, SpriteItem, StreamtubeItem,
-    TensorGlyphItem, TubeItem, ViewportGpuResources, VolumeItem, VolumeSurfaceSliceItem,
-    primitives,
+    ScatterVolumeItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, TensorGlyphItem,
+    TubeItem, ViewportGpuResources, VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
 
 /// Resources a scene's `build` function may upload into.
@@ -86,8 +85,6 @@ pub struct BuiltScene {
     pub image_slices: Vec<ImageSliceItem>,
     /// Mesh-sampled volume slice items.
     pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
-    /// Screen-space image items.
-    pub screen_images: Vec<ScreenImageItem>,
     /// GPU implicit-surface items.
     pub gpu_implicit: Vec<GpuImplicitItem>,
     /// GPU marching-cubes items.
@@ -197,7 +194,6 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     sf.gaussian_splats = scene.gaussian_splats.clone();
     sf.image_slices = scene.image_slices.clone();
     sf.volume_surface_slices = scene.volume_surface_slices.clone();
-    sf.screen_images = scene.screen_images.clone();
     sf.gpu_implicit = scene.gpu_implicit.clone();
     sf.gpu_mc_items = scene.gpu_mc_items.clone();
     sf.scatter_volumes = scene.scatter_volumes.clone();

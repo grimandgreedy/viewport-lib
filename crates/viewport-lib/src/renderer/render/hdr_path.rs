@@ -2104,7 +2104,7 @@ impl ViewportRenderer {
                             // Store even though depth_write_enabled=false on all
                             // sub-highlight pipelines: the values are unchanged, but
                             // StoreOp::Discard would invalidate the tile on Metal and
-                            // cause subsequent passes (tone_map, grid, screen images)
+                            // cause subsequent passes (tone_map, grid, overlays)
                             // to read 0.0, making the background go black.
                             store: crate::gpu::StoreOp::Store,
                         }),
@@ -3577,10 +3577,6 @@ impl ViewportRenderer {
         // -----------------------------------------------------------------------
         if !slot.selection_outlines.outline_object_buffers.is_empty()
             || !slot.selection_outlines.polyline_outline_indices.is_empty()
-            || !slot
-                .selection_outlines
-                .screen_rect_outline_buffers
-                .is_empty()
             || slot.selection_outlines.plugin_outline_present
         {
             // Prefer the HDR-format pipeline; fall back to LDR single-sample.
@@ -4181,54 +4177,6 @@ impl ViewportRenderer {
             gp_pass.set_pipeline(&self.resources.ground.pipeline);
             gp_pass.set_bind_group(0, &self.resources.ground.bind_group, &[]);
             gp_pass.draw(0..3, 0..1);
-        }
-
-        // Screen-space image overlay pass (HDR path).
-        // Must run before the editor overlay and axes passes because those
-        // discard hdr_depth_view (StoreOp::Discard). The DC pipeline compares
-        // per-pixel image depth against the scene depth buffer; if the buffer
-        // has been discarded, Metal returns zeros and all DC fragments fail.
-        // Plain overlay items (depth_compare: Always) are unaffected by depth,
-        // but ordering them here keeps depth-composite correct.
-        if !self.screen_image_gpu_data.is_empty() {
-            if let Some(overlay_pipeline) = &self.resources.screen_image.pipeline {
-                let slot_hdr = self.viewport_slots[vp_idx].hdr.as_ref().unwrap();
-                let dc_pipeline = self.resources.screen_image.dc_pipeline.as_ref();
-                let mut img_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                    #[cfg(any(wgpu29, wgpu30))]
-                    multiview_mask: None,
-                    label: Some("screen_image_pass"),
-                    color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
-                        view: output_view,
-                        resolve_target: None,
-                        ops: crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Load,
-                            store: crate::gpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: Some(crate::gpu::RenderPassDepthStencilAttachment {
-                        view: &slot_hdr.output_depth_view,
-                        depth_ops: Some(crate::gpu::Operations {
-                            load: crate::gpu::LoadOp::Load,
-                            store: crate::gpu::StoreOp::Discard,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                for gpu in &self.screen_image_gpu_data {
-                    if let (Some(dc_bg), Some(dc_pipe)) = (&gpu.depth_bind_group, dc_pipeline) {
-                        img_pass.set_pipeline(dc_pipe);
-                        img_pass.set_bind_group(0, dc_bg, &[]);
-                    } else {
-                        img_pass.set_pipeline(overlay_pipeline);
-                        img_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                    }
-                    img_pass.draw(0..6, 0..1);
-                }
-            }
         }
 
         // Editor overlay pass (HDR path): draw viewport/editor overlays on the

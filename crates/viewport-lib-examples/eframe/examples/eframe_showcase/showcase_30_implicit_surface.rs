@@ -1,30 +1,27 @@
 //! Showcase 30: Implicit Surface Rendering & Marching Cubes
 //!
-//! Demonstrates CPU sphere-marching alongside marching cubes, using
-//! the same three-sphere SDF scene rendered three ways:
+//! Demonstrates GPU ray-marched implicit surfaces alongside marching cubes,
+//! using the same three-sphere SDF scene rendered three ways:
 //!
-//! - **Merged blobs** : sphere-marching with smooth-min (smin), producing a
-//!   single organic fused shape. Colour is blended between the three spheres.
-//! - **Separate spheres** : sphere-marching with plain min(), so the three
-//!   spheres stay distinct with sharp junctions.
+//! - **GPU implicit** : the three spheres as `ImplicitPrimitive`s blended by
+//!   smooth-min and ray-marched on the GPU at full resolution.
 //! - **Marching cubes** : the same smin SDF sampled onto a 64^3 grid and
 //!   triangulated. Renders as a normal mesh; shows the tessellation faceting
-//!   that sphere-marching avoids.
+//!   that ray-marching avoids.
+//! - **GPU marching cubes** : a gyroid field triangulated by compute shaders,
+//!   with live isovalue scrubbing.
 //!
-//! For the two sphere-marching variants, two mesh spheres (blue=near,
-//! orange=far) show depth compositing: toggle "Depth composite" to see the
-//! implicit surface interact with scene geometry.
+//! Two mesh spheres (blue=near, orange=far) sit either side of the surface so
+//! it is clear how the implicit surface interacts with scene geometry.
 
-use crate::{App, MeshId};
 use crate::eframe::egui;
+use crate::{App, MeshId};
 use glam::Vec3;
 use viewport_lib as vpl;
 use vpl::{
     Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
     ImplicitPrimitive, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
-    VolumeData, extract_isosurface,
-    geometry::implicit::{ImplicitRenderOptions, march_implicit_surface_colour},
-    primitives,
+    VolumeData, extract_isosurface, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -34,10 +31,6 @@ use vpl::{
 /// Which rendering approach to use for the three-sphere SDF scene.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IsSdfVariant {
-    /// Sphere-marching with smooth-min: three spheres fuse into one blob.
-    Blobs,
-    /// Sphere-marching with hard min: three spheres stay distinct.
-    SeparateSpheres,
     /// Marching cubes triangulation of the same smin SDF field.
     MarchingCubes,
     /// GPU implicit surface: same three-blob SDF via descriptor-driven ray-march.
@@ -58,32 +51,6 @@ fn blob_sdf(p: Vec3) -> f32 {
     smin(smin(d0, d1, 0.9), d2, 0.9)
 }
 
-/// Per-point colour for the blob SDF (proximity-weighted blend of three hues).
-fn blob_colour(p: Vec3) -> [u8; 4] {
-    let d0 = (p - Vec3::new(-1.8, 0.0, 0.0)).length() - 1.3;
-    let d1 = (p - Vec3::new(1.8, 0.0, 0.0)).length() - 1.3;
-    let d2 = (p - Vec3::new(0.0, 1.8, 0.0)).length() - 1.3;
-
-    const C0: [f32; 3] = [0.75, 0.28, 0.05]; // red-orange
-    const C1: [f32; 3] = [0.10, 0.26, 0.68]; // blue
-    const C2: [f32; 3] = [0.10, 0.52, 0.18]; // green
-
-    // Bias by the smin blend radius so weights are non-zero on the isosurface
-    // (at d_i = 0, weight = 0.9 rather than 0, which would produce black).
-    let blend = 0.9_f32;
-    let w0 = (-d0 + blend).max(0.0);
-    let w1 = (-d1 + blend).max(0.0);
-    let w2 = (-d2 + blend).max(0.0);
-    let total = (w0 + w1 + w2).max(1e-5);
-
-    [
-        ((C0[0] * w0 + C1[0] * w1 + C2[0] * w2) / total * 255.0) as u8,
-        ((C0[1] * w0 + C1[1] * w1 + C2[1] * w2) / total * 255.0) as u8,
-        ((C0[2] * w0 + C1[2] * w1 + C2[2] * w2) / total * 255.0) as u8,
-        255,
-    ]
-}
-
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -92,8 +59,6 @@ pub(crate) struct IsState {
     pub built: bool,
     pub mesh_id: MeshId,
     pub mc_mesh_id: Option<MeshId>,
-    pub depth_composite: bool,
-    pub resolution_div: u32,
     pub sdf_variant: IsSdfVariant,
     pub gmc_volume_id: Option<vpl::McVolumeId>,
     pub gmc_isovalue: f32,
@@ -105,8 +70,6 @@ impl Default for IsState {
             built: false,
             mesh_id: MeshId::INVALID,
             mc_mesh_id: None,
-            depth_composite: true,
-            resolution_div: 2,
             sdf_variant: IsSdfVariant::GpuImplicit,
             gmc_volume_id: None,
             gmc_isovalue: 0.0,
@@ -227,16 +190,6 @@ pub(crate) fn controls_implicit(app: &mut App, ui: &mut egui::Ui) {
     );
     ui.radio_value(
         &mut app.is_state.sdf_variant,
-        IsSdfVariant::Blobs,
-        "CPU sphere-march : smin (merged blobs)",
-    );
-    ui.radio_value(
-        &mut app.is_state.sdf_variant,
-        IsSdfVariant::SeparateSpheres,
-        "CPU sphere-march : min (separate spheres)",
-    );
-    ui.radio_value(
-        &mut app.is_state.sdf_variant,
         IsSdfVariant::MarchingCubes,
         "Marching cubes : same smin field (CPU)",
     );
@@ -252,23 +205,6 @@ pub(crate) fn controls_implicit(app: &mut App, ui: &mut egui::Ui) {
         ui.add(egui::Slider::new(&mut app.is_state.gmc_isovalue, -1.5_f32..=1.5).text("isovalue"));
         ui.separator();
     }
-
-    let is_march = app.is_state.sdf_variant != IsSdfVariant::MarchingCubes
-        && app.is_state.sdf_variant != IsSdfVariant::GpuImplicit
-        && app.is_state.sdf_variant != IsSdfVariant::GpuMarchingCubes;
-    ui.add_enabled_ui(is_march, |ui| {
-        ui.label("Depth compositing (sphere-march only):");
-        ui.checkbox(
-            &mut app.is_state.depth_composite,
-            "Depth-composite against scene",
-        );
-        ui.separator();
-        ui.label("Render resolution divisor:");
-        ui.add(
-            egui::Slider::new(&mut app.is_state.resolution_div, 1_u32..=4)
-                .text("1/N  (lower = faster)"),
-        );
-    });
 
     ui.separator();
     ui.label("Blue sphere  : in front of the surface.");
@@ -337,72 +273,6 @@ impl App {
         items
     }
 
-    /// Sphere-march the current SDF variant and push the result into `fd`.
-    ///
-    /// No-ops when `MarchingCubes` or `GpuImplicit` is active.
-    /// Called every frame so the image tracks camera movement.
-    pub(crate) fn push_implicit_screen_image(
-        &self,
-        fd: &mut vpl::FrameData,
-        viewport_w: u32,
-        viewport_h: u32,
-    ) {
-        if !self.is_state.built
-            || self.is_state.sdf_variant == IsSdfVariant::MarchingCubes
-            || self.is_state.sdf_variant == IsSdfVariant::GpuImplicit
-            || self.is_state.sdf_variant == IsSdfVariant::GpuMarchingCubes
-        {
-            return;
-        }
-
-        let div = self.is_state.resolution_div.max(1);
-        let w = (viewport_w / div).max(1);
-        let h = (viewport_h / div).max(1);
-
-        let opts = ImplicitRenderOptions {
-            width: w,
-            height: h,
-            max_steps: 128,
-            step_scale: 0.85,
-            hit_threshold: 5e-4,
-            max_distance: self.camera.zfar,
-            ..Default::default()
-        };
-
-        let cam = &self.camera;
-        let mut img = match self.is_state.sdf_variant {
-            IsSdfVariant::Blobs => {
-                march_implicit_surface_colour(cam, &opts, |p| (blob_sdf(p), blob_colour(p)))
-            }
-            IsSdfVariant::SeparateSpheres => march_implicit_surface_colour(cam, &opts, |p| {
-                let d0 = (p - Vec3::new(-1.8, 0.0, 0.0)).length() - 1.3;
-                let d1 = (p - Vec3::new(1.8, 0.0, 0.0)).length() - 1.3;
-                let d2 = (p - Vec3::new(0.0, 1.8, 0.0)).length() - 1.3;
-                let d = d0.min(d1).min(d2);
-                // Each sphere keeps its own flat colour.
-                let colour = if d0 <= d1 && d0 <= d2 {
-                    [191u8, 71, 13, 255] // red-orange
-                } else if d1 <= d2 {
-                    [26, 66, 173, 255] // blue
-                } else {
-                    [26, 133, 46, 255] // green
-                };
-                (d, colour)
-            }),
-            IsSdfVariant::MarchingCubes
-            | IsSdfVariant::GpuImplicit
-            | IsSdfVariant::GpuMarchingCubes => unreachable!(),
-        };
-
-        img.scale = div as f32;
-
-        if !self.is_state.depth_composite {
-            img.depth = None;
-        }
-
-        fd.scene.screen_images.push(img);
-    }
-
     /// Submit a GPU implicit surface item for the three-blob scene.
     ///
     /// Only active when `is_sdf_variant == GpuImplicit`. The three sphere
@@ -413,7 +283,7 @@ impl App {
             return;
         }
 
-        // Centers and radius matching blob_sdf / blob_colour.
+        // Centers and radius matching blob_sdf.
         const CENTERS: [[f32; 3]; 3] = [[-1.8, 0.0, 0.0], [1.8, 0.0, 0.0], [0.0, 1.8, 0.0]];
         const COLOURS: [[f32; 4]; 3] = [
             [0.75, 0.28, 0.05, 1.0], // red-orange
@@ -542,12 +412,12 @@ pub(crate) fn scene(
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
         (
-                        app.implicit_scene_items(),
-                        None,
-                        crate::App::implicit_lighting(),
-                        app.mode_gen,
-                        0,
-                    )
+            app.implicit_scene_items(),
+            None,
+            crate::App::implicit_lighting(),
+            app.mode_gen,
+            0,
+        )
     };
     crate::SceneContents {
         items,
@@ -565,13 +435,8 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    ctx: &crate::FrameCtx,
-) {
-    // Implicit surface (Showcase 30) : CPU sphere-march, GPU implicit, or GPU MC  :  re-submitted every frame.
-    app.push_implicit_screen_image(&mut *fd, ctx.w as u32, ctx.h as u32);
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
+    // Implicit surface (Showcase 30) : GPU implicit or GPU MC  :  re-submitted every frame.
     app.push_gpu_implicit(&mut *fd);
     app.push_gpu_mc_job(&mut *fd);
 }
@@ -583,30 +448,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -647,13 +504,23 @@ impl crate::Showcase for ScImplicitSurface {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -662,7 +529,12 @@ impl crate::Showcase for ScImplicitSurface {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_implicit(app, ui)
     }
 }

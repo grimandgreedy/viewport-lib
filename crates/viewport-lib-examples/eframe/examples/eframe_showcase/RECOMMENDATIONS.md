@@ -47,8 +47,6 @@ Once split, delete 32. Net: -1 menu entry, three richer showcases.
 
 ### Weaker candidates (worth thinking about but less obvious)
 
-**29. Depth-Composited Images.** Niche but cleanly demonstrates `ScreenImageItem::depth`. It's small and self-contained. Keep but accept it's a footnote.
-
 **44. Debug Draw.** 327 lines, demonstrates `DebugDraw` and physics contact-event reading. Could fold into 43 (Scene Runtime) as a third demo since both use `PhysicsLitePlugin`. Smaller win than the others above.
 
 ---
@@ -180,7 +178,6 @@ This is what I'd put in the sidebar dropdown if the goal is "a new user can find
 
 **Annotation & overlay**
 9. Annotations  *(fold into 34)*
-29. Depth-Composited Images
 34. Labels
 35. Overlay Composition
 

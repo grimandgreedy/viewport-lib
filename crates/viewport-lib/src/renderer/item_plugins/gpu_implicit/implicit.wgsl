@@ -65,7 +65,7 @@ struct ImplicitUniform {
 @group(1) @binding(0) var<uniform> u: ImplicitUniform;
 
 // ---------------------------------------------------------------------------
-// Vertex stage : full-screen quad (identical to screen_image.wgsl)
+// Vertex stage : full-screen quad.
 // ---------------------------------------------------------------------------
 
 struct VertexOutput {

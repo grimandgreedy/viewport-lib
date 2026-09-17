@@ -12,9 +12,9 @@ use viewport_lib::{
     Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, GaussianSplatData,
     GaussianSplatItem, GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, ImplicitBlendMode,
     ImplicitPrimitive, Material, MeshInstanceItem, PickId, RibbonItem, ScatterQuality,
-    ScatterSettings, ScatterVolume, ScatterVolumeItem, ScreenImageItem, ShDegree, SliceAxis,
-    SpriteBlend, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData,
-    TubeItem, VolumeData, VolumeItem, VolumeSurfaceSliceItem, primitives,
+    ScatterSettings, ScatterVolume, ScatterVolumeItem, ShDegree, SliceAxis, SpriteBlend,
+    SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData, TubeItem, VolumeData,
+    VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedScene, rigs, standard_cameras};
@@ -96,11 +96,6 @@ pub fn scenes() -> Vec<NamedScene> {
             name: "volume_surface_slice",
             cameras: standard_cameras(Vec3::ZERO, 5.0),
             build: build_volume_surface_slice,
-        },
-        NamedScene {
-            name: "screen_image",
-            cameras: standard_cameras(Vec3::ZERO, 6.0),
-            build: build_screen_image,
         },
         NamedScene {
             name: "gpu_implicit",
@@ -714,49 +709,6 @@ fn build_volume_surface_slice(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     ss.settings.pick_id = PickId(1609);
     BuiltScene {
         volume_surface_slices: vec![ss],
-        lighting: rigs::from_above(),
-        ..Default::default()
-    }
-}
-
-fn build_screen_image(ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // A gradient panel centred on screen over a mesh, plus a corner-anchored
-    // panel, so anchoring and compositing over geometry are both in the image.
-    let sphere = ctx
-        .res
-        .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
-        .expect("sphere upload");
-    let mut item = viewport_lib::SceneRenderItem::default();
-    item.mesh_id = sphere;
-    item.material = Material::pbr([0.4, 0.55, 0.7], 0.2, 0.5);
-
-    let (w, h) = (64u32, 32u32);
-    let gradient: Vec<[u8; 4]> = (0..w * h)
-        .map(|i| {
-            let t = (i % w) as f32 / (w - 1) as f32;
-            [(255.0 * t) as u8, 60, (255.0 * (1.0 - t)) as u8, 220]
-        })
-        .collect();
-    let mut centre = ScreenImageItem::default();
-    centre.pixels = gradient.clone();
-    centre.width = w;
-    centre.height = h;
-    centre.anchor_x = AnchorX::Middle;
-    centre.anchor_y = AnchorY::Middle;
-    centre.scale = 2.0;
-    centre.alpha = 1.0;
-    centre.settings.pick_id = PickId(1610);
-
-    let mut corner = ScreenImageItem::default();
-    corner.pixels = gradient;
-    corner.width = w;
-    corner.height = h;
-    corner.scale = 1.0;
-    corner.alpha = 0.8;
-
-    BuiltScene {
-        items: vec![item],
-        screen_images: vec![centre, corner],
         lighting: rigs::from_above(),
         ..Default::default()
     }

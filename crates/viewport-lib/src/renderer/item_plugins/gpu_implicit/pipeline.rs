@@ -61,7 +61,7 @@ impl GpuImplicitGpu {
             &resources.binds.camera_bgl,
             &bgl,
         );
-        // depth_write is on so subsequent screen-image depth-composite items test against it.
+        // depth_write is on so later depth-tested passes occlude against the surface.
         let pipeline = crate::resources::builders::build_dual_pipeline(
             device,
             &crate::resources::builders::DualPipelineDesc {

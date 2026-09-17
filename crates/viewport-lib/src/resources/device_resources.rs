@@ -264,24 +264,6 @@ pub(crate) struct PickResources {
     pub(crate) edge_pipeline: Option<crate::gpu::RenderPipeline>,
 }
 
-/// Screen-space image quad pipelines (plain + depth-composite) and the rect
-/// outline mask pipeline. Lazily built.
-#[derive(Default)]
-pub(crate) struct ScreenImageResources {
-    /// Render pipeline for screen-space image quads.
-    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 0 layout (uniform + texture + sampler).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Depth-composite pipeline (LessEqual depth, per-pixel image depth).
-    pub(crate) dc_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 0 layout for the dc pipeline (uniform + colour + sampler + depth).
-    pub(crate) dc_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Outline mask pipeline for screen-space rect images. None until first selected.
-    pub(crate) rect_outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Layout for the rect outline mask pipeline (NdcRectUniform).
-    pub(crate) rect_outline_bgl: Option<crate::gpu::BindGroupLayout>,
-}
-
 /// Sub-object highlight pipelines (fill / edge / sprite, HDR + LDR) and layout.
 /// Lazily built the first frame a sub-selection is present.
 #[derive(Default)]
@@ -685,10 +667,6 @@ pub struct DeviceResources {
     /// consumer's own GPU compute on the shared device).
     pub(crate) external_instances:
         crate::resources::gpu::external_instances::ExternalInstancesResources,
-
-    // --- Screen-space image overlays (lazily created) ---
-    /// Screen-space image pipelines (plain + depth-composite) and rect outline mask.
-    pub(crate) screen_image: ScreenImageResources,
 
     // --- GPU object-ID picking (lazily created) ---
     /// Object-ID pick pipeline and its bind group layouts.

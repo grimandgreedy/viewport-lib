@@ -210,25 +210,6 @@ impl ViewportRenderer {
             self.dispatch_plugin_paint(&mut render_pass, frame, false);
             // Outline composite after all scene content.
             emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
-            // Screen-space image overlays.
-            // Regular items drawn with depth_compare: Always (always on top).
-            // Depth-composite items drawn with depth_compare: LessEqual (occluded by
-            // scene geometry whose depth was already written to the depth attachment).
-            if !self.screen_image_gpu_data.is_empty() {
-                if let Some(overlay_pipeline) = &self.resources.screen_image.pipeline {
-                    let dc_pipeline = self.resources.screen_image.dc_pipeline.as_ref();
-                    for gpu in &self.screen_image_gpu_data {
-                        if let (Some(dc_bg), Some(dc_pipe)) = (&gpu.depth_bind_group, dc_pipeline) {
-                            render_pass.set_pipeline(dc_pipe);
-                            render_pass.set_bind_group(0, dc_bg, &[]);
-                        } else {
-                            render_pass.set_pipeline(overlay_pipeline);
-                            render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                        }
-                        render_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.
             if !needs_blur {

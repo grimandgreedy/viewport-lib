@@ -305,8 +305,6 @@ pub struct SceneFrame {
     pub streamtube_items: Vec<StreamtubeItem>,
     /// References to pre-uploaded streamtubes.
     pub streamtube_refs: Vec<StreamtubeRefItem>,
-    /// Screen-space image overlay items to render this frame.
-    pub screen_images: Vec<ScreenImageItem>,
     /// GPU implicit surface items to render this frame.
     pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
     /// GPU marching cubes items to dispatch this frame.
@@ -405,7 +403,6 @@ impl Default for SceneFrame {
             isolines: Vec::new(),
             streamtube_items: Vec::new(),
             streamtube_refs: Vec::new(),
-            screen_images: Vec::new(),
             gpu_implicit: Vec::new(),
             gpu_mc_items: Vec::new(),
             compute_filter_items: Vec::new(),

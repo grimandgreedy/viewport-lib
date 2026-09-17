@@ -17,80 +17,6 @@ enum PickItemType {
     Surface,
 }
 
-/// Test the screen-space overlay images against a single click position and
-/// return the topmost hit's pick id, mirroring the CPU pick's screen-image
-/// section (`point.rs`, section 10). Screen images are drawn on top of all 3D
-/// geometry with no world-space representation, so this is a plain rect test
-/// rather than anything the render-based id pass could answer; both the GPU
-/// object pick and the GPU rect pick call this instead of drawing a pass for
-/// them.
-fn screen_image_hit_at(
-    items: &[crate::ScreenImageItem],
-    viewport_size: glam::Vec2,
-    click_pos: glam::Vec2,
-) -> Option<u64> {
-    for item in items {
-        if item.settings.pick_id == crate::renderer::PickId::NONE
-            || item.width == 0
-            || item.height == 0
-        {
-            continue;
-        }
-        let img_w = item.width as f32 * item.scale;
-        let img_h = item.height as f32 * item.scale;
-        let [sx, sy] = crate::renderer::types::viewport_anchored_top_left(
-            item.anchor_x,
-            item.anchor_y,
-            [img_w, img_h],
-            [viewport_size.x, viewport_size.y],
-        );
-        if click_pos.x >= sx
-            && click_pos.x <= sx + img_w
-            && click_pos.y >= sy
-            && click_pos.y <= sy + img_h
-        {
-            return Some(item.settings.pick_id.0);
-        }
-    }
-    None
-}
-
-/// Collect the pick ids of every screen-space overlay image whose screen rect
-/// overlaps the query rect, mirroring [`screen_image_hit_at`] but for a rect
-/// query instead of a point.
-fn screen_image_hits_in_rect(
-    items: &[crate::ScreenImageItem],
-    viewport_size: glam::Vec2,
-    rect_min: glam::Vec2,
-    rect_max: glam::Vec2,
-) -> Vec<u64> {
-    let mut hits = Vec::new();
-    for item in items {
-        if item.settings.pick_id == crate::renderer::PickId::NONE
-            || item.width == 0
-            || item.height == 0
-        {
-            continue;
-        }
-        let img_w = item.width as f32 * item.scale;
-        let img_h = item.height as f32 * item.scale;
-        let [sx, sy] = crate::renderer::types::viewport_anchored_top_left(
-            item.anchor_x,
-            item.anchor_y,
-            [img_w, img_h],
-            [viewport_size.x, viewport_size.y],
-        );
-        let overlaps = rect_min.x <= sx + img_w
-            && rect_max.x >= sx
-            && rect_min.y <= sy + img_h
-            && rect_max.y >= sy;
-        if overlaps {
-            hits.push(item.settings.pick_id.0);
-        }
-    }
-    hits
-}
-
 /// Snap priority for a resolved sub-object, higher wins. A point-like feature
 /// (surface vertex, curve / cloud node, glyph instance, splat) snaps ahead of a
 /// one-dimensional edge / segment, which snaps ahead of a surface face or plain
@@ -520,33 +446,6 @@ impl ViewportRenderer {
             && self.frame_counter % 4 != 0
         {
             return None;
-        }
-
-        // Screen-space overlay images have no world-space geometry to draw into
-        // the id pass, and they always render on top of the 3D scene, so a hit
-        // here takes priority over anything the render-based pass would find
-        // (matching the CPU backend, where these carry toi = 0.0 : see
-        // `point.rs` section 10). OBJECT-only, the same as the CPU backend.
-        let viewport_size = glam::Vec2::from(frame.camera.viewport_size);
-        if mask.intersects(PickMask::OBJECT) {
-            if let Some(id) = screen_image_hit_at(&frame.scene.screen_images, viewport_size, cursor)
-            {
-                let view_proj_inv = frame.camera.render_camera.view_proj().inverse();
-                let (ray_origin, ray_dir) = crate::interaction::query::picking::screen_to_ray(
-                    cursor,
-                    viewport_size,
-                    view_proj_inv,
-                );
-                #[allow(deprecated)]
-                return Some(PickHit {
-                    id,
-                    sub_object: None,
-                    world_pos: ray_origin + ray_dir * 0.001,
-                    normal: -ray_dir,
-                    scalar_value: None,
-                    sub_object_world_pos: None,
-                });
-            }
         }
 
         let pending = match self.pick_scene_gpu_begin(device, queue, cursor, frame, mask) {
@@ -1304,23 +1203,8 @@ impl ViewportRenderer {
     ) -> crate::renderer::picking::PickRectResult {
         let wants_object = mask.intersects(PickMask::OBJECT);
 
-        // Screen-space overlay images have no world-space geometry, so they are
-        // tested directly against the logical-space query rect rather than
-        // drawn into the id pass; see `screen_image_hits_in_rect`. OBJECT-only,
-        // matching the CPU backend and the point path.
-        let viewport_size_logical = glam::Vec2::from(frame.camera.viewport_size);
         let logical_lo = glam::Vec2::new(rect_min.x.min(rect_max.x), rect_min.y.min(rect_max.y));
         let logical_hi = glam::Vec2::new(rect_min.x.max(rect_max.x), rect_min.y.max(rect_max.y));
-        let mut screen_image_objects = if wants_object {
-            screen_image_hits_in_rect(
-                &frame.scene.screen_images,
-                viewport_size_logical,
-                logical_lo,
-                logical_hi,
-            )
-        } else {
-            Vec::new()
-        };
 
         let scene_items: &[SceneRenderItem] = match &frame.scene.surfaces {
             SurfaceSubmission::Flat(items) => items.as_ref(),
@@ -1331,7 +1215,7 @@ impl ViewportRenderer {
         let vp_h = (frame.camera.viewport_size[1] * ppp).round() as u32;
         if vp_w == 0 || vp_h == 0 {
             return crate::renderer::picking::PickRectResult {
-                objects: screen_image_objects,
+                objects: Vec::new(),
                 elements: Vec::new(),
             };
         }
@@ -1346,7 +1230,7 @@ impl ViewportRenderer {
         let ry_end = (hi.y.ceil().max(0.0) as u32).min(vp_h);
         if rx_end <= rx || ry_end <= ry {
             return crate::renderer::picking::PickRectResult {
-                objects: screen_image_objects,
+                objects: Vec::new(),
                 elements: Vec::new(),
             };
         }
@@ -1357,7 +1241,7 @@ impl ViewportRenderer {
         let draw_set = self.build_pick_draws(device, frame, mask, scene_items, &flags);
         if draw_set.is_empty() {
             return crate::renderer::picking::PickRectResult {
-                objects: screen_image_objects,
+                objects: Vec::new(),
                 elements: Vec::new(),
             };
         }
@@ -1472,9 +1356,8 @@ impl ViewportRenderer {
             })
             .unwrap();
 
-        let mut seen: std::collections::HashSet<u32> =
-            screen_image_objects.iter().map(|&id| id as u32).collect();
-        let mut objects = std::mem::take(&mut screen_image_objects);
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut objects: Vec<u64> = Vec::new();
         let mut elements: Vec<(u64, SubObjectRef)> = Vec::new();
         let mut seen_elem: std::collections::HashSet<(u64, SubObjectRef)> =
             std::collections::HashSet::new();

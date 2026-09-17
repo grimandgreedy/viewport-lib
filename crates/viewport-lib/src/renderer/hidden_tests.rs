@@ -14,8 +14,8 @@
 use super::types::FrameData;
 use super::{
     CameraFrame, GlyphItem, LightingSettings, PointCloudItem, PolylineItem, RenderCamera,
-    RibbonItem, SceneFrame, ScreenImageItem, StreamtubeItem, SurfaceSubmission, TensorGlyphItem,
-    TubeItem, ViewportRenderer,
+    RibbonItem, SceneFrame, StreamtubeItem, SurfaceSubmission, TensorGlyphItem, TubeItem,
+    ViewportRenderer,
 };
 use crate::camera::Camera;
 use crate::plugin_api::ItemTypePlugin as _;
@@ -425,31 +425,6 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             plugin.drawn_count(),
             1,
             "gpu_implicit: hidden item must not produce gpu data"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // Screen image
-    // -----------------------------------------------------------------
-    {
-        let mut fd = empty_frame();
-        let mut vis = ScreenImageItem::default();
-        vis.width = 2;
-        vis.height = 2;
-        vis.pixels = vec![[255, 255, 255, 255]; 4];
-        vis.settings = visible();
-        let mut hid = ScreenImageItem::default();
-        hid.width = 2;
-        hid.height = 2;
-        hid.pixels = vec![[255, 255, 255, 255]; 4];
-        hid.settings = hidden();
-        fd.scene.screen_images.push(vis);
-        fd.scene.screen_images.push(hid);
-        let _ = renderer.prepare_callback(&device, &queue, &fd);
-        assert_eq!(
-            renderer.screen_image_gpu_data.len(),
-            1,
-            "screen_image: hidden item must not produce gpu data"
         );
     }
 }

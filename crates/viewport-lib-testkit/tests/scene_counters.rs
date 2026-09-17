@@ -81,10 +81,8 @@ fn expected(name: &str) -> Option<Expected> {
         "gpu_implicit" => e(0, 0, 0, 0, 0, 0),
         "gpu_marching_cubes" => e(0, 0, 0, 0, 0, 0),
         "mesh_instances" => e(0, 0, 0, 0, 0, 0),
-        // These item-type scenes include mesh geometry (a backdrop for the
-        // screen image; ground and receivers for scatter and decals), so the
-        // mesh counters are live for them.
-        "screen_image" => e(1, 1, 1, 0, 0, 960),
+        // These item-type scenes include mesh geometry (ground and receivers
+        // for scatter and decals), so the mesh counters are live for them.
         "scatter_volume" => e(2, 2, 2, 2, 0, 972),
         "decals" => e(2, 2, 2, 2, 0, 24),
         // The decal scene again with supersampling on: same content and same

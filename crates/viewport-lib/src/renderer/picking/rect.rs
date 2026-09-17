@@ -252,32 +252,6 @@ impl ViewportRenderer {
         let wants_instance = mask.intersects(PickMask::INSTANCE);
         if wants_instance || wants_object {}
 
-        // 9. Screen image object rect picks (OBJECT only).
-        if wants_object {
-            // Screen image: check if the image's screen rect overlaps the pick rect.
-            for item in &self.pick_screen_image_items {
-                if item.settings.pick_id == PickId::NONE || item.width == 0 || item.height == 0 {
-                    continue;
-                }
-                let img_w = item.width as f32 * item.scale;
-                let img_h = item.height as f32 * item.scale;
-                let [sx, sy] = crate::renderer::types::viewport_anchored_top_left(
-                    item.anchor_x,
-                    item.anchor_y,
-                    [img_w, img_h],
-                    [viewport_size.x, viewport_size.y],
-                );
-                // Overlap: image rect [sx, sx+img_w] x [sy, sy+img_h] vs pick rect.
-                let overlap = sx <= rect_max.x
-                    && sx + img_w >= rect_min.x
-                    && sy <= rect_max.y
-                    && sy + img_h >= rect_min.y;
-                if overlap {
-                    result.objects.push(item.settings.pick_id.0);
-                }
-            }
-        }
-
         // 13. Decal rect picks (OBJECT only): project the decal projection box
         // (unit cube [-0.5, 0.5]^3 mapped by `transform`) and test its corners
         // and edges against the selection rect. Mirrors the ray-versus-box test

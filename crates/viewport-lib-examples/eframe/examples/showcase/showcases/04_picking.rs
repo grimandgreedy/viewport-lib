@@ -2,8 +2,8 @@
 //! face-like), then click or drag a box to select. The scene holds one of every
 //! pickable item type (meshes, point cloud, glyphs, polyline, volume, gaussian
 //! splats, a volume mesh, tensor glyphs, sprites, streamtube / tube / ribbon,
-//! a volume surface slice, a screen image, a GPU implicit surface, a GPU
-//! marching-cubes surface, and a decal). Every one highlights at the object
+//! a volume surface slice, a GPU implicit surface, a GPU marching-cubes
+//! surface, and a decal). Every one highlights at the object
 //! level (outline / selected tint) and, where it has sub-elements, at the
 //! sub-object level (face fill, vertex/point/instance sprites, segment/strip,
 //! cell, voxel).
@@ -19,14 +19,14 @@ use viewport_lib as vpl;
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    AnchorX, AnchorY, BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem,
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
-    Material, McVolumeId, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId,
-    PickMask, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, ScreenImageItem,
-    ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef,
-    TensorGlyphItem, TextureId, TubeItem, VolumeData, VolumeId, VolumeItem, VolumeMeshData,
-    VolumeMeshItem, VolumeSelectionInfo, VolumeSurfaceSliceItem, primitives,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GaussianSplatData,
+    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
+    GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings, Material, McVolumeId,
+    MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask, PointCloudItem,
+    PolylineItem, PolylineSelectionInfo, RibbonItem, ShDegree, SpriteItem, StreamtubeItem,
+    SubObjectRef, SubSelection, SubSelectionRef, TensorGlyphItem, TextureId, TubeItem, VolumeData,
+    VolumeId, VolumeItem, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo,
+    VolumeSurfaceSliceItem, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -45,7 +45,6 @@ const STREAMTUBE: u64 = 1009;
 const TUBE: u64 = 1010;
 const RIBBON: u64 = 1011;
 const SLICE: u64 = 1012;
-const SCREEN: u64 = 1013;
 const IMPLICIT: u64 = 1014;
 const MC: u64 = 1015;
 const DECAL: u64 = 1016;
@@ -102,7 +101,6 @@ pub struct PickingShowcase {
     slice_mesh_id: Option<MeshId>,
     mc_id: Option<McVolumeId>,
     mc_data: Option<Arc<VolumeData>>,
-    screen_pixels: Vec<[u8; 4]>,
     decal_tex: Option<TextureId>,
     decal_transform: Mat4,
 
@@ -152,7 +150,6 @@ impl PickingShowcase {
             slice_mesh_id: None,
             mc_id: None,
             mc_data: None,
-            screen_pixels: Vec::new(),
             decal_tex: None,
             decal_transform: Mat4::IDENTITY,
             mesh_lookup: HashMap::new(),
@@ -308,21 +305,6 @@ impl PickingShowcase {
             item.settings.selected = sel(SLICE);
             item.settings.unlit = false;
             fd.scene.volume_surface_slices.push(item);
-        }
-
-        // Screen image: a checkerboard pinned to the top-right corner.
-        if !self.screen_pixels.is_empty() {
-            let mut img = ScreenImageItem::default();
-            img.pixels = self.screen_pixels.clone();
-            img.width = 48;
-            img.height = 48;
-            img.anchor_x = AnchorX::Right;
-            img.anchor_y = AnchorY::Top;
-            img.scale = 2.0;
-            img.settings.pick_id = PickId(SCREEN);
-            img.settings.selected = sel(SCREEN);
-            img.settings.unlit = false;
-            fd.scene.screen_images.push(img);
         }
 
         // GPU implicit: two smooth-blended spheres.
@@ -651,10 +633,6 @@ impl Showcase for PickingShowcase {
                 self.labels.insert(MC, ("Marching cubes".into(), None));
             }
         }
-
-        // Screen image: a small checkerboard sprite in the corner.
-        self.screen_pixels = checkerboard(48, 48);
-        self.labels.insert(SCREEN, ("Screen image".into(), None));
 
         // GPU implicit surface (blended spheres).
         self.labels.insert(IMPLICIT, ("GPU implicit".into(), None));
@@ -1159,20 +1137,6 @@ fn capsule_volume_mesh(centre: Vec3) -> VolumeMeshData {
     data.cells = cells;
     data.cell_scalars.insert("scalar".to_string(), scalars);
     data
-}
-
-/// An RGBA checkerboard for the screen-image item.
-fn checkerboard(w: u32, h: u32) -> Vec<[u8; 4]> {
-    (0..w * h)
-        .map(|i| {
-            let (x, y) = (i % w, i / w);
-            if (x / 6 + y / 6) % 2 == 0 {
-                [255, 255, 255, 220]
-            } else {
-                [30, 30, 30, 220]
-            }
-        })
-        .collect()
 }
 
 /// A target-sticker texture (concentric red / white rings on transparent) for

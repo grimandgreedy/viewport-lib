@@ -30,7 +30,6 @@ fn every_scene_builds_and_renders() {
             || !built.gaussian_splats.is_empty()
             || !built.image_slices.is_empty()
             || !built.volume_surface_slices.is_empty()
-            || !built.screen_images.is_empty()
             || !built.gpu_implicit.is_empty()
             || !built.gpu_mc_items.is_empty()
             || !built.scatter_volumes.is_empty()

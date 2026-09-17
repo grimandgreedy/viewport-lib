@@ -113,9 +113,9 @@ pub(crate) use self::types::{
     ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
     OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ScreenRectOutlineBuffers, ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform,
-    SpriteGpuData, SsaoUniform, StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData,
-    ToneMapUniform, ViewportCullState, ViewportHdrState,
+    ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform, SpriteGpuData, SsaoUniform,
+    StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData, ToneMapUniform, ViewportCullState,
+    ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
@@ -129,8 +129,8 @@ pub use self::types::{
 // `plugin_api::shared_wgsl` instead.
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
-    OverlayVertex, PointCloudGpuData, PolylineGpuData, ScreenImageGpuData, SingleLightUniform,
-    Vertex, VertexBufferLayoutExt,
+    OverlayVertex, PointCloudGpuData, PolylineGpuData, SingleLightUniform, Vertex,
+    VertexBufferLayoutExt,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;

@@ -430,70 +430,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Screen image outlines: compute NDC bounds and create outline buffers.
-        let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> =
-            Vec::new();
-        if frame.interaction.outline_selected
-            && frame
-                .scene
-                .screen_images
-                .iter()
-                .any(|i| i.settings.selected)
-        {
-            self.resources
-                .ensure_screen_rect_outline_mask_pipeline(device);
-            let [vp_w, vp_h] = frame.camera.viewport_size;
-            if let Some(bgl) = self.resources.screen_image.rect_outline_bgl.as_ref() {
-                for item in &frame.scene.screen_images {
-                    if item.settings.hidden
-                        || !item.settings.selected
-                        || item.width == 0
-                        || item.height == 0
-                    {
-                        continue;
-                    }
-                    let [ndc_min_x, ndc_max_x, ndc_min_y, ndc_max_y] =
-                        crate::renderer::types::viewport_anchored_ndc(
-                            item.anchor_x,
-                            item.anchor_y,
-                            [
-                                item.width as f32 * item.scale,
-                                item.height as f32 * item.scale,
-                            ],
-                            [vp_w, vp_h],
-                        );
-                    #[repr(C)]
-                    #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-                    struct NdcRectUniform {
-                        ndc_min: [f32; 2],
-                        ndc_max: [f32; 2],
-                    }
-                    let uniform_data = NdcRectUniform {
-                        ndc_min: [ndc_min_x, ndc_min_y],
-                        ndc_max: [ndc_max_x, ndc_max_y],
-                    };
-                    let uniform_buf =
-                        device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                            label: Some("screen_rect_outline_uniform"),
-                            contents: bytemuck::bytes_of(&uniform_data),
-                            usage: crate::gpu::BufferUsages::UNIFORM,
-                        });
-                    let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                        label: Some("screen_rect_outline_bg"),
-                        layout: bgl,
-                        entries: &[crate::gpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buf.as_entire_binding(),
-                        }],
-                    });
-                    screen_rect_outline_buffers.push(crate::resources::ScreenRectOutlineBuffers {
-                        _uniform_buf: uniform_buf,
-                        bind_group: bg,
-                    });
-                }
-            }
-        }
-
         // X-ray buffers for selected objects.
         let mut xray_object_buffers: Vec<(
             crate::resources::mesh::mesh_store::MeshId,
@@ -605,7 +541,6 @@ impl ViewportRenderer {
         {
             let slot = &mut self.viewport_slots[vp_idx];
             slot.selection_outlines.outline_object_buffers = outline_object_buffers;
-            slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
             slot.cap_buffers = cap_buffers;
@@ -645,10 +580,6 @@ impl ViewportRenderer {
                 .selection_outlines
                 .outline_object_buffers
                 .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .screen_rect_outline_buffers
-                    .is_empty()
                 || plugin_outline)
         {
             let ppp = frame.camera.pixels_per_point;
@@ -689,8 +620,6 @@ impl ViewportRenderer {
             let slot_ref = &self.viewport_slots[vp_idx];
             let outlines_ptr = &slot_ref.selection_outlines.outline_object_buffers
                 as *const Vec<OutlineObjectBuffers>;
-            let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
-                as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const crate::gpu::TextureView;
@@ -699,18 +628,9 @@ impl ViewportRenderer {
             let edge_bg_ptr = &slot_hdr.outline_edge_bind_group as *const crate::gpu::BindGroup;
             // SAFETY: slot fields remain valid for the duration of this function;
             // no other code modifies these fields here.
-            let (
-                outlines,
-                screen_rect_outlines,
-                camera_bg,
-                mask_view,
-                colour_view,
-                depth_view,
-                edge_bg,
-            ) = unsafe {
+            let (outlines, camera_bg, mask_view, colour_view, depth_view, edge_bg) = unsafe {
                 (
                     &*outlines_ptr,
-                    &*screen_rect_outlines_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*colour_view_ptr,
@@ -798,38 +718,6 @@ impl ViewportRenderer {
                     };
                     pass.set_index_buffer(index_slice, crate::gpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..index_count, 0, 0..1);
-                }
-
-                // Draw screen-space rect outlines for screen images.
-                if !screen_rect_outlines.is_empty() {
-                    if let Some(pipeline) = self
-                        .resources
-                        .screen_image
-                        .rect_outline_mask_pipeline
-                        .as_ref()
-                    {
-                        pass.set_pipeline(pipeline);
-                        for sr in screen_rect_outlines {
-                            pass.set_bind_group(0, &sr.bind_group, &[]);
-                            pass.draw(0..6, 0..1);
-                        }
-                    }
-                }
-
-                // Draw screen-space rect outlines for screen images.
-                if !screen_rect_outlines.is_empty() {
-                    if let Some(pipeline) = self
-                        .resources
-                        .screen_image
-                        .rect_outline_mask_pipeline
-                        .as_ref()
-                    {
-                        pass.set_pipeline(pipeline);
-                        for sr in screen_rect_outlines {
-                            pass.set_bind_group(0, &sr.bind_group, &[]);
-                            pass.draw(0..6, 0..1);
-                        }
-                    }
                 }
 
                 // Item-type plugin outline mask: each registered plugin

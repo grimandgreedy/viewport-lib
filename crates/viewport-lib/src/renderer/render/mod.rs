@@ -387,16 +387,6 @@ impl ViewportRenderer {
                     }
                 }
             }
-            // Screen-space image overlays.
-            if !self.screen_image_gpu_data.is_empty() {
-                if let Some(pipeline) = &self.resources.screen_image.pipeline {
-                    render_pass.set_pipeline(pipeline);
-                    for gpu in &self.screen_image_gpu_data {
-                        render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                        render_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
             emit_overlay_2d!(self, render_pass);
         }
 

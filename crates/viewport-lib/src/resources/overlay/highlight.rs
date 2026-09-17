@@ -680,12 +680,6 @@ pub(crate) struct SplatOutlineMaskUniform {
     pub(crate) _pad: [f32; 9],       // 36 bytes  (total: 112)
 }
 
-/// NDC-space rect outline for screen image overlays.
-pub(crate) struct ScreenRectOutlineBuffers {
-    pub _uniform_buf: crate::gpu::Buffer,
-    pub bind_group: crate::gpu::BindGroup,
-}
-
 /// Uniform for the fullscreen outline edge-detection pass (32 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
