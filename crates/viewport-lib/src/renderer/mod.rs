@@ -1640,6 +1640,42 @@ impl ViewportRenderer {
         self.item_type_plugins.contains_key(type_name)
     }
 
+    /// Borrow a registered item-type plugin back as its concrete type.
+    ///
+    /// `with_item_type_plugin` takes the plugin by box and the renderer owns it
+    /// from then on, so this is how a host reaches it again: to upload content
+    /// the plugin stores itself, to change its settings, or to read state it
+    /// accumulated during a frame.
+    ///
+    /// `None` when nothing is registered under `type_name`, or when something
+    /// is but it is not a `T`.
+    pub fn item_type_plugin<T: crate::plugin_api::ItemTypePlugin>(
+        &self,
+        type_name: &str,
+    ) -> Option<&T> {
+        self.item_type_plugins
+            .get(type_name)?
+            .as_any_plugin()
+            .downcast_ref::<T>()
+    }
+
+    /// Mutably borrow a registered item-type plugin back as its concrete type,
+    /// the same lookup as [`item_type_plugin`](Self::item_type_plugin).
+    ///
+    /// This is the upload route for an item type that owns its own content:
+    /// take the plugin and call its own upload method on it, the way content
+    /// held by the renderer is uploaded through
+    /// [`resources_mut`](Self::resources_mut).
+    pub fn item_type_plugin_mut<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<&mut T> {
+        self.item_type_plugins
+            .get_mut(type_name)?
+            .as_any_plugin_mut()
+            .downcast_mut::<T>()
+    }
+
     /// Register a [`PostEffectProducer`](crate::plugin_api::PostEffectProducer).
     ///
     /// The producer's `init_gpu` runs on the next render (registration takes

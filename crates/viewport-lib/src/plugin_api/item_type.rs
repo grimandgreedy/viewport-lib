@@ -494,6 +494,23 @@ pub struct ShadowCastContext<'a> {
     pub frame_index: u64,
 }
 
+/// Information forwarded to a plugin's
+/// [`contribute_lights`](ItemTypePlugin::contribute_lights).
+///
+/// Lighting is prepared before any plugin's `prepare` runs, so this carries no
+/// per-frame plugin state: derive the lights from the submitted items.
+#[non_exhaustive]
+pub struct LightContext<'a> {
+    /// Uploaded resources, for anything the derivation needs to read. A volume
+    /// tinted by a colourmap samples it here with
+    /// [`get_colourmap_rgba`](crate::resources::DeviceResources::get_colourmap_rgba).
+    pub resources: &'a crate::resources::DeviceResources,
+    /// Active render-camera snapshot.
+    pub camera: &'a crate::RenderCamera,
+    /// Monotonically increasing frame counter.
+    pub frame_index: u64,
+}
+
 /// Information forwarded to a plugin's `outline_mask`.
 ///
 /// The lib's outline-mask render pass is already begun on entry and has
@@ -573,7 +590,30 @@ pub struct PickPassContext<'a> {
 /// and GPU plugins differ deliberately: they carry no external identity and
 /// are multi-instance. See [`RuntimePlugin`](crate::runtime::RuntimePlugin)
 /// and [`GpuPlugin`](crate::runtime::GpuPlugin).
-pub trait ItemTypePlugin: Send + Sync + 'static {
+/// Upcast to [`Any`] so a host can downcast a registered
+/// [`ItemTypePlugin`] back to its concrete type.
+///
+/// Blanket-implemented for every eligible type: no plugin implements this by
+/// hand, and it exists only so
+/// [`ViewportRenderer::item_type_plugin_mut`](crate::renderer::ViewportRenderer::item_type_plugin_mut)
+/// can hand a registered plugin back as the type it was registered as.
+pub trait AsAnyItemTypePlugin {
+    /// Return `self` as `&dyn Any`.
+    fn as_any_plugin(&self) -> &dyn Any;
+    /// Return `self` as `&mut dyn Any`.
+    fn as_any_plugin_mut(&mut self) -> &mut dyn Any;
+}
+
+impl<T: Any> AsAnyItemTypePlugin for T {
+    fn as_any_plugin(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_plugin_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a
     /// second plugin with the same name replaces the first.
@@ -587,6 +627,25 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// layouts. See [`SharedBindings`](crate::plugin_api::SharedBindings)
     /// for the binding inventory.
     fn init_gpu(&mut self, _device: &crate::gpu::Device, _shared: &SharedBindings<'_>) {}
+
+    /// Lights this item type contributes to the scene this frame.
+    ///
+    /// An item type that emits light changes how *every other* item type is
+    /// lit, which is the one thing a plugin cannot express through its own
+    /// draw hooks. The returned lights are appended after the consumer's own
+    /// lights and go through the same per-frame frustum cull and count cap, so
+    /// a type that returns many may see them dropped.
+    ///
+    /// Called once per frame before any `prepare`, so derive from `items`
+    /// rather than from state a `prepare` would have built. Return an empty
+    /// vector (the default) for a type that emits nothing.
+    fn contribute_lights(
+        &self,
+        _items: &dyn PluginItemCollection,
+        _ctx: &LightContext<'_>,
+    ) -> Vec<crate::renderer::LightSource> {
+        Vec::new()
+    }
 
     /// Resident GPU bytes held in stores this item type owns.
     ///

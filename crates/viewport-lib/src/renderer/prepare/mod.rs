@@ -270,6 +270,8 @@ impl ViewportRenderer {
             &mut self.last_cluster_stats,
             &mut self.last_frustum_culled_lights,
             &self.viewport_slots,
+            &self.item_type_plugins,
+            plugin_frame_index,
             scene_fx,
             device,
             queue,

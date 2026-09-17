@@ -43,6 +43,11 @@ impl ItemPluginRegistry {
         Some(self.entries[index].1.as_ref())
     }
 
+    pub(crate) fn get_mut(&mut self, name: &str) -> Option<&mut dyn ItemTypePlugin> {
+        let index = *self.by_name.get(name)?;
+        Some(self.entries[index].1.as_mut())
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

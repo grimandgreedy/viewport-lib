@@ -68,6 +68,23 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         TYPE_NAME
     }
 
+    /// An emissive volume lights the opaque surfaces around it. Derived from
+    /// the submitted items rather than from prepared state, because lighting
+    /// is built before any `prepare` runs.
+    fn contribute_lights(
+        &self,
+        items: &dyn crate::plugin_api::PluginItemCollection,
+        ctx: &crate::plugin_api::LightContext<'_>,
+    ) -> Vec<crate::renderer::LightSource> {
+        let Some(items) = items
+            .as_any()
+            .downcast_ref::<Vec<crate::renderer::ScatterVolumeItem>>()
+        else {
+            return Vec::new();
+        };
+        derive_virtual_lights(items, ctx.resources)
+    }
+
     fn prepare(
         &mut self,
         device: &crate::gpu::Device,
@@ -558,4 +575,100 @@ impl ScatterVolumePlugin {
         pass.set_bind_group(0, source, &[]);
         pass.draw(0..3, 0..1);
     }
+}
+
+/// Derive virtual point lights from emissive scatter volumes so
+/// nearby opaque surfaces receive warm light from "fire-like" volumes.
+///
+/// Cheap approximation: one virtual `Point` light per emissive
+/// volume, placed at the shape's centre. Intensity scales with
+/// `emission_strength * density`; range scales with the shape's
+/// longest axis. For `ColourSource::Ramp`, the colour is sampled
+/// from the CPU-side LUT at the "hot end" of the ramp (the point
+/// where emission contributes most), then multiplied by the tint.
+fn derive_virtual_lights(
+    items: &[crate::renderer::ScatterVolumeItem],
+    resources: &crate::resources::DeviceResources,
+) -> Vec<crate::renderer::LightSource> {
+    use crate::scene::scatter_volume::{ColourSource, Emission, EmissionCurve, ScatterShape};
+    // Sample the LUT at the value where emission peaks. For Linear
+    // and Power curves emission grows with density, so the centre
+    // of the volume (highest local density, typically remap = 1)
+    // dominates the illumination. Threshold emission is a step
+    // function; sampling just past the threshold is the most
+    // representative point.
+    fn lut_sample(lut: &[[u8; 4]; 256], t: f32) -> [f32; 3] {
+        let idx = (t.clamp(0.0, 1.0) * 255.0).round() as usize;
+        let p = lut[idx];
+        // Colourmap bytes are sRGB (see `upload_colourmap`); decode to
+        // linear here so this CPU tint matches the GPU sampler, which
+        // decodes an `Rgba8UnormSrgb` LUT on read.
+        [
+            crate::srgb_to_linear(p[0] as f32 / 255.0),
+            crate::srgb_to_linear(p[1] as f32 / 255.0),
+            crate::srgb_to_linear(p[2] as f32 / 255.0),
+        ]
+    }
+    let mut lights: Vec<crate::renderer::LightSource> = Vec::new();
+    for item in items {
+        if item.settings.hidden {
+            continue;
+        }
+        let (strength, sample_t) = match item.volume.emission {
+            Emission::None => (0.0, 0.0),
+            Emission::Strength { strength, curve } => match curve {
+                EmissionCurve::Linear | EmissionCurve::Power(_) => (strength, 0.95),
+                EmissionCurve::Threshold(min_d) => (strength, (min_d + 0.05).clamp(0.0, 1.0)),
+            },
+        };
+        if strength <= 0.0 {
+            continue;
+        }
+        let centre = item.volume.shape_centre();
+        let (extent, size) = match item.volume.shape {
+            ScatterShape::Box(b) => {
+                let half = (b.max - b.min) * 0.5;
+                let r = half.length();
+                (r, r)
+            }
+            ScatterShape::Sphere { radius, .. } => (radius, radius),
+        };
+        let tint: [f32; 3] = match item.volume.colour {
+            ColourSource::Flat(rgb) => rgb.to_linear_rgb(),
+            ColourSource::Ramp(_) => [1.0, 1.0, 1.0],
+        };
+        let ramp_sample: [f32; 3] = match item.volume.colour {
+            ColourSource::Flat(_) => [1.0, 1.0, 1.0],
+            ColourSource::Ramp(id) => match resources.get_colourmap_rgba(id) {
+                Some(lut) => lut_sample(lut, sample_t),
+                None => [1.0, 1.0, 1.0],
+            },
+        };
+        let colour = [
+            tint[0] * ramp_sample[0],
+            tint[1] * ramp_sample[1],
+            tint[2] * ramp_sample[2],
+        ];
+        // Intensity model: emission * density folded into a unitless
+        // scalar. Volume size enters through `range` rather than
+        // intensity to keep illumination consistent across resizes.
+        let intensity = strength * item.volume.density * item.settings.opacity;
+        if !(intensity > 0.0) {
+            continue;
+        }
+        let range = (size * 4.0).max(extent * 2.0);
+        let mut light = crate::renderer::LightSource::default();
+        light.kind = crate::renderer::LightKind::Point {
+            position: centre,
+            range,
+            // Soft emitter: a volume is not a point source, so give it a
+            // radius tied to its size to keep the inverse-square falloff
+            // from spiking right at the centre.
+            radius: extent.max(0.1),
+        };
+        light.colour = colour.into();
+        light.intensity = intensity;
+        lights.push(light);
+    }
+    lights
 }
