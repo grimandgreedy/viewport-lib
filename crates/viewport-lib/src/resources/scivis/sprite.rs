@@ -343,12 +343,12 @@ impl DeviceResources {
         item: &crate::renderer::SpriteItem,
     ) -> crate::resources::SpriteSetId {
         let gpu = self.upload_sprite(device, queue, item);
-        self.content.sprite_set_store.insert(gpu)
+        self.content.sprite_set_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded sprite set.
     pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
-        self.content.sprite_set_store.remove(id)
+        self.content.sprite_set_store.remove(id).is_some()
     }
 
     /// Replace the contents of a pre-uploaded sprite set, keeping the same id.
@@ -363,7 +363,10 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_sprite(device, queue, item);
-        self.content.sprite_set_store.replace(id, gpu)
+        self.content
+            .sprite_set_store
+            .replace_sized(id, gpu)
+            .is_some()
     }
 
     /// Start an asynchronous sprite set upload.
@@ -444,12 +447,12 @@ impl DeviceResources {
         item: &crate::renderer::SpriteItem,
     ) -> crate::resources::SpriteInstanceSetId {
         let gpu = self.upload_sprite(device, queue, item);
-        self.content.sprite_instance_set_store.insert(gpu)
+        self.content.sprite_instance_set_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded sprite instance set.
     pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
-        self.content.sprite_instance_set_store.remove(id)
+        self.content.sprite_instance_set_store.remove(id).is_some()
     }
 
     /// Replace the contents of a pre-uploaded sprite instance set, keeping
@@ -465,7 +468,10 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_sprite(device, queue, item);
-        self.content.sprite_instance_set_store.replace(id, gpu)
+        self.content
+            .sprite_instance_set_store
+            .replace_sized(id, gpu)
+            .is_some()
     }
 
     /// Start an asynchronous sprite instance set upload.

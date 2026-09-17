@@ -583,12 +583,12 @@ impl DeviceResources {
         item: &crate::renderer::GlyphItem,
     ) -> crate::resources::GlyphSetId {
         let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
-        self.content.glyph_set_store.insert(gpu)
+        self.content.glyph_set_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded glyph set.
     pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
-        self.content.glyph_set_store.remove(id)
+        self.content.glyph_set_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded glyph set, keeping the same id.
@@ -603,7 +603,10 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_glyph_set_per_frame(device, queue, item, false);
-        self.content.glyph_set_store.replace(id, gpu)
+        self.content
+            .glyph_set_store
+            .replace_sized(id, gpu)
+            .is_some()
     }
 
     /// Start an asynchronous glyph set upload.
@@ -674,12 +677,12 @@ impl DeviceResources {
         item: &crate::renderer::TensorGlyphItem,
     ) -> crate::resources::TensorGlyphSetId {
         let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
-        self.content.tensor_glyph_set_store.insert(gpu)
+        self.content.tensor_glyph_set_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded tensor glyph set.
     pub fn drop_tensor_glyph_set(&mut self, id: crate::resources::TensorGlyphSetId) -> bool {
-        self.content.tensor_glyph_set_store.remove(id)
+        self.content.tensor_glyph_set_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded tensor glyph set, keeping the same id.
@@ -694,7 +697,10 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_tensor_glyph_set_per_frame(device, queue, item, false);
-        self.content.tensor_glyph_set_store.replace(id, gpu)
+        self.content
+            .tensor_glyph_set_store
+            .replace_sized(id, gpu)
+            .is_some()
     }
 
     /// Start an asynchronous tensor glyph set upload.

@@ -21,7 +21,7 @@ use crate::{geometry::marching_cubes::VolumeData, resources::DeviceResources};
 /// address by [`McVolumeId`].
 #[derive(Default)]
 pub(crate) struct McResources {
-    pub(crate) volumes: Vec<McVolumeGpuData>,
+    pub(crate) volumes: crate::resources::handle::SlotStore<McVolumeGpuData, McVolumeId>,
 }
 
 // ---------------------------------------------------------------------------
@@ -83,11 +83,6 @@ pub(crate) struct McVolumeGpuData {
     /// caller-supplied buffer before every MC dispatch, so the isosurface
     /// tracks the buffer's contents with no CPU upload.
     pub external_scalar: Option<McExternalScalarSource>,
-    /// False after `free_mc_volume` is called; the emptied slot is reused lazily.
-    pub alive: bool,
-    /// Bumped each time the slot is freed, so a handle issued for an earlier
-    /// occupant no longer resolves once the slot is reused.
-    pub generation: u32,
 }
 
 /// A caller-supplied buffer feeding a volume's scalar field.
@@ -97,10 +92,9 @@ pub(crate) struct McExternalScalarSource {
     pub offset_bytes: u64,
 }
 
-impl McVolumeGpuData {
-    /// Resident GPU bytes across every slab buffer of this volume. Zero for a
-    /// freed slot (its slabs are dropped on free).
-    pub fn gpu_bytes(&self) -> u64 {
+impl crate::resources::handle::GpuByteSize for McVolumeGpuData {
+    /// Resident GPU bytes across every slab buffer of this volume.
+    fn gpu_bytes(&self) -> u64 {
         self.slabs
             .iter()
             .map(|s| {
@@ -144,29 +138,14 @@ impl DeviceResources {
     /// pre-built GPU data into the store and return its handle. Reuses a freed
     /// slot when one is available, carrying that slot's current generation so a
     /// stale handle to the previous occupant no longer resolves.
-    pub(crate) fn insert_mc_volume_gpu_data(
-        &mut self,
-        mut gpu_data: McVolumeGpuData,
-    ) -> McVolumeId {
-        if let Some(free_idx) = self.mc.volumes.iter().position(|v| !v.alive) {
-            gpu_data.generation = self.mc.volumes[free_idx].generation;
-            self.mc.volumes[free_idx] = gpu_data;
-            McVolumeId::new(free_idx as u32, self.mc.volumes[free_idx].generation)
-        } else {
-            let idx = self.mc.volumes.len();
-            self.mc.volumes.push(gpu_data);
-            McVolumeId::new(idx as u32, 0)
-        }
+    pub(crate) fn insert_mc_volume_gpu_data(&mut self, gpu_data: McVolumeGpuData) -> McVolumeId {
+        self.mc.volumes.insert_sized(gpu_data)
     }
 
     /// Look up a live volume by handle, validating the generation. Returns
     /// `None` for a stale handle, a freed slot, or an out-of-range index.
     pub(crate) fn mc_volume(&self, id: McVolumeId) -> Option<&McVolumeGpuData> {
-        let vol = self.mc.volumes.get(id.index as usize)?;
-        if vol.generation != id.generation || !vol.alive {
-            return None;
-        }
-        Some(vol)
+        self.mc.volumes.get(id)
     }
 
     /// Feed the volume's scalar field from a caller-supplied same-device buffer.
@@ -203,14 +182,13 @@ impl DeviceResources {
                 missing: "COPY_SRC",
             });
         }
-        let store_len = self.mc.volumes.len();
+        let store_len = self.mc.volumes.slot_count();
         let vol = self
             .mc
             .volumes
-            .get_mut(id.index as usize)
-            .filter(|v| v.generation == id.generation && v.alive)
+            .get_mut(id)
             .ok_or(crate::ViewportError::StaleHandle {
-                index: id.index as usize,
+                index: id.index(),
                 count: store_len,
             })?;
         let [nx, ny, nz] = vol.dims;
@@ -238,14 +216,13 @@ impl DeviceResources {
     /// Returns [`ViewportError::StaleHandle`](crate::error::ViewportError::StaleHandle)
     /// if `id` does not resolve to a live volume.
     pub fn clear_mc_scalar_source(&mut self, id: McVolumeId) -> crate::ViewportResult<()> {
-        let store_len = self.mc.volumes.len();
+        let store_len = self.mc.volumes.slot_count();
         let vol = self
             .mc
             .volumes
-            .get_mut(id.index as usize)
-            .filter(|v| v.generation == id.generation && v.alive)
+            .get_mut(id)
             .ok_or(crate::ViewportError::StaleHandle {
-                index: id.index as usize,
+                index: id.index(),
                 count: store_len,
             })?;
         vol.external_scalar = None;
@@ -394,8 +371,6 @@ pub(crate) fn build_mc_volume_gpu_data(
             slabs,
             dims: vol.dims,
             external_scalar: None,
-            alive: true,
-            generation: 0,
         })
     }
 }
@@ -489,23 +464,12 @@ impl DeviceResources {
     /// immediately (wgpu defers the real GPU free until in-flight commands that
     /// reference the buffers complete).
     pub fn free_mc_volume(&mut self, id: McVolumeId) {
-        if let Some(v) = self.mc.volumes.get_mut(id.index as usize) {
-            if v.generation == id.generation && v.alive {
-                v.slabs.clear();
-                v.alive = false;
-                v.generation = v.generation.wrapping_add(1);
-            }
-        }
+        self.mc.volumes.remove(id);
     }
 
     /// Total resident GPU bytes across every live MC volume.
     pub(crate) fn mc_volume_resident_bytes(&self) -> u64 {
-        self.mc
-            .volumes
-            .iter()
-            .filter(|v| v.alive)
-            .map(|v| v.gpu_bytes())
-            .sum()
+        self.mc.volumes.allocated_bytes()
     }
 }
 

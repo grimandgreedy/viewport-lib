@@ -422,4 +422,33 @@ mod emission_tests {
             "the test is vacuous if nothing was emitted"
         );
     }
+
+    /// Dropping a system frees its slot for the next create. The dropped
+    /// handle must not resolve to whatever lands in that slot afterwards:
+    /// before the handle carried a generation, it did, and a stale id silently
+    /// drove a different system's simulation.
+    #[test]
+    fn a_dropped_systems_handle_does_not_alias_the_slots_next_occupant() {
+        let Some((device, queue, resources)) = crate::resources::test_support::try_make_resources()
+        else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources = resources;
+        let config = GpuParticleSystemConfig::default();
+
+        let first = resources.create_gpu_particle_system(&device, &queue, &config);
+        resources.drop_gpu_particle_system(first);
+        let second = resources.create_gpu_particle_system(&device, &queue, &config);
+
+        assert_ne!(first, second, "the reused slot must carry a new generation");
+        assert!(
+            resources.particle_system(first).is_none(),
+            "the dropped handle must not resolve"
+        );
+        assert!(
+            resources.particle_system(second).is_some(),
+            "the live handle must resolve"
+        );
+    }
 }

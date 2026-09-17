@@ -105,7 +105,6 @@ fn build_gaussian_splat_set(
         sh_buf,
         sh_degree: data.sh_degree,
         count,
-        revision: 0,
         cpu_positions: std::sync::Arc::new(data.positions.clone()),
         cpu_scales: std::sync::Arc::new(data.scales.clone()),
     }
@@ -141,7 +140,7 @@ impl DeviceResources {
     ) -> crate::error::ViewportResult<GaussianSplatId> {
         validate_gaussian_splat_data(data)?;
         let gpu_set = build_gaussian_splat_set(device, queue, data);
-        Ok(self.content.gaussian_splat_store.insert(gpu_set))
+        Ok(self.content.gaussian_splat_store.insert_sized(gpu_set))
     }
 
     /// Replace the contents of an uploaded Gaussian splat set in place, keeping
@@ -169,7 +168,12 @@ impl DeviceResources {
     ) -> crate::error::ViewportResult<()> {
         validate_gaussian_splat_data(data)?;
         let gpu_set = build_gaussian_splat_set(device, queue, data);
-        if self.content.gaussian_splat_store.replace(id, gpu_set) {
+        if self
+            .content
+            .gaussian_splat_store
+            .replace_sized(id, gpu_set)
+            .is_some()
+        {
             Ok(())
         } else {
             Err(crate::error::ViewportError::StaleHandle {
@@ -220,7 +224,7 @@ impl DeviceResources {
 
                 Ok(crate::resources::upload_jobs::JobProduct::with_apply(
                     Box::new(move |resources: &mut DeviceResources| {
-                        let id = resources.content.gaussian_splat_store.insert(gpu_set);
+                        let id = resources.content.gaussian_splat_store.insert_sized(gpu_set);
                         slot_for_apply.set(id);
                     }),
                 ))
@@ -427,12 +431,6 @@ pub(crate) struct GaussianSplatGpuSet {
     pub sh_degree: ShDegree,
     /// Number of splats.
     pub count: u32,
-    /// Monotonic identity for this set's buffers, stamped by the store on
-    /// insert and replace. Anything caching bind groups over the buffers
-    /// (the renderer's splat item type keys its per-viewport sort state on
-    /// it) rebuilds when the revision changes, since `replace` swaps the
-    /// buffers behind a live handle.
-    pub revision: u64,
     /// CPU positions kept for picking and the wireframe overlay
     /// (object-space). Shared so per-frame consumers snapshot without
     /// copying the set.
@@ -441,11 +439,11 @@ pub(crate) struct GaussianSplatGpuSet {
     pub cpu_scales: std::sync::Arc<Vec<[f32; 3]>>,
 }
 
-impl GaussianSplatGpuSet {
+impl crate::resources::handle::GpuByteSize for GaussianSplatGpuSet {
     /// Resident GPU bytes for the persistent source buffers (position, scale,
     /// rotation, opacity, SH). Per-viewport sort scratch is derived and grows
     /// lazily, so it is not counted here.
-    pub fn gpu_bytes(&self) -> u64 {
+    fn gpu_bytes(&self) -> u64 {
         self.position_buf.size()
             + self.scale_buf.size()
             + self.rotation_buf.size()
@@ -454,66 +452,13 @@ impl GaussianSplatGpuSet {
     }
 }
 
-/// Slotted store for Gaussian splat sets with generational handles.
+/// Slotted store for Gaussian splat sets.
 ///
 /// A removed set leaves an empty slot that a later insert reuses. Each slot
 /// carries a generation bumped on removal, and a [`GaussianSplatId`] captures
 /// the generation it was issued against, so a stale handle resolves to `None`
 /// rather than aliasing the set now in its slot. An entry's byte charge is its
-/// [`GaussianSplatGpuSet::gpu_bytes`].
-pub(crate) struct GaussianSplatStore {
-    store: crate::resources::handle::SlotStore<GaussianSplatGpuSet, GaussianSplatId>,
-    /// Source of [`GaussianSplatGpuSet::revision`] stamps; bumped per insert
-    /// and replace.
-    next_revision: u64,
-}
-
-impl GaussianSplatStore {
-    pub fn new() -> Self {
-        Self {
-            store: crate::resources::handle::SlotStore::default(),
-            next_revision: 0,
-        }
-    }
-
-    pub fn insert(&mut self, mut set: GaussianSplatGpuSet) -> GaussianSplatId {
-        set.revision = self.next_revision;
-        self.next_revision += 1;
-        let bytes = set.gpu_bytes();
-        self.store.insert(set, bytes)
-    }
-
-    /// Swap the set in `id`'s slot for `set`, keeping the slot generation so the
-    /// handle stays valid. Returns `true` on success, `false` for a stale handle
-    /// or an empty slot.
-    pub fn replace(&mut self, id: GaussianSplatId, mut set: GaussianSplatGpuSet) -> bool {
-        set.revision = self.next_revision;
-        self.next_revision += 1;
-        let bytes = set.gpu_bytes();
-        self.store.replace(id, set, bytes).is_some()
-    }
-
-    /// Total resident GPU bytes across every live splat set.
-    pub fn allocated_bytes(&self) -> u64 {
-        self.store.allocated_bytes()
-    }
-
-    /// Look up a set by handle, validating the generation. Returns `None` for a
-    /// stale handle, an empty slot, or an out-of-range index.
-    pub fn get(&self, id: GaussianSplatId) -> Option<&GaussianSplatGpuSet> {
-        self.store.get(id)
-    }
-
-    /// Total number of slots (occupied plus free). Reported in stale-handle
-    /// errors to show how many slots exist.
-    pub fn slot_count(&self) -> usize {
-        self.store.slot_count()
-    }
-
-    /// Remove a set by handle, bumping the slot generation and freeing the slot.
-    /// Returns `true` if a set was removed, `false` for a stale handle or an
-    /// already-empty slot.
-    pub fn remove(&mut self, id: GaussianSplatId) -> bool {
-        self.store.remove(id).is_some()
-    }
-}
+/// [`GpuByteSize::gpu_bytes`](crate::resources::handle::GpuByteSize::gpu_bytes),
+/// and its revision is what the item type keys its per-viewport sort scratch on.
+pub(crate) type GaussianSplatStore =
+    crate::resources::handle::SlotStore<GaussianSplatGpuSet, GaussianSplatId>;

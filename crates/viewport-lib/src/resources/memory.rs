@@ -14,12 +14,12 @@ pub struct TextureMemoryStats {
 }
 
 /// Resident GPU bytes for the user-uploaded working set, from
-/// [`DeviceResources::resident_bytes`].
+/// [`DeviceResources::resident_bytes`](crate::resources::DeviceResources::resident_bytes).
 ///
 /// These are the classes a streaming or eviction policy frees and re-uploads:
 /// meshes (`upload_mesh_data` and friends), user textures (`upload_texture` and
-/// friends), Gaussian splats, marching-cubes volumes, and the pre-uploaded
-/// scivis curves. Direct-volume 3D textures (`upload_volume`) are counted too,
+/// friends), Gaussian splats, marching-cubes volumes, the pre-uploaded scivis
+/// curves, and whatever registered item-type plugins report holding. Direct-volume 3D textures (`upload_volume`) are counted too,
 /// though the direct-volume store cannot be freed yet. The query is cheap
 /// enough to poll each frame.
 ///
@@ -62,6 +62,16 @@ pub struct ResidentBytes {
     /// (polylines, tubes, streamtubes, ribbons, point clouds, glyph sets,
     /// tensor glyph sets, and sprite sets).
     pub scivis_bytes: u64,
+    /// GPU bytes reported by registered item-type plugins that hold content in
+    /// stores of their own, summed from
+    /// [`ItemTypePlugin::resident_bytes`](crate::plugin_api::ItemTypePlugin::resident_bytes).
+    ///
+    /// Only [`ViewportRenderer::resident_bytes`](crate::renderer::ViewportRenderer::resident_bytes)
+    /// can fill this in: the plugins are registered with the renderer, not with
+    /// `DeviceResources`, so
+    /// [`DeviceResources::resident_bytes`](crate::resources::DeviceResources::resident_bytes)
+    /// leaves it zero.
+    pub plugin_bytes: u64,
     /// Host memory bytes across every resident mesh's retained CPU geometry
     /// copies: the positions, normals, and indices kept for CPU picking,
     /// clip-plane cap geometry, and the normal-line visualisation.
@@ -90,6 +100,7 @@ impl ResidentBytes {
             + self.scivis_bytes
             + self.volume_bytes
             + self.projected_tet_bytes
+            + self.plugin_bytes
     }
 
     /// Host memory bytes counted here: currently the retained mesh CPU geometry
@@ -156,6 +167,9 @@ impl crate::resources::DeviceResources {
             scivis_bytes,
             volume_bytes: self.volume_resident_bytes(),
             projected_tet_bytes: self.content.projected_tet_store.allocated_bytes(),
+            // Plugins are registered with the renderer, not here; filled in by
+            // `ViewportRenderer::resident_bytes`.
+            plugin_bytes: 0,
             cpu_geometry_bytes: self.mesh_store.cpu_allocated_bytes(),
         }
     }

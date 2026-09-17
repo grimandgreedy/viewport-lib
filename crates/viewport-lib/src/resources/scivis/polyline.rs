@@ -651,13 +651,13 @@ impl DeviceResources {
     ) -> crate::resources::PolylineId {
         self.ensure_polyline_pipeline(device);
         let gpu = self.upload_polyline_per_frame(device, queue, item, [1.0, 1.0]);
-        self.content.polyline_store.insert(gpu)
+        self.content.polyline_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded polyline. Returns `true` if a polyline was
     /// actually removed, `false` if the id was already invalid.
     pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
-        self.content.polyline_store.remove(id)
+        self.content.polyline_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded polyline, keeping the same
@@ -677,7 +677,7 @@ impl DeviceResources {
         }
         self.ensure_polyline_pipeline(device);
         let gpu = self.upload_polyline_per_frame(device, queue, item, [1.0, 1.0]);
-        self.content.polyline_store.replace(id, gpu)
+        self.content.polyline_store.replace_sized(id, gpu).is_some()
     }
 
     /// Start an asynchronous polyline upload.

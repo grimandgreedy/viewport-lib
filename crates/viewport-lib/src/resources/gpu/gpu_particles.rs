@@ -27,8 +27,10 @@ use crate::renderer::{ParticleMeshAlign, SpriteBlend, SpriteLitParams, SpriteSiz
 /// systems. All pipelines are lazily built; `systems` holds the persistent
 /// per-system GPU state, indexed by `GpuParticleSystemId`.
 pub(crate) struct ParticleResources {
-    /// Live particle systems. Slots can be reused after `drop_gpu_particle_system`.
-    pub(crate) systems: Vec<Option<ParticleSystem>>,
+    /// Live particle systems. Slots can be reused after
+    /// `drop_gpu_particle_system`; the handle's generation keeps a dropped
+    /// system's handle from resolving to its slot's next occupant.
+    pub(crate) systems: crate::resources::handle::SlotStore<ParticleSystem, GpuParticleSystemId>,
     /// Resource epochs the systems' draw bind groups were last validated
     /// against. A system's draw bind group bakes a texture view in at
     /// creation; without this a freed texture stays pinned (and sampled) for
@@ -44,7 +46,7 @@ pub(crate) struct ParticleResources {
 impl ParticleResources {
     pub(crate) fn new(device: &crate::gpu::Device) -> Self {
         Self {
-            systems: Vec::new(),
+            systems: crate::resources::handle::SlotStore::default(),
             deps_gate: crate::resources::resource_deps::DepsGate::default(),
             draw_bg_rebuilds: 0,
             layouts: ParticleLayouts::new(device),
@@ -429,8 +431,6 @@ pub(crate) struct ParticleSystem {
     /// The texture ids baked into the draw bind groups, revalidated when the
     /// resource epochs move so a freed texture is neither pinned nor sampled.
     pub draw_deps: crate::resources::resource_deps::ResourceDeps,
-    /// Whether the slot is in use. The slot is reused lazily by future creates.
-    pub alive: bool,
     /// Per-frame emission bookkeeping, behind a lock because the item type
     /// advances it from a shared borrow of the resources.
     pub emit: std::sync::Mutex<EmitState>,
@@ -549,22 +549,10 @@ impl crate::resources::DeviceResources {
             draw_lit_normal_bg: bindings.draw_lit_normal_bg,
             draw_uniform_buf: bindings.draw_uniform_buf,
             draw_deps: bindings.draw_deps,
-            alive: true,
             emit: std::sync::Mutex::new(EmitState::default()),
         };
 
-        if let Some(idx) = self
-            .particle
-            .systems
-            .iter()
-            .position(|slot: &Option<ParticleSystem>| slot.as_ref().is_none_or(|s| !s.alive))
-        {
-            self.particle.systems[idx] = Some(system);
-            GpuParticleSystemId::from_index(idx)
-        } else {
-            self.particle.systems.push(Some(system));
-            GpuParticleSystemId::from_index(self.particle.systems.len() - 1)
-        }
+        self.particle.systems.insert(system, 0)
     }
 
     /// Build the per-route draw bind groups for a particle system: the sprite
@@ -791,34 +779,35 @@ impl crate::resources::DeviceResources {
         if verdict == Revalidate::Valid {
             return;
         }
-        let stale: Vec<usize> = self
+        let stale: Vec<GpuParticleSystemId> = self
             .particle
             .systems
             .iter()
-            .enumerate()
-            .filter_map(|(i, slot)| {
-                let s = slot.as_ref()?;
-                let needs =
-                    s.alive && (verdict == Revalidate::RebuildAll || !s.draw_deps.resolves(self));
-                needs.then_some(i)
-            })
+            .filter(|(_, s)| verdict == Revalidate::RebuildAll || !s.draw_deps.resolves(self))
+            .map(|(id, _)| id)
             .collect();
-        for i in stale {
-            let render = self.particle.systems[i]
-                .as_ref()
-                .expect("stale index came from a live slot")
+        for id in stale {
+            let render = self
+                .particle
+                .systems
+                .get(id)
+                .expect("stale handle came from a live slot")
                 .render
                 .clone();
             let bindings = {
-                let buf = &self.particle.systems[i]
-                    .as_ref()
-                    .expect("stale index came from a live slot")
+                let buf = &self
+                    .particle
+                    .systems
+                    .get(id)
+                    .expect("stale handle came from a live slot")
                     .particle_buf;
                 self.build_particle_draw_bindings(device, &render, buf)
             };
-            let system = self.particle.systems[i]
-                .as_mut()
-                .expect("stale index came from a live slot");
+            let system = self
+                .particle
+                .systems
+                .get_mut(id)
+                .expect("stale handle came from a live slot");
             system.draw_bg = bindings.draw_bg;
             system.draw_bg_mesh = bindings.draw_bg_mesh;
             system.draw_lit_normal_bg = bindings.draw_lit_normal_bg;
@@ -831,18 +820,12 @@ impl crate::resources::DeviceResources {
     /// Release a particle system. The handle becomes invalid; the slot is
     /// reused on the next `create_gpu_particle_system` call.
     pub fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId) {
-        if let Some(Some(s)) = self.particle.systems.get_mut(id.index()) {
-            s.alive = false;
-        }
+        self.particle.systems.remove(id);
     }
 
     #[allow(dead_code)]
     pub(crate) fn particle_system(&self, id: GpuParticleSystemId) -> Option<&ParticleSystem> {
-        self.particle
-            .systems
-            .get(id.index())?
-            .as_ref()
-            .filter(|s| s.alive)
+        self.particle.systems.get(id)
     }
 
     #[allow(dead_code)]
@@ -850,11 +833,7 @@ impl crate::resources::DeviceResources {
         &mut self,
         id: GpuParticleSystemId,
     ) -> Option<&mut ParticleSystem> {
-        self.particle
-            .systems
-            .get_mut(id.index())?
-            .as_mut()
-            .filter(|s| s.alive)
+        self.particle.systems.get_mut(id)
     }
 }
 

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) mod curve_store;
+pub(crate) mod stores;
 pub(crate) mod gaussian_splat;
 pub(crate) mod glyph;
 mod path_tracing;

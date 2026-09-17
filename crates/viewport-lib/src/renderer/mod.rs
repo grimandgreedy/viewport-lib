@@ -986,6 +986,25 @@ impl ViewportRenderer {
         &self.resources
     }
 
+    /// Resident GPU bytes for the user-uploaded working set, including whatever
+    /// registered item-type plugins report holding in stores of their own.
+    ///
+    /// The same figure as
+    /// [`DeviceResources::resident_bytes`](crate::resources::DeviceResources::resident_bytes)
+    /// with [`ResidentBytes::plugin_bytes`](crate::resources::ResidentBytes::plugin_bytes)
+    /// filled in. Prefer this one: the plugins are registered with the
+    /// renderer, so the resources-level call cannot see them and reports
+    /// `plugin_bytes` as zero.
+    pub fn resident_bytes(&self) -> crate::resources::ResidentBytes {
+        let mut bytes = self.resources.resident_bytes();
+        bytes.plugin_bytes = self
+            .item_type_plugins
+            .values()
+            .map(|p| p.resident_bytes())
+            .sum();
+        bytes
+    }
+
     /// Performance counters from the last completed frame.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
         self.last_stats

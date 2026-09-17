@@ -588,6 +588,22 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     /// for the binding inventory.
     fn init_gpu(&mut self, _device: &crate::gpu::Device, _shared: &SharedBindings<'_>) {}
 
+    /// Resident GPU bytes held in stores this item type owns.
+    ///
+    /// Summed into [`ResidentBytes::plugin_bytes`](crate::resources::ResidentBytes::plugin_bytes)
+    /// by [`ViewportRenderer::resident_bytes`](crate::renderer::ViewportRenderer::resident_bytes),
+    /// so an item type that holds its own uploaded content shows up in the
+    /// working-set figure an eviction policy budgets against. Leave it at the
+    /// default when the type stores nothing of its own, or stores it through
+    /// the shared upload calls on `DeviceResources` (which count it already).
+    ///
+    /// Count the persistent content buffers. Per-frame scratch and derived
+    /// caches that grow and shrink with the viewport are not part of the
+    /// evictable working set and are better left out.
+    fn resident_bytes(&self) -> u64 {
+        0
+    }
+
     /// Called when the wgpu device is recreated, e.g. after device loss or a
     /// host-driven reset. Every pipeline, buffer, texture, or bind group the
     /// plugin built against the old device is now invalid and must be rebuilt.

@@ -26,8 +26,11 @@ use bytemuck::{Pod, Zeroable};
 /// External instance sets, their lazily built pipeline, and layout.
 #[derive(Default)]
 pub(crate) struct ExternalInstancesResources {
-    /// Live sets. Slots hold `None` after `drop_external_instance_set`.
-    pub(crate) sets: Vec<Option<ExternalInstanceSet>>,
+    /// Live sets. A slot freed by `drop_external_instance_set` is reused by a
+    /// later create; the handle's generation keeps the dropped set's handle
+    /// from resolving to its slot's next occupant.
+    pub(crate) sets:
+        crate::resources::handle::SlotStore<ExternalInstanceSet, ExternalInstanceSetId>,
     /// Group 1 layout: per-item uniform + positions storage buffer.
     pub(crate) draw_bgl: Option<crate::gpu::BindGroupLayout>,
     /// Opaque depth-tested draw pipeline (LDR + HDR formats).
@@ -130,21 +133,7 @@ impl crate::resources::DeviceResources {
             mesh_id: config.mesh_id,
             positions: config.positions.clone(),
         };
-        // Reuse a dropped slot if one exists, otherwise append.
-        if let Some(idx) = self
-            .external_instances
-            .sets
-            .iter()
-            .position(|s| s.is_none())
-        {
-            self.external_instances.sets[idx] = Some(set);
-            Ok(ExternalInstanceSetId::from_index(idx))
-        } else {
-            self.external_instances.sets.push(Some(set));
-            Ok(ExternalInstanceSetId::from_index(
-                self.external_instances.sets.len() - 1,
-            ))
-        }
+        Ok(self.external_instances.sets.insert(set, 0))
     }
 
     /// Re-point an external instance set at a new positions buffer.
@@ -172,16 +161,13 @@ impl crate::resources::DeviceResources {
                 missing: "STORAGE",
             });
         }
-        let count = self.external_instances.sets.len();
-        let set = self
-            .external_instances
-            .sets
-            .get_mut(id.index())
-            .and_then(|s| s.as_mut())
-            .ok_or(crate::error::ViewportError::StaleHandle {
+        let count = self.external_instances.sets.slot_count();
+        let set = self.external_instances.sets.get_mut(id).ok_or(
+            crate::error::ViewportError::StaleHandle {
                 index: id.index(),
                 count,
-            })?;
+            },
+        )?;
         set.positions = positions;
         Ok(())
     }
@@ -190,9 +176,7 @@ impl crate::resources::DeviceResources {
     /// skipped. The consumer's buffer is released (the renderer's clone is
     /// dropped; the allocation lives while the consumer holds a handle).
     pub fn drop_external_instance_set(&mut self, id: ExternalInstanceSetId) {
-        if let Some(slot) = self.external_instances.sets.get_mut(id.index()) {
-            *slot = None;
-        }
+        self.external_instances.sets.remove(id);
     }
 
     /// Lazily build the external-instances draw pipeline and layout.
@@ -274,12 +258,7 @@ impl crate::resources::DeviceResources {
             if item.settings.hidden || item.instance_count == 0 {
                 continue;
             }
-            let Some(set) = self
-                .external_instances
-                .sets
-                .get(item.set_id.index())
-                .and_then(|s| s.as_ref())
-            else {
+            let Some(set) = self.external_instances.sets.get(item.set_id) else {
                 continue;
             };
             // Clamp the requested window to the buffer's whole elements so a
@@ -380,7 +359,7 @@ mod tests {
                 &ExternalInstanceSetConfig::new(mesh_id, buf.clone()),
             )
             .unwrap();
-        assert!(resources.external_instances.sets[id.index()].is_some());
+        assert!(resources.external_instances.sets.get(id).is_some());
 
         // Re-point works.
         let bigger = positions_buffer(&device, 16, crate::gpu::BufferUsages::STORAGE);
@@ -388,8 +367,10 @@ mod tests {
             .set_external_instance_set_buffer(id, bigger)
             .unwrap();
         assert_eq!(
-            resources.external_instances.sets[id.index()]
-                .as_ref()
+            resources
+                .external_instances
+                .sets
+                .get(id)
                 .unwrap()
                 .positions
                 .size(),
@@ -397,13 +378,20 @@ mod tests {
         );
 
         resources.drop_external_instance_set(id);
-        assert!(resources.external_instances.sets[id.index()].is_none());
+        assert!(resources.external_instances.sets.get(id).is_none());
 
         // Dropped slot is reused by the next create.
         let id2 = resources
             .create_external_instance_set(&device, &ExternalInstanceSetConfig::new(mesh_id, buf))
             .unwrap();
         assert_eq!(id2.index(), id.index());
+        // ... but the dropped handle must not follow the slot to its new
+        // occupant. Before the handle carried a generation, it did.
+        assert_ne!(id, id2, "the reused slot must carry a new generation");
+        assert!(
+            resources.external_instances.sets.get(id).is_none(),
+            "the dropped handle must not resolve to the slot's new occupant"
+        );
 
         // Re-pointing a dropped id fails.
         resources.drop_external_instance_set(id2);

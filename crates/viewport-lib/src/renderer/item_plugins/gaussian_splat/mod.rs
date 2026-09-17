@@ -134,18 +134,18 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             if item.settings.hidden {
                 continue;
             }
-            let Some(set) = store.get(item.source) else {
+            let Some((set, revision)) = store.get_with_revision(item.source) else {
                 continue;
             };
 
             // Per-(set, viewport) sort scratch, invalidated when the set's
             // buffers were replaced behind the handle.
             let sorts = self.sorts.entry(item.source).or_insert_with(|| SetSorts {
-                revision: set.revision,
+                revision,
                 viewports: Vec::new(),
             });
-            if sorts.revision != set.revision {
-                sorts.revision = set.revision;
+            if sorts.revision != revision {
+                sorts.revision = revision;
                 sorts.viewports.clear();
             }
             while sorts.viewports.len() <= vp_idx {

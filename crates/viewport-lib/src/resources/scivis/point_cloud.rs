@@ -343,12 +343,12 @@ impl DeviceResources {
         item: &crate::renderer::PointCloudItem,
     ) -> crate::resources::PointCloudId {
         let gpu = self.upload_point_cloud_per_frame(device, queue, item);
-        self.content.point_cloud_store.insert(gpu)
+        self.content.point_cloud_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded point cloud.
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
-        self.content.point_cloud_store.remove(id)
+        self.content.point_cloud_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded point cloud, keeping the same id.
@@ -363,7 +363,10 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_point_cloud_per_frame(device, queue, item);
-        self.content.point_cloud_store.replace(id, gpu)
+        self.content
+            .point_cloud_store
+            .replace_sized(id, gpu)
+            .is_some()
     }
 
     /// Start an asynchronous point cloud upload.

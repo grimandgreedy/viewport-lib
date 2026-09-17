@@ -358,12 +358,12 @@ impl DeviceResources {
         item: &crate::renderer::StreamtubeItem,
     ) -> crate::resources::StreamtubeId {
         let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
-        self.content.streamtube_store.insert(gpu)
+        self.content.streamtube_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded streamtube.
     pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
-        self.content.streamtube_store.remove(id)
+        self.content.streamtube_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded streamtube, keeping the same id.
@@ -378,7 +378,10 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
-        self.content.streamtube_store.replace(id, gpu)
+        self.content
+            .streamtube_store
+            .replace_sized(id, gpu)
+            .is_some()
     }
 
     // -------------------------------------------------------------------------
@@ -726,12 +729,12 @@ impl DeviceResources {
         item: &crate::renderer::TubeItem,
     ) -> crate::resources::TubeId {
         let gpu = self.upload_tube_per_frame(device, queue, item, false);
-        self.content.tube_store.insert(gpu)
+        self.content.tube_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded tube.
     pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
-        self.content.tube_store.remove(id)
+        self.content.tube_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded tube, keeping the same id.
@@ -746,7 +749,7 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_tube_per_frame(device, queue, item, false);
-        self.content.tube_store.replace(id, gpu)
+        self.content.tube_store.replace_sized(id, gpu).is_some()
     }
 
     // -------------------------------------------------------------------------
@@ -1130,12 +1133,12 @@ impl DeviceResources {
         item: &crate::renderer::RibbonItem,
     ) -> crate::resources::RibbonId {
         let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
-        self.content.ribbon_store.insert(gpu)
+        self.content.ribbon_store.insert_sized(gpu)
     }
 
     /// Remove a pre-uploaded ribbon.
     pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
-        self.content.ribbon_store.remove(id)
+        self.content.ribbon_store.remove(id).is_some()
     }
 
     /// Replace the geometry of a pre-uploaded ribbon, keeping the same id.
@@ -1150,7 +1153,7 @@ impl DeviceResources {
             return false;
         }
         let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
-        self.content.ribbon_store.replace(id, gpu)
+        self.content.ribbon_store.replace_sized(id, gpu).is_some()
     }
 
     /// Start an asynchronous streamtube upload.
