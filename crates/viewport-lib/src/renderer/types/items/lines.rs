@@ -321,6 +321,18 @@ pub struct RibbonItem {
     /// GPU blend state for this ribbon. Default: [`SpriteBlend::AlphaBlend`].
     /// Use [`SpriteBlend::Additive`] for energy or spark trails.
     pub blend: SpriteBlend,
+    /// Whether the ribbon writes depth. Default: `true`, matching tubes and
+    /// streamtubes, which are the other swept surfaces in this family.
+    ///
+    /// A ribbon that writes depth draws with the opaque scene and is visible to
+    /// everything that reads the depth buffer: it occludes, it receives
+    /// projected decals, and soft-particle sprites fade against it. Clear this
+    /// for a genuinely translucent ribbon and an `AlphaBlend` or
+    /// `Premultiplied` ribbon routes through order-independent transparency
+    /// instead, which resolves overlapping segments without sorting them but
+    /// contributes no depth. `Additive` ribbons never write depth, since
+    /// accumulating is the point of that blend.
+    pub depth_write: bool,
     /// Optional streak texture sampled along the ribbon. `None` renders the
     /// ribbon without a texture (the resolved colour is used directly). Use
     /// for lightning, slash arcs, dragon breath, laser beams.
@@ -356,6 +368,7 @@ impl Default for RibbonItem {
             colour: [1.0, 1.0, 1.0, 1.0].into(),
             colour_attribute: Vec::new(),
             blend: SpriteBlend::AlphaBlend,
+            depth_write: true,
             texture_id: None,
             u_attribute: Vec::new(),
             model: IDENTITY_MAT4,

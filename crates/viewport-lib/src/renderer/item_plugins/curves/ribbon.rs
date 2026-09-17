@@ -36,6 +36,12 @@ pub(crate) const TYPE_NAME: &str = "viewport.ribbon";
 pub(super) struct RibbonKey {
     pub blend: SpriteBlend,
     pub wireframe: bool,
+    /// Whether the variant writes depth. An `AlphaBlend` or `Premultiplied`
+    /// ribbon that does draws with the opaque scene; one that does not is
+    /// routed to OIT instead and never reaches this set. `Additive` never
+    /// writes depth whatever the item asks for, since accumulating is the
+    /// point of that blend.
+    pub depth_write: bool,
 }
 
 impl RibbonKey {
@@ -57,33 +63,48 @@ impl RibbonKey {
         ]
         .into_iter()
         .flat_map(|blend| {
-            [false, true]
-                .into_iter()
-                .map(move |wireframe| RibbonKey { blend, wireframe })
+            [false, true].into_iter().flat_map(move |wireframe| {
+                [false, true].into_iter().map(move |depth_write| RibbonKey {
+                    blend,
+                    wireframe,
+                    depth_write,
+                })
+            })
         })
     }
 
     fn slot(self) -> usize {
-        self.blend_index() + 3 * (self.wireframe as usize)
+        self.blend_index() + 3 * (self.wireframe as usize) + 6 * (self.depth_write as usize)
     }
+}
+
+/// Build one value per [`RibbonKey`] and place each at its own
+/// [`slot`](RibbonKey::slot), which is *not* the order `all()` yields them in.
+/// Collecting in iteration order instead puts variants under the wrong keys, so
+/// `get` hands back a pipeline belonging to a different blend or topology.
+fn place_by_slot<T>(mut build: impl FnMut(RibbonKey) -> T) -> Vec<T> {
+    let mut slots: Vec<Option<T>> = (0..12).map(|_| None).collect();
+    for key in RibbonKey::all() {
+        slots[key.slot()] = Some(build(key));
+    }
+    slots
+        .into_iter()
+        .map(|v| v.unwrap_or_else(|| unreachable!("every slot is covered by all()")))
+        .collect()
 }
 
 /// A `DualPipeline` built for every reachable [`RibbonKey`], indexed for a
 /// hash-free draw-time lookup (`get`).
 pub(super) struct RibbonVariantSet {
-    variants: [DualPipeline; 6],
+    variants: [DualPipeline; 12],
 }
 
 impl RibbonVariantSet {
-    pub fn build(mut build: impl FnMut(RibbonKey) -> DualPipeline) -> Self {
-        let mut variants: Vec<DualPipeline> = Vec::with_capacity(6);
-        for key in RibbonKey::all() {
-            variants.push(build(key));
-        }
+    pub fn build(build: impl FnMut(RibbonKey) -> DualPipeline) -> Self {
         Self {
-            variants: variants
+            variants: place_by_slot(build)
                 .try_into()
-                .unwrap_or_else(|_| unreachable!("RibbonKey::all() yields exactly 6 keys")),
+                .unwrap_or_else(|_| unreachable!("RibbonKey::all() yields exactly 12 keys")),
         }
     }
 
@@ -154,11 +175,14 @@ impl RibbonGpu {
         // trails; depth write is disabled so successive segments accumulate
         // rather than clipping each other when they overlap.
         let pipelines = RibbonVariantSet::build(|key| {
-            let (blend, depth_write) = match key.blend {
-                SpriteBlend::AlphaBlend => (crate::gpu::BlendState::ALPHA_BLENDING, true),
-                SpriteBlend::Additive => (additive_blend, false),
-                SpriteBlend::Premultiplied => (premultiplied_blend, false),
+            let blend = match key.blend {
+                SpriteBlend::AlphaBlend => crate::gpu::BlendState::ALPHA_BLENDING,
+                SpriteBlend::Additive => additive_blend,
+                SpriteBlend::Premultiplied => premultiplied_blend,
             };
+            // Additive never writes depth: successive segments accumulate
+            // rather than clipping each other where they overlap.
+            let depth_write = key.depth_write && !matches!(key.blend, SpriteBlend::Additive);
             build_dual_pipeline(
                 device,
                 &DualPipelineDesc {
@@ -383,6 +407,7 @@ impl ItemTypePlugin for RibbonPlugin {
             let key = RibbonKey {
                 blend: gd.blend,
                 wireframe: gd.wireframe,
+                depth_write: gd.depth_write,
             };
             pass.set_pipeline(gpu.pipelines.get(key).for_format(is_hdr));
             draw_mesh(pass, gd);
@@ -728,11 +753,15 @@ mod tests {
     /// Same completeness guarantee as the mesh-family `PipelineVariantSet`
     /// tests: every key in `RibbonKey::all()` must land in its own slot, so a
     /// built set resolves each through `get()` without aliasing. Covers the
-    /// `blend x wireframe` cross product the wireframe pipeline used to ignore.
+    /// `blend x wireframe x depth_write` cross product.
     #[test]
     fn all_keys_are_distinct_and_densely_slotted() {
         let keys: Vec<RibbonKey> = RibbonKey::all().collect();
-        assert_eq!(keys.len(), 6, "RibbonKey has blend(3) x wireframe = 6 keys");
+        assert_eq!(
+            keys.len(),
+            12,
+            "RibbonKey has blend(3) x wireframe x depth_write = 12 keys"
+        );
 
         let mut seen_keys = std::collections::HashSet::new();
         let mut seen_slots = std::collections::HashSet::new();
@@ -742,11 +771,46 @@ mod tests {
                 "all() yielded {key:?} more than once"
             );
             let slot = key.slot();
-            assert!(slot < 6, "{key:?} slotted out of range: {slot}");
+            assert!(slot < 12, "{key:?} slotted out of range: {slot}");
             assert!(
                 seen_slots.insert(slot),
                 "{key:?} collided with another key at slot {slot}"
             );
         }
+    }
+
+    /// `build` must place each variant at its own `slot`, not in iteration
+    /// order. The two orderings differ, so pushing in iteration order hands out
+    /// a pipeline belonging to a different key at draw time: an opaque ribbon
+    /// drew through the additive wireframe pipeline and rendered as a zigzag of
+    /// lines. The slot-distinctness test above does not catch it, because the
+    /// slots are fine; it is the placement that was wrong.
+    #[test]
+    fn build_places_each_variant_at_its_own_slot() {
+        // The same placement `RibbonVariantSet::build` uses, standing the
+        // pipelines in for the key each slot was built from.
+        let placed = place_by_slot(|key| key);
+        for key in RibbonKey::all() {
+            assert_eq!(
+                placed[key.slot()],
+                key,
+                "slot {} does not hold the variant built for {key:?}",
+                key.slot()
+            );
+        }
+    }
+
+    /// The reason the placement matters: `all()` order and `slot()` order are
+    /// genuinely different, so collecting in iteration order is wrong rather
+    /// than merely unidiomatic. If this ever stops being true the placement is
+    /// still correct, but the hazard it guards has gone.
+    #[test]
+    fn iteration_order_differs_from_slot_order() {
+        let iteration: Vec<usize> = RibbonKey::all().map(|k| k.slot()).collect();
+        let dense: Vec<usize> = (0..12).collect();
+        assert_ne!(
+            iteration, dense,
+            "all() now yields keys in slot order; place_by_slot still correct"
+        );
     }
 }

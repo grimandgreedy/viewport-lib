@@ -1027,9 +1027,10 @@ fn build_decal_on_curves(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     rb.positions = line(1.4);
     rb.strip_lengths = vec![24];
     rb.width = 0.28;
-    // Face the ribbon straight up, so it is the best possible receiver for a
-    // top-down projection rather than an edge-on one.
-    rb.twist_attribute = Some(vec![[0.0, 0.0, 1.0]; 24]);
+    // twist_attribute sets the ribbon's width direction, not its normal: with
+    // the tangent along X, a width along Y lays the face flat so it points at
+    // the decal rather than standing edge-on to it.
+    rb.twist_attribute = Some(vec![[0.0, 1.0, 0.0]; 24]);
     rb.colour = [0.75, 0.75, 0.78, 1.0].into();
 
     let checker = checker_texture(ctx, [220, 70, 40], [240, 220, 200]);

@@ -332,6 +332,7 @@ impl DeviceResources {
             ],
             cast_shadows: true,
             oit_eligible: false,
+            depth_write: true,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -703,6 +704,7 @@ impl DeviceResources {
             ],
             cast_shadows: true,
             oit_eligible: false,
+            depth_write: true,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -1075,7 +1077,13 @@ impl DeviceResources {
             ],
         });
 
+        // Only a ribbon that does not write depth goes through OIT. Deciding
+        // this from the blend mode alone sent every default ribbon to the OIT
+        // pass, which writes no depth, so an opaque ribbon was invisible to
+        // decals, soft particles and everything else that reads scene depth.
+        // Mirrors the sprite rule, which gates on `depth_write` the same way.
         let oit_eligible = !wireframe
+            && !item.depth_write
             && matches!(
                 item.blend,
                 crate::renderer::SpriteBlend::AlphaBlend
@@ -1100,6 +1108,7 @@ impl DeviceResources {
             ],
             cast_shadows: true,
             oit_eligible,
+            depth_write: item.depth_write,
             node_pick_buffer: build_node_pick_buffer(
                 device,
                 queue,
@@ -1591,6 +1600,9 @@ pub struct StreamtubeGpuData {
     /// HDR path to route the batch through `oit_pass` instead of the
     /// ordinary ribbon draw.
     pub(crate) oit_eligible: bool,
+    /// Whether this item writes depth. Ribbons select a pipeline variant by it;
+    /// tubes and streamtubes are always opaque and set it true.
+    pub(crate) depth_write: bool,
     /// Per-triangle segment index, one entry per triangle in `index_buffer`
     /// (i.e. `index_count / 3` entries). Maps a GPU pick's `primitive_index`
     /// (the hit triangle) to the source curve segment, so a sub-object GPU pick
