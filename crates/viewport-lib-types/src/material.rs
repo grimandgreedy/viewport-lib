@@ -352,9 +352,11 @@ pub struct UvTransform {
     pub scale: [f32; 2],
     /// Rotation about the texture centre, in radians. Default `0.0`.
     pub rotation: f32,
-    /// UV-set index (glTF `texCoord`). `0` samples the mesh's primary UVs.
-    /// Higher sets need a second UV vertex stream, which is not wired yet, so
-    /// values other than `0` currently fall back to UV0.
+    /// UV-set index (glTF `texCoord`). `0` samples the mesh's primary UVs, `1`
+    /// samples [`MeshData::uvs1`](crate::data::mesh::MeshData::uvs1). A mesh
+    /// carrying no second set binds a zero fallback, so a slot selecting `1`
+    /// there samples `vec2(0.0)` rather than falling back to UV0. Values above
+    /// `1` are not carried: the renderer has two streams.
     pub uv_set: u32,
 }
 
