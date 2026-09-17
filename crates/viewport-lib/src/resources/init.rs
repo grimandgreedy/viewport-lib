@@ -2436,8 +2436,6 @@ impl DeviceResources {
             },
             oit: crate::resources::postprocess::OitResources::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
-            // Scatter-volume (participating media) pipeline (lazily created).
-            scatter: crate::resources::volume::scatter_volume::ScatterResources::default(),
             // IBL / environment map resources.
             ibl: crate::resources::material::environment::IblResources {
                 irradiance_view: None,

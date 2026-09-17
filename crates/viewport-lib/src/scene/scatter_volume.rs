@@ -13,6 +13,11 @@ use crate::scene::aabb::Aabb;
 /// Add to a frame via [`ScatterVolumeItem`](crate::renderer::ScatterVolumeItem)
 /// and push into `SceneFrame::scatter_volumes`. No upload step is required;
 /// the renderer packs visible volumes into a storage buffer each frame.
+/// Hard cap on the number of scatter volumes drawn in one frame. Volumes past
+/// this many are skipped for the frame; the per-volume draw flow handles up to
+/// this many active volumes.
+pub const MAX_SCATTER_VOLUMES: usize = 16;
+
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ScatterVolume {

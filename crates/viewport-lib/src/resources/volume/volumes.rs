@@ -106,7 +106,6 @@ impl DeviceResources {
         if replaced {
             // Drop any scatter bind group built against this slot's old texture
             // so the previous field's GPU memory is actually released.
-            self.invalidate_scatter_density(id.index() as u32);
         }
         replaced
     }
@@ -119,9 +118,7 @@ impl DeviceResources {
     /// already freed or is stale.
     pub fn free_volume(&mut self, id: VolumeId) -> bool {
         let freed = self.content.volume_textures.remove(id).is_some();
-        if freed {
-            self.invalidate_scatter_density(id.index() as u32);
-        }
+        if freed {}
         freed
     }
 

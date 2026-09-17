@@ -194,8 +194,8 @@ pub use scene::aabb;
 pub use scene::material;
 pub use scene::scatter_volume;
 pub use scene::scatter_volume::{
-    ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, RefractionParams,
-    ScatterShape, ScatterVolume,
+    ColourSource, DensityRemap, Emission, EmissionCurve, MAX_SCATTER_VOLUMES, NoiseDriver,
+    RefractionParams, ScatterShape, ScatterVolume,
 };
 pub use scene::traits;
 

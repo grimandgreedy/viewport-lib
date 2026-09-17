@@ -1277,69 +1277,6 @@ impl ViewportRenderer {
             self.cache_pick_items(frame);
         }
 
-        // Prepare scatter volumes for rendering. Independent of picking: always runs.
-        {
-            self.prepared_scatter_volumes.clear();
-            self.prepared_refraction_volumes.clear();
-            let global_wireframe = frame.viewport.wireframe_mode;
-            let eye = frame.camera.render_camera.eye_position;
-            for item in &frame.scene.scatter_volumes {
-                if item.settings.hidden || item.settings.wireframe || global_wireframe {
-                    continue;
-                }
-                let mut flags: u32 = 0;
-                if item.settings.unlit {
-                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_UNLIT;
-                }
-                if item.settings.receive_shadows {
-                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_RECEIVE_SHADOWS;
-                }
-                self.prepared_scatter_volumes.push((
-                    item.volume.clone(),
-                    item.settings.opacity,
-                    flags,
-                ));
-                if item.volume.refraction.is_some() {
-                    self.prepared_refraction_volumes
-                        .push((item.volume.clone(), item.settings.opacity));
-                }
-            }
-            // Sort back-to-front for the per-volume scatter draws. The
-            // metric is the maximum corner distance of the volume's world
-            // AABB from the eye, descending. Centroid distance flips order
-            // when one volume contains another (huge fog containing a small
-            // fire) -- the fire centroid can land on either side of the fog
-            // centroid as the camera orbits, causing the alpha-over composite
-            // to swap visibly. Sorting by far-corner distance keeps
-            // containers (whose far corner is much further from the eye)
-            // strictly behind contained volumes regardless of camera angle.
-            self.prepared_scatter_volumes.sort_by(|a, b| {
-                let aabb_a = a.0.world_aabb();
-                let aabb_b = b.0.world_aabb();
-                let far_corner = |aabb: &crate::Aabb| -> f32 {
-                    let cx = if (aabb.min.x - eye[0]).abs() > (aabb.max.x - eye[0]).abs() {
-                        aabb.min.x
-                    } else {
-                        aabb.max.x
-                    };
-                    let cy = if (aabb.min.y - eye[1]).abs() > (aabb.max.y - eye[1]).abs() {
-                        aabb.min.y
-                    } else {
-                        aabb.max.y
-                    };
-                    let cz = if (aabb.min.z - eye[2]).abs() > (aabb.max.z - eye[2]).abs() {
-                        aabb.min.z
-                    } else {
-                        aabb.max.z
-                    };
-                    (cx - eye[0]).powi(2) + (cy - eye[1]).powi(2) + (cz - eye[2]).powi(2)
-                };
-                let da = far_corner(&aabb_a);
-                let db = far_corner(&aabb_b);
-                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-
         let (scene_fx, viewport_fx) = frame.effects.split();
         self.prepare_scene_internal(device, queue, frame, &scene_fx, sink);
 

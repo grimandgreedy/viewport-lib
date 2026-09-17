@@ -4,7 +4,6 @@ pub(crate) use crate::resources::device_resources::DualPipeline;
 pub(crate) use crate::resources::device_resources::OutlineResources;
 pub(crate) use crate::resources::device_resources::PickResources;
 pub(crate) use crate::resources::device_resources::ProjectedTetResources;
-pub(crate) use crate::resources::device_resources::ScatterViewportState;
 pub(crate) use crate::resources::device_resources::ShadowCullState;
 pub(crate) use crate::resources::device_resources::SubHighlightResources;
 pub(crate) use crate::resources::device_resources::ViewportCullState;

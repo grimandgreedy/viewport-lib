@@ -160,3 +160,66 @@ fn two_viewports_render_one_scene_from_different_cameras() {
     // The two viewports used different cameras, so their images must differ.
     assert_ne!(img0, img1, "both viewports rendered the same image");
 }
+
+/// The same fan-out for a scene with a scatter volume in it.
+///
+/// Scatter keeps accumulation and history targets per viewport, allocated on
+/// first use and sized from that viewport's scene size. A single shared set
+/// would leave the second viewport compositing the first one's fog, which is
+/// what the differing images here rule out. The two viewports are also given
+/// different sizes, so the allocation actually has to key on the viewport
+/// rather than on the frame.
+#[test]
+fn two_viewports_keep_separate_scatter_targets() {
+    let Some(mut h) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    let scene = scene_by_name("scatter_volume").expect("scatter_volume scene");
+    assert!(scene.cameras.len() >= 2, "scene needs two cameras");
+    let built = h.build_scene(&scene);
+
+    let vp0 = h.renderer.create_viewport(&h.device);
+    let vp1 = h.renderer.create_viewport(&h.device);
+
+    let mut frame0 = frame_for(&built, &scene.cameras[0].camera, [SIZE as f32, SIZE as f32]);
+    let mut frame1 = frame_for(&built, &scene.cameras[1].camera, [SIZE as f32, SIZE as f32]);
+    frame0.camera = frame0.camera.with_viewport_id(vp0);
+    frame1.camera = frame1.camera.with_viewport_id(vp1);
+
+    let tex0 = offscreen(&h.device);
+    let tex1 = offscreen(&h.device);
+    let view0 = tex0.create_view(&wgpu::TextureViewDescriptor::default());
+    let view1 = tex1.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let (scene_fx, _) = frame0.effects.split();
+    let token = h
+        .renderer
+        .owned()
+        .prepare_scene(&h.device, &h.queue, &frame0, &scene_fx);
+    h.renderer
+        .owned()
+        .prepare_viewport(&h.device, &h.queue, &token, vp0, &frame0);
+    h.renderer
+        .owned()
+        .prepare_viewport(&h.device, &h.queue, &token, vp1, &frame1);
+
+    let cmd0 = h
+        .renderer
+        .owned()
+        .render_viewport(&h.device, &h.queue, &view0, vp0, &frame0);
+    let cmd1 = h
+        .renderer
+        .owned()
+        .render_viewport(&h.device, &h.queue, &view1, vp1, &frame1);
+    h.queue.submit([cmd0, cmd1]);
+
+    let img0 = readback(&h.device, &h.queue, &tex0);
+    let img1 = readback(&h.device, &h.queue, &tex1);
+
+    let uniform = |img: &[u8]| img.chunks_exact(4).all(|p| p == &img[0..4]);
+    assert!(!uniform(&img0), "viewport 0 is blank");
+    assert!(!uniform(&img1), "viewport 1 is blank");
+    assert_ne!(img0, img1, "both viewports rendered the same image");
+}

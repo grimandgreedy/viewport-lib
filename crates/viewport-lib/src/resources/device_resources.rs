@@ -151,71 +151,6 @@ pub(crate) struct ViewportHdrState {
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
 }
-/// Per-viewport scatter-pass intermediates: two RGBA16F ping-pong targets
-/// driven by the temporal-accumulation logic, plus the composite bind groups
-/// and previous-frame view-projection used for reprojection.
-///
-/// Lives on `ViewportRenderer` (not `ViewportHdrState`) so that the scatter
-/// pass can allocate and mutate it without conflicting with the immutable
-/// `slot_hdr` borrow held across the larger paint phase.
-pub(crate) struct ScatterViewportState {
-    // Textures keep the GPU allocation alive; views are sampled or rendered
-    // into.
-    /// Per-volume scatter draws accumulate into this target each frame.
-    /// Cleared at the start of the scatter pass.
-    #[allow(dead_code)]
-    pub raw_current_texture: crate::gpu::Texture,
-    pub raw_current_view: crate::gpu::TextureView,
-    /// History ping-pong. The temporal-resolve pass reads one slot
-    /// (history_prev) and writes the other (history_new). `parity` selects.
-    #[allow(dead_code)]
-    pub history_a_texture: crate::gpu::Texture,
-    pub history_a_view: crate::gpu::TextureView,
-    #[allow(dead_code)]
-    pub history_b_texture: crate::gpu::Texture,
-    pub history_b_view: crate::gpu::TextureView,
-    /// Composite bind group reading the raw-current texture.
-    /// Used when temporal accumulation is disabled.
-    pub composite_bg_raw: crate::gpu::BindGroup,
-    /// Composite bind groups reading either history slot, used as the source
-    /// after the temporal-resolve pass has written history_new.
-    pub composite_bg_history_a: crate::gpu::BindGroup,
-    pub composite_bg_history_b: crate::gpu::BindGroup,
-    /// Temporal-resolve bind groups, keyed by which history slot is being
-    /// read as the previous-frame input. Each binds raw_current + the chosen
-    /// history slot.
-    pub temporal_resolve_bg_read_a: crate::gpu::BindGroup,
-    pub temporal_resolve_bg_read_b: crate::gpu::BindGroup,
-    /// Current allocated intermediate size, [width, height].
-    pub size: [u32; 2],
-    /// Whether `size` reflects the downsampled (half-res) allocation.
-    pub downsampled: bool,
-    /// Index of the history slot the next frame writes to (0 = A, 1 = B).
-    /// The other slot is read as the previous-frame history.
-    pub parity: u32,
-    /// True when the history slot opposite `parity` holds a usable
-    /// previous-frame composite result.
-    pub history_valid: bool,
-    /// Previous frame's view-projection (row-major mat4).
-    pub prev_view_proj: [[f32; 4]; 4],
-    /// Scene colour copy sampled by the refraction pass. Allocated on demand
-    /// when at least one volume has refraction enabled. Matches the HDR
-    /// target's size and format.
-    #[allow(dead_code)]
-    pub refraction_source_texture: Option<crate::gpu::Texture>,
-    /// View paired with `refraction_source_texture`. Bound as the source
-    /// during the refraction pass and as the render target during the
-    /// preceding blit-copy of the HDR scene.
-    pub refraction_source_view: Option<crate::gpu::TextureView>,
-    /// Per-viewport bind group binding `(refraction_source_view, depth)` to
-    /// the refraction pass.
-    pub refraction_source_bg: Option<crate::gpu::BindGroup>,
-    /// Per-viewport bind group binding the HDR view as the source for the
-    /// blit-copy that fills `refraction_source_view`.
-    pub refraction_blit_bg: Option<crate::gpu::BindGroup>,
-    /// Allocated size of the refraction source, matched to the HDR target.
-    pub refraction_source_size: [u32; 2],
-}
 /// A render pipeline compiled for both the LDR swapchain format and the HDR
 /// intermediate format (`Rgba16Float`). Used for pipelines that draw into the
 /// primary scene colour attachment, which may be either format depending on
@@ -465,7 +400,7 @@ pub struct ContentResources {
 }
 
 /// Device-shared GPU resources: pipelines, layouts, samplers, fallbacks, LUTs,
-/// and the per-feature pipeline clusters (`scatter`, `volume`, ...).
+/// and the per-feature pipeline clusters (`volume`, `pt`, ...).
 /// Created once at init and shared across every viewport.
 ///
 /// Typically stored in the host framework's resource container and accessed
@@ -634,10 +569,6 @@ pub struct DeviceResources {
     // --- Projected tetrahedra transparent volume rendering (lazily created) ---
     /// Projected-tetrahedra pipeline, layouts, and LUT bind group cache.
     pub(crate) pt: ProjectedTetResources,
-
-    // --- Scatter-volume (participating media) rendering (lazily created) ---
-    /// Scatter-volume pipelines, layouts, and per-frame upload buffers.
-    pub(crate) scatter: crate::resources::volume::scatter_volume::ScatterResources,
 
     // --- IBL / environment map resources ---
     /// Image-based-lighting views, fallbacks, owned array textures, environment

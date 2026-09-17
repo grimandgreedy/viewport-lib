@@ -21,6 +21,7 @@ pub(crate) mod gpu_particles;
 pub(crate) mod image_slice;
 pub(crate) mod point_cloud;
 pub(crate) mod polyline;
+pub(crate) mod scatter_volume;
 pub(crate) mod sprite;
 pub(crate) mod tensor_glyph;
 pub(crate) mod volume;
@@ -50,6 +51,7 @@ pub(crate) fn plugin_items_for<'f>(
         glyph::TYPE_NAME => Some(&frame.scene.glyphs),
         point_cloud::TYPE_NAME => Some(&frame.scene.point_clouds),
         polyline::TYPE_NAME => Some(&frame.scene.polylines),
+        scatter_volume::TYPE_NAME => Some(&frame.scene.scatter_volumes),
         sprite::TYPE_NAME => Some(&frame.scene.sprite_items),
         tensor_glyph::TYPE_NAME => Some(&frame.scene.tensor_glyphs),
         volume::TYPE_NAME => Some(&frame.scene.volumes),
@@ -145,6 +147,12 @@ impl crate::renderer::ViewportRenderer {
         self.with_item_type_plugin(
             device,
             Box::new(decal::DecalPlugin::new(self.decal_cache_stats.clone())),
+        );
+        // Scatter composites over the finished scene, so it registers after
+        // every type whose pixels it absorbs.
+        self.with_item_type_plugin(
+            device,
+            Box::new(scatter_volume::ScatterVolumePlugin::default()),
         );
     }
 }

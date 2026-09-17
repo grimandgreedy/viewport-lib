@@ -84,6 +84,13 @@ fn expected(name: &str) -> Option<Expected> {
         // These item-type scenes include mesh geometry (ground and receivers
         // for scatter and decals), so the mesh counters are live for them.
         "scatter_volume" => e(2, 2, 2, 2, 0, 972),
+        // A fog box containing a dense sphere, downsampled: two volumes over a
+        // slab and a pillar, so the back-to-front order has something to get
+        // wrong.
+        "scatter_layered" => e(2, 2, 2, 2, 0, 24),
+        // A texture-driven volume beside a noise-driven one, against a single
+        // backdrop slab.
+        "scatter_textured" => e(1, 1, 1, 0, 0, 12),
         "decals" => e(2, 2, 2, 2, 0, 24),
         // The decal scene again with supersampling on: same content and same
         // draw structure, only the resolution differs.

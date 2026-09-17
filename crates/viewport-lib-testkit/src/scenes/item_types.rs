@@ -113,6 +113,16 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_scatter_volume,
         },
         NamedScene {
+            name: "scatter_layered",
+            cameras: standard_cameras(Vec3::new(0.0, 0.0, 1.0), 11.0),
+            build: build_scatter_layered,
+        },
+        NamedScene {
+            name: "scatter_textured",
+            cameras: standard_cameras(Vec3::ZERO, 6.0),
+            build: build_scatter_textured,
+        },
+        NamedScene {
             name: "decals",
             cameras: standard_cameras(Vec3::ZERO, 8.0),
             build: build_decals,
@@ -869,6 +879,138 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         scatter_volumes: vec![fog_item],
         scatter_settings: Some(scatter_settings),
         lighting: rigs::grazing(),
+        ..Default::default()
+    }
+}
+
+fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // A wide fog box that fully contains a small dense sphere, which is the
+    // arrangement the per-volume draw order has to get right: the two
+    // centroids sit close together, so a centroid-distance sort flips as the
+    // camera orbits while a far-corner sort keeps the container behind.
+    // Downsampled, so the half-resolution target and the composite upscale
+    // are in the picture too.
+    let slab = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(14.0, 14.0, 0.4))
+        .expect("slab upload");
+    let mut ground = viewport_lib::SceneRenderItem::default();
+    ground.mesh_id = slab;
+    ground.model = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.2)).to_cols_array_2d();
+    ground.material = Material::pbr([0.42, 0.44, 0.46], 0.0, 0.85);
+
+    let post = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(0.5, 0.5, 3.2))
+        .expect("post upload");
+    let mut pillar = viewport_lib::SceneRenderItem::default();
+    pillar.mesh_id = post;
+    pillar.model = Mat4::from_translation(Vec3::new(2.4, -1.4, 1.6)).to_cols_array_2d();
+    pillar.material = Material::pbr([0.8, 0.45, 0.2], 0.1, 0.5);
+
+    let fog = ScatterVolume::box_uniform(
+        Aabb {
+            min: Vec3::new(-6.0, -6.0, 0.0),
+            max: Vec3::new(6.0, 6.0, 3.0),
+        },
+        0.16,
+        [0.72, 0.78, 0.9],
+    );
+
+    // Forward-scattering core inside the fog, bright enough that compositing
+    // it in the wrong order is obvious rather than subtle.
+    let mut core = ScatterVolume::sphere_uniform([-0.8, 0.6, 1.3], 1.5, 0.9, [1.0, 0.72, 0.4]);
+    core.anisotropy = 0.6;
+    core.density_remap = viewport_lib::DensityRemap::Smoothstep { lo: 0.0, hi: 0.8 };
+    core.emission = viewport_lib::Emission::Strength {
+        strength: 0.8,
+        curve: viewport_lib::EmissionCurve::Power(2.0),
+    };
+
+    let mut fog_item = ScatterVolumeItem::new(fog);
+    fog_item.settings.pick_id = PickId(1620);
+    let mut core_item = ScatterVolumeItem::new(core);
+    core_item.settings.pick_id = PickId(1621);
+
+    let mut scatter_settings = ScatterSettings::default();
+    scatter_settings.temporal = false;
+    scatter_settings.blue_noise_jitter = false;
+    scatter_settings.downsample = true;
+    scatter_settings.quality = ScatterQuality::High;
+
+    BuiltScene {
+        items: vec![ground, pillar],
+        scatter_volumes: vec![fog_item, core_item],
+        scatter_settings: Some(scatter_settings),
+        lighting: rigs::grazing(),
+        ..Default::default()
+    }
+}
+
+fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // The two density sources that are not the flat constant: a 3D texture
+    // read through a colourmap ramp, and static procedural noise. Both go
+    // through the per-volume texture bind groups, which are cached by id and
+    // so need a scene that actually binds two different ones.
+    let (data, dims) = radial_field(24);
+    let vid = ctx.res.upload_volume(ctx.device, ctx.queue, &data, dims);
+
+    let backdrop = ctx
+        .res
+        .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 0.3, 5.0))
+        .expect("backdrop upload");
+    let mut wall = viewport_lib::SceneRenderItem::default();
+    wall.mesh_id = backdrop;
+    wall.model = Mat4::from_translation(Vec3::new(0.0, 2.6, 0.0)).to_cols_array_2d();
+    wall.material = Material::pbr([0.55, 0.55, 0.6], 0.0, 0.9);
+
+    let mut textured = ScatterVolume::box_uniform(
+        Aabb {
+            min: Vec3::new(-2.6, -1.2, -1.2),
+            max: Vec3::new(-0.2, 1.2, 1.2),
+        },
+        1.1,
+        [1.0, 1.0, 1.0],
+    );
+    textured.density_texture = Some(vid);
+    textured.colour = viewport_lib::ColourSource::Ramp(ColourmapId(0));
+    textured.density_remap = viewport_lib::DensityRemap::Smoothstep { lo: 0.1, hi: 0.7 };
+
+    // Static noise: scroll velocity and time scale are both zero, so the
+    // field does not move and a still frame repeats exactly.
+    let mut noisy = ScatterVolume::box_uniform(
+        Aabb {
+            min: Vec3::new(0.2, -1.2, -1.2),
+            max: Vec3::new(2.6, 1.2, 1.2),
+        },
+        0.85,
+        [0.55, 0.85, 1.0],
+    );
+    let mut noise = viewport_lib::NoiseDriver::default();
+    noise.scale = 1.4;
+    noise.octaves = 4;
+    noise.scroll_velocity = [0.0; 3];
+    noise.time_scale = 0.0;
+    noise.lacunarity = 2.0;
+    noisy.noise = Some(noise);
+    noisy.anisotropy = -0.3;
+
+    let mut textured_item = ScatterVolumeItem::new(textured);
+    textured_item.settings.pick_id = PickId(1622);
+    textured_item.settings.selected = true;
+    let noisy_item = ScatterVolumeItem::new(noisy);
+
+    let mut scatter_settings = ScatterSettings::default();
+    scatter_settings.temporal = false;
+    scatter_settings.blue_noise_jitter = false;
+    scatter_settings.downsample = false;
+    scatter_settings.quality = ScatterQuality::High;
+
+    BuiltScene {
+        items: vec![wall],
+        scatter_volumes: vec![textured_item, noisy_item],
+        scatter_settings: Some(scatter_settings),
+        lighting: rigs::from_above(),
         ..Default::default()
     }
 }

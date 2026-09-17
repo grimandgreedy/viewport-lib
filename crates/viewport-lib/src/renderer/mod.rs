@@ -464,9 +464,6 @@ pub struct ViewportRenderer {
     /// Clamped to `[policy.min_render_scale, policy.max_render_scale]`.
     /// Reported in `FrameStats::render_scale` each frame.
     current_render_scale: f32,
-    /// Instant the renderer was constructed. Used as the t=0 reference for
-    /// per-frame animated effects (e.g. `ScatterVolume::noise` time scrolling).
-    start_instant: web_time::Instant,
     /// Instant recorded at the start of the most recent `prepare()` call.
     /// Used to compute `total_frame_ms` on the following frame.
     last_prepare_instant: Option<web_time::Instant>,
@@ -495,22 +492,6 @@ pub struct ViewportRenderer {
     /// identity is stable means objects only moved: refit the pick BVH.
     pick_bvh_transform_rev: u64,
     /// Point cloud items from the last `prepare()` call, retained for `pick()` dispatch.
-    /// Scatter volume items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_scatter_volume_items: Vec<crate::renderer::types::ScatterVolumeItem>,
-    /// Volumes packed into the GPU storage buffer this frame
-    /// (volume, density_multiplier, flag bits). Stored so `render_viewport`
-    /// can re-upload as needed without re-walking the scene frame.
-    pub(crate) prepared_scatter_volumes:
-        Vec<(crate::scene::scatter_volume::ScatterVolume, f32, u32)>,
-    /// Subset of the prepared scatter volumes that carry `RefractionParams`.
-    /// Cleared and refilled each frame by `prepare_viewport`. The refraction
-    /// pass walks this list; an empty list skips the pass entirely.
-    pub(crate) prepared_refraction_volumes: Vec<(crate::scene::scatter_volume::ScatterVolume, f32)>,
-    /// Per-viewport scatter intermediates and temporal history. Indexed by
-    /// `vp_idx`. Grown lazily inside the scatter pass; each entry is
-    /// reallocated when the requested scatter target size or downsample mode
-    /// changes.
-    pub(crate) scatter_viewport_states: Vec<Option<crate::resources::ScatterViewportState>>,
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
@@ -958,7 +939,6 @@ impl ViewportRenderer {
             performance_policy: crate::renderer::stats::PerformancePolicy::default(),
             upload_budget: None,
             current_render_scale: 1.0,
-            start_instant: web_time::Instant::now(),
             last_prepare_instant: None,
             frame_counter: 0,
             lod_levels: std::collections::HashMap::new(),
@@ -967,10 +947,6 @@ impl ViewportRenderer {
             pick_bvh: std::sync::Mutex::new(None),
             pick_bvh_identity_rev: 0,
             pick_bvh_transform_rev: 0,
-            pick_scatter_volume_items: Vec::new(),
-            prepared_scatter_volumes: Vec::new(),
-            prepared_refraction_volumes: Vec::new(),
-            scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
