@@ -568,10 +568,9 @@ pub struct SpriteGpuData {
     /// pipelines never write depth), and neither soft-particle fade nor
     /// refractive distortion is active -- both need to sample a resolved
     /// scene texture mid-fragment (depth for soft-particle, colour for
-    /// refraction), which the OIT pass exposes for neither (see
-    /// `docs/plans/non-mesh-pipeline-consistency-plan.md#phase-6d`). Read by
-    /// the HDR path to route the batch through `oit_pass` instead of the
-    /// ordinary sprite passes.
+    /// refraction), which the OIT pass exposes for neither. Read by the
+    /// sprite item type to route the batch through the OIT pass instead of the
+    /// ordinary sprite draws.
     pub(crate) oit_eligible: bool,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: crate::gpu::Buffer,

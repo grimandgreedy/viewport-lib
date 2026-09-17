@@ -1,21 +1,23 @@
-// Unlit sprite shader, weighted-blended OIT variant.
+// Lit sprite shader, weighted-blended OIT variant.
 //
-// Same vertex stage as `sprite.wgsl`. The fragment stage is the same colour
-// resolve (texture sample, clip test) but packs a weighted-blended OIT
-// output instead of returning a straight colour, so overlapping transparent
-// sprites composite order-independently instead of by draw order.
+// Same vertex stage and lighting/shadow logic as `sprite_lit.wgsl`; the
+// fragment stage packs a weighted-blended OIT output instead of returning a
+// straight colour.
 //
-// Soft-particle fade is not supported here: it needs to sample resolved
-// scene depth mid-fragment, which the OIT pass does not expose (see
-// `docs/plans/non-mesh-pipeline-consistency-plan.md#phase-6d`). Sprites with
-// an active `soft_particle_distance` stay on the ordinary blend pipeline
-// (`sprite.wgsl`) regardless of blend mode; this shader is only ever
-// selected for sprites the CPU-side eligibility check has already excluded
-// soft particles from.
+// Soft-particle fade is not supported here, for the same reason as
+// `sprite_oit.wgsl`: it needs to sample resolved scene depth mid-fragment,
+// which the OIT pass does not expose. Lit sprites with an active
+// `soft_particle_distance` stay on `sprite_lit.wgsl` regardless of blend
+// mode.
 //
-// Group 0: Camera uniform + ClipPlanes + ClipVolume.
+// Group 0: camera + clip + lighting bindings (shared with the mesh path).
 // Group 1: SpriteUniform + sprite texture + sampler + per-instance buffer.
-// (No group 2: no soft-particle depth binding, unlike sprite.wgsl.)
+// Group 2: optional tangent-space normal map + sampler (no group 2 for
+//          soft-particle depth, unlike sprite_lit.wgsl -- normal map moves
+//          from group 3 to group 2 since there is nothing to sample depth
+//          for here).
+
+// #include "helpers/scene_lighting.wgsl"
 
 struct Camera {
     view_proj:     mat4x4<f32>,
@@ -60,8 +62,7 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-// Per-batch uniform: same layout as `sprite.wgsl`'s `SpriteUniform`. Only the
-// leading fields through `refraction_strength` are read here.
+// Same layout as `sprite_lit.wgsl`'s `SpriteUniform`.
 struct SpriteUniform {
     model:                  mat4x4<f32>,
     world_space:            u32,
@@ -70,6 +71,24 @@ struct SpriteUniform {
     orientation:            u32,
     axis:                   vec3<f32>,
     refraction_strength:    f32,
+    lit:                    u32,
+    normal_mode:            u32,
+    has_normal_map:         u32,
+    ambient_scale:          f32,
+    roughness:              f32,
+    receive_shadows:        u32,
+    _pad_lit_b:             u32,
+    _pad_lit_c:             u32,
+};
+
+struct ShadowAtlas {
+    cascade_vp:        array<mat4x4<f32>, 4>,
+    cascade_splits:    vec4<f32>,
+    cascade_count:     u32,
+    atlas_size:        f32,
+    shadow_filter:     u32,
+    pcss_light_radius: f32,
+    atlas_rects:       array<vec4<f32>, 8>,
 };
 
 struct SpriteInstance {
@@ -84,13 +103,20 @@ struct SpriteInstance {
 };
 
 @group(0) @binding(0) var<uniform>       camera:        Camera;
+@group(0) @binding(1) var                shadow_map:    texture_depth_2d;
+@group(0) @binding(2) var                shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var<uniform>       lights_uniform: Lights;
 @group(0) @binding(4) var<uniform>       clip_planes:   ClipPlanes;
+@group(0) @binding(5) var<uniform>       shadow_atlas:  ShadowAtlas;
 @group(0) @binding(6) var<uniform>       clip_volume:   ClipVolumeUB;
 
 @group(1) @binding(0) var<uniform>       sprite_ub:     SpriteUniform;
-@group(1) @binding(1) var               sprite_texture: texture_2d<f32>;
-@group(1) @binding(2) var               sprite_sampler: sampler;
+@group(1) @binding(1) var                sprite_texture: texture_2d<f32>;
+@group(1) @binding(2) var                sprite_sampler: sampler;
 @group(1) @binding(3) var<storage, read> instance_buf:  array<SpriteInstance>;
+
+@group(2) @binding(0) var normal_map_tex:  texture_2d<f32>;
+@group(2) @binding(1) var normal_map_samp: sampler;
 
 // #include "helpers/clip_volume_test.wgsl"
 
@@ -101,10 +127,14 @@ struct VertexIn {
 };
 
 struct VertexOut {
-    @builtin(position) clip_pos:      vec4<f32>,
-    @location(0)       colour:        vec4<f32>,
-    @location(1)       world_pos:     vec3<f32>,
-    @location(2)       uv:            vec2<f32>,
+    @builtin(position) clip_pos:       vec4<f32>,
+    @location(0)       colour:         vec4<f32>,
+    @location(1)       world_pos:      vec3<f32>,
+    @location(2)       uv:             vec2<f32>,
+    @location(3)       local_offset:   vec2<f32>,
+    @location(4)       tangent_world:  vec3<f32>,
+    @location(5)       bitangent_world:vec3<f32>,
+    @location(6)       facing_world:   vec3<f32>,
 };
 
 fn quad_corner(vi: u32) -> vec2<f32> {
@@ -165,22 +195,18 @@ fn vs_main(in: VertexIn) -> VertexOut {
         }
     }
 
+    var quad_world_pos = world_pos;
     if sprite_ub.world_space != 0u {
         let half = inst.size * 0.5;
-        let ws_pos = world_pos
-                   + local_right * (rotated.x * half * stretch_x)
-                   + local_up    * (rotated.y * half);
-        out.clip_pos = camera.view_proj * vec4<f32>(ws_pos, 1.0);
-        out.world_pos = ws_pos;
+        quad_world_pos = world_pos
+                       + local_right * (rotated.x * half * stretch_x)
+                       + local_up    * (rotated.y * half);
+        out.clip_pos = camera.view_proj * vec4<f32>(quad_world_pos, 1.0);
     } else {
-        let center    = camera.view_proj * vec4<f32>(world_pos, 1.0);
-        let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
-        let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
-        let half_px    = inst.size * 0.5;
-        let inv_vp     = vec2<f32>(1.0, 1.0)
-                       / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
-        let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
-                        + up_clip    * (rotated.y * half_px * inv_vp.y);
+        let center  = camera.view_proj * vec4<f32>(world_pos, 1.0);
+        let half_px = inst.size * 0.5;
+        let inv_vp  = vec2<f32>(1.0, 1.0)
+                    / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
         if sprite_ub.orientation == 0u {
             let ndc_off = rotated * half_px * inv_vp;
             out.clip_pos = vec4<f32>(
@@ -190,14 +216,23 @@ fn vs_main(in: VertexIn) -> VertexOut {
                 center.w,
             );
         } else {
+            let right_clip = camera.view_proj * vec4<f32>(local_right, 0.0);
+            let up_clip    = camera.view_proj * vec4<f32>(local_up,    0.0);
+            let offset_clip = right_clip * (rotated.x * half_px * stretch_x * inv_vp.x)
+                            + up_clip    * (rotated.y * half_px * inv_vp.y);
             out.clip_pos = center + offset_clip * center.w;
         }
-        out.world_pos = world_pos
+        quad_world_pos = world_pos
                        + local_right * (rotated.x * stretch_x)
                        + local_up    *  rotated.y;
     }
 
-    out.colour = inst.colour;
+    out.world_pos = quad_world_pos;
+    out.colour     = inst.colour;
+    out.local_offset  = vec2<f32>(rotated.x * stretch_x, rotated.y);
+    out.tangent_world   = local_right;
+    out.bitangent_world = local_up;
+    out.facing_world    = -cam_forward;
 
     let u  = mix(inst.uv_rect.x, inst.uv_rect.z, (corner.x + 1.0) * 0.5);
     let v  = mix(inst.uv_rect.y, inst.uv_rect.w, (corner.y + 1.0) * 0.5);
@@ -206,18 +241,37 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
+// Cascaded shadow map sampling: cascade selection, receiver bias, and the
+// PCF/PCSS/hard filter tiers, shared with the mesh shader family.
+// #include "helpers/csm.wgsl"
+
+fn build_normal(local_offset: vec2<f32>,
+                tangent: vec3<f32>,
+                bitangent: vec3<f32>,
+                facing: vec3<f32>,
+                uv: vec2<f32>) -> vec3<f32> {
+    let mode = sprite_ub.normal_mode;
+    if mode == 1u {
+        return normalize(facing);
+    }
+    if mode == 2u && sprite_ub.has_normal_map != 0u {
+        let sample = textureSample(normal_map_tex, normal_map_samp, uv).rgb;
+        let n_ts = normalize(sample * 2.0 - vec3<f32>(1.0));
+        let n_world = tangent * n_ts.x + bitangent * n_ts.y + facing * n_ts.z;
+        return normalize(n_world);
+    }
+    let r2 = clamp(dot(local_offset, local_offset), 0.0, 1.0);
+    let z  = sqrt(1.0 - r2);
+    let n  = tangent * local_offset.x + bitangent * local_offset.y + facing * z;
+    return normalize(n);
+}
+
 struct OitOutput {
     @location(0) accum:  vec4<f32>,
     @location(1) reveal: f32,
 };
 
-// Weighted-blended OIT packing (McGuire & Bavoil). `rgb`/`alpha` are the
-// straight (non-premultiplied) resolved colour; `is_premultiplied` skips the
-// extra `* alpha` for a `SpriteBlend::Premultiplied` batch, whose `rgb` is
-// already alpha-premultiplied by the time it reaches this shader (the
-// ordinary blend path assumes the same convention -- see `sprite.wgsl`'s
-// header). `view_z` is view-space Z (negative in front of the camera); the
-// weight curve matches `viewport_oit_pack` in `plugin_api/shared_wgsl.rs`.
+// See `sprite_oit.wgsl` for the packing convention this mirrors.
 fn pack_oit(rgb: vec3<f32>, alpha: f32, view_z: f32, is_premultiplied: bool) -> OitOutput {
     let premult_rgb = select(rgb * alpha, rgb, is_premultiplied);
     let z = abs(view_z);
@@ -233,6 +287,49 @@ fn resolve_colour(in: VertexOut) -> vec4<f32> {
     if sprite_ub.has_texture != 0u {
         colour = colour * textureSample(sprite_texture, sprite_sampler, in.uv);
     }
+
+    if sprite_ub.lit != 0u {
+        let n = build_normal(
+            in.local_offset,
+            normalize(in.tangent_world),
+            normalize(in.bitangent_world),
+            normalize(in.facing_world),
+            in.uv,
+        );
+        var lights_for_shader = lights_uniform;
+        lights_for_shader.hemisphere_intensity =
+            lights_uniform.hemisphere_intensity * sprite_ub.ambient_scale;
+        let lit_rgb = apply_scene_lighting(
+            n,
+            colour.rgb,
+            false,
+            in.world_pos,
+            lights_for_shader,
+        );
+
+        if sprite_ub.receive_shadows != 0u
+            && lights_uniform.shadows_enabled != 0u
+            && lights_uniform.count > 0u {
+            let l0 = lights_storage[0];
+            if l0.light_type == 0u {
+                let light_dir = normalize(l0.pos_or_dir);
+                let shadow_factor = sample_shadow_csm(in.world_pos, camera.eye_pos, n, light_dir, 0u).factor;
+                let up_weight = clamp(n.z * 0.5 + 0.5, 0.0, 1.0);
+                let ambient = mix(
+                    lights_for_shader.ground_colour,
+                    lights_for_shader.sky_colour,
+                    up_weight,
+                ) * lights_for_shader.hemisphere_intensity;
+                let ambient_rgb = colour.rgb * ambient;
+                colour = vec4<f32>(mix(ambient_rgb, lit_rgb, shadow_factor), colour.a);
+            } else {
+                colour = vec4<f32>(lit_rgb, colour.a);
+            }
+        } else {
+            colour = vec4<f32>(lit_rgb, colour.a);
+        }
+    }
+
     return colour;
 }
 
