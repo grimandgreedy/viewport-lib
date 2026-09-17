@@ -63,6 +63,11 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_sprites_refraction,
         },
         NamedScene {
+            name: "supersampled_sprites",
+            cameras: standard_cameras(Vec3::ZERO, 6.0),
+            build: build_supersampled_sprites,
+        },
+        NamedScene {
             name: "volume",
             cameras: standard_cameras(Vec3::ZERO, 5.0),
             build: build_volume,
@@ -452,6 +457,23 @@ fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// place in the frame again. The textured slab behind them is what makes the
 /// distortion legible: over a flat colour a refractive sprite and a plain one
 /// look the same.
+/// The soft-particle scene again with supersampling on.
+///
+/// The sprite passes run before the SSAA resolve, so they draw into the
+/// supersampled attachments and `clip_pos` is in supersampled pixels. Anything
+/// that turns `clip_pos` back into a texture coordinate has to divide by the
+/// size of the target it is drawing into, not by the scene viewport size. When
+/// the soft fade divided by the viewport size instead, every sprite in this
+/// scene sampled off the edge of the depth texture and faded to nothing,
+/// leaving the cube and ground alone in the frame.
+fn build_supersampled_sprites(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut scene = build_sprites_soft(ctx);
+    let mut post = viewport_lib::PostProcessSettings::default();
+    post.ssaa_factor = 2;
+    scene.post_process = Some(post);
+    scene
+}
+
 fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let slab = ctx
         .res

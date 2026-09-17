@@ -196,9 +196,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
                / vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
     let offset = disp * sprite_ub.refraction_strength * inv_vp;
 
-    // Fragment's own screen UV. `clip_pos.xy` is in framebuffer pixels at
-    // this point thanks to the @builtin(position) interpolation rules.
-    let screen_uv = in.clip_pos.xy * inv_vp;
+    // Fragment's own screen UV. `clip_pos.xy` is in pixels of the target being
+    // drawn into, which is not the scene viewport size when this pass runs
+    // supersampled, so the divisor comes from the texture rather than from
+    // `clip_planes`. The offset above keeps the scene-size scale deliberately:
+    // `refraction_strength` is in scene pixels, and a displacement should look
+    // the same at any supersampling factor.
+    let inv_target = vec2<f32>(1.0, 1.0) / vec2<f32>(textureDimensions(scene_colour_tex));
+    let screen_uv = in.clip_pos.xy * inv_target;
     let sample_uv = clamp(screen_uv + offset, vec2<f32>(0.0), vec2<f32>(1.0));
 
     let sampled = textureSample(scene_colour_tex, scene_colour_samp, sample_uv);

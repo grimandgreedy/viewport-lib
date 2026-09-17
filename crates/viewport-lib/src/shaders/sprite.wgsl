@@ -262,7 +262,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         soft_dist = in.soft_distance;
     }
     if soft_dist > 0.0 {
-        let viewport_size = vec2<f32>(clip_planes.viewport_width, clip_planes.viewport_height);
+        // Size of the depth texture actually bound, not `clip_planes.viewport_width`.
+        // `clip_pos` is in pixels of the target being drawn into, and this pass
+        // draws into the supersampled attachments when SSAA is on, so the scene
+        // viewport size would be a factor too small and send the sample off the
+        // edge of the texture. The depth texture is the same resolution as the
+        // colour target here, so asking it is both correct and self-describing.
+        let viewport_size = vec2<f32>(textureDimensions(scene_depth_tex));
         let screen_uv     = in.clip_pos.xy / viewport_size;
         let scene_ndc_z   = textureSample(scene_depth_tex, scene_depth_samp, screen_uv);
         let ndc = vec4<f32>(
