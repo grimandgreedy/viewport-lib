@@ -8,6 +8,7 @@
 //! only skips the item.
 
 mod pipeline;
+pub(crate) mod types;
 
 use crate::plugin_api::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,

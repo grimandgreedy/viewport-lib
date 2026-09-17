@@ -4,6 +4,7 @@
 //! the renderer routes that field to this plugin.
 
 mod pipeline;
+pub(crate) mod types;
 
 use crate::plugin_api::pick_helpers::{project_to_screen, segment_in_rect};
 use crate::plugin_api::{

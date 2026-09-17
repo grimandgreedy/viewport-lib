@@ -11,6 +11,7 @@
 //! draws instead.
 
 mod pipeline;
+pub(crate) mod types;
 
 use std::sync::Arc;
 

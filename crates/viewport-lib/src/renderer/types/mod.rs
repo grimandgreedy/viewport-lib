@@ -80,7 +80,7 @@ pub(crate) struct InstancedBatch {
 mod clip;
 pub mod debug;
 mod frame;
-mod items;
+pub(crate) mod items;
 mod lighting;
 mod overlay;
 mod postprocess;

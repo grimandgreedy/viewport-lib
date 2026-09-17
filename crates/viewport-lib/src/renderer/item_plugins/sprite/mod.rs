@@ -19,6 +19,7 @@
 //!   scene depth for the soft fade.
 
 mod pipeline;
+pub(crate) mod types;
 
 use crate::plugin_api::{
     DepthReadContext, EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin,

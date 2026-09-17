@@ -1,0 +1,30 @@
+//! Per-frame reference to a pre-uploaded tensor glyph set.
+
+use crate::renderer::types::items::common::IDENTITY_MAT4;
+use crate::scene::material::ItemSettings;
+
+/// Per-frame reference to a pre-uploaded tensor glyph set. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct TensorGlyphSetRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`DeviceResources::upload_tensor_glyph_set`](crate::resources::DeviceResources::upload_tensor_glyph_set)
+    /// or `begin_upload_tensor_glyph_set`.
+    pub source: crate::resources::TensorGlyphSetId,
+    /// Per-frame model matrix. Composes on top of the per-instance
+    /// transforms baked at upload time.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl TensorGlyphSetRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::TensorGlyphSetId) -> Self {
+        Self {
+            source: id,
+            model: IDENTITY_MAT4,
+            settings: ItemSettings::default(),
+        }
+    }
+}

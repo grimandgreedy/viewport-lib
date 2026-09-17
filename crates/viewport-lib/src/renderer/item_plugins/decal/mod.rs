@@ -9,6 +9,7 @@
 //! edge trace when a decal is selected.
 
 mod pipeline;
+pub(crate) mod types;
 
 use crate::plugin_api::{
     EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext, PickRay,

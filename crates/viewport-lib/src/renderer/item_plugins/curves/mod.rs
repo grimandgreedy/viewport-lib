@@ -19,6 +19,7 @@ mod pipeline;
 mod ribbon;
 mod streamtube;
 mod tube;
+pub(crate) mod types;
 
 pub(crate) use ribbon::{RibbonPlugin, TYPE_NAME as RIBBON_TYPE_NAME};
 pub(crate) use streamtube::{StreamtubePlugin, TYPE_NAME as STREAMTUBE_TYPE_NAME};

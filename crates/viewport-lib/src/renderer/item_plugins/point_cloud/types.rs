@@ -1,3 +1,4 @@
+use crate::renderer::types::items::common::IDENTITY_MAT4;
 use crate::resources::ColourmapId;
 use crate::scene::material::ItemSettings;
 
@@ -73,6 +74,33 @@ impl Default for PointCloudItem {
             radius_scalars: Vec::new(),
             radius_scalar_range: None,
             radius_range: (2.0, 12.0),
+            settings: ItemSettings::default(),
+        }
+    }
+}
+
+/// Per-frame reference to a pre-uploaded point cloud. See [`PolylineRefItem`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PointCloudRefItem {
+    /// Handle to GPU buffers produced by
+    /// [`DeviceResources::upload_point_cloud`](crate::resources::DeviceResources::upload_point_cloud)
+    /// or `begin_upload_point_cloud`.
+    pub source: crate::resources::PointCloudId,
+    /// Per-frame model matrix. Composes on top of the model baked into the
+    /// upload, so identity here renders the points at their original
+    /// transform.
+    pub model: [[f32; 4]; 4],
+    /// Per-item render settings.
+    pub settings: ItemSettings,
+}
+
+impl PointCloudRefItem {
+    /// Visible reference at the identity transform.
+    pub fn new(id: crate::resources::PointCloudId) -> Self {
+        Self {
+            source: id,
+            model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
     }

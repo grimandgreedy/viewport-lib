@@ -4,6 +4,7 @@
 //! `SceneFrame::gpu_implicit`; the renderer routes that field to this plugin.
 
 mod pipeline;
+pub(crate) mod types;
 
 use crate::plugin_api::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,

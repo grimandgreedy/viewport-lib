@@ -17,6 +17,7 @@
 //! and both stay where they are.
 
 mod pipeline;
+pub(crate) mod types;
 
 use crate::plugin_api::{
     EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext, PickRay,
