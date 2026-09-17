@@ -586,6 +586,39 @@ impl ItemTypePlugin for SpritePlugin {
         }
     }
 
+    /// A quad outline per billboard, showing where each sprite sits and how
+    /// big it is on screen: sub-structure rather than bounds.
+    ///
+    /// Capped for the same reason as the splat rings, and past the cap a batch
+    /// falls back to one axis-aligned box around every sprite in it. That box
+    /// is a weak stand-in and is kept only because it is what the batch has
+    /// always drawn.
+    fn wireframe_polylines(
+        &self,
+        items: &dyn PluginItemCollection,
+        ctx: &ItemFrameContext<'_>,
+    ) -> Vec<crate::renderer::PolylineItem> {
+        /// Above this many sprites a quad each stops being readable.
+        const MAX_OUTLINED_SPRITES: usize = 100;
+
+        let Some(sprites) = items.as_any().downcast_ref::<Vec<SpriteItem>>() else {
+            return Vec::new();
+        };
+        sprites
+            .iter()
+            .filter(|item| !item.settings.hidden && (ctx.wireframe_mode || item.settings.wireframe))
+            .filter(|item| !item.positions.is_empty())
+            .map(|item| {
+                let model = glam::Mat4::from_cols_array_2d(&item.model);
+                if item.positions.len() <= MAX_OUTLINED_SPRITES {
+                    sprite_quad_outlines_polyline(item, ctx.camera, ctx.viewport_size, model)
+                } else {
+                    sprite_bounds_polyline(item, model)
+                }
+            })
+            .collect()
+    }
+
     fn resolve_sub_object(
         &self,
         _pick_id: PickId,
@@ -645,5 +678,135 @@ fn sprite_radius_px(
                 (world_r * 100.0_f32).max(4.0)
             }
         }
+    }
+}
+
+/// One axis-aligned box around every sprite position in the batch, for a batch
+/// too large to outline individually.
+fn sprite_bounds_polyline(item: &SpriteItem, model: glam::Mat4) -> crate::renderer::PolylineItem {
+    let mut mn = glam::Vec3::splat(f32::INFINITY);
+    let mut mx = glam::Vec3::splat(f32::NEG_INFINITY);
+    for pos in &item.positions {
+        let wp = model.transform_point3(glam::Vec3::from(*pos));
+        mn = mn.min(wp);
+        mx = mx.max(wp);
+    }
+    let corners: [[f32; 3]; 8] = [
+        [mn.x, mn.y, mn.z],
+        [mx.x, mn.y, mn.z],
+        [mn.x, mx.y, mn.z],
+        [mx.x, mx.y, mn.z],
+        [mn.x, mn.y, mx.z],
+        [mx.x, mn.y, mx.z],
+        [mn.x, mx.y, mx.z],
+        [mx.x, mx.y, mx.z],
+    ];
+    crate::renderer::obb_wireframe_polyline(&corners, [0.75, 0.75, 0.75, 1.0])
+}
+
+/// Generate 4-edge quad outlines for each sprite in a batch.
+///
+/// Mirrors the sprite vertex shader corner computation:
+/// - WorldSpace sprites: expand along camera right/up by half-size in world units.
+/// - ScreenSpace sprites: convert NDC corners back to world space via inv_view_proj.
+fn sprite_quad_outlines_polyline(
+    item: &SpriteItem,
+    camera: &crate::RenderCamera,
+    viewport_size: glam::Vec2,
+    model: glam::Mat4,
+) -> crate::renderer::PolylineItem {
+    let view = &camera.view;
+    // Row 0 of the view matrix = camera right in world space.
+    // Row 1 of the view matrix = camera up in world space.
+    // glam Mat4 is column-major: view[col][row], matching view[0][0]/view[1][0]/view[2][0] in WGSL.
+    let cam_right = glam::Vec3::new(view.x_axis.x, view.y_axis.x, view.z_axis.x);
+    let cam_up = glam::Vec3::new(view.x_axis.y, view.y_axis.y, view.z_axis.y);
+
+    let view_proj = camera.view_proj();
+    let inv_view_proj = view_proj.inverse();
+    let [vw, vh] = [viewport_size.x, viewport_size.y];
+    let is_world_space = matches!(
+        item.size_mode,
+        crate::renderer::types::SpriteSizeMode::WorldSpace
+    );
+
+    // BL -> BR -> TR -> TL -> BL: a closed rectangle (4 edges, 5 positions per strip).
+    const CORNERS: [(f32, f32); 5] = [
+        (-1.0, -1.0),
+        (1.0, -1.0),
+        (1.0, 1.0),
+        (-1.0, 1.0),
+        (-1.0, -1.0),
+    ];
+
+    let mut all_positions: Vec<[f32; 3]> = Vec::new();
+    let mut strip_lengths: Vec<u32> = Vec::new();
+
+    for i in 0..item.positions.len() {
+        let world_pos = model.transform_point3(glam::Vec3::from(item.positions[i]));
+        let size = if i < item.sizes.len() {
+            item.sizes[i]
+        } else {
+            item.default_size
+        };
+        let rotation = if i < item.rotations.len() {
+            item.rotations[i]
+        } else {
+            0.0
+        };
+        let cos_r = rotation.cos();
+        let sin_r = rotation.sin();
+        let half = size * 0.5;
+
+        let mut pts: Vec<[f32; 3]> = Vec::with_capacity(5);
+        let mut ok = true;
+
+        if is_world_space {
+            for (cx, cy) in CORNERS {
+                let rx = cos_r * cx - sin_r * cy;
+                let ry = sin_r * cx + cos_r * cy;
+                let p = world_pos + cam_right * (rx * half) + cam_up * (ry * half);
+                pts.push(p.to_array());
+            }
+        } else {
+            let clip_center = view_proj * world_pos.extend(1.0);
+            if clip_center.w <= 0.0 {
+                // Behind camera -- skip this sprite.
+                ok = false;
+            } else {
+                let ndc_center =
+                    glam::Vec3::new(clip_center.x, clip_center.y, clip_center.z) / clip_center.w;
+                for (cx, cy) in CORNERS {
+                    let rx = cos_r * cx - sin_r * cy;
+                    let ry = sin_r * cx + cos_r * cy;
+                    let ndc = glam::Vec3::new(
+                        ndc_center.x + rx * half / vw,
+                        ndc_center.y + ry * half / vh,
+                        ndc_center.z,
+                    );
+                    let world_h = inv_view_proj * ndc.extend(1.0);
+                    if world_h.w.abs() < 1e-7 {
+                        ok = false;
+                        break;
+                    }
+                    pts.push(
+                        (glam::Vec3::new(world_h.x, world_h.y, world_h.z) / world_h.w).to_array(),
+                    );
+                }
+            }
+        }
+
+        if ok && pts.len() == 5 {
+            all_positions.extend_from_slice(&pts);
+            strip_lengths.push(5);
+        }
+    }
+
+    crate::renderer::PolylineItem {
+        positions: all_positions,
+        strip_lengths,
+        default_colour: [0.75, 0.75, 0.75, 1.0].into(),
+        line_width: 1.0,
+        ..crate::renderer::PolylineItem::default()
     }
 }

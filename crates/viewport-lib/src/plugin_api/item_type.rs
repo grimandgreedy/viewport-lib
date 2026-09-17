@@ -773,6 +773,88 @@ pub trait ItemTypePlugin: Send + Sync + 'static {
     ///
     /// Plugins that do not participate in the outline highlight leave
     /// this empty.
+    ///
+    /// # When the item type has no edges to trace
+    ///
+    /// This traces a ring around rasterised geometry, so it suits a type whose
+    /// items are solid on screen. A type whose items are a cloud, a billboard
+    /// or a participating-media volume has no silhouette worth ringing, and the
+    /// built-in types in that position show selection as a bounds wireframe
+    /// instead: a box for a volume, great circles for a sphere.
+    ///
+    /// That is not a built-in privilege. The polyline substrate those draw
+    /// through takes consumer items too, and the builders are public, so a
+    /// plugin's consumer draws the same affordance by pushing one item per
+    /// frame:
+    ///
+    /// ```no_run
+    /// # use viewport_lib::{FrameData, Aabb, aabb_wireframe_polyline};
+    /// # fn example(fd: &mut FrameData, bounds: &Aabb, selected: bool) {
+    /// if selected {
+    ///     // The same yellow the built-in bounds outlines use.
+    ///     fd.scene
+    ///         .polylines
+    ///         .push(aabb_wireframe_polyline(bounds, [1.0, 0.9, 0.2, 1.0]));
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// [`sphere_wireframe_polyline`](crate::sphere_wireframe_polyline) does the
+    /// same for a sphere. Set `settings.wireframe` on the pushed item for the
+    /// thin single-pixel line the built-in outlines use, rather than the
+    /// screen-space thick line a data polyline gets.
+    /// Build this frame's wireframe polylines for the item type.
+    ///
+    /// Called during `prepare` for every registered plugin. The returned items
+    /// are uploaded and drawn through the shared line substrate, the same one
+    /// isolines, clip-object outlines and consumer-submitted polylines render
+    /// through, so a plugin needs no pipeline of its own for this. Return an
+    /// empty vector, the default, for a type with nothing to draw.
+    ///
+    /// Implementations honour both triggers, since either means the same thing
+    /// to the viewer: `ctx.wireframe_mode` for the whole frame, and
+    /// `items.item_settings(i).wireframe` for one item. Skip hidden items.
+    ///
+    /// # Which lines to return
+    ///
+    /// [`ItemSettings::wireframe`](crate::scene::material::ItemSettings::wireframe)
+    /// is documented as rendering an item's sub-objects as meshes, and that is
+    /// the first thing to reach for: a Gaussian splat set draws a ring per
+    /// splat, a sprite batch an outline per billboard. Lines that show what the
+    /// item is made of.
+    ///
+    /// A bounding box is the other common answer, and it is a weaker one: it
+    /// locates the item without describing it, and past a certain item count
+    /// it degenerates into a box around everything. Prefer it where the item
+    /// genuinely has no internal structure to show, as a participating-media
+    /// volume does not, and be wary of it as a fallback for "too many
+    /// sub-objects to draw": drawing nothing is often more honest.
+    ///
+    /// [`aabb_wireframe_polyline`](crate::aabb_wireframe_polyline) and
+    /// [`sphere_wireframe_polyline`](crate::sphere_wireframe_polyline) build
+    /// the two common bounds shapes.
+    ///
+    /// # Selection
+    ///
+    /// This is also where a type with no silhouette shows selection. The
+    /// outline ring from [`outline_mask`](Self::outline_mask) traces rasterised
+    /// geometry, which a volume, a cloud or a billboard does not present, so
+    /// those types answer `item_settings(i).selected` here instead and draw
+    /// their bounds. `[1.0, 0.9, 0.2, 1.0]` is the colour the built-in types
+    /// use for that, distinct from the paler colour they use for plain
+    /// wireframe mode.
+    ///
+    /// Set `settings.wireframe` on a returned item for the thin single-pixel
+    /// line the built-in outlines use, rather than the screen-space thick line
+    /// a data polyline gets.
+    fn wireframe_polylines(
+        &self,
+        _items: &dyn PluginItemCollection,
+        _ctx: &ItemFrameContext<'_>,
+    ) -> Vec<crate::renderer::PolylineItem> {
+        Vec::new()
+    }
+
     fn outline_mask(
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,

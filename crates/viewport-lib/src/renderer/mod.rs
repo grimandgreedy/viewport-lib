@@ -84,7 +84,7 @@ pub use self::types::{
     SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
     TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
     ViewportFrame, VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    VolumeTransparency, aabb_wireframe_polyline, sphere_wireframe_polyline,
+    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -1836,6 +1836,68 @@ impl ViewportRenderer {
             }
         }
         bufs
+    }
+
+    /// Collect every plugin's wireframe polylines and upload them into the
+    /// shared line substrate.
+    ///
+    /// Runs in scene prepare, right after the substrate's own producers
+    /// (isolines, clip outlines), so a plugin's wireframe draws in the same
+    /// pass and the same order relative to scene geometry as before these
+    /// moved behind the seam. Two phases because the context borrows
+    /// `resources` while the upload needs it mutably.
+    pub(crate) fn dispatch_plugin_wireframes(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        frame: &FrameData,
+    ) {
+        if self.item_type_plugins.is_empty() {
+            return;
+        }
+        let mut polylines: Vec<crate::renderer::PolylineItem> = Vec::new();
+        for (name, plugin) in self.item_type_plugins.iter() {
+            let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) else {
+                continue;
+            };
+            if items.is_empty() {
+                continue;
+            }
+            let ctx = crate::plugin_api::ItemFrameContext {
+                camera: &frame.camera.render_camera,
+                viewport_size: glam::Vec2::from(frame.camera.viewport_size),
+                viewport_index: frame.camera.viewport_index,
+                frame_index: self.plugin_frame_index,
+                jobs: crate::resources::Jobs::new(&self.resources),
+                resources: &self.resources,
+                wireframe_mode: frame.viewport.wireframe_mode,
+                outline_selected: frame.interaction.outline_selected,
+                sub_selection: frame.interaction.sub_selection.as_ref(),
+                clip_objects: &frame.effects.clip.objects,
+                quality_reduced: self.degradation_volume_quality_reduced,
+                decal_excluded_surfaces: &self.decal_excluded_surfaces,
+                ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
+            };
+            polylines.extend(plugin.wireframe_polylines(items, &ctx));
+        }
+        if polylines.is_empty() {
+            return;
+        }
+        self.resources.ensure_polyline_pipeline(device);
+        let vp_size = frame.camera.viewport_size;
+        for item in &polylines {
+            if item.positions.is_empty() {
+                continue;
+            }
+            let mut gpu = self
+                .resources
+                .upload_polyline_per_frame(device, queue, item, vp_size);
+            // A plugin asks for the thin single-pixel line by setting the flag
+            // on the item it returns; the substrate keys its pipeline on the
+            // uploaded data rather than on the item.
+            gpu.wireframe = item.settings.wireframe;
+            self.polyline_gpu_data.push(gpu);
+        }
     }
 
     /// Walk registered item-type plugins and invoke `paint` for each one

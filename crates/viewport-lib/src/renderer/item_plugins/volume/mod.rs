@@ -299,6 +299,23 @@ impl ItemTypePlugin for VolumePlugin {
         mask.intersects(PickMask::VOXEL)
             .then_some(SubObjectRef::Voxel(sub_primitive))
     }
+    /// The volume's bounding box, transformed by its model. A ray-marched
+    /// volume has no surface to trace, so the box is both its wireframe and,
+    /// when selected, its only selection affordance.
+    fn wireframe_polylines(
+        &self,
+        items: &dyn PluginItemCollection,
+        ctx: &ItemFrameContext<'_>,
+    ) -> Vec<crate::renderer::PolylineItem> {
+        let Some(volumes) = items.as_any().downcast_ref::<Vec<VolumeItem>>() else {
+            return Vec::new();
+        };
+        volumes
+            .iter()
+            .filter(|item| !item.settings.hidden && (ctx.wireframe_mode || item.settings.wireframe))
+            .map(obb_polyline)
+            .collect()
+    }
 }
 
 /// Bind the per-item group-1 data and the cube proxy buffers shared by the
@@ -310,4 +327,28 @@ fn bind_cube(pass: &mut crate::gpu::RenderPass<'_>, entry: &pipeline::VolumeFram
         entry.index_buffer.slice(..),
         crate::gpu::IndexFormat::Uint32,
     );
+}
+
+/// The volume's bbox corners transformed by its model, as a box wireframe.
+///
+/// A `VolumeItem`'s bounds are axis-aligned in object space but its model may
+/// rotate them, so this walks the eight corners through the matrix rather than
+/// using [`aabb_wireframe_polyline`](crate::aabb_wireframe_polyline).
+fn obb_polyline(item: &VolumeItem) -> crate::renderer::PolylineItem {
+    let model = glam::Mat4::from_cols_array_2d(&item.model);
+    let mn = glam::Vec3::from(item.bbox_min);
+    let mx = glam::Vec3::from(item.bbox_max);
+    let local = [
+        glam::Vec3::new(mn.x, mn.y, mn.z),
+        glam::Vec3::new(mx.x, mn.y, mn.z),
+        glam::Vec3::new(mn.x, mx.y, mn.z),
+        glam::Vec3::new(mx.x, mx.y, mn.z),
+        glam::Vec3::new(mn.x, mn.y, mx.z),
+        glam::Vec3::new(mx.x, mn.y, mx.z),
+        glam::Vec3::new(mn.x, mx.y, mx.z),
+        glam::Vec3::new(mx.x, mx.y, mx.z),
+    ];
+    let corners: [[f32; 3]; 8] =
+        std::array::from_fn(|i| model.transform_point3(local[i]).to_array());
+    crate::renderer::obb_wireframe_polyline(&corners, [0.75, 0.75, 0.75, 1.0])
 }

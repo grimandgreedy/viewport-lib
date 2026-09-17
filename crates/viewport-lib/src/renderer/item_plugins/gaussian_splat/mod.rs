@@ -380,6 +380,45 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         }
     }
 
+    /// Three orthogonal rings per splat, showing each Gaussian's anisotropy.
+    ///
+    /// This is sub-structure rather than bounds: the rings say what the set is
+    /// made of. It is capped because a ring per splat is 99 line strips at 100
+    /// splats and unbounded beyond that. Sets past the cap draw nothing, which
+    /// is deliberate: the box that used to stand in for them was a single
+    /// PCA-fitted hull around the whole cloud, which said less than the
+    /// silhouette already did.
+    fn wireframe_polylines(
+        &self,
+        items: &dyn PluginItemCollection,
+        ctx: &ItemFrameContext<'_>,
+    ) -> Vec<crate::renderer::PolylineItem> {
+        /// Above this many splats a ring per splat stops being readable and
+        /// starts being expensive.
+        const MAX_RINGED_SPLATS: usize = 100;
+
+        let Some(splats) = items.as_any().downcast_ref::<Vec<GaussianSplatItem>>() else {
+            return Vec::new();
+        };
+        let store = &ctx.resources.content.gaussian_splat_store;
+        splats
+            .iter()
+            .filter(|item| !item.settings.hidden && (ctx.wireframe_mode || item.settings.wireframe))
+            .filter_map(|item| {
+                let set = store.get(item.source)?;
+                let count = (set.count as usize).min(set.cpu_positions.len());
+                if count == 0 || count > MAX_RINGED_SPLATS {
+                    return None;
+                }
+                Some(splat_rings_polyline(
+                    &set.cpu_positions[..count],
+                    &set.cpu_scales[..count],
+                    glam::Mat4::from_cols_array_2d(&item.model),
+                ))
+            })
+            .collect()
+    }
+
     fn resolve_sub_object(
         &self,
         _pick_id: PickId,
@@ -587,5 +626,41 @@ impl GaussianSplatPlugin {
                 });
             }
         }
+    }
+}
+
+/// Three orthogonal rings (XY, XZ, YZ) per splat, each scaled by that splat's
+/// own scale and placed by the item's model.
+fn splat_rings_polyline(
+    positions: &[[f32; 3]],
+    scales: &[[f32; 3]],
+    model: glam::Mat4,
+) -> crate::renderer::PolylineItem {
+    const SEGMENTS: usize = 32;
+    let mut all_positions: Vec<[f32; 3]> = Vec::new();
+    let mut strip_lengths: Vec<u32> = Vec::new();
+    for (pos, scale) in positions.iter().zip(scales.iter()) {
+        let centre = glam::Vec3::from(*pos);
+        let [sx, sy, sz] = *scale;
+        let rings: [(glam::Vec3, glam::Vec3, f32, f32); 3] = [
+            (glam::Vec3::X, glam::Vec3::Y, sx, sy),
+            (glam::Vec3::X, glam::Vec3::Z, sx, sz),
+            (glam::Vec3::Y, glam::Vec3::Z, sy, sz),
+        ];
+        for (a1, a2, r1, r2) in &rings {
+            for i in 0..=SEGMENTS {
+                let t = std::f32::consts::TAU * i as f32 / SEGMENTS as f32;
+                let local = centre + (*a1) * (r1 * t.cos()) + (*a2) * (r2 * t.sin());
+                all_positions.push(model.transform_point3(local).to_array());
+            }
+            strip_lengths.push((SEGMENTS + 1) as u32);
+        }
+    }
+    crate::renderer::PolylineItem {
+        positions: all_positions,
+        strip_lengths,
+        default_colour: [0.75, 0.75, 0.75, 1.0].into(),
+        line_width: 1.0,
+        ..crate::renderer::PolylineItem::default()
     }
 }

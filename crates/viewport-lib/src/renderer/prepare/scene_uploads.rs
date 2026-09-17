@@ -155,45 +155,6 @@ impl ViewportRenderer {
         let vp_size = frame.camera.viewport_size;
 
         // ------------------------------------------------------------------
-        // Scatter-volume bounds outlines: emit a polyline of the volume
-        // shape for each volume whose `selected` or `wireframe` flag is set,
-        // or when global wireframe mode is on. Scatter volumes have no other
-        // selection feedback, so the outline is independent of
-        // `interaction.outline_selected` (which gates surface-mesh outlines).
-        // ------------------------------------------------------------------
-        if !frame.scene.scatter_volumes.is_empty() {
-            for item in &frame.scene.scatter_volumes {
-                if item.settings.hidden {
-                    continue;
-                }
-                let show_outline = item.settings.selected
-                    || item.settings.wireframe
-                    || frame.viewport.wireframe_mode;
-                if !show_outline {
-                    continue;
-                }
-                resources.ensure_polyline_pipeline(device);
-                let colour = if item.settings.selected {
-                    [1.0_f32, 0.9, 0.2, 1.0]
-                } else {
-                    [0.8_f32, 0.85, 0.95, 1.0]
-                };
-                let polyline = match item.volume.shape {
-                    crate::scene::scatter_volume::ScatterShape::Box(b) => {
-                        crate::renderer::aabb_wireframe_polyline(&b, colour)
-                    }
-                    crate::scene::scatter_volume::ScatterShape::Sphere { center, radius } => {
-                        crate::renderer::sphere_wireframe_polyline(center, radius, 48, colour)
-                    }
-                };
-                let mut gpu_data =
-                    resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                gpu_data.wireframe = true;
-                polyline_gpu_data.push(gpu_data);
-            }
-        }
-
-        // ------------------------------------------------------------------
         // isoline extraction and upload via polyline pipeline.
         // ------------------------------------------------------------------
         if !frame.scene.isolines.is_empty() {

@@ -233,6 +233,44 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         state.history_valid = settings.temporal;
     }
 
+    /// The volume's bounds: a box wireframe or three sphere great circles.
+    ///
+    /// Participating media has no surface for the outline ring to trace, so
+    /// this is a scatter volume's only selection feedback, and it is drawn
+    /// whether or not `outline_selected` is set for the frame: that flag gates
+    /// the surface-mesh outline, which is a different affordance.
+    fn wireframe_polylines(
+        &self,
+        items: &dyn PluginItemCollection,
+        ctx: &ItemFrameContext<'_>,
+    ) -> Vec<crate::renderer::PolylineItem> {
+        let Some(volumes) = items.as_any().downcast_ref::<Vec<ScatterVolumeItem>>() else {
+            return Vec::new();
+        };
+        volumes
+            .iter()
+            .filter(|item| !item.settings.hidden)
+            .filter(|item| item.settings.selected || item.settings.wireframe || ctx.wireframe_mode)
+            .map(|item| {
+                let colour = if item.settings.selected {
+                    [1.0_f32, 0.9, 0.2, 1.0]
+                } else {
+                    [0.8_f32, 0.85, 0.95, 1.0]
+                };
+                let mut polyline = match item.volume.shape {
+                    ScatterShape::Box(b) => crate::renderer::aabb_wireframe_polyline(&b, colour),
+                    ScatterShape::Sphere { center, radius } => {
+                        crate::renderer::sphere_wireframe_polyline(center, radius, 48, colour)
+                    }
+                };
+                // Thin single-pixel lines, as the bounds outlines have always
+                // drawn: a thick screen-space line reads as geometry.
+                polyline.settings.wireframe = true;
+                polyline
+            })
+            .collect()
+    }
+
     fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return None;

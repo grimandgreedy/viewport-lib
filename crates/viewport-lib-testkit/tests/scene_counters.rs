@@ -94,6 +94,9 @@ fn expected(name: &str) -> Option<Expected> {
         // Scrolling noise and heat-haze refraction at a pinned clock, over a
         // wall and four struts for the shimmer to bend.
         "scatter_animated" => e(5, 5, 2, 2, 0, 60),
+        // Wireframe-only scene: a volume box, splat rings and sprite quads,
+        // all drawn as lines through the shared substrate. No mesh geometry.
+        "item_wireframes" => e(0, 0, 0, 0, 0, 0),
         "decals" => e(2, 2, 2, 2, 0, 24),
         // The decal scene again with supersampling on: same content and same
         // draw structure, only the resolution differs.

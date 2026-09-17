@@ -1,88 +1,9 @@
-//! Per-viewport finalization passes: Gaussian splat sort and wireframe,
-//! sprite wireframe, debug fragment buffer, and atlas blit uniform.
+//! Per-viewport finalization passes: the debug fragment buffer and the
+//! atlas blit uniform.
 
 use super::*;
 
 impl ViewportRenderer {
-    pub(super) fn prepare_splat_wireframe(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-    ) {
-        // Gaussian splat wireframe overlay.
-        let need_splat_wf = frame.viewport.wireframe_mode
-            || frame
-                .scene
-                .gaussian_splats
-                .iter()
-                .any(|g| !g.settings.hidden && g.settings.wireframe);
-        if need_splat_wf {
-            self.resources.ensure_polyline_pipeline(device);
-            let vp_size = frame.camera.viewport_size;
-            for item in &frame.scene.gaussian_splats {
-                if item.settings.hidden {
-                    continue;
-                }
-                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
-                    continue;
-                }
-                let Some(gpu_set) = self.resources.content.gaussian_splat_store.get(item.source)
-                else {
-                    continue;
-                };
-                let count = gpu_set.count as usize;
-                let positions = gpu_set.cpu_positions.clone();
-                let scales = gpu_set.cpu_scales.clone();
-                let _ = gpu_set;
-                let polyline = splat_wireframe_polyline(&positions, &scales, item.model, count);
-                if !polyline.positions.is_empty() {
-                    let gpu = self
-                        .resources
-                        .upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                    self.polyline_gpu_data.push(gpu);
-                }
-            }
-        }
-    }
-
-    pub(super) fn prepare_sprite_wireframe(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        frame: &FrameData,
-    ) {
-        // Sprite wireframe overlay: quad outline per sprite (<=100) or AABB box (>100).
-        let need_sprite_wf = frame.viewport.wireframe_mode
-            || frame
-                .scene
-                .sprite_items
-                .iter()
-                .any(|s| !s.settings.hidden && s.settings.wireframe);
-        if need_sprite_wf {
-            self.resources.ensure_polyline_pipeline(device);
-            let vp_size = frame.camera.viewport_size;
-            for item in &frame.scene.sprite_items {
-                if item.settings.hidden {
-                    continue;
-                }
-                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
-                    continue;
-                }
-                if item.positions.is_empty() {
-                    continue;
-                }
-                let polyline = sprite_wireframe_polyline(item, &frame.camera);
-                if !polyline.positions.is_empty() {
-                    let gpu = self
-                        .resources
-                        .upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                    self.polyline_gpu_data.push(gpu);
-                }
-            }
-        }
-    }
-
     pub(super) fn prepare_debug_buffer(&mut self, frame: &FrameData) {
         {
             let vp_idx = frame.camera.viewport_index;

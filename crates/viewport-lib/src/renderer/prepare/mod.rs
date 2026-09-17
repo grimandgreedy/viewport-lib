@@ -16,7 +16,6 @@ mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
 mod viewport_overlays;
-mod wireframe;
 
 use math::*;
 use mesh_material::*;
@@ -25,7 +24,6 @@ pub(crate) use mesh_material::{
 };
 use overlay_geometry::*;
 use projection::*;
-use wireframe::*;
 
 /// One cube-map face of a point-light shadow: which atlas slot and face it
 /// occupies, the light-space view-projection used to render it, and the light
@@ -434,7 +432,6 @@ impl ViewportRenderer {
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
         resources.run_deform_slot_copies(device, queue);
-        let vp_size = frame.camera.viewport_size;
         // Surface LIC GPU data upload.
         // ------------------------------------------------------------------
         self.lic_gpu_data.clear();
@@ -523,27 +520,6 @@ impl ViewportRenderer {
         }
 
         // Volume wireframe overlay: OBB from bbox + model matrix.
-        let need_vol_wf = frame.viewport.wireframe_mode
-            || frame
-                .scene
-                .volumes
-                .iter()
-                .any(|v| !v.settings.hidden && v.settings.wireframe);
-        if need_vol_wf {
-            resources.ensure_polyline_pipeline(device);
-            for item in &frame.scene.volumes {
-                if item.settings.hidden {
-                    continue;
-                }
-                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
-                    continue;
-                }
-                let polyline = volume_obb_polyline(item);
-                let gpu = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                self.polyline_gpu_data.push(gpu);
-            }
-        }
-
         // Transparent volume meshes wireframe: boundary mesh edge overlay.
         // Items rendering as opaque already participate in the standard
         // wireframe pass via the surface submission; here we only need to
@@ -853,6 +829,12 @@ impl ViewportRenderer {
         // re-upload after they intern in `prepare_viewport_internal`.
         self.resources.upload_material_gpu(queue);
         self.resources.upload_custom_data(queue);
+
+        // Item-type wireframes join the shared line substrate, after its own
+        // producers (isolines, clip outlines) filled it in `upload_polylines`.
+        // Placed at the end of scene prepare because the plugin context borrows
+        // `resources` shared while the upload above holds it mutably.
+        self.dispatch_plugin_wireframes(device, queue, frame);
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -920,8 +902,6 @@ impl ViewportRenderer {
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
-        self.prepare_splat_wireframe(device, queue, frame);
-        self.prepare_sprite_wireframe(device, queue, frame);
         self.prepare_debug_buffer(frame);
         self.prepare_atlas_blit(queue, frame, viewport_fx);
     }

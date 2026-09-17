@@ -147,6 +147,40 @@ pub fn aabb_wireframe_polyline(
     }
 }
 
+/// Build a `PolylineItem` that draws the 12 edges of a box from its 8 corners.
+///
+/// The box need not be axis-aligned, which is what separates this from
+/// [`aabb_wireframe_polyline`]: pass corners already transformed into world
+/// space and any orientation works. Corner order is bit 0 = x, bit 1 = y,
+/// bit 2 = z, with 0 the minimum and 1 the maximum along that axis, so corner 5
+/// is (max x, min y, max z). Produces 6 strips: the two z faces as closed
+/// loops, then the four lateral edges. Pass `colour` as RGBA in linear space.
+pub fn obb_wireframe_polyline(
+    corners: &[[f32; 3]; 8],
+    colour: impl Into<crate::Colour>,
+) -> PolylineItem {
+    let c = corners;
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut strip_lengths: Vec<u32> = Vec::new();
+    // Bottom face (z = min): 0, 1, 3, 2, 0
+    positions.extend_from_slice(&[c[0], c[1], c[3], c[2], c[0]]);
+    strip_lengths.push(5);
+    // Top face (z = max): 4, 5, 7, 6, 4
+    positions.extend_from_slice(&[c[4], c[5], c[7], c[6], c[4]]);
+    strip_lengths.push(5);
+    for (lo, hi) in [(0usize, 4usize), (1, 5), (2, 6), (3, 7)] {
+        positions.extend_from_slice(&[c[lo], c[hi]]);
+        strip_lengths.push(2);
+    }
+    PolylineItem {
+        positions,
+        strip_lengths,
+        default_colour: colour.into(),
+        line_width: 1.0,
+        ..PolylineItem::default()
+    }
+}
+
 /// Build a `PolylineItem` that draws three great-circle outlines for a sphere.
 ///
 /// Produces three closed loops in the XY, XZ, and YZ planes through the given

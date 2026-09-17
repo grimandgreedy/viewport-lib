@@ -128,6 +128,11 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_scatter_animated,
         },
         NamedScene {
+            name: "item_wireframes",
+            cameras: standard_cameras(Vec3::ZERO, 7.0),
+            build: build_item_wireframes,
+        },
+        NamedScene {
             name: "decals",
             cameras: standard_cameras(Vec3::ZERO, 8.0),
             build: build_decals,
@@ -1103,6 +1108,80 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         items,
         scatter_volumes: vec![smoke_item, heat_item],
         scatter_settings: Some(scatter_settings),
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_item_wireframes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // The item types whose wireframe is drawn as lines standing in for
+    // geometry that has none: a volume's bounding box, a ring per Gaussian
+    // splat, a quad outline per billboard. Each draws only under
+    // `settings.wireframe`, which no other catalogue scene sets, so without
+    // this scene all three paths are unrendered by the gate.
+    let (data, dims) = radial_field(20);
+    let vid = ctx.res.upload_volume(ctx.device, ctx.queue, &data, dims);
+    let mut volume = VolumeItem::default();
+    volume.volume_id = vid;
+    volume.colour_lut = Some(ColourmapId(0));
+    volume.scalar_range = (-0.4, 0.65);
+    volume.threshold_min = -0.4;
+    volume.threshold_max = 0.65;
+    volume.bbox_min = [-1.0, -1.0, -1.0];
+    volume.bbox_max = [1.0, 1.0, 1.0];
+    volume.model = Mat4::from_translation(Vec3::new(-2.6, 0.0, 0.0)).to_cols_array_2d();
+    volume.settings.wireframe = true;
+
+    // Eight splats, well under the ring cap, with distinct scales per axis so
+    // the three rings of each are visibly different ellipses.
+    const SH0_C: f32 = 0.282_094_79;
+    let mut sd = GaussianSplatData::default();
+    sd.sh_degree = ShDegree::Zero;
+    for i in 0..8 {
+        let t = i as f32 / 8.0;
+        let theta = t * std::f32::consts::TAU;
+        sd.positions.push([
+            0.9 * theta.cos(),
+            0.9 * theta.sin(),
+            0.3 * (theta * 2.0).sin(),
+        ]);
+        sd.scales.push([0.34, 0.2 + 0.12 * t, 0.15]);
+        sd.rotations.push([0.0, 0.0, 0.0, 1.0]);
+        sd.opacities.push(0.9);
+        sd.sh_coefficients.extend_from_slice(&[
+            (0.8 - 0.4 * t - 0.5) / SH0_C,
+            (0.4 - 0.5) / SH0_C,
+            (0.3 + 0.5 * t - 0.5) / SH0_C,
+        ]);
+    }
+    let splat_id = ctx
+        .res
+        .upload_gaussian_splat(ctx.device, ctx.queue, &sd)
+        .expect("splat upload");
+    let mut splats = GaussianSplatItem::default();
+    splats.source = splat_id;
+    splats.model = Mat4::from_translation(Vec3::new(0.0, 0.0, 0.0)).to_cols_array_2d();
+    splats.settings.wireframe = true;
+
+    // Six world-space billboards, under the outline cap, at mixed sizes so the
+    // quads differ from one another.
+    let mut sprites = SpriteItem::default();
+    sprites.positions = (0..6)
+        .map(|i| {
+            let theta = i as f32 / 6.0 * std::f32::consts::TAU;
+            [2.8 + 0.7 * theta.cos(), 0.7 * theta.sin(), 0.0]
+        })
+        .collect();
+    sprites.sizes = (0..6).map(|i| 0.3 + 0.07 * i as f32).collect();
+    sprites.default_colour = [0.85, 0.85, 0.9, 1.0].into();
+    sprites.size_mode = SpriteSizeMode::WorldSpace;
+    sprites.depth_write = true;
+    sprites.settings.wireframe = true;
+
+    BuiltScene {
+        volumes: vec![volume],
+        gaussian_splats: vec![splats],
+        sprite_items: vec![sprites],
         lighting: rigs::from_above(),
         ..Default::default()
     }
