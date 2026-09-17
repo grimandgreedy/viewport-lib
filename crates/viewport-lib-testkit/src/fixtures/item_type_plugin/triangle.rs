@@ -6,8 +6,8 @@ use viewport_lib::plugin_api::shared_wgsl::{
     SHARED_BINDINGS_WGSL, SHARED_PICK_WGSL, SHARED_SHADOW_BINDINGS_WGSL,
 };
 use viewport_lib::plugin_api::{
-    EncoderScope, EncoderScopeContext, ItemTypePlugin, PaintContext, PickPassContext,
-    PluginItemCollection, ShadowCastContext, SharedBindings,
+    DepthReadContext, EncoderScope, EncoderScopeContext, ItemTypePlugin, PaintContext,
+    PickPassContext, PluginItemCollection, ShadowCastContext, SharedBindings,
 };
 use viewport_lib::resources::{DeviceResources, PluginPipelineOpts};
 use viewport_lib::wgpu;
@@ -36,6 +36,8 @@ pub struct TriangleItemTypePlugin {
     /// Drawn in `encode`, which opens its own pass over the scene colour
     /// rather than drawing into one the lib began.
     encode: wgpu::RenderPipeline,
+    /// Drawn in `paint_depth_read`, inside the lib's read-only-depth pass.
+    depth_read: wgpu::RenderPipeline,
     pick_id_layout: wgpu::BindGroupLayout,
     pick_id_group: Option<wgpu::BindGroup>,
 }
@@ -129,6 +131,19 @@ impl TriangleItemTypePlugin {
             ),
         );
 
+        // The read-only-depth pass, which blends over the scene colour with the
+        // depth attachment bound read-only.
+        let depth_read = resources.build_depth_read_pipeline(
+            device,
+            &PluginPipelineOpts::new(
+                Some("triangle_item_depth_read"),
+                &shader,
+                "vs_depth_read",
+                "fs_depth_read",
+                &[],
+            ),
+        );
+
         Self {
             log,
             type_name,
@@ -136,6 +151,7 @@ impl TriangleItemTypePlugin {
             pick,
             shadow,
             encode,
+            depth_read,
             pick_id_layout,
             pick_id_group: None,
         }
@@ -217,6 +233,27 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         // Group 0 (the cascade's light view-projection, at its dynamic offset)
         // is bound by the renderer on pass entry.
         pass.set_pipeline(&self.shadow);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn draws_depth_read(&self) -> bool {
+        true
+    }
+
+    fn paint_depth_read(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &DepthReadContext<'_>,
+        items: &dyn PluginItemCollection,
+    ) {
+        self.log.record("paint_depth_read");
+        if items.is_empty() || items.item_settings(0).hidden {
+            return;
+        }
+        // Group 0 is bound by the renderer on pass entry. The fixture does not
+        // sample the depth it is handed; drawing at all is what the tests here
+        // are checking.
+        pass.set_pipeline(&self.depth_read);
         pass.draw(0..3, 0..1);
     }
 
@@ -336,6 +373,19 @@ fn vs_pick(@builtin(vertex_index) vi: u32) -> PickVsOut {{
     out.clip_pos = camera.view_proj * vec4<f32>(triangle_world(vi), 1.0);
     out.pick_id = pick.id.x;
     return out;
+}}
+
+// The read-only-depth stage draws the same triangle offset along -X, clear of
+// both the opaque and encode triangles.
+@vertex
+fn vs_depth_read(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {{
+    let world = triangle_world(vi) - vec3<f32>(1.6, 0.0, 0.0);
+    return camera.view_proj * vec4<f32>(world, 1.0);
+}}
+
+@fragment
+fn fs_depth_read() -> @location(0) vec4<f32> {{
+    return vec4<f32>({g:?}, {b:?}, {r:?}, 1.0);
 }}
 
 // The encode stage draws the same triangle offset along +X, so a test can

@@ -2664,34 +2664,20 @@ impl ViewportRenderer {
         }
         let device = ctx.device;
         let vp_idx = ctx.vp_idx;
-        let ssaa_factor = ctx.ssaa_factor;
         let resources = &self.resources;
         let slot = &self.viewport_slots[vp_idx];
         let camera_bg = &slot.camera_bind_group;
         let slot_hdr = slot.hdr.as_ref().unwrap();
 
-        // Match the sprite soft path: target the ssaa_* colour/depth views when
-        // SSAA is active so plugin draws land at supersampled resolution and
-        // resolve with the rest of the scene; otherwise the hdr_* views.
-        let use_ssaa = ssaa_factor > 1
-            && slot_hdr.ssaa_colour_view.is_some()
-            && slot_hdr.ssaa_depth_view.is_some()
-            && slot_hdr.ssaa_depth_only_view.is_some();
-        let colour_view = if use_ssaa {
-            slot_hdr.ssaa_colour_view.as_ref().unwrap()
-        } else {
-            &slot_hdr.hdr_view
-        };
-        let depth_view = if use_ssaa {
-            slot_hdr.ssaa_depth_view.as_ref().unwrap()
-        } else {
-            &slot_hdr.hdr_depth_view
-        };
-        let depth_only_view = if use_ssaa {
-            slot_hdr.ssaa_depth_only_view.as_ref().unwrap()
-        } else {
-            &slot_hdr.hdr_depth_only_view
-        };
+        // The HDR views, not the supersampled ones. This pass runs after the
+        // SSAA resolve, which is encoded once per frame and never again, so a
+        // draw into the supersampled colour here would land in a texture
+        // nothing reads afterwards and vanish from the frame. It used to select
+        // the ssaa_* views by copying `hdr_sprite_passes`, which makes the same
+        // choice correctly because it runs *before* the resolve.
+        let colour_view = &slot_hdr.hdr_view;
+        let depth_view = &slot_hdr.hdr_depth_view;
+        let depth_only_view = &slot_hdr.hdr_depth_only_view;
 
         // Prebuilt group handed to plugins that have a spare bind group. Plugins
         // at the four-group limit ignore it and bake the same depth-only view +
