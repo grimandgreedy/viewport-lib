@@ -174,7 +174,6 @@ impl ViewportRenderer {
                 &mut render_pass,
                 &self.polyline_gpu_data,
                 camera_bg,
-                &self.sprite_gpu_data,
                 &self.mesh_instance_gpu_data,
                 false
             );

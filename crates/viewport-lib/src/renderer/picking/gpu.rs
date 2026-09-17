@@ -8,16 +8,13 @@ use super::*;
 /// Each variant knows which pick masks it can answer. A type contributes draws
 /// only when the caller asked for a level it can resolve, so the mask selects
 /// which geometry is rasterised rather than filtering the read-back id. Types
-/// with their own pick pipeline (glyphs, sprites, polylines) are handled in
-/// their own pass blocks, not here.
+/// with their own pick pipeline (glyphs, sprites, polylines) draw through
+/// their own item-type plugin's `render_pick`, not here.
 #[derive(Clone, Copy)]
 enum PickItemType {
     /// Mesh-backed surfaces: scene surfaces and volume-mesh boundaries, resolved
     /// against `mesh_store`.
     Surface,
-    /// Sprite sets: camera-facing quads expanded in the vertex shader, drawn with
-    /// a dedicated pick pipeline that reuses the render expansion. Object-level.
-    Sprite,
 }
 
 /// Test the screen-space overlay images against a single click position and
@@ -125,7 +122,6 @@ impl PickItemType {
                     | PickMask::CELL,
             ),
             // Sprite sets answer the object mask plus the per-instance level.
-            PickItemType::Sprite => mask.intersects(PickMask::OBJECT | PickMask::INSTANCE),
         }
     }
 }
@@ -151,18 +147,6 @@ enum PickSubKind {
     /// `resolve_sub_object`; a plugin without the hook stays object-level. The
     /// payload is the plugin's `type_name`, the `item_type_plugins` key.
     Plugin(&'static str),
-    /// Glyph, tensor-glyph, or sprite set: `instance_index` is the instance.
-    Instance,
-}
-
-/// One sprite set to draw into the pick pass. The group-2 pick-id bind group is
-/// owned; the sprite bind group and position buffer are borrowed from prepared
-/// state. The pipeline and group-0 camera bind group are shared across sets.
-struct SpritePickDraw<'a> {
-    id_bind_group: crate::gpu::BindGroup,
-    sprite_bind_group: &'a crate::gpu::BindGroup,
-    vertex_buffer: &'a crate::gpu::Buffer,
-    sprite_count: u32,
 }
 
 /// Which types have pickable geometry this frame, plus the shared proxy mesh
@@ -175,7 +159,6 @@ struct SpritePickDraw<'a> {
 /// (instance/camera bind groups, draw recording) while the returned
 /// `PickDrawSet` is still alive.
 struct PickPipelineFlags {
-    has_pickable_sprites: bool,
     decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
     scatter_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
@@ -246,9 +229,8 @@ fn build_surface_pick_meta(frame: &FrameData) -> SurfacePickMeta {
 /// per query and shared by the point and rect pick passes. Building this is
 /// query-shape-agnostic: it does not know whether the caller wants a single
 /// pixel or a whole rect region back, only which types answer `mask`.
-struct PickDrawSet<'a> {
+struct PickDrawSet {
     draws: Vec<(crate::resources::mesh::mesh_store::MeshId, PickInstance)>,
-    sprite_draws: Vec<SpritePickDraw<'a>>,
     /// Whether any registered plugin has pickable geometry this frame. Plugin
     /// draws are not collected here; they are issued directly from
     /// `dispatch_plugin_pick` during `record_pick_pass_draws`.
@@ -267,11 +249,11 @@ struct PickDrawSet<'a> {
     primitive_index_supported: bool,
 }
 
-impl PickDrawSet<'_> {
+impl PickDrawSet {
     /// `true` when nothing would be drawn: the pass has nothing to submit, so
     /// the caller can report a miss without touching the GPU.
     fn is_empty(&self) -> bool {
-        self.draws.is_empty() && self.sprite_draws.is_empty() && !self.has_plugin_pick
+        self.draws.is_empty() && !self.has_plugin_pick
     }
 }
 
@@ -630,7 +612,7 @@ impl ViewportRenderer {
         let py = ((cursor.y * ppp).round() as u32).min(vp_h - 1);
 
         let flags = self.ensure_pick_pipelines(device, frame, mask);
-        let draw_set = self.build_pick_draws(device, queue, frame, mask, scene_items, &flags);
+        let draw_set = self.build_pick_draws(device, frame, mask, scene_items, &flags);
         if draw_set.is_empty() {
             return PickBegin::Miss;
         }
@@ -819,14 +801,6 @@ impl ViewportRenderer {
         if mask.intersects(PickMask::EDGE) {
             self.resources.ensure_pick_edge_pipeline(device);
         }
-        let has_pickable_sprites = PickItemType::Sprite.satisfies(mask)
-            && self
-                .sprite_gpu_data
-                .iter()
-                .any(|g| g.pick_id != PickId::NONE && g.sprite_count > 0);
-        if has_pickable_sprites {
-            self.resources.ensure_sprite_pick_pipeline(device);
-        }
 
         // Decals rasterise their projection box (the unit cube mapped by
         // `transform`) as an object-level proxy. Ensure the shared cube mesh
@@ -878,7 +852,6 @@ impl ViewportRenderer {
         };
 
         PickPipelineFlags {
-            has_pickable_sprites,
             decal_cube,
             scatter_cube,
             scatter_sphere,
@@ -893,18 +866,15 @@ impl ViewportRenderer {
     /// only in the scissor rect and how much of the read-back they need.
     /// Takes `&self`: pipelines are already built by
     /// [`ensure_pick_pipelines`](Self::ensure_pick_pipelines), so this only
-    /// reads prepared per-frame GPU data and issues the small per-draw pick-id
-    /// buffer uploads.
+    /// reads prepared per-frame GPU data.
     fn build_pick_draws<'a>(
         &'a self,
         device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
         frame: &FrameData,
         mask: PickMask,
         scene_items: &'a [SceneRenderItem],
         flags: &PickPipelineFlags,
-    ) -> PickDrawSet<'a> {
-        let has_pickable_sprites = flags.has_pickable_sprites;
+    ) -> PickDrawSet {
         let decal_cube = flags.decal_cube;
         let scatter_cube = flags.scatter_cube;
         let scatter_sphere = flags.scatter_sphere;
@@ -1028,46 +998,6 @@ impl ViewportRenderer {
         // set builds a group-1 bind group (the set uniform + a per-set object-id
         // uniform) here so it outlives the render pass. The buffers behind the
         // bind group stay alive through it, so the temporary id buffer can drop.
-        // Sprite sets draw with their own pipeline. Each set gets a group-2 bind
-        // group holding its object id; the pipeline and camera bind group are
-        // shared, so only the id, sprite bind group, and position buffer vary.
-        let mut sprite_draws: Vec<SpritePickDraw> = Vec::new();
-        if has_pickable_sprites {
-            let id_bgl = self
-                .resources
-                .sprite
-                .pick_id_bgl
-                .as_ref()
-                .expect("sprite pick id bgl");
-            for gpu in self
-                .sprite_gpu_data
-                .iter()
-                .filter(|g| g.pick_id != PickId::NONE && g.sprite_count > 0)
-            {
-                let id_data = [gpu.pick_id.0 as u32, 0u32, 0u32, 0u32];
-                let id_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-                    label: Some("sprite_pick_id_buf"),
-                    size: std::mem::size_of_val(&id_data) as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&id_buf, 0, bytemuck::cast_slice(&id_data));
-                let id_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                    label: Some("sprite_pick_id_bg"),
-                    layout: id_bgl,
-                    entries: &[crate::gpu::BindGroupEntry {
-                        binding: 0,
-                        resource: id_buf.as_entire_binding(),
-                    }],
-                });
-                sprite_draws.push(SpritePickDraw {
-                    id_bind_group,
-                    sprite_bind_group: &gpu.bind_group,
-                    vertex_buffer: &gpu.vertex_buffer,
-                    sprite_count: gpu.sprite_count,
-                });
-            }
-        }
 
         // Registered plugins draw their own pick-ids into the pass. They answer
         // the same level set as built-in surfaces (object plus the mesh
@@ -1101,7 +1031,6 @@ impl ViewportRenderer {
 
         PickDrawSet {
             draws,
-            sprite_draws,
             has_plugin_pick,
             kinds,
             surface_meta,
@@ -1247,7 +1176,7 @@ impl ViewportRenderer {
         pick_pass: &mut crate::gpu::RenderPass<'rp>,
         pick_camera_bg: &'rp crate::gpu::BindGroup,
         pick_instance_bg: &'rp crate::gpu::BindGroup,
-        draw_set: &PickDrawSet<'rp>,
+        draw_set: &PickDrawSet,
         sublevel: &'rp [Option<PickSublevelBind>],
         frame: &'rp FrameData,
     ) {
@@ -1299,26 +1228,9 @@ impl ViewportRenderer {
             pick_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
         }
 
-        // Sprite sets: camera-facing quads expanded in the vertex shader. The
-        // pipeline and full camera bind group (group 0) are shared; each set
-        // varies its sprite bind group, pick-id, and position buffer.
-        if let Some(sprite_pipeline) = self.resources.sprite.pick_pipeline.as_ref() {
-            if !draw_set.sprite_draws.is_empty() {
-                pick_pass.set_pipeline(sprite_pipeline);
-                pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
-                for sd in &draw_set.sprite_draws {
-                    pick_pass.set_bind_group(1, sd.sprite_bind_group, &[]);
-                    pick_pass.set_bind_group(2, &sd.id_bind_group, &[]);
-                    pick_pass.set_vertex_buffer(0, sd.vertex_buffer.slice(..));
-                    pick_pass.draw(0..6, 0..sd.sprite_count);
-                }
-            }
-        }
-
         // Item-type plugins render their own pick-ids last. They build their
         // pipelines against the full shared group-0 layout, so bind the full
-        // camera bind group (the same one the sprite draws use) before
-        // handing them the pass.
+        // camera bind group before handing them the pass.
         if draw_set.has_plugin_pick {
             pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
             self.dispatch_plugin_pick(pick_pass, frame, draw_set.mask);
@@ -1442,7 +1354,7 @@ impl ViewportRenderer {
         let rh = ry_end - ry;
 
         let flags = self.ensure_pick_pipelines(device, frame, mask);
-        let draw_set = self.build_pick_draws(device, queue, frame, mask, scene_items, &flags);
+        let draw_set = self.build_pick_draws(device, frame, mask, scene_items, &flags);
         if draw_set.is_empty() {
             return crate::renderer::picking::PickRectResult {
                 objects: screen_image_objects,
@@ -1690,7 +1602,7 @@ impl ViewportRenderer {
         let rh = ry_end - ry;
 
         let flags = self.ensure_pick_pipelines(device, frame, mask);
-        let draw_set = self.build_pick_draws(device, queue, frame, mask, scene_items, &flags);
+        let draw_set = self.build_pick_draws(device, frame, mask, scene_items, &flags);
         if draw_set.is_empty() {
             return None;
         }
@@ -1983,13 +1895,6 @@ impl ViewportRenderer {
         world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
         match kinds.get(&object_id).copied()? {
-            PickSubKind::Instance => {
-                if mask.intersects(PickMask::INSTANCE) {
-                    Some(SubObjectRef::Instance(sub_primitive))
-                } else {
-                    None
-                }
-            }
             PickSubKind::Surface => self.resolve_surface_sub_object(
                 object_id,
                 sub_primitive,
@@ -2075,9 +1980,6 @@ impl ViewportRenderer {
         world_pos: Option<glam::Vec3>,
     ) -> Option<SubObjectRef> {
         match kinds.get(&object_id).copied()? {
-            PickSubKind::Instance => mask
-                .intersects(PickMask::INSTANCE)
-                .then_some(SubObjectRef::Instance(sub_primitive)),
             PickSubKind::Surface => {
                 if !primitive_index_supported {
                     return None;
@@ -2203,15 +2105,6 @@ impl ViewportRenderer {
             if !ri.settings.hidden && ri.settings.pick_id != PickId::NONE {
                 kinds.insert(ri.settings.pick_id.0, PickSubKind::Surface);
             }
-        }
-
-        // Instanced families.
-        for gpu in self
-            .sprite_gpu_data
-            .iter()
-            .filter(|g| g.pick_id != PickId::NONE && g.sprite_count > 0)
-        {
-            kinds.insert(gpu.pick_id.0, PickSubKind::Instance);
         }
 
         kinds

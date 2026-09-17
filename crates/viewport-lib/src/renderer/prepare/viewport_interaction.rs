@@ -430,44 +430,6 @@ impl ViewportRenderer {
             }
         }
 
-        // Each entry is (gpu_data_index, instance_ranges).
-        // None = draw all instances (object-level selection).
-        // Some(vec) = draw only these specific instance indices (sub-object Instance selection).
-        let mut sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)> = Vec::new();
-        if frame.interaction.outline_selected {
-            // Sprite outline indices: record which sprite GPU data entries are selected
-            // so the mask pass can render the actual billboard quads.
-            {
-                let sub_sel = frame.interaction.sub_selection.as_ref();
-                for (i, item) in frame.scene.sprite_items.iter().enumerate() {
-                    if item.settings.hidden || item.positions.is_empty() {
-                        continue;
-                    }
-                    if item.settings.selected {
-                        self.resources.ensure_sprite_outline_mask_pipeline(device);
-                        sprite_outline_indices.push((i, None));
-                    } else if item.settings.pick_id != PickId::NONE {
-                        let instances: Vec<u32> = sub_sel
-                            .iter()
-                            .flat_map(|s| s.items.iter())
-                            .filter_map(|(node_id, sub)| {
-                                if *node_id == item.settings.pick_id.0 {
-                                    if let crate::renderer::SubObjectRef::Instance(idx) = sub {
-                                        return Some(*idx);
-                                    }
-                                }
-                                None
-                            })
-                            .collect();
-                        if !instances.is_empty() {
-                            self.resources.ensure_sprite_outline_mask_pipeline(device);
-                            sprite_outline_indices.push((i, Some(instances)));
-                        }
-                    }
-                }
-            }
-        }
-
         // Screen image outlines: compute NDC bounds and create outline buffers.
         let mut screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers> =
             Vec::new();
@@ -643,7 +605,6 @@ impl ViewportRenderer {
         {
             let slot = &mut self.viewport_slots[vp_idx];
             slot.selection_outlines.outline_object_buffers = outline_object_buffers;
-            slot.selection_outlines.sprite_outline_indices = sprite_outline_indices;
             slot.selection_outlines.screen_rect_outline_buffers = screen_rect_outline_buffers;
             slot.xray_object_buffers = xray_object_buffers;
             slot.constraint_line_buffers = constraint_line_buffers;
@@ -684,10 +645,6 @@ impl ViewportRenderer {
                 .selection_outlines
                 .outline_object_buffers
                 .is_empty()
-                || !self.viewport_slots[vp_idx]
-                    .selection_outlines
-                    .sprite_outline_indices
-                    .is_empty()
                 || !self.viewport_slots[vp_idx]
                     .selection_outlines
                     .screen_rect_outline_buffers
@@ -732,12 +689,8 @@ impl ViewportRenderer {
             let slot_ref = &self.viewport_slots[vp_idx];
             let outlines_ptr = &slot_ref.selection_outlines.outline_object_buffers
                 as *const Vec<OutlineObjectBuffers>;
-            let sprite_outline_idx_ptr = &slot_ref.selection_outlines.sprite_outline_indices
-                as *const Vec<(usize, Option<Vec<u32>>)>;
             let screen_rect_outlines_ptr = &slot_ref.selection_outlines.screen_rect_outline_buffers
                 as *const Vec<crate::resources::ScreenRectOutlineBuffers>;
-            let sprite_gpu_ptr =
-                &self.sprite_gpu_data as *const Vec<crate::resources::SpriteGpuData>;
             let camera_bg_ptr = &slot_ref.camera_bind_group as *const crate::gpu::BindGroup;
             let slot_hdr = slot_ref.hdr.as_ref().unwrap();
             let mask_view_ptr = &slot_hdr.outline_mask_view as *const crate::gpu::TextureView;
@@ -748,9 +701,7 @@ impl ViewportRenderer {
             // no other code modifies these fields here.
             let (
                 outlines,
-                sprite_outline_indices,
                 screen_rect_outlines,
-                sprite_gpu_data,
                 camera_bg,
                 mask_view,
                 colour_view,
@@ -759,9 +710,7 @@ impl ViewportRenderer {
             ) = unsafe {
                 (
                     &*outlines_ptr,
-                    &*sprite_outline_idx_ptr,
                     &*screen_rect_outlines_ptr,
-                    &*sprite_gpu_ptr,
                     &*camera_bg_ptr,
                     &*mask_view_ptr,
                     &*colour_view_ptr,
@@ -851,31 +800,6 @@ impl ViewportRenderer {
                     pass.draw_indexed(0..index_count, 0, 0..1);
                 }
 
-                // Draw sprite billboards into the mask so the outline matches
-                // each sprite's actual quad shape and per-instance size.
-                if !sprite_outline_indices.is_empty() {
-                    if let Some(pipeline) = self.resources.sprite.outline_mask_pipeline.as_ref() {
-                        pass.set_pipeline(pipeline);
-                        for (idx, instance_filter) in sprite_outline_indices {
-                            if let Some(sprite) = sprite_gpu_data.get(*idx) {
-                                pass.set_bind_group(0, camera_bg, &[]);
-                                pass.set_bind_group(1, &sprite.bind_group, &[]);
-                                pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-                                match instance_filter {
-                                    None => {
-                                        pass.draw(0..6, 0..sprite.sprite_count);
-                                    }
-                                    Some(indices) => {
-                                        for &i in indices {
-                                            pass.draw(0..6, i..i + 1);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 // Draw screen-space rect outlines for screen images.
                 if !screen_rect_outlines.is_empty() {
                     if let Some(pipeline) = self
@@ -888,31 +812,6 @@ impl ViewportRenderer {
                         for sr in screen_rect_outlines {
                             pass.set_bind_group(0, &sr.bind_group, &[]);
                             pass.draw(0..6, 0..1);
-                        }
-                    }
-                }
-
-                // Draw sprite billboards into the mask so the outline matches
-                // each sprite's actual quad shape and per-instance size.
-                if !sprite_outline_indices.is_empty() {
-                    if let Some(pipeline) = self.resources.sprite.outline_mask_pipeline.as_ref() {
-                        pass.set_pipeline(pipeline);
-                        for (idx, instance_filter) in sprite_outline_indices {
-                            if let Some(sprite) = sprite_gpu_data.get(*idx) {
-                                pass.set_bind_group(0, camera_bg, &[]);
-                                pass.set_bind_group(1, &sprite.bind_group, &[]);
-                                pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-                                match instance_filter {
-                                    None => {
-                                        pass.draw(0..6, 0..sprite.sprite_count);
-                                    }
-                                    Some(indices) => {
-                                        for &i in indices {
-                                            pass.draw(0..6, i..i + 1);
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
                 }

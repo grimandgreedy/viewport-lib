@@ -116,7 +116,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = PointCloudPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -158,7 +158,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = GlyphPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -203,7 +203,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = TensorGlyphPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -245,7 +245,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = PolylinePlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -287,7 +287,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = StreamtubePlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -329,7 +329,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = TubePlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -371,7 +371,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = RibbonPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -417,7 +417,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             sub_selection: None,
             clip_objects: &[],
             quality_reduced: false,
-            ref_items: None,
+            ref_items: [None, None],
         };
         let mut plugin = GpuImplicitPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);

@@ -201,10 +201,32 @@ pub struct ItemFrameContext<'a> {
     /// for the built-in types that have a reference form (`point_clouds` has
     /// `point_cloud_refs`, and so on). The reference items carry their own
     /// `ItemSettings` and a per-frame model matrix; the payload lives in the
-    /// upload store. Always `None` for an externally registered plugin, whose
-    /// items arrive on one collection; it goes away when `SceneFrame` merges
-    /// the two.
-    pub(crate) ref_items: Option<&'a dyn PluginItemCollection>,
+    /// upload store. A type may have more than one reference form: a sprite
+    /// batch can name a pre-uploaded sprite set or a pre-uploaded instance
+    /// set, which are different item types over the same draw. Read them with
+    /// [`refs_of`](Self::refs_of) rather than by index, since which slot a
+    /// form occupies is not meaningful. Empty for an externally registered
+    /// plugin, whose items all arrive on one collection; the whole field goes
+    /// away when `SceneFrame` merges items and references.
+    pub(crate) ref_items: [Option<&'a dyn PluginItemCollection>; MAX_REF_COLLECTIONS],
+}
+
+/// How many reference collections one item type may submit in a frame. Two
+/// today, for sprite; raise it if a type grows a third form.
+pub(crate) const MAX_REF_COLLECTIONS: usize = 2;
+
+impl<'a> ItemFrameContext<'a> {
+    /// This frame's reference items of type `T`, or an empty slice if the
+    /// frame carried none. A type with two reference forms calls this once per
+    /// form; the order the forms were routed in does not matter.
+    pub(crate) fn refs_of<T: 'static>(&self) -> &'a [T] {
+        self.ref_items
+            .iter()
+            .flatten()
+            .find_map(|c| c.as_any().downcast_ref::<Vec<T>>())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
 }
 
 /// Information forwarded to a plugin's `paint`.

@@ -70,11 +70,7 @@ impl ItemTypePlugin for TubePlugin {
             .as_any()
             .downcast_ref::<Vec<TubeItem>>()
             .expect("tube collection is the SceneFrame field");
-        let refs = ctx
-            .ref_items
-            .and_then(|r| r.as_any().downcast_ref::<Vec<TubeRefItem>>())
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
+        let refs = ctx.refs_of::<TubeRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
         if items.is_empty() && refs.is_empty() {

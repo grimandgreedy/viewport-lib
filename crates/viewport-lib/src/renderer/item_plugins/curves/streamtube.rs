@@ -54,11 +54,7 @@ impl ItemTypePlugin for StreamtubePlugin {
             .as_any()
             .downcast_ref::<Vec<StreamtubeItem>>()
             .expect("streamtube collection is the SceneFrame field");
-        let refs = ctx
-            .ref_items
-            .and_then(|r| r.as_any().downcast_ref::<Vec<StreamtubeRefItem>>())
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
+        let refs = ctx.refs_of::<StreamtubeRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
         if items.is_empty() && refs.is_empty() {

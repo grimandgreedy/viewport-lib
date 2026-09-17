@@ -93,7 +93,6 @@ pub(crate) use self::scivis::curve_store::{
 };
 pub use self::scivis::gaussian_splat::{GaussianSplatData, GaussianSplatId, ShDegree};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
-pub(crate) use self::scivis::sprite::SpriteKey;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;

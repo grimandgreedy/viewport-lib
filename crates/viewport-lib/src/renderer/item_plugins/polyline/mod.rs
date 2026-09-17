@@ -86,11 +86,7 @@ impl ItemTypePlugin for PolylinePlugin {
             .as_any()
             .downcast_ref::<Vec<PolylineItem>>()
             .expect("polyline collection is the SceneFrame field");
-        let refs = ctx
-            .ref_items
-            .and_then(|r| r.as_any().downcast_ref::<Vec<PolylineRefItem>>())
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
+        let refs = ctx.refs_of::<PolylineRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
         if items.is_empty() && refs.is_empty() {

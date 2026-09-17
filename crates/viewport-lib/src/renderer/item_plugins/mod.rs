@@ -19,11 +19,13 @@ pub(crate) mod gpu_marching_cubes;
 pub(crate) mod image_slice;
 pub(crate) mod point_cloud;
 pub(crate) mod polyline;
+pub(crate) mod sprite;
 pub(crate) mod tensor_glyph;
 pub(crate) mod volume;
 pub(crate) mod volume_surface_slice;
 
 use crate::plugin_api::PluginItemCollection;
+use crate::plugin_api::item_type::MAX_REF_COLLECTIONS;
 use crate::renderer::types::FrameData;
 
 /// The per-frame collection for a registered plugin: internal item types
@@ -44,6 +46,7 @@ pub(crate) fn plugin_items_for<'f>(
         glyph::TYPE_NAME => Some(&frame.scene.glyphs),
         point_cloud::TYPE_NAME => Some(&frame.scene.point_clouds),
         polyline::TYPE_NAME => Some(&frame.scene.polylines),
+        sprite::TYPE_NAME => Some(&frame.scene.sprite_items),
         tensor_glyph::TYPE_NAME => Some(&frame.scene.tensor_glyphs),
         volume::TYPE_NAME => Some(&frame.scene.volumes),
         volume_surface_slice::TYPE_NAME => Some(&frame.scene.volume_surface_slices),
@@ -62,16 +65,23 @@ pub(crate) fn plugin_items_for<'f>(
 pub(crate) fn plugin_ref_items_for<'f>(
     frame: &'f FrameData,
     name: &str,
-) -> Option<&'f dyn PluginItemCollection> {
+) -> [Option<&'f dyn PluginItemCollection>; MAX_REF_COLLECTIONS] {
+    let one = |c: &'f dyn PluginItemCollection| [Some(c), None];
     match name {
-        curves::RIBBON_TYPE_NAME => Some(&frame.scene.ribbon_refs),
-        curves::STREAMTUBE_TYPE_NAME => Some(&frame.scene.streamtube_refs),
-        curves::TUBE_TYPE_NAME => Some(&frame.scene.tube_refs),
-        glyph::TYPE_NAME => Some(&frame.scene.glyph_set_refs),
-        point_cloud::TYPE_NAME => Some(&frame.scene.point_cloud_refs),
-        polyline::TYPE_NAME => Some(&frame.scene.polyline_refs),
-        tensor_glyph::TYPE_NAME => Some(&frame.scene.tensor_glyph_set_refs),
-        _ => None,
+        curves::RIBBON_TYPE_NAME => one(&frame.scene.ribbon_refs),
+        curves::STREAMTUBE_TYPE_NAME => one(&frame.scene.streamtube_refs),
+        curves::TUBE_TYPE_NAME => one(&frame.scene.tube_refs),
+        glyph::TYPE_NAME => one(&frame.scene.glyph_set_refs),
+        point_cloud::TYPE_NAME => one(&frame.scene.point_cloud_refs),
+        polyline::TYPE_NAME => one(&frame.scene.polyline_refs),
+        // Sprite is the one type with two reference forms: a stored batch and a
+        // stored instance set.
+        sprite::TYPE_NAME => [
+            Some(&frame.scene.sprite_set_refs),
+            Some(&frame.scene.sprite_instance_set_refs),
+        ],
+        tensor_glyph::TYPE_NAME => one(&frame.scene.tensor_glyph_set_refs),
+        _ => [None, None],
     }
 }
 
@@ -83,12 +93,9 @@ pub(crate) fn plugin_collections_for<'f>(
     frame: &'f FrameData,
     name: &str,
 ) -> impl Iterator<Item = &'f dyn PluginItemCollection> {
-    [
-        plugin_items_for(frame, name),
-        plugin_ref_items_for(frame, name),
-    ]
-    .into_iter()
-    .flatten()
+    std::iter::once(plugin_items_for(frame, name))
+        .chain(plugin_ref_items_for(frame, name))
+        .flatten()
 }
 
 impl crate::renderer::ViewportRenderer {
@@ -124,5 +131,7 @@ impl crate::renderer::ViewportRenderer {
             device,
             Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
         );
+        // Sprites drew after every other non-mesh type, so they register last.
+        self.with_item_type_plugin(device, Box::new(sprite::SpritePlugin::default()));
     }
 }

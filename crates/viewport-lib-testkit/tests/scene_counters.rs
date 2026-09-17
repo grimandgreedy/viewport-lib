@@ -71,6 +71,7 @@ fn expected(name: &str) -> Option<Expected> {
         // Same content as `sprites_soft`, supersampled: the counters are
         // resolution-independent, so they match it exactly.
         "supersampled_sprites" => e(2, 2, 2, 2, 0, 24),
+        "supersampled_sprite_refraction" => e(1, 1, 1, 0, 0, 12),
         "volume" => e(0, 0, 0, 0, 0, 0),
         "gaussian_splats" => e(0, 0, 0, 0, 0, 0),
         "image_slice" => e(0, 0, 0, 0, 0, 0),

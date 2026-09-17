@@ -147,69 +147,14 @@ impl ViewportRenderer {
         (resolved, switches, culled, reduced)
     }
 
-    pub(super) fn upload_sprites_and_particles(
+    pub(super) fn upload_particles(
         resources: &mut DeviceResources,
-        sprite_gpu_data: &mut Vec<crate::resources::SpriteGpuData>,
         particle_gpu_data: &mut Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         frame: &FrameData,
         sink: &mut crate::renderer::SubmitSink,
     ) {
-        // ------------------------------------------------------------------
-        // Sprite billboard GPU data upload.
-        // ------------------------------------------------------------------
-        sprite_gpu_data.clear();
-        if !frame.scene.sprite_items.is_empty() {
-            resources.ensure_sprite_pipelines(device);
-            for item in &frame.scene.sprite_items {
-                if item.settings.hidden || item.positions.is_empty() {
-                    continue;
-                }
-                let mut gd = resources.upload_sprite(device, queue, item);
-                gd.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                sprite_gpu_data.push(gd);
-            }
-        }
-
-        // Pre-uploaded sprite set references.
-        if !frame.scene.sprite_set_refs.is_empty() {
-            resources.ensure_sprite_pipelines(device);
-            for ref_item in &frame.scene.sprite_set_refs {
-                if ref_item.settings.hidden {
-                    continue;
-                }
-                let entry = match resources.content.sprite_set_store.get(ref_item.source) {
-                    Some(e) => e.clone(),
-                    None => continue,
-                };
-                let mut gd = entry;
-                gd.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
-                sprite_gpu_data.push(gd);
-            }
-        }
-
-        // Pre-uploaded sprite instance set references.
-        if !frame.scene.sprite_instance_set_refs.is_empty() {
-            resources.ensure_sprite_pipelines(device);
-            for ref_item in &frame.scene.sprite_instance_set_refs {
-                if ref_item.settings.hidden {
-                    continue;
-                }
-                let entry = match resources
-                    .content
-                    .sprite_instance_set_store
-                    .get(ref_item.source)
-                {
-                    Some(e) => e.clone(),
-                    None => continue,
-                };
-                let mut gd = entry;
-                gd.wireframe = frame.viewport.wireframe_mode || ref_item.settings.wireframe;
-                sprite_gpu_data.push(gd);
-            }
-        }
-
         // Mesh-instance batches are uploaded by `upload_mesh_instances`, called
         // separately so it can resolve LOD groups per instance.
 

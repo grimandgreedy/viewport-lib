@@ -33,9 +33,7 @@ impl ViewportRenderer {
         view_proj: glam::Mat4,
         mask: PickMask,
     ) -> Option<PickHit> {
-        use crate::interaction::query::picking::{
-            pick_gaussian_splat_cpu, pick_transparent_volume_mesh_cpu, screen_to_ray,
-        };
+        use crate::interaction::query::picking::{pick_transparent_volume_mesh_cpu, screen_to_ray};
         use parry3d::math::{Pose, Vector};
         use parry3d::query::{Ray, RayCast};
 
@@ -317,63 +315,7 @@ impl ViewportRenderer {
 
         // 6. Instance picks (INSTANCE or OBJECT fallback) for glyphs, tensor glyphs, sprites.
         let wants_instance = mask.intersects(PickMask::INSTANCE);
-        if wants_instance || wants_object {
-            // Convert a world-space radius at a given world position to a pixel threshold.
-            // Using the actual instance centroid rather than the model origin gives a correct
-            // pixel size when instances are offset far from the model's local origin.
-            let instance_radius_px = |world_center: glam::Vec3, world_r: f32| -> f32 {
-                let p0 = view_proj * world_center.extend(1.0);
-                let p1 = view_proj * (world_center + glam::Vec3::X * world_r).extend(1.0);
-                if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
-                    let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
-                    let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
-                    ((n1 - n0).length() * 0.5 * viewport_size.x.max(viewport_size.y)).max(4.0)
-                } else {
-                    (world_r * 100.0_f32).max(4.0)
-                }
-            };
-
-            // Sprites
-            for item in &self.pick_sprite_items {
-                if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
-                    continue;
-                }
-                let model = glam::Mat4::from_cols_array_2d(&item.model);
-                let radius_px = match item.size_mode {
-                    SpriteSizeMode::ScreenSpace => (item.default_size * 0.5).max(4.0),
-                    SpriteSizeMode::WorldSpace => {
-                        let n = item.positions.len() as f32;
-                        let centroid = model.transform_point3(
-                            item.positions
-                                .iter()
-                                .map(|p| glam::Vec3::from(*p))
-                                .sum::<glam::Vec3>()
-                                / n,
-                        );
-                        instance_radius_px(centroid, (item.default_size * 0.5).max(0.01))
-                    }
-                };
-                if let Some(mut hit) = pick_gaussian_splat_cpu(
-                    click_pos,
-                    item.settings.pick_id.0,
-                    &item.positions,
-                    model,
-                    view_proj,
-                    viewport_size,
-                    radius_px,
-                ) {
-                    let toi = (hit.world_pos - ray_origin).dot(ray_dir).max(0.0);
-                    if wants_instance {
-                        if let Some(SubObjectRef::Point(idx)) = hit.sub_object {
-                            hit.sub_object = Some(SubObjectRef::Instance(idx));
-                        }
-                    } else {
-                        hit.sub_object = None;
-                    }
-                    consider(toi, hit);
-                }
-            }
-        }
+        if wants_instance || wants_object {}
 
         // 10. Screen image object picks (OBJECT only).
         if wants_object {

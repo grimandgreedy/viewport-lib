@@ -2423,7 +2423,7 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             lic: crate::resources::postprocess::LicResources::default(),
-            sprite: crate::resources::scivis::sprite::SpriteResources::default(),
+            sprite: crate::resources::scivis::sprite::SpriteResources::new(device),
             point_cloud: crate::resources::scivis::point_cloud::PointCloudResources::new(device),
             glyph: crate::resources::scivis::glyph::GlyphResources::new(device),
             tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::new(device),

@@ -1063,7 +1063,6 @@ macro_rules! emit_outline_composite {
         if let Some(slot) = $vp_slot {
             if !slot.selection_outlines.outline_object_buffers.is_empty()
                 || !slot.selection_outlines.polyline_outline_indices.is_empty()
-                || !slot.selection_outlines.sprite_outline_indices.is_empty()
                 || slot.selection_outlines.plugin_outline_present
             {
                 let composite_bg = slot.hdr.as_ref().map(|h| &h.outline_composite_bind_group);
@@ -1082,12 +1081,12 @@ macro_rules! emit_outline_composite {
     }};
 }
 
-/// Draw the line substrate, mesh instances and sprites from per-frame GPU
+/// Draw the line substrate and mesh instances from per-frame GPU
 /// data prepared in `prepare()`.
 ///
 /// Called by both `paint` and `paint_to` after `emit_draw_calls!` to render scivis layers.
 macro_rules! emit_scivis_draw_calls {
-    ($resources:expr, $render_pass:expr, $polyline_gpu_data:expr, $camera_bg:expr, $sprite_gpu_data:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
+    ($resources:expr, $render_pass:expr, $polyline_gpu_data:expr, $camera_bg:expr, $mesh_instance_gpu_data:expr, $is_hdr:expr) => {{
         let resources = $resources;
         let render_pass = $render_pass;
         let camera_bg: &crate::gpu::BindGroup = $camera_bg;
@@ -1194,56 +1193,6 @@ macro_rules! emit_scivis_draw_calls {
         // Sprite billboard pass: route by (depth_write, blend mode).
         // Depth-write items first (opaque-style markers), then the no-depth-write
         // batches (transparent / additive / premultiplied particle effects).
-        if !$sprite_gpu_data.is_empty() {
-            // Unlit buckets only: this macro path has no group-3 lit normal-map
-            // bind group plumbing, so lit sprites are not drawn here (see the
-            // separate lit-aware loop in `render/hdr_path.rs`).
-            let sprite_pipelines = resources.sprite.pipelines.as_ref();
-            let buckets: Vec<(
-                bool,
-                crate::renderer::SpriteBlend,
-                Option<&crate::resources::DualPipeline>,
-            )> = crate::resources::SpriteKey::all()
-                .filter(|key| !key.lit)
-                .map(|key| {
-                    (
-                        key.depth_write,
-                        key.blend,
-                        sprite_pipelines.map(|ps| ps.get(key)),
-                    )
-                })
-                .collect();
-            // Group 2 (sprite_soft_bgl) carries the scene-depth resolve consumed
-            // by soft-particle fade. Inline sprite draws inside the main HDR or
-            // LDR pass cannot bind the live scene depth (it is still being
-            // written), so they bind a placeholder. The shader gates the fade
-            // sample on a positive soft_particle_distance, so non-fade items
-            // ignore this binding's contents. Soft fade itself is applied in the
-            // separate transparent-sprite post-pass driven from `render.rs`.
-            let soft_bg = resources.sprite.soft_fallback_bg.as_ref();
-            for (depth_write, blend, pipeline) in buckets {
-                let Some(dual) = pipeline else { continue };
-                let Some(soft_bg) = soft_bg else { continue };
-                let mut set = false;
-                for sprite in $sprite_gpu_data.iter() {
-                    if sprite.wireframe
-                        || sprite.depth_write != depth_write
-                        || sprite.blend != blend
-                    {
-                        continue;
-                    }
-                    if !set {
-                        render_pass.set_pipeline(dual.for_format(_is_hdr));
-                        render_pass.set_bind_group(0, camera_bg, &[]);
-                        render_pass.set_bind_group(2, soft_bg, &[]);
-                        set = true;
-                    }
-                    render_pass.set_bind_group(1, &sprite.bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, sprite.vertex_buffer.slice(..));
-                    render_pass.draw(0..6, 0..sprite.sprite_count);
-                }
-            }
-        }
     }};
 }
 

@@ -1,200 +1,29 @@
+//! Sprite billboard resources that stay with the renderer: the two bind group
+//! layouts the public upload API builds its bind groups against, the per-item
+//! upload, and the pre-uploaded sprite set and instance set stores.
+//!
+//! The pipelines that draw sprites live with the sprite item type under
+//! `renderer/item_plugins/sprite/`. Only what the upload path needs is here,
+//! because `upload_sprite_set` is public and hands back bind groups built
+//! over these layouts.
+
 use super::*;
 
-/// Sprite pipeline variant axes: depth-write, blend mode, and unlit vs
-/// `apply_scene_lighting`-lit shading. Kept separate from the mesh family's
-/// `PipelineKey` -- sprite's axes don't map onto `two_sided` / `cutout` /
-/// `no_discard_eligible`, and `blend` is three-valued, not boolean, so
-/// reusing that type would just be confusing field names for an unrelated
-/// set of axes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct SpriteKey {
-    pub depth_write: bool,
-    pub blend: crate::renderer::SpriteBlend,
-    pub lit: bool,
-}
-
-impl SpriteKey {
-    fn blend_index(self) -> usize {
-        match self.blend {
-            crate::renderer::SpriteBlend::AlphaBlend => 0,
-            crate::renderer::SpriteBlend::Additive => 1,
-            crate::renderer::SpriteBlend::Premultiplied => 2,
-        }
-    }
-
-    /// Every axis combination, for eager cross-product construction
-    /// (`SpriteVariantSet::build`).
-    pub fn all() -> impl Iterator<Item = SpriteKey> {
-        [
-            crate::renderer::SpriteBlend::AlphaBlend,
-            crate::renderer::SpriteBlend::Additive,
-            crate::renderer::SpriteBlend::Premultiplied,
-        ]
-        .into_iter()
-        .flat_map(|blend| {
-            [false, true].into_iter().flat_map(move |lit| {
-                [false, true].into_iter().map(move |depth_write| SpriteKey {
-                    depth_write,
-                    blend,
-                    lit,
-                })
-            })
-        })
-    }
-
-    /// Dense index in `0..12`, stable across calls, for the hash-free array
-    /// lookup `SpriteVariantSet` uses.
-    fn slot(self) -> usize {
-        self.depth_write as usize + 2 * self.blend_index() + 6 * (self.lit as usize)
-    }
-}
-
-/// A `DualPipeline` built for every reachable [`SpriteKey`], indexed for a
-/// hash-free draw-time lookup (`get`). Construction is eager: `build` runs
-/// once per key when `ensure_sprite_pipelines` first runs, not per draw call.
-pub(crate) struct SpriteVariantSet {
-    variants: [DualPipeline; 12],
-}
-
-impl SpriteVariantSet {
-    pub fn build(mut build: impl FnMut(SpriteKey) -> DualPipeline) -> Self {
-        let mut variants: Vec<DualPipeline> = Vec::with_capacity(12);
-        for key in SpriteKey::all() {
-            variants.push(build(key));
-        }
-        Self {
-            variants: variants
-                .try_into()
-                .unwrap_or_else(|_| unreachable!("SpriteKey::all() yields exactly 12 keys")),
-        }
-    }
-
-    pub fn get(&self, key: SpriteKey) -> &DualPipeline {
-        &self.variants[key.slot()]
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Pins `SpriteKey::all()` and `slot()` in sync, the same regression
-    /// class `pipeline_key::tests::all_keys_are_distinct_and_densely_slotted`
-    /// guards for the mesh family's `PipelineKey`: if a future axis widens
-    /// past what `slot()` computes, two distinct keys would collide on the
-    /// same array index and `build` would silently drop one of them.
-    #[test]
-    fn all_keys_are_distinct_and_densely_slotted() {
-        let keys: Vec<SpriteKey> = SpriteKey::all().collect();
-        assert_eq!(
-            keys.len(),
-            12,
-            "SpriteKey has depth_write x blend(3) x lit = 12 keys"
-        );
-
-        let mut seen_keys = std::collections::HashSet::new();
-        let mut seen_slots = std::collections::HashSet::new();
-        for key in keys {
-            assert!(
-                seen_keys.insert(key),
-                "all() yielded {key:?} more than once"
-            );
-            let slot = key.slot();
-            assert!(slot < 12, "{key:?} slotted out of range: {slot}");
-            assert!(
-                seen_slots.insert(slot),
-                "{key:?} collided with another key at slot {slot}"
-            );
-        }
-    }
-
-    /// Same completeness guarantee as the mesh-family `PipelineVariantSet`
-    /// tests: once built, every key in `SpriteKey::all()` must resolve
-    /// through `get()` without panicking.
-    #[test]
-    fn sprite_pipelines_resolve_every_key_once_built() {
-        let Some((device, _queue, mut res)) = crate::resources::test_support::try_make_resources()
-        else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        res.ensure_sprite_pipelines(&device);
-        let pipelines = res
-            .sprite
-            .pipelines
-            .as_ref()
-            .expect("ensure_sprite_pipelines must build the sprite variant set");
-        for key in SpriteKey::all() {
-            let _ = pipelines.get(key);
-        }
-    }
-}
-
-/// Sprite billboard pipelines (emissive + lit, keyed by depth-write / blend /
-/// lit), their bind group layouts, refraction pass, and soft-particle
-/// fallbacks. All lazily built; the uploaded sprite sets live in separate
-/// flat stores.
-#[derive(Default)]
+/// The bind group layouts sprite uploads build against.
+///
+/// Group 1 carries a batch's uniform, texture, sampler and instance buffer;
+/// group 3 carries the optional tangent-space normal map for a lit batch.
+/// Both are built once at startup rather than lazily, because an upload can
+/// arrive before the first frame that draws one.
 pub(crate) struct SpriteResources {
-    /// Sprite render pipelines, keyed by `SpriteKey`.
-    pub(crate) pipelines: Option<SpriteVariantSet>,
-    /// Refractive sprite pipeline (HDR target only).
-    pub(crate) refraction_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 BGL for the refraction pipeline: scene-colour texture + sampler.
-    pub(crate) refraction_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Sampler used by the refraction shader to read the scene-colour resolve.
-    pub(crate) refraction_sampler: Option<crate::gpu::Sampler>,
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
-    /// GPU object-id pick pipeline. Reuses the sprite render vertex expansion and
-    /// writes the item's pick_id. None until the first pick call with sprites.
-    pub(crate) pick_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the per-draw pick_id uniform used by `pick_pipeline`.
-    pub(crate) pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Bind group layout for the per-pass scene-depth resolve bound at group 2.
-    pub(crate) soft_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Fallback bind group for the group-2 soft-particle binding.
-    pub(crate) soft_fallback_bg: Option<crate::gpu::BindGroup>,
-    /// Sampler used for the group-2 scene-depth binding.
-    pub(crate) soft_sampler: Option<crate::gpu::Sampler>,
-    /// 1x1 Depth32Float texture backing the soft fallback bind group.
-    pub(crate) soft_fallback_tex: Option<crate::gpu::Texture>,
-    /// Group 3 BGL for the optional lit normal map (texture + sampler).
-    pub(crate) lit_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Fallback bind group for the lit normal map binding.
-    pub(crate) lit_fallback_bg: Option<crate::gpu::BindGroup>,
-    /// 1x1 RGBA8Unorm texture backing the lit fallback bind group. Held so the
-    /// fallback bind group keeps a valid texture; not read after construction.
-    #[allow(dead_code)]
-    pub(crate) lit_fallback_tex: Option<crate::gpu::Texture>,
-    /// Sprite outline mask pipeline (R8Unorm). None until first selected sprite.
-    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Weighted-blended OIT pipeline, unlit, straight alpha. HDR-only (see
-    /// `docs/plans/non-mesh-pipeline-consistency-plan.md#phase-6b`).
-    pub(crate) oit_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Weighted-blended OIT pipeline, unlit, premultiplied alpha.
-    pub(crate) oit_pipeline_premultiplied: Option<crate::gpu::RenderPipeline>,
-    /// Weighted-blended OIT pipeline, lit, straight alpha.
-    pub(crate) oit_lit_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Weighted-blended OIT pipeline, lit, premultiplied alpha.
-    pub(crate) oit_lit_pipeline_premultiplied: Option<crate::gpu::RenderPipeline>,
+    pub(crate) bgl: crate::gpu::BindGroupLayout,
+    /// Group 3 layout for the optional lit normal map (texture + sampler).
+    pub(crate) lit_bgl: crate::gpu::BindGroupLayout,
 }
 
-impl DeviceResources {
-    /// Lazily create the sprite billboard pipelines (alpha-blended, instanced quad expansion).
-    ///
-    /// Creates two pipelines that share the same shader and bind group layout but differ
-    /// in `depth_write_enabled`: one for transparent effects (`depth_write: false`) and one
-    /// for opaque-style placed sprites (`depth_write: true`).
-    ///
-    /// No-op if already created. Called from `prepare()` when `frame.scene.sprite_items` is
-    /// non-empty.
-    pub(crate) fn ensure_sprite_pipelines(&mut self, device: &crate::gpu::Device) {
-        if self.sprite.bgl.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-
+impl SpriteResources {
+    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("sprite_bgl"),
             entries: &[
@@ -242,416 +71,19 @@ impl DeviceResources {
             ],
         });
 
-        // Group 2: scene depth + sampler for soft-particle fade. The shader
-        // skips sampling unless soft_particle_distance > 0, so callers may bind
-        // a placeholder when no resolved depth is available.
-        let soft_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
-            label: Some("sprite_soft_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::NonFiltering,
-                    ),
-                    count: None,
-                },
-            ],
-        });
-
-        let soft_sampler =
-            crate::resources::builders::clamp_nearest_sampler(device, "sprite_soft_sampler");
-
-        let fallback_tex = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("sprite_soft_fallback_tex"),
-            size: crate::gpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth32Float,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING
-                | crate::gpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let fallback_view = fallback_tex.create_view(&crate::gpu::TextureViewDescriptor {
-            aspect: crate::gpu::TextureAspect::DepthOnly,
-            ..Default::default()
-        });
-        let fallback_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("sprite_soft_fallback_bg"),
-            layout: &soft_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(&fallback_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(&soft_sampler),
-                },
-            ],
-        });
-
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "sprite_shader",
-            crate::resources::builders::wgsl_source!("sprite"),
-        );
-
-        let layout = crate::resources::builders::pipeline_layout(
-            device,
-            "sprite_pipeline_layout",
-            &[&self.binds.camera_bgl, &bgl, &soft_bgl],
-        );
-
-        // Position vertex buffer: one vec3 per sprite, Instance stepping.
-        // Stored in an array so both pipeline creations can borrow from it.
-        let vert_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }];
-        let vertex_buffers = [crate::gpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &vert_attrs,
-        }];
-
-        let sample_count = self.sample_count;
-        let ldr_format = self.target_format;
-        // Sprites are billboards drawn with `Less` depth test, no culling. Each
-        // variant differs only in blend mode and whether it writes depth.
-        let make_sprite = |depth_write: bool, blend: crate::gpu::BlendState, label: &str| {
-            crate::resources::builders::build_dual_pipeline(
-                device,
-                &crate::resources::builders::DualPipelineDesc {
-                    label,
-                    layout: &layout,
-                    shader: &shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &vertex_buffers,
-                    blend: Some(blend),
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write,
-                    depth_compare: crate::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        // Group 3 BGL for the lit sprite path: optional tangent-space normal
-        // map + filtering sampler. Bound by every lit batch; a 1x1 default
-        // backs the binding when no map is supplied.
         let lit_bgl = crate::resources::builders::texture_sampler_bgl(
             device,
             "sprite_lit_bgl",
             crate::gpu::ShaderStages::FRAGMENT,
         );
 
-        let alpha = crate::gpu::BlendState::ALPHA_BLENDING;
-        let additive = crate::resources::builders::ADDITIVE_BLEND;
-        let premultiplied = crate::resources::builders::PREMULTIPLIED_BLEND;
-        self.sprite.bgl = Some(bgl);
-        self.sprite.soft_bgl = Some(soft_bgl);
-        self.sprite.soft_sampler = Some(soft_sampler);
-        self.sprite.soft_fallback_tex = Some(fallback_tex);
-        self.sprite.soft_fallback_bg = Some(fallback_bg);
-
-        // -----------------------------------------------------------------
-        // Refractive sprite pipeline.
-        //
-        // Group 0: shared camera bindings.
-        // Group 1: shared sprite BGL (uniform / texture / sampler / instance buf).
-        // Group 2: scene-colour resolve texture + sampler.
-        //
-        // Available only on the HDR path. The LDR `paint_to` route has no
-        // resolvable scene-colour texture to sample, mirroring the
-        // soft-particle constraint.
-        let refraction_bgl = crate::resources::builders::texture_sampler_bgl(
-            device,
-            "sprite_refraction_bgl",
-            crate::gpu::ShaderStages::FRAGMENT,
-        );
-
-        let refraction_sampler =
-            crate::resources::builders::clamp_linear_sampler(device, "sprite_refraction_sampler");
-
-        let refraction_shader = crate::resources::builders::wgsl_module(
-            device,
-            "sprite_refraction_shader",
-            crate::resources::builders::wgsl_source!("sprite_refraction"),
-        );
-
-        let bgl_ref = self.sprite.bgl.as_ref().unwrap();
-        let refraction_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "sprite_refraction_pipeline_layout",
-            &[&self.binds.camera_bgl, bgl_ref, &refraction_bgl],
-        );
-
-        let refraction_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "sprite_refraction_pipeline",
-                layout: &refraction_layout,
-                vertex_module: &refraction_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &vertex_buffers,
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &refraction_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                cache: None,
-            },
-        );
-
-        self.sprite.refraction_bgl = Some(refraction_bgl);
-        self.sprite.refraction_sampler = Some(refraction_sampler);
-        self.sprite.refraction_pipeline = Some(refraction_pipeline);
-
-        // -----------------------------------------------------------------
-        // Lit sprite pipelines.
-        //
-        // Group 0: shared camera + clip + lighting bindings (already provides
-        //          the lights uniform at binding 3 and the lights storage at
-        //          binding 13 via `camera_bind_group_layout`).
-        // Group 1: shared sprite BGL (uniform / texture / sampler / instance buf).
-        // Group 2: shared soft-particle BGL (depth + sampler). Lit sprites
-        //          honour the same per-instance soft-fade distance as the
-        //          emissive path.
-        // Group 3: new lit BGL (optional normal map + sampler).
-        let lit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "sprite_lit_shader",
-            crate::resources::builders::wgsl_source!("sprite_lit"),
-        );
-
-        let sprite_bgl_ref = self.sprite.bgl.as_ref().unwrap();
-        let soft_bgl_ref = self.sprite.soft_bgl.as_ref().unwrap();
-        let lit_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "sprite_lit_pipeline_layout",
-            &[
-                &self.binds.camera_bgl,
-                sprite_bgl_ref,
-                soft_bgl_ref,
-                &lit_bgl,
-            ],
-        );
-
-        let make_lit = |depth_write: bool, blend: crate::gpu::BlendState, label: &str| {
-            crate::resources::builders::build_dual_pipeline(
-                device,
-                &crate::resources::builders::DualPipelineDesc {
-                    label,
-                    layout: &lit_layout,
-                    shader: &lit_shader,
-                    vertex_entry: "vs_main",
-                    fragment_entry: "fs_main",
-                    vertex_buffers: &vertex_buffers,
-                    blend: Some(blend),
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    depth_write,
-                    depth_compare: crate::gpu::CompareFunction::Less,
-                    sample_count,
-                    ldr_format,
-                },
-            )
-        };
-
-        // One PipelineVariantSet-style build covers all 12 (depth_write x
-        // blend x lit) combinations: the same closure picks the unlit or lit
-        // shader/layout pair and the blend state for every key up front.
-        self.sprite.pipelines = Some(SpriteVariantSet::build(|key| {
-            let blend = match key.blend {
-                crate::renderer::SpriteBlend::AlphaBlend => alpha,
-                crate::renderer::SpriteBlend::Additive => additive,
-                crate::renderer::SpriteBlend::Premultiplied => premultiplied,
-            };
-            if key.lit {
-                make_lit(key.depth_write, blend, "sprite_lit_pipeline_variant")
-            } else {
-                make_sprite(key.depth_write, blend, "sprite_pipeline_variant")
-            }
-        }));
-
-        // The fallback bind group reuses the crate-wide `fallback_normal_map`,
-        // already populated with `(128, 128, 255, 255)` for tangent-space `(0, 0, 1)`.
-        let lit_fallback_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-            label: Some("sprite_lit_fallback_bg"),
-            layout: &lit_bgl,
-            entries: &[
-                crate::gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(
-                        &self.material.normal_map_view,
-                    ),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
-                },
-            ],
-        });
-
-        self.sprite.lit_bgl = Some(lit_bgl);
-        self.sprite.lit_fallback_bg = Some(lit_fallback_bg);
-
-        // -----------------------------------------------------------------
-        // OIT (weighted-blended, order-independent transparency) sprite
-        // pipelines. HDR-only: the OIT accum/reveal targets do not exist on
-        // the LDR path. Only ever selected for `AlphaBlend`/`Premultiplied`
-        // sprites with `depth_write: false` and no active soft-particle
-        // fade (see `SpriteGpuData::oit_eligible`); `Additive` sprites and
-        // any sprite excluded by that check keep drawing through the
-        // ordinary pipelines above.
-        //
-        // "Straight alpha" and "premultiplied" are not separate pipelines --
-        // the GPU blend state for the accum/reveal targets is identical
-        // either way (see `crate::plugin_api::target_desc::OIT_ACCUM_BLEND`/
-        // `OIT_REVEAL_BLEND`); the only difference is whether the fragment
-        // shader multiplies by alpha before weighting. Each OIT shader
-        // exposes `fs_oit`/`fs_oit_premultiplied` from the same module, so
-        // one pipeline layout builds both pipelines.
-        let oit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "sprite_oit_shader",
-            crate::resources::builders::wgsl_source!("sprite_oit"),
-        );
-        let oit_lit_shader = crate::resources::builders::wgsl_module(
-            device,
-            "sprite_lit_oit_shader",
-            crate::resources::builders::wgsl_source!("sprite_lit_oit"),
-        );
-
-        let sprite_bgl_for_oit = self.sprite.bgl.as_ref().unwrap();
-        let oit_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "sprite_oit_pipeline_layout",
-            &[&self.binds.camera_bgl, sprite_bgl_for_oit],
-        );
-        let lit_bgl_for_oit = self.sprite.lit_bgl.as_ref().unwrap();
-        let oit_lit_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "sprite_lit_oit_pipeline_layout",
-            &[&self.binds.camera_bgl, sprite_bgl_for_oit, lit_bgl_for_oit],
-        );
-
-        let make_oit_pipeline = |layout: &crate::gpu::PipelineLayout,
-                                 shader: &crate::gpu::ShaderModule,
-                                 entry: &str,
-                                 label: &str| {
-            crate::resources::builders::render_pipeline(
-                device,
-                crate::resources::builders::RenderPipelineDesc {
-                    label,
-                    layout,
-                    vertex_module: shader,
-                    vertex_entry: "vs_main",
-                    vertex_buffers: &vertex_buffers,
-                    fragment: Some(crate::gpu::FragmentState {
-                        module: shader,
-                        entry_point: Some(entry),
-                        targets: &[
-                            Some(crate::gpu::ColorTargetState {
-                                format: crate::gpu::TextureFormat::Rgba16Float,
-                                blend: Some(crate::plugin_api::target_desc::OIT_ACCUM_BLEND),
-                                write_mask: crate::gpu::ColorWrites::ALL,
-                            }),
-                            Some(crate::gpu::ColorTargetState {
-                                format: crate::gpu::TextureFormat::R8Unorm,
-                                blend: Some(crate::plugin_api::target_desc::OIT_REVEAL_BLEND),
-                                write_mask: crate::gpu::ColorWrites::RED,
-                            }),
-                        ],
-                        compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: crate::gpu::PrimitiveState {
-                        topology: crate::gpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                        false,
-                        crate::gpu::CompareFunction::LessEqual,
-                    )),
-                    multisample: crate::gpu::MultisampleState {
-                        count: sample_count,
-                        ..Default::default()
-                    },
-                    cache: None,
-                },
-            )
-        };
-
-        self.sprite.oit_pipeline = Some(make_oit_pipeline(
-            &oit_layout,
-            &oit_shader,
-            "fs_oit",
-            "sprite_oit_pipeline",
-        ));
-        self.sprite.oit_pipeline_premultiplied = Some(make_oit_pipeline(
-            &oit_layout,
-            &oit_shader,
-            "fs_oit_premultiplied",
-            "sprite_oit_pipeline_premultiplied",
-        ));
-        self.sprite.oit_lit_pipeline = Some(make_oit_pipeline(
-            &oit_lit_layout,
-            &oit_lit_shader,
-            "fs_oit",
-            "sprite_lit_oit_pipeline",
-        ));
-        self.sprite.oit_lit_pipeline_premultiplied = Some(make_oit_pipeline(
-            &oit_lit_layout,
-            &oit_lit_shader,
-            "fs_oit_premultiplied",
-            "sprite_lit_oit_pipeline_premultiplied",
-        ));
+        Self { bgl, lit_bgl }
     }
+}
 
-    /// Upload one [`SpriteItem`] to the GPU and return draw data.
-    ///
-    /// Called from `prepare()` for each non-empty item in `frame.scene.sprite_items`.
+impl DeviceResources {
     pub(crate) fn upload_sprite(
-        &mut self,
+        &self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         item: &crate::renderer::SpriteItem,
@@ -827,11 +259,7 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let bgl = self
-            .sprite
-            .bgl
-            .as_ref()
-            .expect("ensure_sprite_pipelines not called");
+        let bgl = &self.sprite.bgl;
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("sprite_bind_group"),
@@ -857,7 +285,8 @@ impl DeviceResources {
         });
 
         let lit_normal_bg = if item.lit {
-            self.sprite.lit_bgl.as_ref().map(|lit_bgl| {
+            Some({
+                let lit_bgl = &self.sprite.lit_bgl;
                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("sprite_lit_normal_bg"),
                     layout: lit_bgl,
@@ -905,69 +334,14 @@ impl DeviceResources {
     /// Lazily create the sprite outline mask pipeline (R8Unorm, mask-only).
     ///
     /// Same bind group layout and vertex transform as the normal sprite pipeline but
-    /// outputs a flat mask value.  Must be called after `ensure_sprite_pipelines`.
-    pub(crate) fn ensure_sprite_outline_mask_pipeline(&mut self, device: &crate::gpu::Device) {
-        if self.sprite.outline_mask_pipeline.is_some() {
-            return;
-        }
-        self.note_pipeline_built(concat!(file!(), ":", line!()));
-        let bgl = self
-            .sprite
-            .bgl
-            .as_ref()
-            .expect("ensure_sprite_pipelines must be called first");
+    /// outputs a flat mask value.
 
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "sprite_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("sprite_outline_mask"),
-        );
-
-        let layout = crate::resources::builders::standard_scene_layout(
-            device,
-            "sprite_outline_mask_pipeline_layout",
-            &self.binds.camera_bgl,
-            bgl,
-        );
-
-        let vert_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }];
-        let vertex_buffers = [crate::gpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &vert_attrs,
-        }];
-
-        self.sprite.outline_mask_pipeline =
-            Some(crate::resources::builders::build_outline_mask_pipeline(
-                device,
-                "sprite_outline_mask_pipeline",
-                &layout,
-                &shader,
-                crate::gpu::TextureFormat::R8Unorm,
-                &vertex_buffers,
-                None,
-                false,
-                crate::gpu::CompareFunction::Less,
-            ));
-    }
-
-    /// Pre-upload a static sprite set and return a typed handle.
-    ///
-    /// Use this for sprites whose positions, sizes, and colours never
-    /// change between frames: foliage, signage, light flares. Submit a
-    /// [`SpriteSetRefItem`](crate::renderer::SpriteSetRefItem) on
-    /// `SceneFrame::sprite_set_refs` each frame to draw the set.
     pub fn upload_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         item: &crate::renderer::SpriteItem,
     ) -> crate::resources::SpriteSetId {
-        self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
         self.content.sprite_set_store.insert(gpu)
     }
@@ -988,7 +362,6 @@ impl DeviceResources {
         if !self.content.sprite_set_store.contains(id) {
             return false;
         }
-        self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
         self.content.sprite_set_store.replace(id, gpu)
     }
@@ -1070,7 +443,6 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::SpriteItem,
     ) -> crate::resources::SpriteInstanceSetId {
-        self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
         self.content.sprite_instance_set_store.insert(gpu)
     }
@@ -1092,7 +464,6 @@ impl DeviceResources {
         if !self.content.sprite_instance_set_store.contains(id) {
             return false;
         }
-        self.ensure_sprite_pipelines(device);
         let gpu = self.upload_sprite(device, queue, item);
         self.content.sprite_instance_set_store.replace(id, gpu)
     }

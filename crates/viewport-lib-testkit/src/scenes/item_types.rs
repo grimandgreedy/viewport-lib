@@ -68,6 +68,11 @@ pub fn scenes() -> Vec<NamedScene> {
             build: build_supersampled_sprites,
         },
         NamedScene {
+            name: "supersampled_sprite_refraction",
+            cameras: standard_cameras(Vec3::ZERO, 6.0),
+            build: build_supersampled_sprite_refraction,
+        },
+        NamedScene {
             name: "volume",
             cameras: standard_cameras(Vec3::ZERO, 5.0),
             build: build_volume,
@@ -468,6 +473,22 @@ fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// leaving the cube and ground alone in the frame.
 fn build_supersampled_sprites(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut scene = build_sprites_soft(ctx);
+    let mut post = viewport_lib::PostProcessSettings::default();
+    post.ssaa_factor = 2;
+    scene.post_process = Some(post);
+    scene
+}
+
+/// The refraction scene again with supersampling on.
+///
+/// Refractive sprites used to be skipped outright whenever supersampling was
+/// active, because the pass they ran in had no resolve of its own at the
+/// supersampled size. Drawing them from the item type's encoder hook puts them
+/// after the resolve instead, where the scene colour they sample is a finished
+/// image at scene resolution, so the factor no longer matters to them. This
+/// scene is the gate on that: before, it rendered the ground with no bubbles.
+fn build_supersampled_sprite_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let mut scene = build_sprites_refraction(ctx);
     let mut post = viewport_lib::PostProcessSettings::default();
     post.ssaa_factor = 2;
     scene.post_process = Some(post);

@@ -76,11 +76,7 @@ impl ItemTypePlugin for TensorGlyphPlugin {
             .as_any()
             .downcast_ref::<Vec<TensorGlyphItem>>()
             .expect("tensor glyph collection is the SceneFrame field");
-        let refs = ctx
-            .ref_items
-            .and_then(|r| r.as_any().downcast_ref::<Vec<TensorGlyphSetRefItem>>())
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
+        let refs = ctx.refs_of::<TensorGlyphSetRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
         if items.is_empty() && refs.is_empty() {

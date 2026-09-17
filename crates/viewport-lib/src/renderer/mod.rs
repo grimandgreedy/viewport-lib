@@ -132,8 +132,6 @@ use crate::resources::{
 pub(crate) struct SelectionOutlines {
     /// Per-frame outline buffers for selected objects.
     pub outline_object_buffers: Vec<OutlineObjectBuffers>,
-    /// Indices into `sprite_gpu_data` for selected sprite sets.
-    pub sprite_outline_indices: Vec<(usize, Option<Vec<u32>>)>,
     /// Per-frame NDC rect outline buffers for selected screen images.
     pub screen_rect_outline_buffers: Vec<crate::resources::ScreenRectOutlineBuffers>,
     /// Indices into polyline_gpu_data for selected user polylines.
@@ -231,16 +229,6 @@ pub(crate) struct ViewportSlot {
 }
 
 /// Renderer wrapping all GPU resources and providing `prepare()` and `paint()` methods.
-/// Per-viewport scene-colour resolve sampled by the refractive sprite pass.
-///
-/// Lazily allocated on the first frame containing a refractive sprite; resized
-/// whenever the HDR target dimensions change. The bind group is rebuilt with
-/// the resolve when either changes.
-struct SpriteRefractionResolve {
-    texture: crate::gpu::Texture,
-    view: crate::gpu::TextureView,
-    size: [u32; 2],
-}
 
 /// GPU timestamp slot for the main opaque HDR scene pass.
 pub(crate) const GPU_TS_SCENE: u32 = 0;
@@ -392,18 +380,12 @@ pub struct ViewportRenderer {
     decal_deps_gate: crate::resources::resource_deps::DepsGate,
     /// Per-frame decal exclude GPU data, rebuilt in prepare(), consumed in paint().
     decal_exclude_items: Vec<crate::resources::decal::DecalExcludeGpuItem>,
-    /// Per-frame sprite GPU data, rebuilt in prepare(), consumed in paint().
-    sprite_gpu_data: Vec<crate::resources::SpriteGpuData>,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
     /// Per-frame GPU particle systems, dispatched in prepare(), consumed in paint().
     particle_gpu_data: Vec<crate::resources::gpu::gpu_particles::ParticleFrameData>,
     external_instances_gpu_data:
         Vec<crate::resources::gpu::external_instances::ExternalInstancesGpuData>,
-    /// Scene-colour resolve textures for the refractive sprite pass, indexed
-    /// alongside `viewport_slots`. Lazily allocated when the first refractive
-    /// sprite appears for a viewport.
-    sprite_refraction_resolves: Vec<Option<SpriteRefractionResolve>>,
     /// Per-frame screen-image GPU data, rebuilt in prepare(), consumed in paint().
     screen_image_gpu_data: Vec<crate::resources::ScreenImageGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
@@ -555,8 +537,6 @@ pub struct ViewportRenderer {
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
-    /// Sprite items from the last `prepare()` call, retained for `pick()` dispatch.
-    pick_sprite_items: Vec<SpriteItem>,
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Screen image items from the last `prepare()` call, retained for `pick()` dispatch.
     pick_screen_image_items: Vec<ScreenImageItem>,
@@ -971,11 +951,9 @@ impl ViewportRenderer {
             last_stats: crate::renderer::stats::FrameStats::default(),
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             polyline_gpu_data: Vec::new(),
-            sprite_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
             particle_gpu_data: Vec::new(),
             external_instances_gpu_data: Vec::new(),
-            sprite_refraction_resolves: Vec::new(),
             lic_gpu_data: Vec::new(),
             decal_gpu_data: Vec::new(),
             decal_cache: std::collections::HashMap::new(),
@@ -1022,7 +1000,6 @@ impl ViewportRenderer {
             prepared_refraction_volumes: Vec::new(),
             scatter_viewport_states: Vec::new(),
             pick_volume_mesh_items: Vec::new(),
-            pick_sprite_items: Vec::new(),
             pick_screen_image_items: Vec::new(),
             pick_decal_items: Vec::new(),
             cpu_pick_cache_enabled: false,
@@ -3266,7 +3243,6 @@ impl ViewportRenderer {
             &mut *render_pass,
             &self.polyline_gpu_data,
             camera_bg,
-            &self.sprite_gpu_data,
             &self.mesh_instance_gpu_data,
             false
         );
