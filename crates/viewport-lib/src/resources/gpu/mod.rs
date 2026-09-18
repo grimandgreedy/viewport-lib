@@ -6,7 +6,5 @@ pub(crate) mod compute_filter;
 pub(crate) mod dyn_res;
 /// Auto-exposure GPU resources (log-luminance histogram + adaptation).
 pub mod exposure;
-/// Instanced mesh drawing off a consumer-owned positions buffer.
-pub mod external_instances;
 /// Hierarchical-Z max-depth pyramid for GPU occlusion culling.
 pub(crate) mod hiz;

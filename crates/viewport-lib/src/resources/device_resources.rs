@@ -553,9 +553,6 @@ pub struct DeviceResources {
 
     // --- External instance sets ---
     /// Consumer-buffer instanced mesh drawing (positions produced by the
-    /// consumer's own GPU compute on the shared device).
-    pub(crate) external_instances:
-        crate::resources::gpu::external_instances::ExternalInstancesResources,
 
     // --- GPU object-ID picking (lazily created) ---
     /// Object-ID pick pipeline and its bind group layouts.

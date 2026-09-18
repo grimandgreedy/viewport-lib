@@ -2444,8 +2444,6 @@ impl DeviceResources {
             },
             pick: crate::resources::types::PickResources::default(),
 
-            external_instances:
-                crate::resources::gpu::external_instances::ExternalInstancesResources::default(),
             sub_highlight: crate::resources::types::SubHighlightResources::default(),
             overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources::default(),
             overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources::default(

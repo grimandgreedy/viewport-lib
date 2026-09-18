@@ -369,8 +369,6 @@ pub struct ViewportRenderer {
     decal_excluded_surfaces: Vec<(crate::MeshId, [[f32; 4]; 4])>,
     /// Per-frame mesh-instance batches, rebuilt in prepare(), consumed in paint().
     mesh_instance_gpu_data: Vec<crate::resources::MeshInstanceGpuData>,
-    external_instances_gpu_data:
-        Vec<crate::resources::gpu::external_instances::ExternalInstancesGpuData>,
     /// Per-frame overlay label GPU data, rebuilt in prepare(), consumed in paint().
     label_gpu_data: Option<crate::resources::LabelGpuData>,
     /// Per-frame SDF overlay shape GPU data, rebuilt in prepare(), consumed in paint().
@@ -902,7 +900,6 @@ impl ViewportRenderer {
             prepare_breakdown: crate::renderer::stats::PrepareBreakdown::default(),
             polyline_gpu_data: Vec::new(),
             mesh_instance_gpu_data: Vec::new(),
-            external_instances_gpu_data: Vec::new(),
             lic_gpu_data: Vec::new(),
             decal_cache_stats: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             decal_excluded_surfaces: Vec::new(),
@@ -3315,20 +3312,18 @@ impl ViewportRenderer {
     }
 
     /// Create an instance set drawn from a caller-owned positions buffer.
-    ///
-    /// Prefer this over the [`DeviceResources`] method of the same name: it is
-    /// the call that keeps working once an item type owns its own storage.
     pub fn create_external_instance_set(
         &mut self,
         device: &crate::gpu::Device,
         config: &crate::resources::ExternalInstanceSetConfig,
     ) -> crate::error::ViewportResult<crate::resources::ExternalInstanceSetId> {
-        self.resources.create_external_instance_set(device, config)
+        let host = self.external_instances_host();
+        host.plugin.create_set(device, host.resources, config)
     }
 
     /// Release an external instance set. Items still naming it are skipped.
     pub fn drop_external_instance_set(&mut self, id: crate::resources::ExternalInstanceSetId) {
-        self.resources.drop_external_instance_set(id)
+        self.external_instances_host().plugin.drop_set(id)
     }
 
     /// Re-point an external instance set at a different positions buffer.
@@ -3337,8 +3332,20 @@ impl ViewportRenderer {
         id: crate::resources::ExternalInstanceSetId,
         positions: crate::gpu::Buffer,
     ) -> crate::error::ViewportResult<()> {
-        self.resources
-            .set_external_instance_set_buffer(id, positions)
+        self.external_instances_host()
+            .plugin
+            .set_buffer(id, positions)
+    }
+
+    /// The registered external instances item type, which holds the sets.
+    fn external_instances_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<
+        '_,
+        crate::renderer::item_plugins::external_instances::ExternalInstancesPlugin,
+    > {
+        self.item_type_plugin_host(crate::renderer::item_plugins::external_instances::TYPE_NAME)
+            .expect("the built-in external instances item type is registered at construction")
     }
 
     /// Upload an equirectangular HDR environment map and precompute IBL textures.

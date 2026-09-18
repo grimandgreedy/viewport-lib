@@ -928,6 +928,22 @@ impl<'a> MeshDraw<'a> {
         mesh_id: MeshId,
         instances: u32,
     ) -> bool {
+        self.draw_indexed_instance_range(pass, mesh_id, 0..instances)
+    }
+
+    /// The same draw over an instance *range*, for an item type whose
+    /// instances are a window into a larger buffer: `instance_index` in the
+    /// vertex stage starts at the range's start, so several items can render
+    /// disjoint regions of one pool without rebinding anything.
+    ///
+    /// Returns `false` without touching the pass when `mesh_id` is stale, the
+    /// same as [`draw_indexed`](Self::draw_indexed).
+    pub fn draw_indexed_instance_range(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        mesh_id: MeshId,
+        instances: std::ops::Range<u32>,
+    ) -> bool {
         let Some(mesh) = self.resources.mesh_store.get(mesh_id) else {
             return false;
         };
@@ -936,7 +952,7 @@ impl<'a> MeshDraw<'a> {
             self.resources.geometry.index_slice(mesh.index_span),
             crate::gpu::IndexFormat::Uint32,
         );
-        pass.draw_indexed(0..mesh.index_count, 0, 0..instances);
+        pass.draw_indexed(0..mesh.index_count, 0, instances);
         true
     }
 

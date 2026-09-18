@@ -46,7 +46,6 @@ pub mod upload_jobs;
 pub mod volume;
 
 pub use self::gpu::compute_filter::ComputeFilterResult;
-pub use self::gpu::external_instances::{ExternalInstanceSetConfig, ExternalInstanceSetId};
 pub use self::handle::ContentHandle;
 pub use self::light_probes::{
     LightProbe, LightProbeSet, LightProbeVolume, SHCoefficients, evaluate_sh,
@@ -79,6 +78,9 @@ pub use self::plugin_builders::{
     SHADOW_DEPTH_FORMAT,
 };
 pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
+pub use crate::renderer::item_plugins::external_instances::types::{
+    ExternalInstanceSetConfig, ExternalInstanceSetId,
+};
 pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
 pub use crate::renderer::item_plugins::gpu_particles::types::{
     GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender,

@@ -13,6 +13,7 @@ pub(crate) mod registry;
 
 pub(crate) mod curves;
 pub(crate) mod decal;
+pub(crate) mod external_instances;
 pub(crate) mod gaussian_splat;
 pub(crate) mod glyph;
 pub(crate) mod gpu_implicit;
@@ -41,6 +42,7 @@ pub(crate) fn plugin_items_for<'f>(
     match name {
         curves::RIBBON_TYPE_NAME => Some(&frame.scene.ribbon_items),
         decal::TYPE_NAME => Some(&frame.scene.decals),
+        external_instances::TYPE_NAME => Some(&frame.scene.external_instances),
         curves::STREAMTUBE_TYPE_NAME => Some(&frame.scene.streamtube_items),
         curves::TUBE_TYPE_NAME => Some(&frame.scene.tube_items),
         gaussian_splat::TYPE_NAME => Some(&frame.scene.gaussian_splats),
@@ -133,6 +135,10 @@ impl crate::renderer::ViewportRenderer {
             Box::new(gaussian_splat::GaussianSplatPlugin::default()),
         );
         self.with_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
+        self.with_item_type_plugin(
+            device,
+            Box::new(external_instances::ExternalInstancesPlugin::default()),
+        );
         self.with_item_type_plugin(
             device,
             Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
