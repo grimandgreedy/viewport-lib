@@ -85,12 +85,13 @@ pub use self::scivis::stores::{
 };
 // Gaussian splat upload vocabulary. Owned here (not in `renderer`) so nothing in
 // `resources` reaches up to `renderer` for these types.
+pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub(crate) use self::scivis::stores::{
     GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
     SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
-pub use self::scivis::gaussian_splat::{GaussianSplatData, GaussianSplatId, ShDegree};
-pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
+pub use viewport_lib_types::data::point::{GaussianSplatData, ShDegree};
+pub use viewport_lib_types::ids::GaussianSplatId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;

@@ -371,6 +371,16 @@ pub enum ViewportError {
         needed: &'static str,
     },
 
+    /// Content was uploaded for, or freed from, an item type whose plugin is
+    /// not registered with the renderer. The item type that owns a store is
+    /// the only thing that can hold its content, so the call had nowhere to
+    /// go. The message names the type.
+    #[error("no item type plugin registered under {type_name}")]
+    ItemTypePluginMissing {
+        /// Registered name of the item type that owns the content.
+        type_name: &'static str,
+    },
+
     /// A LOD group was registered with no levels.
     #[error("LOD group has no levels")]
     LodGroupEmpty,

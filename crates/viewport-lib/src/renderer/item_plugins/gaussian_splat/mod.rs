@@ -11,6 +11,7 @@
 //! draws instead.
 
 mod pipeline;
+mod store;
 pub(crate) mod types;
 
 use std::sync::Arc;
@@ -22,6 +23,9 @@ use crate::plugin_api::{
 };
 use crate::renderer::{GaussianSplatItem, PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
 use crate::resources::{GaussianSplatId, HDR_COLOR_FORMAT, SplatOutlineMaskUniform};
+use store::{GaussianSplatStore, build_gaussian_splat_set, validate_gaussian_splat_data};
+
+pub(crate) use store::{GaussianSplatData, GaussianSplatGpuSet};
 
 pub(crate) const TYPE_NAME: &str = "viewport.gaussian_splat";
 
@@ -64,6 +68,8 @@ struct PickSplatItem {
 
 #[derive(Default)]
 pub(crate) struct GaussianSplatPlugin {
+    /// The uploaded splat sets, owned by the type that draws them.
+    sets: GaussianSplatStore,
     gpu: Option<pipeline::SplatGpu>,
     sorts: std::collections::HashMap<GaussianSplatId, SetSorts>,
     frame: Vec<FrameDraw>,
@@ -74,6 +80,10 @@ pub(crate) struct GaussianSplatPlugin {
 impl ItemTypePlugin for GaussianSplatPlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.sets.allocated_bytes()
     }
 
     fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
@@ -97,7 +107,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             .as_any()
             .downcast_ref::<Vec<GaussianSplatItem>>()
             .expect("gaussian splat collection is the SceneFrame field");
-        let store = &ctx.resources.content.gaussian_splat_store;
+        let store = &self.sets;
 
         // Drop sort state for freed sets (slot reuse issues a new generation,
         // so the old handle stops resolving).
@@ -401,7 +411,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         let Some(splats) = items.as_any().downcast_ref::<Vec<GaussianSplatItem>>() else {
             return Vec::new();
         };
-        let store = &ctx.resources.content.gaussian_splat_store;
+        let store = &self.sets;
         splats
             .iter()
             .filter(|item| !item.settings.hidden && (ctx.wireframe_mode || item.settings.wireframe))
@@ -435,6 +445,93 @@ impl ItemTypePlugin for GaussianSplatPlugin {
 }
 
 impl GaussianSplatPlugin {
+    /// Upload one splat set and return its handle. Reached from
+    /// [`ViewportRenderer::upload_gaussian_splat`](crate::renderer::ViewportRenderer::upload_gaussian_splat).
+    pub(crate) fn upload(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        data: &GaussianSplatData,
+    ) -> crate::error::ViewportResult<GaussianSplatId> {
+        validate_gaussian_splat_data(data)?;
+        let gpu_set = build_gaussian_splat_set(device, queue, data);
+        Ok(self.sets.insert_sized(gpu_set))
+    }
+
+    /// Replace the buffers behind a live handle. The new set is stamped with a
+    /// fresh revision, which is what drops the per-viewport sort scratch keyed
+    /// against the old one.
+    pub(crate) fn replace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: GaussianSplatId,
+        data: &GaussianSplatData,
+    ) -> crate::error::ViewportResult<()> {
+        validate_gaussian_splat_data(data)?;
+        let gpu_set = build_gaussian_splat_set(device, queue, data);
+        if self.sets.replace_sized(id, gpu_set).is_some() {
+            Ok(())
+        } else {
+            Err(crate::error::ViewportError::StaleHandle {
+                index: id.index() as usize,
+                count: self.sets.slot_count(),
+            })
+        }
+    }
+
+    /// Drop an uploaded set. A stale handle is ignored.
+    pub(crate) fn free(&mut self, id: GaussianSplatId) {
+        self.sets.remove(id);
+    }
+
+    /// Submit the buffer building to a worker thread. The set is inserted, and
+    /// its handle minted, when
+    /// [`take_upload_result`](Self::take_upload_result) collects the job.
+    pub(crate) fn begin_upload(
+        &self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        data: GaussianSplatData,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        validate_gaussian_splat_data(&data)?;
+        let device = device.clone();
+        let queue = queue.clone();
+        Ok(jobs.try_submit_cpu(move |progress| {
+            progress.set(0.1);
+            let gpu_set = build_gaussian_splat_set(&device, &queue, &data);
+            progress.set(0.95);
+            Ok(gpu_set)
+        }))
+    }
+
+    /// Take a finished async upload's set into the store and hand back its
+    /// handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<GaussianSplatId> {
+        match jobs.status(id) {
+            crate::resources::UploadStatus::Pending { .. } => {
+                Err(crate::error::ViewportError::JobNotReady)
+            }
+            crate::resources::UploadStatus::Unknown => {
+                Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                })
+            }
+            crate::resources::UploadStatus::Failed(e) => Err(e),
+            crate::resources::UploadStatus::Ready => match jobs.take::<GaussianSplatGpuSet>(id) {
+                Some(gpu_set) => Ok(self.sets.insert_sized(gpu_set)),
+                None => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
+        }
+    }
+
     fn sort_state(&self, fd: &FrameDraw) -> Option<&pipeline::SortState> {
         self.sorts
             .get(&fd.source)?
@@ -453,7 +550,7 @@ impl GaussianSplatPlugin {
         items: &[GaussianSplatItem],
     ) {
         use crate::gpu::util::DeviceExt;
-        let resources = ctx.resources;
+        let sets = &self.sets;
         // Cloned (wgpu layouts are handles) so the closure below does not hold
         // a borrow of `self.gpu` across the outline buffer writes.
         let Some(mask_bgl) = self.gpu.as_ref().map(|g| g.mask_bgl.clone()) else {
@@ -490,7 +587,7 @@ impl GaussianSplatPlugin {
         };
 
         for item in items {
-            let Some(gpu_set) = resources.content.gaussian_splat_store.get(item.source) else {
+            let Some(gpu_set) = sets.get(item.source) else {
                 continue;
             };
             if item.settings.selected && !gpu_set.cpu_positions.is_empty() {

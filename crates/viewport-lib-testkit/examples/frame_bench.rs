@@ -82,7 +82,8 @@ fn cube_cell(id: &'static str, count: u32, instanced: bool, hdr: bool, camera: C
         distance: extent * 2.5 + 6.0,
         build: Box::new(move |ctx| {
             let cube = ctx
-                .res
+                .renderer
+                .resources_mut()
                 .upload_mesh_data(ctx.device, &primitives::cube(0.6))
                 .expect("cube");
             BuiltScene {
@@ -109,7 +110,8 @@ fn mesh_cell(id: &'static str, sub: u32, tris: u64) -> Cell {
         distance: 5.0,
         build: Box::new(move |ctx| {
             let m = ctx
-                .res
+                .renderer
+                .resources_mut()
                 .upload_mesh_data(ctx.device, &primitives::icosphere(1.5, sub))
                 .expect("icosphere");
             let mut it = SceneRenderItem::default();
@@ -296,7 +298,7 @@ fn main() {
     for (i, cell) in cells.iter().enumerate() {
         let built = {
             let mut ctx = BuildCtx {
-                res: renderer.resources_mut(),
+                renderer: &mut renderer,
                 device: &device,
                 queue: &queue,
             };

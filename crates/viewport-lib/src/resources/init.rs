@@ -2371,7 +2371,6 @@ impl DeviceResources {
                 tensor_glyph_set_store: crate::resources::TensorGlyphSetStore::default(),
                 sprite_set_store: crate::resources::SpriteSetStore::default(),
                 sprite_instance_set_store: crate::resources::SpriteInstanceSetStore::default(),
-                gaussian_splat_store: crate::resources::types::GaussianSplatStore::default(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),

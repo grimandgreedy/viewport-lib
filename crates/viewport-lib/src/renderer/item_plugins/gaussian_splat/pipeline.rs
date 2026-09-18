@@ -2,8 +2,8 @@
 //! depth + radix-sort compute passes and their per-viewport scratch, the
 //! pick and outline-mask pipelines, and the per-frame outline buffers.
 
+use super::store::{GaussianSplatGpuSet, ShDegree};
 use crate::resources::DeviceResources;
-use crate::resources::scivis::gaussian_splat::{GaussianSplatGpuSet, ShDegree};
 
 // Per-viewport SplatUniform layout (must match gaussian_splat.wgsl).
 #[repr(C)]

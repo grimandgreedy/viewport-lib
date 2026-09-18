@@ -228,7 +228,8 @@ fn checker_texture(ctx: &mut BuildCtx<'_>, a: [u8; 3], b: [u8; 3]) -> viewport_l
             [c[0], c[1], c[2], 255]
         })
         .collect();
-    ctx.res
+    ctx.renderer
+        .resources_mut()
         .upload_texture(ctx.device, ctx.queue, TextureData::srgb(n, n, pixels))
         .expect("checker texture upload")
 }
@@ -397,7 +398,8 @@ fn build_sprites(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// One batch is lit so the lit variant of the same path is in the pixels too.
 fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let slab = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
         .expect("slab upload");
     let mut ground = viewport_lib::SceneRenderItem::default();
@@ -406,7 +408,8 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     ground.material = Material::pbr([0.62, 0.6, 0.58], 0.0, 0.8);
 
     let box_mesh = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cube(1.6))
         .expect("cube upload");
     let mut cube = viewport_lib::SceneRenderItem::default();
@@ -463,7 +466,8 @@ fn build_sprites_soft(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// batch is lit so the lit OIT pipeline is covered as well.
 fn build_sprites_oit(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let box_mesh = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cube(1.4))
         .expect("cube upload");
     let mut cube = viewport_lib::SceneRenderItem::default();
@@ -578,7 +582,8 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         normal_texture_id: None,
     };
     let system = ctx
-        .res
+        .renderer
+        .resources_mut()
         .create_gpu_particle_system(ctx.device, ctx.queue, &config);
 
     let mut item = viewport_lib::GpuParticleSystemItem::new(system, 0.4);
@@ -607,7 +612,8 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let slab = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(7.0, 7.0, 0.4))
         .expect("slab upload");
     let backdrop_tex = checker_texture(ctx, [230, 80, 60], [235, 225, 205]);
@@ -649,7 +655,10 @@ fn build_sprites_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 fn build_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let (data, dims) = radial_field(24);
-    let vid = ctx.res.upload_volume(ctx.device, ctx.queue, &data, dims);
+    let vid = ctx
+        .renderer
+        .resources_mut()
+        .upload_volume(ctx.device, ctx.queue, &data, dims);
     let mut v = VolumeItem::default();
     v.volume_id = vid;
     v.colour_lut = Some(ColourmapId(0));
@@ -696,7 +705,7 @@ fn build_gaussian_splats(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         ]);
     }
     let sid = ctx
-        .res
+        .renderer
         .upload_gaussian_splat(ctx.device, ctx.queue, &sd)
         .expect("splat upload");
     let mut item = GaussianSplatItem::default();
@@ -713,7 +722,10 @@ fn build_gaussian_splats(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 fn build_image_slice(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let (data, dims) = radial_field(24);
-    let vid = ctx.res.upload_volume(ctx.device, ctx.queue, &data, dims);
+    let vid = ctx
+        .renderer
+        .resources_mut()
+        .upload_volume(ctx.device, ctx.queue, &data, dims);
     let slice = |axis: SliceAxis, offset: f32, selected: bool| {
         let mut s = ImageSliceItem::default();
         s.volume_id = vid;
@@ -740,11 +752,15 @@ fn build_image_slice(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 fn build_volume_surface_slice(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let (data, dims) = radial_field(24);
-    let vid = ctx.res.upload_volume(ctx.device, ctx.queue, &data, dims);
+    let vid = ctx
+        .renderer
+        .resources_mut()
+        .upload_volume(ctx.device, ctx.queue, &data, dims);
     // A bowl surface dipped through the field, sampling it per fragment.
     let bowl = super::meshes::bowl(1.1, 40, 12);
     let mesh_id = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &bowl)
         .expect("bowl upload");
     let mut ss = VolumeSurfaceSliceItem::default();
@@ -823,7 +839,7 @@ fn build_gpu_marching_cubes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         spacing: [step; 3],
     };
     let volume_id = ctx
-        .res
+        .renderer
         .upload_volume_for_mc(ctx.device, ctx.queue, &vol)
         .expect("mc volume upload");
     let mut material = Material::from_colour([0.45, 0.48, 0.52]);
@@ -849,7 +865,8 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // behind it. Temporal accumulation and jitter are pinned off so a still
     // frame is deterministic; quality High hides the banding jitter masks.
     let slab = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(12.0, 12.0, 0.4))
         .expect("slab upload");
     let mut ground = viewport_lib::SceneRenderItem::default();
@@ -858,7 +875,8 @@ fn build_scatter_volume(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     ground.material = Material::pbr([0.5, 0.52, 0.5], 0.0, 0.85);
 
     let sphere = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
         .expect("sphere upload");
     let mut ball = viewport_lib::SceneRenderItem::default();
@@ -901,7 +919,8 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // Downsampled, so the half-resolution target and the composite upscale
     // are in the picture too.
     let slab = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(14.0, 14.0, 0.4))
         .expect("slab upload");
     let mut ground = viewport_lib::SceneRenderItem::default();
@@ -910,7 +929,8 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     ground.material = Material::pbr([0.42, 0.44, 0.46], 0.0, 0.85);
 
     let post = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(0.5, 0.5, 3.2))
         .expect("post upload");
     let mut pillar = viewport_lib::SceneRenderItem::default();
@@ -963,10 +983,14 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // through the per-volume texture bind groups, which are cached by id and
     // so need a scene that actually binds two different ones.
     let (data, dims) = radial_field(24);
-    let vid = ctx.res.upload_volume(ctx.device, ctx.queue, &data, dims);
+    let vid = ctx
+        .renderer
+        .resources_mut()
+        .upload_volume(ctx.device, ctx.queue, &data, dims);
 
     let backdrop = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 0.3, 5.0))
         .expect("backdrop upload");
     let mut wall = viewport_lib::SceneRenderItem::default();
@@ -1033,7 +1057,8 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // reads off the wall, so a fixed value here renders the same frame every
     // time, which is what lets these be held to a golden at all.
     let backdrop = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(9.0, 0.3, 6.0))
         .expect("backdrop upload");
     let mut wall = viewport_lib::SceneRenderItem::default();
@@ -1043,7 +1068,8 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     // Struts in front of the wall, so the refraction has hard edges to bend.
     let strut = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(0.35, 0.35, 4.5))
         .expect("strut upload");
     let mut posts = Vec::new();
@@ -1120,7 +1146,10 @@ fn build_item_wireframes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // `settings.wireframe`, which no other catalogue scene sets, so without
     // this scene all three paths are unrendered by the gate.
     let (data, dims) = radial_field(20);
-    let vid = ctx.res.upload_volume(ctx.device, ctx.queue, &data, dims);
+    let vid = ctx
+        .renderer
+        .resources_mut()
+        .upload_volume(ctx.device, ctx.queue, &data, dims);
     let mut volume = VolumeItem::default();
     volume.volume_id = vid;
     volume.colour_lut = Some(ColourmapId(0));
@@ -1155,7 +1184,7 @@ fn build_item_wireframes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         ]);
     }
     let splat_id = ctx
-        .res
+        .renderer
         .upload_gaussian_splat(ctx.device, ctx.queue, &sd)
         .expect("splat upload");
     let mut splats = GaussianSplatItem::default();
@@ -1192,7 +1221,8 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // and an overlapping darker Multiply decal, so blend order is pinned by
     // sort_key.
     let slab = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
         .expect("slab upload");
     let mut ground = viewport_lib::SceneRenderItem::default();
@@ -1201,7 +1231,8 @@ fn build_decals(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     ground.material = Material::pbr([0.62, 0.6, 0.58], 0.0, 0.8);
 
     let box_mesh = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cube(1.2))
         .expect("cube upload");
     let mut cube = viewport_lib::SceneRenderItem::default();
@@ -1261,7 +1292,8 @@ fn build_refraction_over_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // two draw in different passes, so this scene pins whether the refraction
     // samples the soft particles or the bare backdrop behind them.
     let slab = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(7.0, 7.0, 0.4))
         .expect("slab upload");
     let backdrop_tex = checker_texture(ctx, [230, 80, 60], [235, 225, 205]);
@@ -1372,7 +1404,8 @@ fn build_decal_on_non_mesh(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // anything that wrote depth; the implicit surface does, and unlike the mesh
     // it has no `receives_decals` to decline with.
     let ball = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::sphere(1.0, 32, 16))
         .expect("sphere upload");
     let mut mesh = viewport_lib::SceneRenderItem::default();
@@ -1417,7 +1450,8 @@ fn build_decal_under_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // directly over it. The two are drawn by different passes, so this scene
     // is what pins their order against each other.
     let slab = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cuboid(8.0, 8.0, 0.5))
         .expect("slab upload");
     let mut ground = viewport_lib::SceneRenderItem::default();
@@ -1461,7 +1495,8 @@ fn build_decal_under_soft_sprite(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_mesh_instances(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // A spiral of tinted cube instances in one batch draw.
     let cube = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, &primitives::cube(0.35))
         .expect("cube upload");
     let n = 40;

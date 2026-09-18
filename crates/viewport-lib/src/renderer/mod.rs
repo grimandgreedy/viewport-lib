@@ -2491,14 +2491,53 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         data: &GaussianSplatData,
     ) -> crate::error::ViewportResult<GaussianSplatId> {
-        self.resources.upload_gaussian_splat(device, queue, data)
+        self.gaussian_splat_plugin_mut()?
+            .upload(device, queue, data)
+    }
+
+    /// Replace the splats behind a live [`GaussianSplatId`], keeping the handle.
+    ///
+    /// Items already holding the handle pick up the new set on the next frame.
+    /// Use this for content that changes over time, such as a streamed or
+    /// re-trained splat set.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
+    /// when `data` is empty or its per-attribute vectors disagree in length, or
+    /// [`StaleHandle`](crate::error::ViewportError::StaleHandle) if `id` no
+    /// longer resolves to a live set.
+    pub fn replace_gaussian_splat(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        id: GaussianSplatId,
+        data: &GaussianSplatData,
+    ) -> crate::error::ViewportResult<()> {
+        self.gaussian_splat_plugin_mut()?
+            .replace(device, queue, id, data)
     }
 
     /// Remove an uploaded Gaussian splat set by handle.
     ///
     /// After this call the `id` is invalid and must not be submitted in `SceneFrame`.
     pub fn free_gaussian_splat(&mut self, id: GaussianSplatId) {
-        self.resources.free_gaussian_splat(id);
+        if let Ok(plugin) = self.gaussian_splat_plugin_mut() {
+            plugin.free(id);
+        }
+    }
+
+    /// The registered Gaussian splat item type, which holds the uploaded sets.
+    fn gaussian_splat_plugin_mut(
+        &mut self,
+    ) -> crate::error::ViewportResult<
+        &mut crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin,
+    > {
+        let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
+        self.item_type_plugins
+            .get_mut(name)
+            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })
     }
 
     // -------------------------------------------------------------------------
@@ -3326,25 +3365,53 @@ impl ViewportRenderer {
         self.resources.upload_result_sparse_volume_grid(id)
     }
 
-    /// Start an asynchronous Gaussian splat upload. See
-    /// [`DeviceResources::begin_upload_gaussian_splat`].
+    /// Start an asynchronous Gaussian splat upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. The vec4
+    /// padding and the storage-buffer writes run on a worker thread against
+    /// cloned `Device` and `Queue` handles. Poll
+    /// [`upload_status`](crate::resources::DeviceResources::upload_status) and
+    /// call [`upload_result_gaussian_splat`](Self::upload_result_gaussian_splat)
+    /// once it reads `Ready`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
+    /// before any job is submitted when `data.positions` is empty or the
+    /// per-attribute vectors disagree in length.
     pub fn begin_upload_gaussian_splat(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         data: crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_gaussian_splat(device, queue, data)
+        let jobs = crate::resources::Jobs::new(&self.resources);
+        let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
+        let plugin: &mut crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin = self
+            .item_type_plugins
+            .get_mut(name)
+            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
+        plugin.begin_upload(&jobs, device, queue, data)
     }
 
     /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
     /// completed [`begin_upload_gaussian_splat`](Self::begin_upload_gaussian_splat) job.
+    ///
+    /// The set enters the store here, so a handle is minted on the call that
+    /// collects the job rather than on a background thread.
     pub fn upload_result_gaussian_splat(
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
-        self.resources.upload_result_gaussian_splat(id)
+        let jobs = crate::resources::Jobs::new(&self.resources);
+        let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
+        let plugin: &mut crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin = self
+            .item_type_plugins
+            .get_mut(name)
+            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
+        plugin.take_upload_result(&jobs, id)
     }
 
     /// Start an asynchronous overlay texture upload. See

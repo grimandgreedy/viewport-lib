@@ -315,8 +315,6 @@ pub struct ContentResources {
     pub(crate) sprite_set_store: super::SpriteSetStore,
     /// Pre-uploaded sprite instance set storage.
     pub(crate) sprite_instance_set_store: super::SpriteInstanceSetStore,
-    /// Slotted store of all uploaded Gaussian splat sets.
-    pub(crate) gaussian_splat_store: GaussianSplatStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.

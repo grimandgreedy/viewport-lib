@@ -109,7 +109,7 @@ impl Harness {
     #[cfg(feature = "scenes")]
     pub fn build_scene(&mut self, scene: &NamedScene) -> BuiltScene {
         let mut ctx = BuildCtx {
-            res: self.renderer.resources_mut(),
+            renderer: &mut self.renderer,
             device: &self.device,
             queue: &self.queue,
         };

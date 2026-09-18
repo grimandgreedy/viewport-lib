@@ -25,7 +25,7 @@ impl ShDegree {
 }
 
 /// Upload data for a Gaussian splat set. Submitted once via
-/// `resources_mut().upload_gaussian_splat(data)`.
+/// `renderer.upload_gaussian_splat(device, queue, data)`.
 pub struct GaussianSplatData {
     /// Object-space center positions, one [f32;3] per splat.
     pub positions: Vec<[f32; 3]>,

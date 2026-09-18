@@ -1796,7 +1796,6 @@ impl App {
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             match renderer
-                .resources_mut()
                 .upload_gaussian_splat(&self.device, &self.queue, &data)
             {
                 Ok(id) => {

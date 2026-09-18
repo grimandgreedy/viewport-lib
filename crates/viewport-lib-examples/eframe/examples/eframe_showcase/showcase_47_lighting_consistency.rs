@@ -183,7 +183,6 @@ impl App {
             }
             if let Ok(sid) =
                 renderer
-                    .resources_mut()
                     .upload_gaussian_splat(&self.device, &self.queue, &sd)
             {
                 self.lc_state.splat_id = Some(sid);

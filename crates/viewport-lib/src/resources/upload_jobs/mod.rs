@@ -90,10 +90,6 @@ pub(crate) struct JobResults {
     pub projected_tet: std::sync::Mutex<
         std::collections::HashMap<JobId, ResultSlot<(super::ProjectedTetId, f32, f32)>>,
     >,
-    /// Async gaussian splat uploads.
-    pub gaussian_splat: std::sync::Mutex<
-        std::collections::HashMap<JobId, ResultSlot<crate::renderer::GaussianSplatId>>,
-    >,
     /// Async overlay texture uploads.
     pub overlay_texture: std::sync::Mutex<
         std::collections::HashMap<JobId, ResultSlot<crate::renderer::OverlayTextureId>>,
@@ -1417,6 +1413,48 @@ impl<'a> Jobs<'a> {
                 .expect("upload job runner poisoned");
             runner.submit_cpu(move |_progress| {
                 let value: T = work();
+                let boxed: Box<dyn Any + Send> = Box::new(value);
+                Ok(JobProduct::with_apply(Box::new(
+                    move |_resources: &mut super::DeviceResources| {
+                        slot_for_apply.set(boxed);
+                    },
+                )))
+            })
+        };
+
+        self.resources
+            .job_results
+            .plugin
+            .lock()
+            .expect("plugin job result map poisoned")
+            .insert(id, slot);
+        id
+    }
+
+    /// Schedule a CPU job that can fail, reporting progress as it runs.
+    ///
+    /// The same as [`submit_cpu`](Self::submit_cpu) except that `work`
+    /// receives a [`ProgressHandle`] to call `set` on, and returns a
+    /// `Result`. An `Err` never reaches `take`: it surfaces through
+    /// [`status`](Self::status) as `UploadStatus::Failed`, so a plugin whose
+    /// upload validates on the worker thread reports the failure the same way
+    /// the built-in uploads do.
+    pub fn try_submit_cpu<T, F>(&self, work: F) -> JobId
+    where
+        T: Send + 'static,
+        F: FnOnce(&ProgressHandle) -> Result<T, ViewportError> + Send + 'static,
+    {
+        let slot: PluginResultSlot = ResultSlot::new();
+        let slot_for_apply = slot.clone();
+
+        let id = {
+            let mut runner = self
+                .resources
+                .jobs
+                .lock()
+                .expect("upload job runner poisoned");
+            runner.submit_cpu(move |progress| {
+                let value: T = work(progress)?;
                 let boxed: Box<dyn Any + Send> = Box::new(value);
                 Ok(JobProduct::with_apply(Box::new(
                     move |_resources: &mut super::DeviceResources| {

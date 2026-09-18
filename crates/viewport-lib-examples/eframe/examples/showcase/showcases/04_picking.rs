@@ -593,7 +593,7 @@ impl Showcase for PickingShowcase {
             let data = splat_data(&positions);
             if let Ok(id) = ctx
                 .session
-                .resources_mut()
+                .renderer_mut()
                 .upload_gaussian_splat(ctx.device, ctx.queue, &data)
             {
                 self.splat_id = Some(id);

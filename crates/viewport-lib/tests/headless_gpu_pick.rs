@@ -1550,7 +1550,6 @@ fn gpu_pick_splat_resolves_splat() {
     data.sh_coefficients = vec![0.0; 9];
     data.sh_degree = ShDegree::Zero;
     let splat_id = renderer
-        .resources_mut()
         .upload_gaussian_splat(&device, &queue, &data)
         .expect("upload splat set");
 

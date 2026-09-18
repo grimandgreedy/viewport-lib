@@ -26,13 +26,16 @@ use viewport_lib::{
     GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, LightingSettings, Material, MeshData,
     MeshId, MeshInstanceItem, PointCloudItem, PolylineItem, RibbonItem, ScatterSettings,
     ScatterVolumeItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, TensorGlyphItem,
-    TubeItem, ViewportGpuResources, VolumeItem, VolumeSurfaceSliceItem, primitives,
+    TubeItem, ViewportRenderer, VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
-    /// Long-lived GPU resources (mesh and texture stores).
-    pub res: &'a mut ViewportGpuResources,
+    /// The renderer the scene uploads into. Content an item type holds itself
+    /// (splat sets, marching-cubes volumes) is uploaded straight through here;
+    /// shared content (meshes, textures, volumes) through
+    /// `renderer.resources_mut()`.
+    pub renderer: &'a mut ViewportRenderer,
     /// The wgpu device.
     pub device: &'a wgpu::Device,
     /// The wgpu queue (needed for texture uploads).
@@ -219,7 +222,8 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
 // --- small build helpers ---------------------------------------------------
 
 fn upload(ctx: &mut BuildCtx<'_>, mesh: &MeshData) -> MeshId {
-    ctx.res
+    ctx.renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, mesh)
         .expect("mesh upload")
 }
@@ -420,7 +424,8 @@ fn build_concave_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = textures::checker(512, 8, [230, 230, 230], [40, 40, 50]);
     let tex_id = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_texture(
             ctx.device,
             ctx.queue,
@@ -441,7 +446,8 @@ fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_textured_normalmap(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let nm = textures::normal_bumps(512, 8);
     let nm_id = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_texture(
             ctx.device,
             ctx.queue,

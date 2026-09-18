@@ -39,9 +39,9 @@ pub struct ResidentBytes {
     pub mesh_bytes: u64,
     /// GPU bytes across every resident user-uploaded texture.
     pub texture_bytes: u64,
-    /// GPU buffer bytes across every resident Gaussian splat set (position,
-    /// scale, rotation, opacity, and SH source buffers; per-viewport sort
-    /// scratch is not counted).
+    /// Always zero: the Gaussian splat sets now live with the item type that
+    /// draws them, so their bytes are reported through
+    /// [`plugin_bytes`](Self::plugin_bytes).
     pub gaussian_splat_bytes: u64,
     /// GPU buffer bytes across every resident marching-cubes volume (all slab
     /// buffers of every live volume).
@@ -162,7 +162,7 @@ impl crate::resources::DeviceResources {
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.content.textures.allocated_bytes(),
-            gaussian_splat_bytes: self.content.gaussian_splat_store.allocated_bytes(),
+            gaussian_splat_bytes: 0,
             mc_volume_bytes: self.mc_volume_resident_bytes(),
             scivis_bytes,
             volume_bytes: self.volume_resident_bytes(),
