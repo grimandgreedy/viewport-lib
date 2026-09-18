@@ -130,6 +130,13 @@ pub struct OverlayPolylineItem {
     /// Draw order relative to other overlay rects, polylines, and labels.
     /// Lower values render first (further back).
     pub z_order: i32,
+    /// When set, the path is clipped to the mask shape whose `clip_mask_id`
+    /// matches this value: stroke and interior-fill fragments outside the mask
+    /// are discarded, so a path drawn inside a scrolling region is contained.
+    /// The mask can be any overlay shape (rect, rounded rect, circle, ...), and
+    /// masks may nest. `None` (the default) draws the path unclipped, as does a
+    /// missing mask.
+    pub clip_id: Option<u32>,
 }
 
 impl Default for OverlayPolylineItem {
@@ -153,6 +160,7 @@ impl Default for OverlayPolylineItem {
             texture_transform: TextureTransform::default(),
             opacity: 1.0,
             z_order: 0,
+            clip_id: None,
         }
     }
 }
@@ -303,6 +311,15 @@ impl OverlayPolylineItem {
     /// Set the draw order. Lower values render first (further back).
     pub fn with_z_order(mut self, z_order: i32) -> Self {
         self.z_order = z_order;
+        self
+    }
+
+    /// Clip the path to the mask shape with this id (registered via
+    /// [`OverlayShapeItem::with_clip_mask`](crate::overlay::OverlayShapeItem::with_clip_mask)).
+    /// Fragments outside the mask are discarded, so a path drawn inside a
+    /// scrolling region is contained.
+    pub fn with_clip(mut self, clip_id: u32) -> Self {
+        self.clip_id = Some(clip_id);
         self
     }
 

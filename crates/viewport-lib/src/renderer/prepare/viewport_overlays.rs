@@ -514,6 +514,7 @@ impl ViewportRenderer {
                         colour[3] *= poly.opacity;
                         emit_polyline_stroke(&mut batch, poly, colour, vp_w, vp_h);
                     }
+                    stamp_clip(&mut batch, poly.clip_id);
                     if !batch.is_empty() {
                         batches.push((poly.z_order, batch));
                     }
@@ -1730,6 +1731,18 @@ impl ViewportRenderer {
                     if tris.is_empty() {
                         continue;
                     }
+                    // Same clip resolution as a textured shape: an unmatched or
+                    // absent mask id falls through to a -1 index and an all-zero
+                    // rect, which the shader reads as no clipping.
+                    let clip_index_i = poly
+                        .clip_id
+                        .and_then(|id| clip_index_of.get(&id).copied())
+                        .unwrap_or(-1);
+                    let poly_clip_rect = if clip_index_i >= 0 {
+                        clip_bboxes[clip_index_i as usize]
+                    } else {
+                        [0.0, 0.0, 0.0, 0.0]
+                    };
                     let group_idx = tex_groups
                         .iter()
                         .position(|(id, _)| *id == tex_id)
@@ -1786,9 +1799,8 @@ impl ViewportRenderer {
                                 nine_slice_frac: [0.0; 4],
                                 texture_transform_a: tt_a,
                                 texture_transform_b: tt_b,
-                                // Textured polyline fills carry no clip mask.
-                                clip_index: -1.0,
-                                clip_rect: [0.0; 4],
+                                clip_index: clip_index_i as f32,
+                                clip_rect: poly_clip_rect,
                             });
                         }
                     }
