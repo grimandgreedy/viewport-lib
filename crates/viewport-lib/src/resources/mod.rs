@@ -77,6 +77,7 @@ pub use self::plugin_builders::{
     PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
     SHADOW_DEPTH_FORMAT,
 };
+pub use self::resource_deps::{ResourceGate, Revalidate};
 pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
 pub use crate::renderer::item_plugins::external_instances::types::{
     ExternalInstanceSetConfig, ExternalInstanceSetId,

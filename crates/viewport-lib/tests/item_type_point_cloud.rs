@@ -303,10 +303,10 @@ fn begin_upload_point_cloud_drains_to_a_handle() {
 }
 
 /// A stored upload resolves its colourmap once and keeps what it resolved, so
-/// the built-in LUTs have to be resident by then. They are otherwise uploaded
-/// on the first `prepare`, and pre-uploading at startup is the whole point of
-/// the reference form: an upload that ran first would bind the neutral
-/// fallback and stay grey for the life of the handle.
+/// the built-in LUTs have to be resolvable by then. Pre-uploading at startup is
+/// the whole point of the reference form, and an upload that ran before the
+/// first frame used to bind the neutral fallback and stay grey for the life of
+/// the handle. The ids and views now exist from construction.
 #[test]
 fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
     let Some((device, queue)) = headless_device() else {
@@ -314,22 +314,22 @@ fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let viridis = renderer
+        .resources()
+        .builtin_colourmap_id(viewport_lib::resources::BuiltinColourmap::Viridis);
     assert!(
-        renderer
-            .resources()
-            .builtin_colourmap_id_checked(viewport_lib::resources::BuiltinColourmap::Viridis)
-            .is_none(),
-        "nothing has uploaded the built-in set yet"
+        renderer.resources().colourmap_view(viridis).is_some(),
+        "the built-in LUT views are resident before any frame has run"
     );
 
     let id = renderer.upload_point_cloud(&device, &queue, &sample_point_cloud());
 
-    assert!(
+    assert_eq!(
+        viridis,
         renderer
             .resources()
-            .builtin_colourmap_id_checked(viewport_lib::resources::BuiltinColourmap::Viridis)
-            .is_some(),
-        "the upload made the built-in LUTs resident before resolving one"
+            .builtin_colourmap_id(viewport_lib::resources::BuiltinColourmap::Viridis),
+        "the upload resolved the same id a later frame would"
     );
     assert!(renderer.drop_point_cloud(id));
 }

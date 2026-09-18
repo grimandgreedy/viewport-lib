@@ -92,7 +92,7 @@ pub(crate) struct SpritePlugin {
     /// Resource epochs the two stores were last revalidated against. A stored
     /// batch holds texture views in its bind groups, so a free or a replace
     /// since the last frame means some of them have to be rebound.
-    deps_gate: crate::resources::resource_deps::DepsGate,
+    deps_gate: crate::resources::resource_deps::ResourceGate,
     /// The two layouts every upload builds its bind groups against. Created on
     /// registration, because an upload can arrive before the first frame.
     layouts: Option<SpriteLayouts>,

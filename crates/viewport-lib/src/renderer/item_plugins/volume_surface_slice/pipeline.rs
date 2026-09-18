@@ -239,11 +239,12 @@ impl SliceGpu {
             "volume_surface_slice_vol_sampler",
         );
 
-        let lut_view = match item.colour_lut {
-            Some(id) => resources.colourmap_view(id),
-            None => resources.builtin_colourmap_view(crate::resources::BuiltinColourmap::Viridis),
-        }
-        .unwrap_or_else(|| resources.fallback_colourmap_view());
+        let lut_view = item
+            .colour_lut
+            .and_then(|id| resources.colourmap_view(id))
+            .unwrap_or_else(|| {
+                resources.builtin_colourmap_view(crate::resources::BuiltinColourmap::Viridis)
+            });
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("volume_surface_slice_bg"),

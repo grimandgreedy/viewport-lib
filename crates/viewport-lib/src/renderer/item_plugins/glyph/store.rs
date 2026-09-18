@@ -86,11 +86,12 @@ pub(crate) fn resolve_bindings(
     layouts: &GlyphLayouts,
     item: &crate::renderer::GlyphItem,
 ) -> GlyphBindings {
-    let lut_view = match item.colourmap_id {
-        Some(id) => resources.colourmap_view(id),
-        None => resources.builtin_colourmap_view(crate::resources::BuiltinColourmap::Viridis),
-    }
-    .unwrap_or_else(|| resources.fallback_colourmap_view());
+    let lut_view = item
+        .colourmap_id
+        .and_then(|id| resources.colourmap_view(id))
+        .unwrap_or_else(|| {
+            resources.builtin_colourmap_view(crate::resources::BuiltinColourmap::Viridis)
+        });
     let mesh = resources.ensure_glyph_base_mesh(device, item.glyph_type);
     GlyphBindings {
         lut_view: lut_view.clone(),

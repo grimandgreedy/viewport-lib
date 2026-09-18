@@ -94,10 +94,12 @@ fn resolve_lut(
     resources: &DeviceResources,
     colourmap_id: Option<crate::resources::ColourmapId>,
 ) -> [[u8; 4]; 256] {
-    let id = colourmap_id.or_else(|| {
-        resources.builtin_colourmap_id_checked(crate::resources::BuiltinColourmap::Viridis)
+    let id = colourmap_id.unwrap_or_else(|| {
+        resources.builtin_colourmap_id(crate::resources::BuiltinColourmap::Viridis)
     });
-    id.and_then(|id| resources.get_colourmap_rgba(id).copied())
+    resources
+        .get_colourmap_rgba(id)
+        .copied()
         .unwrap_or([[128u8; 4]; 256])
 }
 

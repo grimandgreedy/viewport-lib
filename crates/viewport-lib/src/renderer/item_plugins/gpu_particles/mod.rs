@@ -63,7 +63,7 @@ pub(crate) struct GpuParticlesPlugin {
     /// against. A system's draw bind group bakes a texture view in when the
     /// system is created, so a free or a replace since the last frame means
     /// some of them have to be rebuilt.
-    deps_gate: crate::resources::resource_deps::DepsGate,
+    deps_gate: crate::resources::resource_deps::ResourceGate,
     /// Draw bind groups rebuilt by revalidation since startup, for tests and
     /// diagnostics.
     draw_bg_rebuilds: u64,

@@ -170,6 +170,13 @@ pub struct ItemFrameContext<'a> {
     /// and the target descriptors and samplers the pipeline builders expose.
     /// Borrows taken from it must not outlive `prepare` / `cull`; bake what
     /// the draw hooks need into the plugin's own bind groups here.
+    ///
+    /// A bind group baked here outlives the frame it was built in, so a plugin
+    /// that bakes a texture view keeps a
+    /// [`ResourceGate`](crate::resources::ResourceGate) beside its store and
+    /// polls it against this before drawing: a texture the host has since freed
+    /// is otherwise pinned by the bind group and still sampled, and a
+    /// replacement swapped in behind a live id never arrives.
     pub resources: &'a crate::resources::DeviceResources,
     /// The frame's global wireframe toggle
     /// (`ViewportFrame::wireframe_mode`). Plugins whose item types have a

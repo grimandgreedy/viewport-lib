@@ -1919,6 +1919,12 @@ impl DeviceResources {
         let fallback_lut_view =
             fallback_lut_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
+        // The built-in LUTs are resident from here: textures, views, CPU copies
+        // and ids. Only their texels wait for a queue, which construction has
+        // not got.
+        let (colourmap_textures, colourmap_views, colourmaps_cpu, builtin_colourmap_ids) =
+            crate::resources::material::textures::create_builtin_colourmaps(device);
+
         let fallback_scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_scalar_buf"),
             size: 4,
@@ -2373,9 +2379,9 @@ impl DeviceResources {
                 fallback_matcap_view: None,
                 matcaps_initialized: false,
                 builtin_matcap_ids: None,
-                colourmap_textures: Vec::new(),
-                colourmap_views: Vec::new(),
-                colourmaps_cpu: Vec::new(),
+                colourmap_textures,
+                colourmap_views,
+                colourmaps_cpu,
                 fallback_lut_texture,
                 fallback_lut_view,
                 fallback_scalar_buf,
@@ -2385,7 +2391,7 @@ impl DeviceResources {
                 fallback_normal_override_buf,
                 fallback_extension_attr_buf,
                 fallback_uv1_buf,
-                builtin_colourmap_ids: None,
+                builtin_colourmap_ids,
                 colourmaps_initialized: false,
             },
             jobs: std::sync::Mutex::new(crate::resources::upload_jobs::JobRunner::new()),

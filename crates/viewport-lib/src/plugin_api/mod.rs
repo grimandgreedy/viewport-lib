@@ -52,6 +52,13 @@
 //!   [`ViewportRenderer::item_type_plugin_mut`](crate::renderer::ViewportRenderer::item_type_plugin_mut)
 //!   returns a registered plugin as its concrete type, so a host can upload
 //!   into, configure, or read back from content the plugin stores itself.
+//! - **Notice that a shared resource went away.** A bind group holding a
+//!   `TextureView` keeps that texture alive after the host frees it, and does
+//!   not see a replacement swapped in behind a live id. A plugin cannot work
+//!   either event out from the ids it holds, so
+//!   [`ResourceGate`](crate::resources::ResourceGate) answers it: poll it at
+//!   the top of `prepare` and rebind the entries its
+//!   [`Revalidate`](crate::resources::Revalidate) verdict names.
 //!
 //! Two submission shapes both work, and the choice is the plugin's. Carry the
 //! geometry on the item behind a version stamp and rebuild when the stamp

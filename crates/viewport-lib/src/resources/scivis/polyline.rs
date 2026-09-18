@@ -577,15 +577,14 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
+        let preset_id = item.colourmap_id.unwrap_or(
+            self.content.builtin_colourmap_ids
+                [crate::resources::BuiltinColourmap::Viridis as usize],
+        );
         let lut_view = self
             .content
-            .builtin_colourmap_ids
-            .and_then(|ids| {
-                let preset_id = item
-                    .colourmap_id
-                    .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                self.content.colourmap_views.get(preset_id.0)
-            })
+            .colourmap_views
+            .get(preset_id.0)
             .unwrap_or(&self.content.fallback_lut_view);
 
         let lut_sampler = &self.material.lut_sampler;

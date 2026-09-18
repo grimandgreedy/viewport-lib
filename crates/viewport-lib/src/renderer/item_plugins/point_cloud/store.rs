@@ -115,11 +115,12 @@ pub(super) fn resolve_bindings(
     bgl: &crate::gpu::BindGroupLayout,
     item: &crate::renderer::PointCloudItem,
 ) -> PointCloudBindings {
-    let lut_view = match item.colourmap_id {
-        Some(id) => resources.colourmap_view(id),
-        None => resources.builtin_colourmap_view(crate::resources::BuiltinColourmap::Viridis),
-    }
-    .unwrap_or_else(|| resources.fallback_colourmap_view());
+    let lut_view = item
+        .colourmap_id
+        .and_then(|id| resources.colourmap_view(id))
+        .unwrap_or_else(|| {
+            resources.builtin_colourmap_view(crate::resources::BuiltinColourmap::Viridis)
+        });
     PointCloudBindings {
         lut_view: lut_view.clone(),
         lut_sampler: resources.material_sampler().clone(),

@@ -301,16 +301,16 @@ impl DeviceResources {
 
     /// Borrow the GPU LUT view for a built-in colourmap preset.
     ///
-    /// `None` before the built-in set is resident, which cannot happen inside
-    /// `prepare` (the lib uploads it before dispatching plugins) but can if
-    /// called earlier. Fall back to
-    /// [`fallback_colourmap_view`](Self::fallback_colourmap_view).
+    /// The built-in views exist from construction, so this resolves whenever it
+    /// is called, including from an upload that runs before the first frame.
+    /// The texels are written on the first `prepare`, before anything samples
+    /// them.
     pub fn builtin_colourmap_view(
         &self,
         preset: crate::resources::BuiltinColourmap,
-    ) -> Option<&crate::gpu::TextureView> {
-        let ids = self.content.builtin_colourmap_ids?;
-        self.content.colourmap_views.get(ids[preset as usize].0)
+    ) -> &crate::gpu::TextureView {
+        let ids = self.content.builtin_colourmap_ids;
+        &self.content.colourmap_views[ids[preset as usize].0]
     }
 
     /// Index count of a mesh uploaded through

@@ -73,7 +73,7 @@ pub(crate) struct DecalPlugin {
         ),
     >,
     /// Resource epochs the cache was last validated against.
-    deps_gate: crate::resources::resource_deps::DepsGate,
+    deps_gate: crate::resources::resource_deps::ResourceGate,
     /// This frame's stencil-exclude draws, one per surface that opted out.
     exclude_draws: Vec<pipeline::DecalExcludeGpuItem>,
     /// Items retained from `prepare` for the out-of-band CPU pick answers.
@@ -94,7 +94,7 @@ impl DecalPlugin {
             gpu: pipeline::DecalGpu::default(),
             draws: Vec::new(),
             cache: std::collections::HashMap::new(),
-            deps_gate: crate::resources::resource_deps::DepsGate::default(),
+            deps_gate: crate::resources::resource_deps::ResourceGate::default(),
             exclude_draws: Vec::new(),
             pick_items: Vec::new(),
             stats,

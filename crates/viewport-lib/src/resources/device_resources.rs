@@ -372,9 +372,11 @@ pub struct ContentResources {
     /// `vec2(0.0)`.
     pub(crate) fallback_uv1_buf: crate::gpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
-    /// `None` until `ensure_colourmaps_initialized()` has been called.
-    pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,
-    /// Whether built-in colourmaps have been uploaded to the GPU.
+    /// Assigned at construction, so resolving a preset never depends on a frame
+    /// having run.
+    pub(crate) builtin_colourmap_ids: [ColourmapId; 10],
+    /// Whether the built-in colourmap texels have been written. The textures and
+    /// views exist from construction; only the pixels wait for a queue.
     pub(crate) colourmaps_initialized: bool,
 }
 

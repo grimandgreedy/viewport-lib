@@ -304,7 +304,7 @@ pub(crate) struct RibbonPlugin {
     /// Resource epochs the store was last revalidated against. A stored ribbon
     /// that draws with a streak texture holds its view in a bind group, so a
     /// free or a replace since the last frame means it has to be rebound.
-    deps_gate: crate::resources::resource_deps::DepsGate,
+    deps_gate: crate::resources::resource_deps::ResourceGate,
     gpu: Option<RibbonGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references.

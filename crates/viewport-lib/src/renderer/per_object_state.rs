@@ -133,7 +133,7 @@ pub(crate) struct PerObjectState {
     /// Resource epochs as of the last prepare. A free keeps only the entries
     /// whose deps still resolve; a replace clears the map, since a swapped
     /// view behind a live id cannot be validated per entry.
-    pub(crate) deps_gate: crate::resources::resource_deps::DepsGate,
+    pub(crate) deps_gate: crate::resources::resource_deps::ResourceGate,
     /// Per-item bind groups for the current frame, indexed by the item's position
     /// in the frame's item list. Populated from `material_bind_groups` each frame
     /// (cheap reference-counted clones) so the render path can index by item slot.
@@ -168,7 +168,7 @@ impl PerObjectState {
             object_data_capacity: 0,
             object_data_gen: 0,
             object_indices: Vec::new(),
-            deps_gate: crate::resources::resource_deps::DepsGate::default(),
+            deps_gate: crate::resources::resource_deps::ResourceGate::default(),
             bind_groups: Vec::new(),
             submesh_bind_groups: HashMap::new(),
             submesh_indices: HashMap::new(),
