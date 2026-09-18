@@ -219,9 +219,7 @@ fn a_reference_item_picks_like_an_inline_one() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    let source = renderer
-        .resources_mut()
-        .upload_polyline(&device, &queue, &polyline);
+    let source = renderer.upload_polyline(&device, &queue, &polyline);
 
     let mut item = PolylineRefItem::new(source);
     item.settings.pick_id = PickId(892);
@@ -253,9 +251,7 @@ fn a_hidden_reference_item_is_skipped() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    let source = renderer
-        .resources_mut()
-        .upload_polyline(&device, &queue, &polyline);
+    let source = renderer.upload_polyline(&device, &queue, &polyline);
 
     let mut item = PolylineRefItem::new(source);
     item.settings.pick_id = PickId(893);

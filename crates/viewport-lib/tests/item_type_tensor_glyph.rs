@@ -174,10 +174,7 @@ fn a_reference_item_picks_like_an_inline_one() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mut frame = sub_object_pick_frame();
 
-    let source =
-        renderer
-            .resources_mut()
-            .upload_tensor_glyph_set(&device, &queue, &three_tensors());
+    let source = renderer.upload_tensor_glyph_set(&device, &queue, &three_tensors());
 
     let mut item = TensorGlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(704);
@@ -211,10 +208,7 @@ fn a_hidden_reference_item_is_skipped() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mut frame = sub_object_pick_frame();
 
-    let source =
-        renderer
-            .resources_mut()
-            .upload_tensor_glyph_set(&device, &queue, &three_tensors());
+    let source = renderer.upload_tensor_glyph_set(&device, &queue, &three_tensors());
 
     let mut item = TensorGlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(705);

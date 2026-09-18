@@ -183,9 +183,7 @@ fn a_reference_item_picks_like_an_inline_one() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mut frame = sub_object_pick_frame();
 
-    let source = renderer
-        .resources_mut()
-        .upload_glyph_set(&device, &queue, &three_arrows(&frame));
+    let source = renderer.upload_glyph_set(&device, &queue, &three_arrows(&frame));
 
     let mut item = GlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(714);
@@ -219,9 +217,7 @@ fn a_hidden_reference_item_is_skipped() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mut frame = sub_object_pick_frame();
 
-    let source = renderer
-        .resources_mut()
-        .upload_glyph_set(&device, &queue, &three_arrows(&frame));
+    let source = renderer.upload_glyph_set(&device, &queue, &three_arrows(&frame));
 
     let mut item = GlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(715);

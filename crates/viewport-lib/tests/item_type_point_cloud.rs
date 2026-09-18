@@ -177,9 +177,7 @@ fn a_reference_item_picks_like_an_inline_one() {
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
-    let source = renderer
-        .resources_mut()
-        .upload_point_cloud(&device, &queue, &cloud);
+    let source = renderer.upload_point_cloud(&device, &queue, &cloud);
 
     let mut item = viewport_lib::PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(447);
@@ -212,9 +210,7 @@ fn a_hidden_reference_item_is_skipped() {
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
-    let source = renderer
-        .resources_mut()
-        .upload_point_cloud(&device, &queue, &cloud);
+    let source = renderer.upload_point_cloud(&device, &queue, &cloud);
 
     let mut item = viewport_lib::PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(448);

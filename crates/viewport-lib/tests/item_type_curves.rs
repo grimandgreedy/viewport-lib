@@ -410,9 +410,7 @@ fn a_reference_streamtube_picks_under_its_own_id() {
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
     tube.settings.pick_id = PickId(1);
-    let source = renderer
-        .resources_mut()
-        .upload_streamtube(&device, &queue, &tube);
+    let source = renderer.upload_streamtube(&device, &queue, &tube);
 
     let mut reference = StreamtubeRefItem::new(source);
     reference.settings.pick_id = PickId(7171);
@@ -437,7 +435,7 @@ fn a_hidden_reference_tube_is_skipped() {
     tube.positions = positions;
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
-    let source = renderer.resources_mut().upload_tube(&device, &queue, &tube);
+    let source = renderer.upload_tube(&device, &queue, &tube);
 
     let mut reference = TubeRefItem::new(source);
     reference.settings.pick_id = PickId(7272);
@@ -463,9 +461,7 @@ fn a_reference_ribbon_draws_and_picks() {
     ribbon.positions = positions;
     ribbon.strip_lengths = strip_lengths;
     ribbon.width = 2.0;
-    let source = renderer
-        .resources_mut()
-        .upload_ribbon(&device, &queue, &ribbon);
+    let source = renderer.upload_ribbon(&device, &queue, &ribbon);
 
     let mut reference = RibbonRefItem::new(source);
     reference.settings.pick_id = PickId(7373);

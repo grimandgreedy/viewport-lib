@@ -96,10 +96,7 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]];
     cloud.point_size = 8.0;
-    let source = h
-        .renderer
-        .resources_mut()
-        .upload_point_cloud(&h.device, &h.queue, &cloud);
+    let source = h.renderer.upload_point_cloud(&h.device, &h.queue, &cloud);
 
     let _ = h.render(&base, 200, 150);
     assert_eq!(
@@ -229,10 +226,7 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     ribbon.positions = vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
     ribbon.strip_lengths = vec![3];
     ribbon.width = 0.5;
-    let source = h
-        .renderer
-        .resources_mut()
-        .upload_ribbon(&h.device, &h.queue, &ribbon);
+    let source = h.renderer.upload_ribbon(&h.device, &h.queue, &ribbon);
 
     let _ = h.render(&base, 200, 150);
     assert_eq!(

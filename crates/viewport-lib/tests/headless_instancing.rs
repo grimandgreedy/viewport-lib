@@ -298,7 +298,6 @@ fn external_instances_render_with_instance_range_slice() {
     queue.write_buffer(&pos_buf, 0, bytemuck::cast_slice(&positions));
 
     let set_id = renderer
-        .resources_mut()
         .create_external_instance_set(
             &device,
             &viewport_lib::ExternalInstanceSetConfig::new(mesh_id, pos_buf),

@@ -17,11 +17,11 @@
 //! This is example code shared across showcases. Treat it as a reference
 //! `GpuPlugin` implementation rather than production cloth/water code.
 
-use viewport_lib::wgpu;
 use bytemuck::{Pod, Zeroable};
 use viewport_lib as vpl;
-use vpl::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
+use viewport_lib::wgpu;
 use viewport_lib::wgpu::util::DeviceExt;
+use vpl::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]

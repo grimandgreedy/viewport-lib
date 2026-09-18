@@ -583,7 +583,6 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     };
     let system = ctx
         .renderer
-        .resources_mut()
         .create_gpu_particle_system(ctx.device, ctx.queue, &config);
 
     let mut item = viewport_lib::GpuParticleSystemItem::new(system, 0.4);
