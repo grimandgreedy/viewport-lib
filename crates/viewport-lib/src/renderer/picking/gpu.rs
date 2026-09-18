@@ -8,8 +8,9 @@ use super::*;
 /// Each variant knows which pick masks it can answer. A type contributes draws
 /// only when the caller asked for a level it can resolve, so the mask selects
 /// which geometry is rasterised rather than filtering the read-back id. Types
-/// with their own pick pipeline (glyphs, sprites, polylines) draw through
-/// their own item-type plugin's `render_pick`, not here.
+/// with their own pick pipeline (glyphs, sprites, polylines, decals, scatter
+/// volumes) draw through their own item-type plugin's `render_pick`, not here.
+/// Only mesh-backed surfaces remain on the shared pipeline.
 #[derive(Clone, Copy)]
 enum PickItemType {
     /// Mesh-backed surfaces: scene surfaces and volume-mesh boundaries, resolved
@@ -55,8 +56,9 @@ impl PickItemType {
 /// How to turn a pick's read-back sub-primitive index into a [`SubObjectRef`],
 /// keyed by the hit object's `pick_id`. Built at submit time from the same
 /// collections the pass draws, then consulted on read-back. Types that only
-/// answer object level (decals, scatter volumes, voxel volumes) are absent
-/// from the map and resolve to no sub-object.
+/// answer object level (voxel volumes, and the types that rasterise a proxy
+/// shape from their own plugin) are absent from the map and resolve to no
+/// sub-object.
 #[derive(Clone, Copy)]
 enum PickSubKind {
     /// Mesh surface or volume-mesh boundary: `primitive_index` is the triangle.
@@ -75,20 +77,10 @@ enum PickSubKind {
     Plugin(&'static str),
 }
 
-/// Which types have pickable geometry this frame, plus the shared proxy mesh
-/// handles resolved while ensuring their pick pipelines. Computed by
-/// [`ViewportRenderer::ensure_pick_pipelines`], a `&mut self` step that must
-/// finish (and drop its mutable borrow) before
-/// [`ViewportRenderer::build_pick_draws`] borrows `self` immutably to build
-/// the draw lists; splitting the two keeps `build_pick_draws`'s borrow shared,
-/// so the point and rect pick passes can call further `&self` helpers
-/// (instance/camera bind groups, draw recording) while the returned
-/// `PickDrawSet` is still alive.
-struct PickPipelineFlags {
-    decal_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
-    scatter_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
-    scatter_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
-}
+/// Marker that the pick pipelines this query needs have been built. The pass
+/// itself reads nothing from it; it exists so the one mutating step stays
+/// separate from the read-only draw collection that follows.
+struct PickPipelineFlags;
 
 /// A pre-built group-2 bind group for a per-pixel sub-object pick variant, one
 /// slot per entry in `PickDrawSet::draws`. Owned before the pass begins so the
@@ -686,7 +678,7 @@ impl ViewportRenderer {
     fn ensure_pick_pipelines(
         &mut self,
         device: &crate::gpu::Device,
-        frame: &FrameData,
+        _frame: &FrameData,
         mask: PickMask,
     ) -> PickPipelineFlags {
         // --- lazy pipeline init ---
@@ -701,60 +693,7 @@ impl ViewportRenderer {
             self.resources.ensure_pick_edge_pipeline(device);
         }
 
-        // Decals rasterise their projection box (the unit cube mapped by
-        // `transform`) as an object-level proxy. Ensure the shared cube mesh
-        // exists when a decal is pickable and the query asks for OBJECT. Computed
-        // as a plain `MeshId` before `draws` borrows `self`, so pushing the decal
-        // draws later needs no further `self` mutation.
-        let decal_cube = if mask.intersects(PickMask::OBJECT)
-            && frame
-                .scene
-                .decals
-                .iter()
-                .any(|d| !d.settings.hidden && d.settings.pick_id != PickId::NONE)
-        {
-            self.ensure_decal_pick_cube(device)
-        } else {
-            None
-        };
-
-        // Scatter volumes pick against their actual shape: a box (the shared cube)
-        // or a sphere (the shared icosphere), world-space and unrotated, matching
-        // the CPU analytic `ray_intersect`. Ensure whichever proxies are needed.
-        let (scatter_cube, scatter_sphere) = if mask.intersects(PickMask::OBJECT) {
-            let mut want_box = false;
-            let mut want_sphere = false;
-            for it in frame
-                .scene
-                .scatter_volumes
-                .iter()
-                .filter(|s| !s.settings.hidden && s.settings.pick_id != PickId::NONE)
-            {
-                match it.volume.shape {
-                    crate::scene::scatter_volume::ScatterShape::Box(_) => want_box = true,
-                    crate::scene::scatter_volume::ScatterShape::Sphere { .. } => want_sphere = true,
-                }
-            }
-            let cube = if want_box {
-                self.ensure_decal_pick_cube(device)
-            } else {
-                None
-            };
-            let sphere = if want_sphere {
-                self.ensure_scatter_pick_sphere(device)
-            } else {
-                None
-            };
-            (cube, sphere)
-        } else {
-            (None, None)
-        };
-
-        PickPipelineFlags {
-            decal_cube,
-            scatter_cube,
-            scatter_sphere,
-        }
+        PickPipelineFlags
     }
 
     /// Build every pick pipeline's draw list for this query, plus the
@@ -774,10 +713,6 @@ impl ViewportRenderer {
         scene_items: &'a [SceneRenderItem],
         flags: &PickPipelineFlags,
     ) -> PickDrawSet {
-        let decal_cube = flags.decal_cube;
-        let scatter_cube = flags.scatter_cube;
-        let scatter_sphere = flags.scatter_sphere;
-
         // --- build PickInstance data ---
         // Every mesh-backed pickable item draws through the surface pipeline:
         // scene surfaces, plus volume-mesh boundaries (both opaque and
@@ -823,73 +758,6 @@ impl ViewportRenderer {
                 .filter(pickable)
             {
                 draws.push((ri.mesh_id, to_instance(&ri)));
-            }
-        }
-
-        // Decals: rasterise the unit-cube projection box under each decal's
-        // transform, tagged with its pick_id. Object-level. The box silhouette
-        // can extend past the projected footprint into empty space, so a click
-        // near a decal but off its receiver can still select it, matching the CPU
-        // decal pick. Degenerate (non-invertible) transforms are skipped.
-        if let Some(cube_id) = decal_cube {
-            for d in frame
-                .scene
-                .decals
-                .iter()
-                .filter(|d| !d.settings.hidden && d.settings.pick_id != PickId::NONE)
-            {
-                if glam::Mat4::from_cols_array_2d(&d.transform)
-                    .determinant()
-                    .abs()
-                    < 1e-12
-                {
-                    continue;
-                }
-                draws.push((cube_id, instance_from(d.transform, d.settings.pick_id)));
-            }
-        }
-
-        // Scatter volumes: box -> cube proxy (exact), sphere -> icosphere proxy.
-        // The shapes are world-space and unrotated, so a translate + scale places
-        // the proxy on the shape. Matches the CPU analytic scatter pick.
-        for it in frame
-            .scene
-            .scatter_volumes
-            .iter()
-            .filter(|s| !s.settings.hidden && s.settings.pick_id != PickId::NONE)
-        {
-            match it.volume.shape {
-                crate::scene::scatter_volume::ScatterShape::Box(b) => {
-                    let Some(cube_id) = scatter_cube else {
-                        continue;
-                    };
-                    let min = b.min;
-                    let max = b.max;
-                    let extent = max - min;
-                    if extent.min_element() <= 0.0 {
-                        continue;
-                    }
-                    let model = glam::Mat4::from_translation((min + max) * 0.5)
-                        * glam::Mat4::from_scale(extent);
-                    draws.push((
-                        cube_id,
-                        instance_from(model.to_cols_array_2d(), it.settings.pick_id),
-                    ));
-                }
-                crate::scene::scatter_volume::ScatterShape::Sphere { center, radius } => {
-                    let Some(sphere_id) = scatter_sphere else {
-                        continue;
-                    };
-                    if radius <= 0.0 {
-                        continue;
-                    }
-                    let model = glam::Mat4::from_translation(glam::Vec3::from(center))
-                        * glam::Mat4::from_scale(glam::Vec3::splat(radius));
-                    draws.push((
-                        sphere_id,
-                        instance_from(model.to_cols_array_2d(), it.settings.pick_id),
-                    ));
-                }
             }
         }
 
@@ -1134,47 +1002,6 @@ impl ViewportRenderer {
             pick_pass.set_bind_group(0, &self.resources.binds.camera_bg, &[]);
             self.dispatch_plugin_pick(pick_pass, frame, draw_set.mask);
         }
-    }
-
-    /// Upload once (and return) the shared unit-cube mesh used as the box pick
-    /// proxy (decals and box scatter volumes). Reused across picks; re-uploaded
-    /// if the cached handle was freed (e.g. after device recreation). Returns
-    /// `None` only if the upload fails.
-    fn ensure_decal_pick_cube(
-        &mut self,
-        device: &crate::gpu::Device,
-    ) -> Option<crate::resources::mesh::mesh_store::MeshId> {
-        if let Some(id) = self.decal_pick_cube {
-            if self.resources.mesh_store.get(id).is_some() {
-                return Some(id);
-            }
-        }
-        let id = self
-            .resources
-            .upload_mesh_data(device, &unit_cube_mesh_data())
-            .ok()?;
-        self.decal_pick_cube = Some(id);
-        Some(id)
-    }
-
-    /// Upload once (and return) the shared unit-radius icosphere used as the pick
-    /// proxy for sphere scatter volumes. Reused across picks; re-uploaded if the
-    /// cached handle was freed. Returns `None` only if the upload fails.
-    fn ensure_scatter_pick_sphere(
-        &mut self,
-        device: &crate::gpu::Device,
-    ) -> Option<crate::resources::mesh::mesh_store::MeshId> {
-        if let Some(id) = self.scatter_pick_sphere {
-            if self.resources.mesh_store.get(id).is_some() {
-                return Some(id);
-            }
-        }
-        // Two subdivisions: a close spherical silhouette for object-level picking
-        // without much geometry.
-        let mesh = crate::geometry::primitives::icosphere(1.0, 2);
-        let id = self.resources.upload_mesh_data(device, &mesh).ok()?;
-        self.scatter_pick_sphere = Some(id);
-        Some(id)
     }
 
     /// GPU object-id rect pick: renders the mask-selected geometry, scissored
@@ -2068,30 +1895,4 @@ impl PendingPick {
             sub_primitive,
         })
     }
-}
-
-/// A unit cube spanning `[-0.5, 0.5]^3` as `MeshData`, used as the decal pick
-/// proxy. The pick pass reads only vertex positions; the per-face normals exist
-/// solely to satisfy mesh-upload validation. Indices wind all six faces.
-fn unit_cube_mesh_data() -> crate::resources::MeshData {
-    let positions = vec![
-        [-0.5, -0.5, -0.5],
-        [0.5, -0.5, -0.5],
-        [0.5, 0.5, -0.5],
-        [-0.5, 0.5, -0.5],
-        [-0.5, -0.5, 0.5],
-        [0.5, -0.5, 0.5],
-        [0.5, 0.5, 0.5],
-        [-0.5, 0.5, 0.5],
-    ];
-    let normals = vec![[0.0, 0.0, 1.0]; 8];
-    let indices = vec![
-        0, 1, 2, 2, 3, 0, 4, 6, 5, 6, 4, 7, 0, 3, 7, 7, 4, 0, 1, 5, 6, 6, 2, 1, 3, 2, 6, 6, 7, 3,
-        0, 4, 5, 5, 1, 0,
-    ];
-    let mut mesh = crate::resources::MeshData::default();
-    mesh.positions = positions;
-    mesh.normals = normals;
-    mesh.indices = indices;
-    mesh
 }

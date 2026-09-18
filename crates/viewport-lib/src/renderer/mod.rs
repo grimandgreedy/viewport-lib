@@ -511,17 +511,6 @@ pub struct ViewportRenderer {
     /// without blocking on the GPU queue. `None` when no async pick is pending.
     pending_pick: Option<picking::PendingPick>,
 
-    /// Shared unit-cube mesh (`[-0.5, 0.5]^3`) used as the GPU pick proxy for
-    /// box-shaped items: decals (under each decal's `transform`) and box scatter
-    /// volumes (under a translate+scale to the box). Uploaded lazily on first
-    /// use, then reused. `None` until then.
-    decal_pick_cube: Option<crate::resources::mesh::mesh_store::MeshId>,
-
-    /// Shared unit-radius icosphere used as the GPU pick proxy for sphere scatter
-    /// volumes, scaled to each volume's radius. Uploaded lazily on first use.
-    /// `None` until then.
-    scatter_pick_sphere: Option<crate::resources::mesh::mesh_store::MeshId>,
-
     // --- GPU timestamp queries ---
     /// Timestamp query set with `2 * GPU_TS_SLOTS` entries: a begin/end pair per
     /// measured pass (see the `GPU_TS_*` slot constants). `None` when
@@ -952,8 +941,6 @@ impl ViewportRenderer {
             pick_volume_mesh_items: Vec::new(),
             cpu_pick_cache_enabled: false,
             pending_pick: None,
-            decal_pick_cube: None,
-            scatter_pick_sphere: None,
             ts_query_set: None,
             ts_query_set_prev: None,
             ts_prev_mask: 0,

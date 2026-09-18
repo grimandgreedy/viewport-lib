@@ -212,6 +212,9 @@ fn gpu_pick_hits_box_scatter_volume() {
     item.settings.pick_id = PickId(41);
     frame.scene.scatter_volumes = vec![item];
 
+    // The volume's pick binding is built during prepare, like every other item
+    // type that answers the id pass with geometry of its own.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(41)));
 }
@@ -236,6 +239,9 @@ fn gpu_pick_hits_sphere_scatter_volume() {
     item.settings.pick_id = PickId(42);
     frame.scene.scatter_volumes = vec![item];
 
+    // The volume's pick binding is built during prepare, like every other item
+    // type that answers the id pass with geometry of its own.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(42)));
 }
@@ -261,12 +267,15 @@ fn gpu_pick_hits_decal_box() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
 
     // A decal is the unit box [-0.5, 0.5]^3 mapped by `transform`; the default
-    // transform places it at the origin. The GPU pick rasterises that box as a
-    // proxy and reads back its pick_id.
+    // transform places it at the origin. The decal item type rasterises that
+    // box in the pick pass and reads back its pick_id.
     let mut decal = DecalItem::default();
     decal.settings.pick_id = PickId(77);
     frame.scene.decals = vec![decal];
 
+    // The decal's pick binding is built during prepare, like every other item
+    // type that answers the id pass with geometry of its own.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(77)));
 }

@@ -111,6 +111,26 @@ pub(crate) struct DecalGpuItem {
     /// Whether this decal is selected. Selected decals contribute to the decal
     /// outline mask so a ring is traced around their footprint.
     pub selected: bool,
+    /// Group 1 of the pick pass: this decal's projection-box transform and the
+    /// id it answers with. `None` when the decal is not pickable.
+    pub pick: Option<DecalPickBinding>,
+}
+
+/// The per-decal uniform and bind group the pick pass binds, kept together so
+/// the buffer outlives the bind group that names it.
+#[derive(Clone)]
+pub(crate) struct DecalPickBinding {
+    pub _uniform_buf: crate::gpu::Buffer,
+    pub bind_group: crate::gpu::BindGroup,
+}
+
+/// GPU mirror of `decal_pick.wgsl`'s `ProxyUniform`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct DecalProxyUniform {
+    pub model: [[f32; 4]; 4],
+    pub object_id: u32,
+    pub _pad: [u32; 3],
 }
 
 /// Per-draw GPU data for one non-receiver surface in the decal exclude pass.
@@ -206,6 +226,9 @@ pub(crate) fn hash_decal_item(
     h.write(bytemuck::bytes_of(&raw));
     h.write_u8(item.blend_mode as u8);
     h.write_u64(item.texture_id.raw());
+    // The pick id is baked into the cached entry's pick binding, so two decals
+    // that look identical but answer different ids must not share an entry.
+    h.write_u64(item.settings.pick_id.0);
     // The key is content identity only. Whether the textures a cached entry
     // names are still resident is the cache's job, answered per entry through
     // `ResourceDeps` when the free epoch moves, so a freed albedo drops the
@@ -258,6 +281,14 @@ pub(crate) struct DecalGpu {
     pub(crate) outline_edge_pipeline: Option<crate::gpu::RenderPipeline>,
     /// BGL for the edge-detect pass: mask texture + sampler + edge uniform.
     pub(crate) outline_edge_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Object-id pick pipeline: rasterises each decal's projection box.
+    /// Built on the first frame a pickable decal is submitted.
+    pub(crate) pick_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 1 of the pick pass: one `DecalProxyUniform` per decal.
+    pub(crate) pick_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// The unit cube every decal's projection box is a transform of. Positions
+    /// only: the pick pass needs no normals or uvs.
+    pub(crate) pick_cube: Option<(crate::gpu::Buffer, crate::gpu::Buffer)>,
 }
 
 /// Persistent GPU resources for the decal outline pass, keyed by viewport size.
@@ -708,13 +739,131 @@ impl DecalGpu {
             ],
         });
 
+        // Group 1 of the pick pass. Built only for a pickable decal: an
+        // unpickable one contributes nothing to the id pass.
+        let pick = (item.settings.pick_id != crate::PickId::NONE)
+            .then(|| self.pick_binding(device, model, item.settings.pick_id))
+            .flatten();
+
         DecalGpuItem {
             blend_mode: item.blend_mode,
             _uniform_buf: uniform_buf,
             bind_group,
             model,
             selected: item.settings.selected,
+            pick,
         }
+    }
+
+    /// Build one decal's pick binding: its projection-box transform and pick
+    /// id. `None` before [`ensure_pick`](Self::ensure_pick) has run.
+    fn pick_binding(
+        &self,
+        device: &crate::gpu::Device,
+        model: glam::Mat4,
+        pick_id: crate::PickId,
+    ) -> Option<DecalPickBinding> {
+        use crate::gpu::util::DeviceExt as _;
+        let bgl = self.pick_bgl.as_ref()?;
+        let raw = DecalProxyUniform {
+            model: model.to_cols_array_2d(),
+            object_id: pick_id.0 as u32,
+            _pad: [0; 3],
+        };
+        let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("decal_pick_uniform_buf"),
+            contents: bytemuck::bytes_of(&raw),
+            usage: crate::gpu::BufferUsages::UNIFORM,
+        });
+        let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("decal_pick_bg"),
+            layout: bgl,
+            entries: &[crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            }],
+        });
+        Some(DecalPickBinding {
+            _uniform_buf: uniform_buf,
+            bind_group,
+        })
+    }
+
+    /// Lazily build the object-id pick pipeline, its group-1 layout, and the
+    /// shared unit cube every decal's projection box is a transform of.
+    pub(crate) fn ensure_pick(
+        &mut self,
+        device: &crate::gpu::Device,
+        resources: &crate::resources::DeviceResources,
+    ) {
+        if self.pick_pipeline.is_some() {
+            return;
+        }
+        use crate::gpu::util::DeviceExt as _;
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("decal_pick_bgl"),
+            entries: &[crate::resources::builders::uniform_entry(
+                0,
+                crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            )],
+        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "decal_pick_shader",
+            crate::resources::builders::wgsl_source!("decal_pick"),
+        );
+        const POS_ATTRS: [crate::gpu::VertexAttribute; 1] = [crate::gpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: crate::gpu::VertexFormat::Float32x3,
+        }];
+        let vertex_layout = crate::gpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &POS_ATTRS,
+        };
+        let mut opts = crate::resources::PluginPipelineOpts::new(
+            Some("decal_pick_pipeline"),
+            &shader,
+            "vs_main",
+            "fs_main",
+            std::slice::from_ref(&vertex_layout),
+        );
+        // Two-sided: the camera can sit inside a decal's projection box, and a
+        // click from in there still selects it.
+        opts.primitive.cull_mode = None;
+        let extra: [&crate::gpu::BindGroupLayout; 1] = [&bgl];
+        opts.extra_bind_group_layouts = &extra;
+        let pipeline = resources.build_pick_pipeline(device, &opts);
+
+        let positions: [[f32; 3]; 8] = [
+            [-0.5, -0.5, -0.5],
+            [0.5, -0.5, -0.5],
+            [0.5, 0.5, -0.5],
+            [-0.5, 0.5, -0.5],
+            [-0.5, -0.5, 0.5],
+            [0.5, -0.5, 0.5],
+            [0.5, 0.5, 0.5],
+            [-0.5, 0.5, 0.5],
+        ];
+        let indices: [u32; 36] = [
+            0, 1, 2, 2, 3, 0, 4, 6, 5, 6, 4, 7, 0, 3, 7, 7, 4, 0, 1, 5, 6, 6, 2, 1, 3, 2, 6, 6, 7,
+            3, 0, 4, 5, 5, 1, 0,
+        ];
+        let vbuf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("decal_pick_cube_vbuf"),
+            contents: bytemuck::cast_slice(&positions),
+            usage: crate::gpu::BufferUsages::VERTEX,
+        });
+        let ibuf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+            label: Some("decal_pick_cube_ibuf"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: crate::gpu::BufferUsages::INDEX,
+        });
+
+        self.pick_bgl = Some(bgl);
+        self.pick_pipeline = Some(pipeline);
+        self.pick_cube = Some((vbuf, ibuf));
     }
 
     /// Lazily create the decal exclude pipeline and its object BGL.

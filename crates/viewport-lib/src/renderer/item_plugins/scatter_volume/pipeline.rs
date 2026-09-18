@@ -27,8 +27,25 @@ use crate::scene::scatter_volume::{
 /// Scatter-volume (participating media) pipelines, layouts, and per-frame
 /// upload buffers. All device-shared and lazily built by the `ensure_scatter_*`
 /// methods; the uploaded density textures are keyed elsewhere.
+/// Unit proxy geometry for the pick pass: positions, indices, and the index
+/// count to draw.
+pub(crate) struct PickProxyMesh {
+    pub(crate) vbuf: crate::gpu::Buffer,
+    pub(crate) ibuf: crate::gpu::Buffer,
+    pub(crate) index_count: u32,
+}
+
 #[derive(Default)]
 pub(crate) struct ScatterGpu {
+    /// Object-id pick pipeline: rasterises each volume's shape.
+    pub(crate) pick_pipeline: Option<crate::gpu::RenderPipeline>,
+    /// Group 1 of the pick pass: one `ScatterProxyUniform` per volume.
+    pub(crate) pick_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Unit cube, for box volumes.
+    pub(crate) pick_cube: Option<PickProxyMesh>,
+    /// Unit icosphere, for sphere volumes. Same subdivision the CPU pick's
+    /// analytic sphere test approximates.
+    pub(crate) pick_sphere: Option<PickProxyMesh>,
     /// Render pipeline for the scatter-volume pass. None until first item submitted.
     pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
     /// Group 1 layout (per-volume uniform with dynamic offset).
@@ -108,7 +125,93 @@ pub(crate) struct ScatterTemporalUniformRaw {
     pub temporal_pack: [f32; 4],
 }
 
+/// GPU mirror of `scatter_pick.wgsl`'s `ProxyUniform`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ScatterProxyUniform {
+    pub model: [[f32; 4]; 4],
+    pub object_id: u32,
+    pub _pad: [u32; 3],
+}
+
 impl ScatterGpu {
+    /// Lazily build the object-id pick pipeline, its group-1 layout, and the
+    /// two unit proxy shapes a scatter volume is picked as.
+    pub(crate) fn ensure_pick(
+        &mut self,
+        device: &crate::gpu::Device,
+        resources: &crate::resources::DeviceResources,
+    ) {
+        if self.pick_pipeline.is_some() {
+            return;
+        }
+        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+            label: Some("scatter_pick_bgl"),
+            entries: &[crate::resources::builders::uniform_entry(
+                0,
+                crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+            )],
+        });
+        let shader = crate::resources::builders::wgsl_module(
+            device,
+            "scatter_pick_shader",
+            crate::resources::builders::wgsl_source!("scatter_pick"),
+        );
+        const POS_ATTRS: [crate::gpu::VertexAttribute; 1] = [crate::gpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: crate::gpu::VertexFormat::Float32x3,
+        }];
+        let vertex_layout = crate::gpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: crate::gpu::VertexStepMode::Vertex,
+            attributes: &POS_ATTRS,
+        };
+        let mut opts = crate::resources::PluginPipelineOpts::new(
+            Some("scatter_pick_pipeline"),
+            &shader,
+            "vs_main",
+            "fs_main",
+            std::slice::from_ref(&vertex_layout),
+        );
+        // Two-sided: the camera is often inside a scatter volume, and a click
+        // from in there still selects it.
+        opts.primitive.cull_mode = None;
+        let extra: [&crate::gpu::BindGroupLayout; 1] = [&bgl];
+        opts.extra_bind_group_layouts = &extra;
+        self.pick_pipeline = Some(resources.build_pick_pipeline(device, &opts));
+        self.pick_bgl = Some(bgl);
+
+        let cube_positions: [[f32; 3]; 8] = [
+            [-0.5, -0.5, -0.5],
+            [0.5, -0.5, -0.5],
+            [0.5, 0.5, -0.5],
+            [-0.5, 0.5, -0.5],
+            [-0.5, -0.5, 0.5],
+            [0.5, -0.5, 0.5],
+            [0.5, 0.5, 0.5],
+            [-0.5, 0.5, 0.5],
+        ];
+        let cube_indices: [u32; 36] = [
+            0, 1, 2, 2, 3, 0, 4, 6, 5, 6, 4, 7, 0, 3, 7, 7, 4, 0, 1, 5, 6, 6, 2, 1, 3, 2, 6, 6, 7,
+            3, 0, 4, 5, 5, 1, 0,
+        ];
+        self.pick_cube = Some(upload_proxy(
+            device,
+            "scatter_pick_cube",
+            &cube_positions,
+            &cube_indices,
+        ));
+
+        let sphere = crate::geometry::primitives::icosphere(1.0, 2);
+        self.pick_sphere = Some(upload_proxy(
+            device,
+            "scatter_pick_sphere",
+            &sphere.positions,
+            &sphere.indices,
+        ));
+    }
+
     // ---------------------------------------------------------------------
     // Bind group layouts
     // ---------------------------------------------------------------------
@@ -1268,5 +1371,30 @@ impl ScatterViewportState {
             Some(tex.create_view(&crate::gpu::TextureViewDescriptor::default()));
         self.refraction_source_texture = Some(tex);
         self.refraction_source_size = size;
+    }
+}
+
+/// Upload one unit proxy shape's positions and indices.
+fn upload_proxy(
+    device: &crate::gpu::Device,
+    label: &str,
+    positions: &[[f32; 3]],
+    indices: &[u32],
+) -> PickProxyMesh {
+    use crate::gpu::util::DeviceExt as _;
+    let vbuf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(positions),
+        usage: crate::gpu::BufferUsages::VERTEX,
+    });
+    let ibuf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(indices),
+        usage: crate::gpu::BufferUsages::INDEX,
+    });
+    PickProxyMesh {
+        vbuf,
+        ibuf,
+        index_count: indices.len() as u32,
     }
 }

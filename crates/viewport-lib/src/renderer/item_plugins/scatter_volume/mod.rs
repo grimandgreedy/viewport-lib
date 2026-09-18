@@ -20,8 +20,8 @@ mod pipeline;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext, PickRay,
-    PluginItemCollection,
+    EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext,
+    PickPassContext, PickRay, PluginItemCollection,
 };
 use crate::renderer::{PickHit, PickId, PickMask, ScatterVolumeItem};
 use crate::scene::scatter_volume::{ScatterShape, ScatterVolume};
@@ -57,6 +57,11 @@ pub(crate) struct ScatterVolumePlugin {
     per_volume_tex_bgs: Vec<crate::gpu::BindGroup>,
     /// Items retained from `prepare` for the out-of-band CPU pick answers.
     pick_items: Vec<ScatterVolumeItem>,
+    /// Group 1 bind groups for the id pass, one per pickable volume, with the
+    /// shape each one draws. Built in `prepare`, where a device is reachable.
+    pick_draws: Vec<(crate::gpu::BindGroup, ScatterProxyShape)>,
+    /// Retained so the uniforms outlive the bind groups in `pick_draws`.
+    _pick_uniforms: Vec<crate::gpu::Buffer>,
     /// Per-viewport accumulation and history targets. Behind a lock because
     /// `encode` runs from a shared borrow but allocates on resize and advances
     /// the history ping-pong.
@@ -103,9 +108,22 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         self.per_volume_tex_bgs.clear();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(volumes);
+        self.pick_draws.clear();
+        self._pick_uniforms.clear();
 
         if volumes.is_empty() {
             return Vec::new();
+        }
+
+        // Pick bindings: a volume answers object picks with its own shape, so
+        // build one proxy transform per pickable volume. Skipped entirely when
+        // nothing is pickable, which is the common case.
+        if volumes
+            .iter()
+            .any(|v| !v.settings.hidden && v.settings.pick_id != PickId::NONE)
+        {
+            self.gpu.ensure_pick(device, ctx.resources);
+            self.build_pick_bindings(device, volumes);
         }
 
         for item in volumes {
@@ -290,6 +308,51 @@ impl ItemTypePlugin for ScatterVolumePlugin {
                 polyline
             })
             .collect()
+    }
+
+    /// Rasterise each pickable volume's shape into the shared id pass: the
+    /// unit cube for a box volume, the unit icosphere for a sphere one. Both
+    /// shapes are world-space and unrotated, so one model matrix per volume
+    /// places either, matching the CPU analytic pick.
+    fn render_pick(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        ctx: &PickPassContext<'_>,
+        _items: &dyn PluginItemCollection,
+    ) {
+        if !ctx.mask.intersects(PickMask::OBJECT) {
+            return;
+        }
+        let (Some(pipeline), Some(cube), Some(sphere)) = (
+            self.gpu.pick_pipeline.as_ref(),
+            self.gpu.pick_cube.as_ref(),
+            self.gpu.pick_sphere.as_ref(),
+        ) else {
+            return;
+        };
+        let mut bound = false;
+        let mut current: Option<ScatterProxyShape> = None;
+        for (bind_group, shape) in &self.pick_draws {
+            if !bound {
+                pass.set_pipeline(pipeline);
+                bound = true;
+            }
+            if current != Some(*shape) {
+                let mesh = match shape {
+                    ScatterProxyShape::Box => cube,
+                    ScatterProxyShape::Sphere => sphere,
+                };
+                pass.set_vertex_buffer(0, mesh.vbuf.slice(..));
+                pass.set_index_buffer(mesh.ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
+                current = Some(*shape);
+            }
+            let count = match shape {
+                ScatterProxyShape::Box => cube.index_count,
+                ScatterProxyShape::Sphere => sphere.index_count,
+            };
+            pass.set_bind_group(1, bind_group, &[]);
+            pass.draw_indexed(0..count, 0, 0..1);
+        }
     }
 
     fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
@@ -574,6 +637,73 @@ impl ScatterVolumePlugin {
         pass.set_pipeline(composite_pipeline);
         pass.set_bind_group(0, source, &[]);
         pass.draw(0..3, 0..1);
+    }
+}
+
+/// Which unit shape stands in for a volume in the id pass.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScatterProxyShape {
+    Box,
+    Sphere,
+}
+
+impl ScatterVolumePlugin {
+    /// Build one group-1 binding per pickable volume: the transform that puts
+    /// the unit shape on the volume, plus the id it answers with. A degenerate
+    /// shape (non-positive extent or radius) is skipped, as the CPU pick does.
+    fn build_pick_bindings(&mut self, device: &crate::gpu::Device, volumes: &[ScatterVolumeItem]) {
+        use crate::gpu::util::DeviceExt as _;
+        let Some(bgl) = self.gpu.pick_bgl.as_ref() else {
+            return;
+        };
+        for item in volumes {
+            if item.settings.hidden || item.settings.pick_id == PickId::NONE {
+                continue;
+            }
+            let (model, shape) = match item.volume.shape {
+                crate::scene::scatter_volume::ScatterShape::Box(b) => {
+                    let extent = b.max - b.min;
+                    if extent.min_element() <= 0.0 {
+                        continue;
+                    }
+                    (
+                        glam::Mat4::from_translation((b.min + b.max) * 0.5)
+                            * glam::Mat4::from_scale(extent),
+                        ScatterProxyShape::Box,
+                    )
+                }
+                crate::scene::scatter_volume::ScatterShape::Sphere { center, radius } => {
+                    if radius <= 0.0 {
+                        continue;
+                    }
+                    (
+                        glam::Mat4::from_translation(glam::Vec3::from(center))
+                            * glam::Mat4::from_scale(glam::Vec3::splat(radius)),
+                        ScatterProxyShape::Sphere,
+                    )
+                }
+            };
+            let raw = pipeline::ScatterProxyUniform {
+                model: model.to_cols_array_2d(),
+                object_id: item.settings.pick_id.0 as u32,
+                _pad: [0; 3],
+            };
+            let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                label: Some("scatter_pick_uniform_buf"),
+                contents: bytemuck::bytes_of(&raw),
+                usage: crate::gpu::BufferUsages::UNIFORM,
+            });
+            let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                label: Some("scatter_pick_bg"),
+                layout: bgl,
+                entries: &[crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                }],
+            });
+            self.pick_draws.push((bind_group, shape));
+            self._pick_uniforms.push(uniform_buf);
+        }
     }
 }
 

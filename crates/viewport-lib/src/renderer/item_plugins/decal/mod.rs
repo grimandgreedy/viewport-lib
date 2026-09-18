@@ -12,8 +12,8 @@ mod pipeline;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext, PickRay,
-    PluginItemCollection, RectPickContext,
+    EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext,
+    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
 };
 use crate::renderer::picking::helpers::{ray_unit_box_toi, segment_in_rect};
 use crate::renderer::{DecalBlendMode, DecalItem, PickHit, PickId, PickMask};
@@ -149,6 +149,15 @@ impl ItemTypePlugin for DecalPlugin {
             self.gpu.ensure_shared(device);
             self.gpu
                 .ensure_pipeline(device, res.shared_bindings().group0_layout);
+            // The pick pipeline and the shared unit cube, built once. A decal
+            // answers object picks by rasterising its projection box, so this
+            // has to exist before the per-decal pick bindings below.
+            if decals
+                .iter()
+                .any(|d| !d.settings.hidden && d.settings.pick_id != PickId::NONE)
+            {
+                self.gpu.ensure_pick(device, res);
+            }
             // Cached entries hold bind groups over texture views, so a free or
             // a replace since the last frame invalidates them: a free drops
             // only the entries whose deps no longer resolve, a replace drops
@@ -282,6 +291,45 @@ impl ItemTypePlugin for DecalPlugin {
         self.encode_exclude(encoder, ctx);
         self.encode_colour(encoder, ctx, &depth_bg);
         self.encode_outline(encoder, ctx, &depth_bg);
+    }
+
+    /// Rasterise each pickable decal's projection box into the shared id
+    /// pass. The box can extend past the shaded footprint into empty space,
+    /// which is deliberate and matches the CPU decal pick: a click near a
+    /// decal but off its receiver still selects it.
+    fn render_pick(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        ctx: &PickPassContext<'_>,
+        _items: &dyn PluginItemCollection,
+    ) {
+        if !ctx.mask.intersects(PickMask::OBJECT) {
+            return;
+        }
+        let (Some(pipeline), Some((vbuf, ibuf))) =
+            (self.gpu.pick_pipeline.as_ref(), self.gpu.pick_cube.as_ref())
+        else {
+            return;
+        };
+        let mut bound = false;
+        for entry in &self.draws {
+            let Some(pick) = entry.pick.as_ref() else {
+                continue;
+            };
+            // Degenerate transforms have no box to rasterise; the CPU pick
+            // skips them the same way.
+            if entry.model.determinant().abs() < 1e-12 {
+                continue;
+            }
+            if !bound {
+                pass.set_pipeline(pipeline);
+                pass.set_vertex_buffer(0, vbuf.slice(..));
+                pass.set_index_buffer(ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
+                bound = true;
+            }
+            pass.set_bind_group(1, &pick.bind_group, &[]);
+            pass.draw_indexed(0..36, 0, 0..1);
+        }
     }
 
     fn pick(&self, ray: &PickRay, ctx: &PickContext<'_>) -> Option<(f32, PickHit)> {
