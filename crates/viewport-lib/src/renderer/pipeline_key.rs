@@ -16,7 +16,7 @@
 //! drawing the wrong thing. `missing_variant` is a *runtime* signal on
 //! families still using named `Option<Pipeline>` fields; it stays load-bearing
 //! until every family migrates to `PipelineVariantSet` below, at which point
-//! it becomes unreachable and can be deleted (phase 4 of the plan).
+//! it becomes unreachable and can be deleted.
 //!
 //! A family that *has* migrated to `PipelineVariantSet` gets a stronger,
 //! compile-time form of the same guarantee: `PipelineVariantSet::build` takes
@@ -31,9 +31,9 @@
 
 /// The axes that vary a mesh-family render pipeline. Computed once per item
 /// (or per instanced batch) and passed to a `select_*` function to pick the
-/// concrete pipeline. Building pipelines from this key eagerly, for every
-/// reachable combination, is phase 2 of the pipeline-variant-specialization
-/// plan; this type only unifies selection.
+/// concrete pipeline. This type only unifies selection; building a pipeline
+/// eagerly for every reachable combination is what `PipelineVariantSet` does
+/// with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub(crate) struct PipelineKey {
     /// `BackfacePolicy::Cull` (false) vs any two-sided policy (true; the

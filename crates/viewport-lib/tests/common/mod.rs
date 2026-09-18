@@ -91,8 +91,6 @@ pub fn headless_device_with_primitive_index() -> Option<(wgpu::Device, wgpu::Que
 /// hardcodes this limit for WebGL2 portability and gives a consumer no way to
 /// raise it), so any draw site that unconditionally binds group index 2 fails
 /// wgpu validation against this device the same way it would against iced's.
-/// See `docs/issues/iced-max-bind-groups-2-draw-path-incomplete.md` and
-/// `docs/plans/iced-two-bind-group-support-plan.md`.
 pub fn headless_device_limited_bind_groups() -> Option<(wgpu::Device, wgpu::Queue)> {
     // Recommended limits (viewport-lib needs more storage buffers per stage than
     // wgpu's default) with bind groups additionally capped at 2.

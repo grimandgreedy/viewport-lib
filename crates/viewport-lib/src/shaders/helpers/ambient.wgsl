@@ -15,8 +15,7 @@
 // - The underived names (`sample_ibl_prefiltered`, `ibl_ambient`) take the
 //   derivatives themselves and are valid only in uniform control flow. `sample_ibl_irradiance`,
 //   `sample_ibl_prefiltered`, `sample_brdf_lut`, and `ibl_ambient` are part
-//   of the frozen material-plugin shading contract
-//   (docs/issues/lighting-shader-injection-seam.md): their signatures must
+//   of the frozen material-plugin shading contract: their signatures must
 //   not change.
 
 const IBL_PI: f32 = 3.14159265;

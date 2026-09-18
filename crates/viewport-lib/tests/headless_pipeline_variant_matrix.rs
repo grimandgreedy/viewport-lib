@@ -1,25 +1,23 @@
-//! Phase 0 completeness matrix for the pipeline-variant-specialization plan
-//! (`docs/adrs/0002-pipeline-variant-management.md`).
-//!
 //! Every reachable (pass, variant-key) combination must resolve to a pipeline
-//! that renders the right thing. This file exercises the axes that matter per
-//! pass -- facedness (one-sided vs two-sided), alpha-cutout, and LDR vs HDR --
-//! across the opaque, OIT, and shadow passes, for both the per-object and the
-//! instanced draw routes.
+//! that renders the right thing.
 //!
-//! Every cell here passes; this is a regression backstop for the pipeline-key
-//! refactor. `shadow_alpha_mask_matrix` covers both draw routes for a masked
-//! caster (a material that discards to nothing in the colour pass must not
-//! still cast a full opaque shadow), including the per-object route, whose
-//! alpha-cutout pipeline was the first of two filed gaps this plan closes.
+//! This file exercises the axes that matter per pass -- facedness (one-sided vs
+//! two-sided), alpha-cutout, and LDR vs HDR -- across the opaque, OIT, and
+//! shadow passes, for both the per-object and the instanced draw routes. A
+//! keyed pipeline set can be incomplete (a key with no pipeline built for it)
+//! or miscorresponded (a key resolving to another key's pipeline), and neither
+//! is visible from the types; rendering every cell is what catches both.
 //!
-//! The other filed gap (`material-plugin-opaque-pipelines-no-early-z-nodiscard-variant`)
-//! is closed too but is not covered here: it was a missing fast-path pipeline
-//! twin, not a rendering difference, so a plugin material draws the same
-//! pixels whether or not the discard-free twin exists. There is no pixel-level
-//! signal that distinguishes the two paths; see
+//! `shadow_alpha_mask_matrix` covers both draw routes for a masked caster: a
+//! material that discards to nothing in the colour pass must not still cast a
+//! full opaque shadow.
+//!
+//! One gap in the same family is deliberately not covered here. A material
+//! plugin's opaque pipelines need a discard-free twin for the early-Z fast
+//! path, and a missing twin is not a rendering difference: the plugin draws the
+//! same pixels either way, so no pixel-level assertion can tell the two apart.
 //! `mesh_sidecar::shade::tests::material_plugin_pipelines_resolve_every_key_once_built`
-//! for the completeness check that covers it instead.
+//! is the completeness check that covers it instead.
 
 #[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;

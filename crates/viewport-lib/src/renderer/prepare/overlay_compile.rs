@@ -1,6 +1,6 @@
 //! Compile overlay items into a retained [`OverlayGeometryId`] once, so the
 //! renderer re-draws them from a cached buffer each frame instead of
-//! re-tessellating them. See `docs/plans/retained-overlay-geometry-plan.md`.
+//! re-tessellating them.
 
 use super::*;
 

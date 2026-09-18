@@ -52,9 +52,8 @@ fn debug_vis_toggle_rebuilds_lit_pipelines() {
 /// with `max_bind_groups: 2` and gives consumers no way to raise it, so any
 /// unconditional `set_bind_group(2, ...)` fails wgpu validation the moment a
 /// mesh, shadow, or HDR pass draws on that device. This has been fixed and
-/// silently reintroduced by new draw sites multiple times (see
-/// `docs/issues/iced-max-bind-groups-2-draw-path-incomplete.md`) because the
-/// only thing that previously caught it was manually running the iced
+/// silently reintroduced by new draw sites several times, because the only
+/// thing that previously caught it was manually running the iced
 /// example. This test exercises the same crash surface headlessly on every
 /// `cargo test`, with no reliance on remembering to gate a new call site.
 ///

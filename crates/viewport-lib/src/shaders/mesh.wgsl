@@ -900,7 +900,6 @@ fn compute_lit(
 
         // Plugin shading hooks: the composer fills the shade-slot regions in
         // plugin-composed modules; in the base module they are inert comments.
-        // See docs/issues/lighting-shader-injection-seam.md for the contract.
         // <viewport-shade-slot:surface>
         // </viewport-shade-slot:surface>
 
