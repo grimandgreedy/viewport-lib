@@ -678,7 +678,7 @@ impl Showcase for DecalCoverageShowcase {
             let vol = Arc::new(vol);
             if let Ok(id) = ctx
                 .session
-                .resources_mut()
+                .renderer_mut()
                 .upload_volume_for_mc(ctx.device, ctx.queue, &vol)
             {
                 self.mc_id = Some(id);

@@ -231,7 +231,7 @@ pub(crate) struct ProjectedTetResources {
 }
 
 /// Selection-outline and x-ray pipelines, the offscreen mask/composite targets,
-/// and their layouts. The mask/edge/xray/splat pipelines are built eagerly at
+/// and their layouts. The mask/edge/xray pipelines are built eagerly at
 /// init; the offscreen textures and composite pipelines are lazily created.
 pub(crate) struct OutlineResources {
     /// Group 1 layout for OutlineUniform (mask/xray pipelines).
@@ -577,10 +577,6 @@ pub struct DeviceResources {
     /// Full-screen ground-plane pipeline, uniform, and bind group.
     /// See `resources::ground_plane::GroundPlaneResources`.
     pub(crate) ground: crate::resources::ground_plane::GroundPlaneResources,
-
-    // --- GPU marching cubes (lazily created) ---
-    /// Marching-cubes compute/render pipelines, layouts, case tables, and per-item volumes.
-    pub(crate) mc: crate::resources::volume::gpu_marching_cubes::McResources,
 
     // --- GPU particle systems ---
     /// Particle compute/draw pipelines, their layouts, and the live systems.

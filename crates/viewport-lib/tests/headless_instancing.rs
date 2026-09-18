@@ -167,7 +167,6 @@ fn mc_external_scalar_drives_isosurface() {
         spacing,
     };
     let volume_id = renderer
-        .resources_mut()
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
@@ -241,7 +240,6 @@ fn mc_external_scalar_drives_isosurface() {
     // Attach the external source and write the sphere field into it.
     queue.write_buffer(&scalar_src, 0, bytemuck::cast_slice(&sphere));
     renderer
-        .resources_mut()
         .set_mc_scalar_source_buffer(volume_id, scalar_src.clone(), 0)
         .unwrap();
     let with_sphere = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);

@@ -43,8 +43,9 @@ pub struct ResidentBytes {
     /// draws them, so their bytes are reported through
     /// [`plugin_bytes`](Self::plugin_bytes).
     pub gaussian_splat_bytes: u64,
-    /// GPU buffer bytes across every resident marching-cubes volume (all slab
-    /// buffers of every live volume).
+    /// Always zero: the marching-cubes volumes now live with the item type that
+    /// triangulates them, so their bytes are reported through
+    /// [`plugin_bytes`](Self::plugin_bytes).
     pub mc_volume_bytes: u64,
     /// GPU bytes across every resident direct-volume 3D texture
     /// (`upload_volume`, the `R32Float` fields a `VolumeItem` ray-marches).
@@ -163,7 +164,7 @@ impl crate::resources::DeviceResources {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.content.textures.allocated_bytes(),
             gaussian_splat_bytes: 0,
-            mc_volume_bytes: self.mc_volume_resident_bytes(),
+            mc_volume_bytes: 0,
             scivis_bytes,
             volume_bytes: self.volume_resident_bytes(),
             projected_tet_bytes: self.content.projected_tet_store.allocated_bytes(),

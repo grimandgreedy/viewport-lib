@@ -1,5 +1,4 @@
 /// GPU marching cubes compute pipeline.
-pub mod gpu_marching_cubes;
 /// Scatter-volume participating-media pipeline state and uploads.
 /// Sparse voxel grid topology processing (boundary face extraction).
 pub mod sparse_volume;

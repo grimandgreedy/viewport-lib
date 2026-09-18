@@ -2457,7 +2457,6 @@ impl DeviceResources {
                 skybox_pipeline,
             },
             pick: crate::resources::types::PickResources::default(),
-            mc: crate::resources::volume::gpu_marching_cubes::McResources::default(),
 
             particle: crate::resources::gpu::gpu_particles::ParticleResources::new(device),
             external_instances:

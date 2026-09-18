@@ -3,11 +3,9 @@
 //! pipelines, the shadow, outline-mask and pick pipelines, and the shared case
 //! tables.
 //!
-//! The uploaded volumes live in `resources`, because `upload_volume_for_mc` and
-//! `McVolumeId` are consumer API and the store is wired into the resident-byte
-//! accounting and the async upload runner. Nothing outside this type reads them. This module
-//! reads the store each prepare and clones the per-slab buffer handles it needs
-//! into [`McFrame`], so the draw hooks never need a borrow of it.
+//! The uploaded volumes live beside this module in `store.rs`. This module
+//! reads that store each prepare and clones the per-slab buffer handles it
+//! needs into [`McFrame`], so the draw hooks never need a borrow of it.
 
 use crate::geometry::marching_cubes::TRI_TABLE;
 use crate::gpu::util::DeviceExt as _;
@@ -449,7 +447,7 @@ impl McGpu {
     pub(super) fn run_jobs(
         &self,
         device: &crate::gpu::Device,
-        resources: &DeviceResources,
+        volumes: &super::store::McVolumeStore,
         jobs: &[GpuMarchingCubesItem],
     ) -> (Vec<McFrame>, Option<crate::gpu::CommandBuffer>) {
         if jobs.is_empty() {
@@ -481,7 +479,7 @@ impl McGpu {
             if scalar_copied.contains(&job.volume_id.index) {
                 continue;
             }
-            let Some(vol) = resources.mc_volume(job.volume_id) else {
+            let Some(vol) = volumes.get(job.volume_id) else {
                 continue;
             };
             if let Some(src) = &vol.external_scalar {
@@ -499,7 +497,7 @@ impl McGpu {
         }
 
         for job in jobs {
-            let Some(vol) = resources.mc_volume(job.volume_id) else {
+            let Some(vol) = volumes.get(job.volume_id) else {
                 continue;
             };
 

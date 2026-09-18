@@ -357,15 +357,6 @@ mod tests {
         data
     }
 
-    fn sample_volume_struct() -> VolumeData {
-        VolumeData {
-            data: sample_volume_data(),
-            dims: [8, 8, 8],
-            origin: [0.0, 0.0, 0.0],
-            spacing: [1.0, 1.0, 1.0],
-        }
-    }
-
     fn drive_until_ready(
         resources: &mut DeviceResources,
         device: &crate::gpu::Device,
@@ -536,32 +527,5 @@ mod tests {
             err,
             crate::error::ViewportError::JobResultMissing { .. }
         ));
-    }
-
-    #[test]
-    fn begin_upload_volume_for_mc_drains_to_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_volume_for_mc(&device, &queue, sample_volume_struct());
-        drive_until_ready(&mut resources, &device, &queue, job, "volume_mc");
-        let _id = resources.upload_result_volume_mc(job).expect("ready");
-    }
-
-    #[test]
-    fn sync_upload_volume_for_mc_still_works() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let vol = sample_volume_struct();
-        let _id = resources
-            .upload_volume_for_mc(&device, &queue, &vol)
-            .expect("upload ok");
     }
 }

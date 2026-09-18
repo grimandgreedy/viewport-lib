@@ -150,10 +150,7 @@ impl App {
                 origin,
                 spacing,
             };
-            match renderer
-                .resources_mut()
-                .upload_volume_for_mc(&self.device, &self.queue, &vol)
-            {
+            match renderer.upload_volume_for_mc(&self.device, &self.queue, &vol) {
                 Ok(id) => {
                     self.is_state.gmc_volume_id = Some(id);
                 }

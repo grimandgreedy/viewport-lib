@@ -3,18 +3,23 @@
 //! and drawn with indirect draws. Consumers submit [`GpuMarchingCubesItem`]s on
 //! `SceneFrame::gpu_mc_items`; the renderer routes that field to this plugin.
 //!
-//! The volumes stay in the lib's store (`upload_volume_for_mc` and `McVolumeId`
-//! are consumer API); the plugin owns the pipelines and the per-frame extraction.
+//! The plugin owns the pipelines, the per-frame extraction, and the uploaded
+//! volumes themselves: `upload_volume_for_mc` hands back a [`McVolumeId`] that
+//! names a volume held here.
 
 mod pipeline;
+mod store;
 pub(crate) mod types;
 
+use crate::geometry::marching_cubes::VolumeData;
 use crate::plugin_api::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
     PickPassContext, PickRay, PluginItemCollection, RectPickContext, ShadowCastContext,
 };
 use crate::renderer::{GpuMarchingCubesItem, PickHit, PickId, PickMask};
 use crate::resources::HDR_COLOR_FORMAT;
+use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_volume_gpu_data};
+use types::McVolumeId;
 
 pub(crate) const TYPE_NAME: &str = "viewport.gpu_marching_cubes";
 
@@ -40,6 +45,8 @@ struct McPickItem {
 
 #[derive(Default)]
 pub(crate) struct GpuMarchingCubesPlugin {
+    /// The uploaded scalar volumes, owned by the type that triangulates them.
+    volumes: McVolumeStore,
     gpu: Option<pipeline::McGpu>,
     /// Per drawn item, rebuilt each prepare.
     frame: Vec<pipeline::McFrame>,
@@ -57,6 +64,10 @@ pub(crate) struct GpuMarchingCubesPlugin {
 impl ItemTypePlugin for GpuMarchingCubesPlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.volumes.allocated_bytes()
     }
 
     fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
@@ -84,11 +95,12 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         if items.is_empty() {
             return Vec::new();
         }
+        let volumes = &self.volumes;
         let gpu = self
             .gpu
             .get_or_insert_with(|| pipeline::McGpu::new(device, ctx.resources));
 
-        let (frame, buf) = gpu.run_jobs(device, ctx.resources, items);
+        let (frame, buf) = gpu.run_jobs(device, volumes, items);
         self.frame = frame;
 
         for entry in &self.frame {
@@ -318,6 +330,125 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
                 pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
                 pass.draw_indirect(&slab.indirect_buf, 0);
             }
+        }
+    }
+}
+
+impl GpuMarchingCubesPlugin {
+    /// Upload a scalar field, pre-allocating every slab's intermediate and
+    /// output buffer, and return its handle. Reached from
+    /// [`ViewportRenderer::upload_volume_for_mc`](crate::renderer::ViewportRenderer::upload_volume_for_mc).
+    pub(crate) fn upload(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        vol: &VolumeData,
+    ) -> crate::ViewportResult<McVolumeId> {
+        let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
+        Ok(self.volumes.insert_sized(gpu_data))
+    }
+
+    /// Drop a volume and its slab buffers. A stale handle is ignored.
+    pub(crate) fn free(&mut self, id: McVolumeId) {
+        self.volumes.remove(id);
+    }
+
+    /// Point a volume's scalar field at a caller-supplied buffer, refreshed
+    /// into the slab buffers before every dispatch.
+    pub(crate) fn set_scalar_source(
+        &mut self,
+        id: McVolumeId,
+        buffer: crate::gpu::Buffer,
+        offset_bytes: u64,
+    ) -> crate::ViewportResult<()> {
+        if !buffer.usage().contains(crate::gpu::BufferUsages::COPY_SRC) {
+            return Err(crate::ViewportError::ExternalBufferUsageMissing {
+                missing: "COPY_SRC",
+            });
+        }
+        let store_len = self.volumes.slot_count();
+        let vol = self
+            .volumes
+            .get_mut(id)
+            .ok_or(crate::ViewportError::StaleHandle {
+                index: id.index(),
+                count: store_len,
+            })?;
+        let [nx, ny, nz] = vol.dims;
+        let needed_bytes = nx as u64 * ny as u64 * nz as u64 * 4;
+        let available_bytes = buffer.size().saturating_sub(offset_bytes);
+        if offset_bytes % 4 != 0 || needed_bytes > available_bytes {
+            return Err(crate::ViewportError::McScalarSourceMismatch {
+                needed_bytes,
+                available_bytes,
+                offset_bytes,
+            });
+        }
+        vol.external_scalar = Some(McExternalScalarSource {
+            buffer,
+            offset_bytes,
+        });
+        Ok(())
+    }
+
+    /// Detach the external scalar source. The slab buffers keep whatever was
+    /// last copied in, so the isosurface freezes at the final field.
+    pub(crate) fn clear_scalar_source(&mut self, id: McVolumeId) -> crate::ViewportResult<()> {
+        let store_len = self.volumes.slot_count();
+        let vol = self
+            .volumes
+            .get_mut(id)
+            .ok_or(crate::ViewportError::StaleHandle {
+                index: id.index(),
+                count: store_len,
+            })?;
+        vol.external_scalar = None;
+        Ok(())
+    }
+
+    /// Submit the slab sizing and buffer allocation to a worker thread. The
+    /// volume is inserted, and its handle minted, when
+    /// [`take_upload_result`](Self::take_upload_result) collects the job.
+    pub(crate) fn begin_upload(
+        &self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        vol: VolumeData,
+    ) -> crate::resources::JobId {
+        let device = device.clone();
+        let queue = queue.clone();
+        jobs.try_submit_cpu(move |progress| {
+            progress.set(0.1);
+            let gpu_data = build_mc_volume_gpu_data(&device, &queue, &vol)?;
+            progress.set(0.95);
+            Ok(gpu_data)
+        })
+    }
+
+    /// Take a finished async upload's volume into the store and hand back its
+    /// handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<McVolumeId> {
+        match jobs.status(id) {
+            crate::resources::UploadStatus::Pending { .. } => {
+                Err(crate::error::ViewportError::JobNotReady)
+            }
+            crate::resources::UploadStatus::Unknown => {
+                Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                })
+            }
+            crate::resources::UploadStatus::Failed(e) => Err(e),
+            crate::resources::UploadStatus::Ready => match jobs.take::<McVolumeGpuData>(id) {
+                Some(gpu_data) => Ok(self.volumes.insert_sized(gpu_data)),
+                None => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
         }
     }
 }

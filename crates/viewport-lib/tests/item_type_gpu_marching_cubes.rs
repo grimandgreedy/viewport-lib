@@ -1,5 +1,6 @@
-//! Picking for the GPU marching cubes item type: GPU pick-id against the
-//! compute-generated isosurface, plus the CPU ray-march and rect select.
+//! The GPU marching cubes item type: the volumes it holds on the consumer's
+//! behalf, plus picking (GPU pick-id against the compute-generated isosurface,
+//! the CPU ray-march, and rect select).
 //!
 //! One file per item type, so a type's coverage travels with it.
 
@@ -42,7 +43,6 @@ fn gpu_pick_hits_marching_cubes() {
         spacing,
     };
     let volume_id = renderer
-        .resources_mut()
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
@@ -75,7 +75,6 @@ fn cpu_pick_hits_marching_cubes() {
 
     let vol = std::sync::Arc::new(radial_field());
     let volume_id = renderer
-        .resources_mut()
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
@@ -112,7 +111,6 @@ fn rect_pick_hits_marching_cubes() {
 
     let vol = std::sync::Arc::new(radial_field());
     let volume_id = renderer
-        .resources_mut()
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
@@ -177,4 +175,176 @@ fn radial_field() -> viewport_lib::VolumeData {
         origin,
         spacing,
     }
+}
+
+// ---------------------------------------------------------------------------
+// The volumes the item type holds
+// ---------------------------------------------------------------------------
+
+/// A small field with an isosurface somewhere in the middle of it.
+fn sample_volume() -> viewport_lib::VolumeData {
+    let dims = [8u32, 8, 8];
+    let data = (0..(dims[0] * dims[1] * dims[2]))
+        .map(|i| (i % 2) as f32)
+        .collect();
+    viewport_lib::VolumeData {
+        data,
+        dims,
+        origin: [0.0, 0.0, 0.0],
+        spacing: [1.0, 1.0, 1.0],
+    }
+}
+
+/// A buffer large enough to hold `sample_volume`'s scalars past `offset`.
+fn scalar_buffer(device: &wgpu::Device, bytes: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("test_scalar_src"),
+        size: bytes,
+        usage,
+        mapped_at_creation: false,
+    })
+}
+
+#[test]
+fn a_stale_mc_volume_handle_does_not_alias_after_slot_reuse() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let id1 = renderer
+        .upload_volume_for_mc(&device, &queue, &sample_volume())
+        .expect("upload a volume");
+    renderer.free_mc_volume(id1);
+
+    // The next upload reuses the freed slot at a new generation.
+    let id2 = renderer
+        .upload_volume_for_mc(&device, &queue, &sample_volume())
+        .expect("upload a second volume");
+    assert_ne!(id1, id2, "the reused slot must carry a new generation");
+
+    // The live handle resolves; the stale one does not, so it cannot reach the
+    // volume now occupying its slot.
+    renderer
+        .clear_mc_scalar_source(id2)
+        .expect("a live handle resolves");
+    assert!(matches!(
+        renderer.clear_mc_scalar_source(id1),
+        Err(viewport_lib::error::ViewportError::StaleHandle { .. })
+    ));
+}
+
+#[test]
+fn mc_volume_bytes_are_reported_and_reclaimed() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let baseline = renderer.resident_bytes().plugin_bytes;
+
+    let id = renderer
+        .upload_volume_for_mc(&device, &queue, &sample_volume())
+        .expect("upload a volume");
+    assert!(
+        renderer.resident_bytes().plugin_bytes > baseline,
+        "an uploaded volume must count toward the plugin working set"
+    );
+
+    renderer.free_mc_volume(id);
+    assert_eq!(
+        renderer.resident_bytes().plugin_bytes,
+        baseline,
+        "freeing a volume must drop its slab buffers out of the resident total"
+    );
+}
+
+#[test]
+fn the_mc_scalar_source_round_trips_and_rejects_bad_inputs() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let id = renderer
+        .upload_volume_for_mc(&device, &queue, &sample_volume())
+        .expect("upload a volume");
+
+    // 8x8x8 volume = 512 nodes = 2048 bytes; the source sits at offset 64.
+    let buf = scalar_buffer(
+        &device,
+        2048 + 64,
+        wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+    );
+    renderer
+        .set_mc_scalar_source_buffer(id, buf, 64)
+        .expect("a large enough COPY_SRC buffer is accepted");
+    renderer.clear_mc_scalar_source(id).expect("and detaches");
+
+    // Too small.
+    let small = scalar_buffer(&device, 128, wgpu::BufferUsages::COPY_SRC);
+    assert!(matches!(
+        renderer.set_mc_scalar_source_buffer(id, small, 0),
+        Err(viewport_lib::error::ViewportError::McScalarSourceMismatch {
+            needed_bytes: 2048,
+            available_bytes: 128,
+            ..
+        })
+    ));
+
+    // Misaligned offset.
+    let buf = scalar_buffer(&device, 4096, wgpu::BufferUsages::COPY_SRC);
+    assert!(matches!(
+        renderer.set_mc_scalar_source_buffer(id, buf, 2),
+        Err(viewport_lib::error::ViewportError::McScalarSourceMismatch { .. })
+    ));
+
+    // Missing COPY_SRC usage.
+    let storage_only = scalar_buffer(&device, 4096, wgpu::BufferUsages::STORAGE);
+    assert!(matches!(
+        renderer.set_mc_scalar_source_buffer(id, storage_only, 0),
+        Err(
+            viewport_lib::error::ViewportError::ExternalBufferUsageMissing {
+                missing: "COPY_SRC"
+            }
+        )
+    ));
+}
+
+#[test]
+fn begin_upload_volume_for_mc_drains_to_a_handle() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let job = renderer.begin_upload_volume_for_mc(&device, &queue, sample_volume());
+    for _ in 0..200 {
+        renderer.resources_mut().process_uploads(&device, &queue);
+        match renderer.resources().upload_status(job) {
+            viewport_lib::resources::UploadStatus::Ready => break,
+            viewport_lib::resources::UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
+        }
+    }
+
+    let id = renderer
+        .upload_result_volume_mc(job)
+        .expect("the finished job yields a handle");
+    assert!(
+        renderer.resident_bytes().plugin_bytes > 0,
+        "the volume is in the store once its handle is taken"
+    );
+
+    // The result is taken once; a second take has nothing to hand back.
+    assert!(matches!(
+        renderer.upload_result_volume_mc(job),
+        Err(viewport_lib::error::ViewportError::JobResultMissing { .. })
+    ));
+    renderer.free_mc_volume(id);
 }

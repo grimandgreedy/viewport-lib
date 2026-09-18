@@ -133,12 +133,12 @@ pub(crate) use self::types::{
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
-pub use self::volume::gpu_marching_cubes::McVolumeId;
 pub use self::volume::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 pub use crate::renderer::GpuMarchingCubesItem;
+pub use crate::renderer::item_plugins::gpu_marching_cubes::types::McVolumeId;
 pub use crate::renderer::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };

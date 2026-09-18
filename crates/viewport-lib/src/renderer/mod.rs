@@ -3014,33 +3014,79 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         vol: &crate::geometry::marching_cubes::VolumeData,
     ) -> crate::ViewportResult<crate::resources::McVolumeId> {
-        self.resources.upload_volume_for_mc(device, queue, vol)
+        self.gpu_marching_cubes_plugin_mut()?
+            .upload(device, queue, vol)
     }
 
     /// Release a marching-cubes volume and its slab buffers.
+    ///
+    /// Dropping the buffers takes the volume out of
+    /// [`resident_bytes`](Self::resident_bytes) immediately; wgpu defers the
+    /// real GPU free until in-flight commands referencing them complete. The
+    /// emptied slot is reused by a later upload, at a new generation, so the
+    /// freed handle cannot alias its successor.
     pub fn free_mc_volume(&mut self, id: crate::resources::McVolumeId) {
-        self.resources.free_mc_volume(id)
+        if let Ok(plugin) = self.gpu_marching_cubes_plugin_mut() {
+            plugin.free(id);
+        }
     }
 
     /// Feed a marching-cubes volume from a caller-supplied buffer, refreshed
     /// before every dispatch so the isosurface tracks it with no CPU upload.
+    ///
+    /// The buffer holds one `f32` per volume node in x-fastest order
+    /// (`index = x + y * nx + z * nx * ny`), matching `VolumeData::data`,
+    /// starting at `offset_bytes`. It needs `COPY_SRC` usage and
+    /// `offset_bytes` must be a multiple of 4. The renderer keeps a clone of
+    /// the buffer handle; if the consumer reallocates it, call this again with
+    /// the new buffer.
+    ///
+    /// # Errors
+    ///
+    /// [`StaleHandle`](crate::error::ViewportError::StaleHandle) if `id` does
+    /// not resolve to a live volume,
+    /// [`ExternalBufferUsageMissing`](crate::error::ViewportError::ExternalBufferUsageMissing)
+    /// if the buffer lacks `COPY_SRC`, or
+    /// [`McScalarSourceMismatch`](crate::error::ViewportError::McScalarSourceMismatch)
+    /// if the offset is misaligned or the volume's scalars do not fit in the
+    /// buffer past `offset_bytes`.
     pub fn set_mc_scalar_source_buffer(
         &mut self,
         id: crate::resources::McVolumeId,
         buffer: crate::gpu::Buffer,
         offset_bytes: u64,
     ) -> crate::ViewportResult<()> {
-        self.resources
-            .set_mc_scalar_source_buffer(id, buffer, offset_bytes)
+        self.gpu_marching_cubes_plugin_mut()?
+            .set_scalar_source(id, buffer, offset_bytes)
     }
 
     /// Detach the external scalar source, freezing the isosurface at the last
     /// field copied in.
+    ///
+    /// # Errors
+    ///
+    /// [`StaleHandle`](crate::error::ViewportError::StaleHandle) if `id` does
+    /// not resolve to a live volume.
     pub fn clear_mc_scalar_source(
         &mut self,
         id: crate::resources::McVolumeId,
     ) -> crate::ViewportResult<()> {
-        self.resources.clear_mc_scalar_source(id)
+        self.gpu_marching_cubes_plugin_mut()?
+            .clear_scalar_source(id)
+    }
+
+    /// The registered GPU marching cubes item type, which holds the uploaded
+    /// volumes.
+    fn gpu_marching_cubes_plugin_mut(
+        &mut self,
+    ) -> crate::error::ViewportResult<
+        &mut crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin,
+    > {
+        let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
+        self.item_type_plugins
+            .get_mut(name)
+            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })
     }
 
     /// Create a persistent GPU particle system, returning its handle.
@@ -3281,25 +3327,48 @@ impl ViewportRenderer {
         self.resources.free_volume(id)
     }
 
-    /// Start an asynchronous marching-cubes-ready volume upload. See
-    /// [`DeviceResources::begin_upload_volume_for_mc`].
+    /// Start an asynchronous marching-cubes-ready volume upload.
+    ///
+    /// Returns a [`JobId`](crate::resources::JobId) immediately. Slab sizing
+    /// and the scalar, intermediate and output buffer allocation run on a
+    /// worker thread against cloned `Device` and `Queue` handles. Ownership of
+    /// `vol` transfers into the worker. The worker surfaces
+    /// [`McBufferTooLarge`](crate::error::ViewportError::McBufferTooLarge)
+    /// through `UploadStatus::Failed` when the device's
+    /// `max_storage_buffer_binding_size` cannot fit a single Z-cell layer.
     pub fn begin_upload_volume_for_mc(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         vol: crate::geometry::marching_cubes::VolumeData,
     ) -> crate::resources::JobId {
-        self.resources
-            .begin_upload_volume_for_mc(device, queue, vol)
+        let jobs = crate::resources::Jobs::new(&self.resources);
+        let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
+        let plugin: &mut crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin =
+            self.item_type_plugins
+                .get_mut(name)
+                .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+                .expect("the built-in marching cubes item type is registered at construction");
+        plugin.begin_upload(&jobs, device, queue, vol)
     }
 
     /// Take the [`McVolumeId`](crate::resources::McVolumeId) produced by a
     /// completed [`begin_upload_volume_for_mc`](Self::begin_upload_volume_for_mc) job.
+    ///
+    /// The volume enters the store here, so a handle is minted on the call that
+    /// collects the job rather than on a background thread.
     pub fn upload_result_volume_mc(
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::McVolumeId> {
-        self.resources.upload_result_volume_mc(id)
+        let jobs = crate::resources::Jobs::new(&self.resources);
+        let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
+        let plugin: &mut crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin =
+            self.item_type_plugins
+                .get_mut(name)
+                .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+                .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
+        plugin.take_upload_result(&jobs, id)
     }
 
     /// Start an asynchronous boundary-only volume mesh upload. See

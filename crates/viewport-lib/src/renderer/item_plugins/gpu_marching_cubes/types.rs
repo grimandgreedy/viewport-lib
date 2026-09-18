@@ -1,5 +1,17 @@
-use crate::resources::McVolumeId;
 use crate::scene::material::{ItemSettings, Material};
+
+crate::resources::handle::slot_handle! {
+    /// Handle to a volume scalar field uploaded for GPU marching cubes.
+    ///
+    /// Returned by [`ViewportRenderer::upload_volume_for_mc`](crate::renderer::ViewportRenderer::upload_volume_for_mc). Pass to
+    /// [`GpuMarchingCubesItem`](crate::renderer::GpuMarchingCubesItem) to select which volume to triangulate each frame.
+    ///
+    /// Carries the slot index plus the generation the slot had when the handle
+    /// was issued. A handle whose volume was removed (its slot freed and reused
+    /// by a later upload) resolves to nothing on lookup, so it cannot alias the
+    /// volume now in its slot.
+    pub struct McVolumeId;
+}
 
 /// One GPU marching cubes draw item submitted per frame.
 ///

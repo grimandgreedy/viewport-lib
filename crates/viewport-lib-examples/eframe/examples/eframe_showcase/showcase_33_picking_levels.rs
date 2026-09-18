@@ -635,11 +635,7 @@ impl App {
                 spacing,
             };
             let vol_arc = std::sync::Arc::new(vol);
-            if let Ok(id) =
-                renderer
-                    .resources_mut()
-                    .upload_volume_for_mc(&self.device, &self.queue, &vol_arc)
-            {
+            if let Ok(id) = renderer.upload_volume_for_mc(&self.device, &self.queue, &vol_arc) {
                 self.pl_state.mc_volume_id = Some(id);
                 self.pl_state.mc_volume_data = Some(vol_arc);
             }
@@ -868,15 +864,11 @@ impl App {
         // --- Decal texture: a target sticker uploaded once, shared by both
         // demo decals (pick_id 60 and 61). ---
         let (dw, dh, drgba) = make_pl_decal_texture();
-        if let Ok(tex) =
-            renderer
-                .resources_mut()
-                .upload_texture(
-                    &self.device,
-                    &self.queue,
-                    vpl::TextureData::srgb(dw, dh, drgba.to_vec()),
-                )
-        {
+        if let Ok(tex) = renderer.resources_mut().upload_texture(
+            &self.device,
+            &self.queue,
+            vpl::TextureData::srgb(dw, dh, drgba.to_vec()),
+        ) {
             self.pl_state.decal_texture_id = Some(tex);
         }
 
