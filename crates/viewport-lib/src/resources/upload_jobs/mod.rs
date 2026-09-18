@@ -45,8 +45,6 @@ pub(crate) struct JobResults {
     pub plugin: std::sync::Mutex<
         std::collections::HashMap<JobId, ResultSlot<Box<dyn std::any::Any + Send>>>,
     >,
-    /// Async polyline uploads.
-    pub polyline: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::PolylineId>>>,
     /// Async point cloud uploads.
     /// Async glyph set uploads.
     /// Async tensor glyph set uploads.

@@ -59,9 +59,9 @@ pub struct ResidentBytes {
     /// transparent volume meshes a `VolumeMeshItem` renders through
     /// `projected_tet_id`. Dropped on `free_projected_tet`.
     pub projected_tet_bytes: u64,
-    /// GPU buffer bytes across every pre-uploaded scivis curve resource
-    /// (polylines, tubes, streamtubes, ribbons, point clouds, glyph sets,
-    /// tensor glyph sets, and sprite sets).
+    /// Always zero: the pre-uploaded curves, clouds, glyph sets and sprite
+    /// batches now live with the item types that draw them, so their bytes are
+    /// reported through [`plugin_bytes`](Self::plugin_bytes).
     pub scivis_bytes: u64,
     /// GPU bytes reported by registered item-type plugins that hold content in
     /// stores of their own, summed from
@@ -151,13 +151,12 @@ impl crate::resources::DeviceResources {
     /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
     /// [`ResidentBytes`].
     pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
-        let scivis_bytes = self.content.polyline_store.allocated_bytes();
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.content.textures.allocated_bytes(),
             gaussian_splat_bytes: 0,
             mc_volume_bytes: 0,
-            scivis_bytes,
+            scivis_bytes: 0,
             volume_bytes: self.volume_resident_bytes(),
             projected_tet_bytes: self.content.projected_tet_store.allocated_bytes(),
             // Plugins are registered with the renderer, not here; filled in by

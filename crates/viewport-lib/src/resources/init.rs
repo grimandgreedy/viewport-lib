@@ -2362,7 +2362,6 @@ impl DeviceResources {
                 material_bind_groups: std::collections::HashMap::new(),
                 texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
-                polyline_store: crate::resources::PolylineStore::default(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),

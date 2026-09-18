@@ -471,3 +471,213 @@ fn a_reference_ribbon_draws_and_picks() {
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(7373)));
 }
+
+// ---------------------------------------------------------------------------
+// The streamtubes the item type holds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_uploaded_streamtube_resolves_until_it_is_dropped() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let baseline = renderer.resident_bytes().plugin_bytes;
+
+    let item = {
+        let mut item = viewport_lib::renderer::StreamtubeItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        item.strip_lengths = vec![3];
+        item.radius = 0.2;
+        item
+    };
+    let id = renderer.upload_streamtube(&device, &queue, &item);
+    assert!(
+        renderer.resident_bytes().plugin_bytes > baseline,
+        "an uploaded streamtube counts toward the plugin working set"
+    );
+    assert!(renderer.replace_streamtube(&device, &queue, id, &item));
+
+    // A dropped handle stops resolving, and the freed slot comes back at a new
+    // generation so it cannot alias its successor.
+    assert!(renderer.drop_streamtube(id));
+    assert!(!renderer.drop_streamtube(id), "a handle drops once");
+    let reused = renderer.upload_streamtube(&device, &queue, &item);
+    assert_ne!(id, reused, "the reused slot carries a new generation");
+    assert!(!renderer.replace_streamtube(&device, &queue, id, &item));
+    assert!(renderer.drop_streamtube(reused));
+    assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
+}
+
+#[test]
+fn begin_upload_streamtube_drains_to_a_handle() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let job = renderer.begin_upload_streamtube(&device, &queue, {
+        let mut item = viewport_lib::renderer::StreamtubeItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        item.strip_lengths = vec![3];
+        item.radius = 0.2;
+        item
+    });
+    for _ in 0..200 {
+        renderer.resources_mut().process_uploads(&device, &queue);
+        match renderer.upload_status(job) {
+            viewport_lib::resources::UploadStatus::Ready => break,
+            viewport_lib::resources::UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                std::thread::sleep(std::time::Duration::from_millis(5))
+            }
+            viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
+        }
+    }
+    let id = renderer
+        .upload_result_streamtube(job)
+        .expect("the finished job yields a handle");
+    assert!(renderer.drop_streamtube(id));
+}
+
+// ---------------------------------------------------------------------------
+// The tubes the item type holds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_uploaded_tube_resolves_until_it_is_dropped() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let baseline = renderer.resident_bytes().plugin_bytes;
+
+    let item = {
+        let mut item = viewport_lib::renderer::TubeItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        item.strip_lengths = vec![3];
+        item.radius = 0.2;
+        item
+    };
+    let id = renderer.upload_tube(&device, &queue, &item);
+    assert!(
+        renderer.resident_bytes().plugin_bytes > baseline,
+        "an uploaded tube counts toward the plugin working set"
+    );
+    assert!(renderer.replace_tube(&device, &queue, id, &item));
+
+    // A dropped handle stops resolving, and the freed slot comes back at a new
+    // generation so it cannot alias its successor.
+    assert!(renderer.drop_tube(id));
+    assert!(!renderer.drop_tube(id), "a handle drops once");
+    let reused = renderer.upload_tube(&device, &queue, &item);
+    assert_ne!(id, reused, "the reused slot carries a new generation");
+    assert!(!renderer.replace_tube(&device, &queue, id, &item));
+    assert!(renderer.drop_tube(reused));
+    assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
+}
+
+#[test]
+fn begin_upload_tube_drains_to_a_handle() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let job = renderer.begin_upload_tube(&device, &queue, {
+        let mut item = viewport_lib::renderer::TubeItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        item.strip_lengths = vec![3];
+        item.radius = 0.2;
+        item
+    });
+    for _ in 0..200 {
+        renderer.resources_mut().process_uploads(&device, &queue);
+        match renderer.upload_status(job) {
+            viewport_lib::resources::UploadStatus::Ready => break,
+            viewport_lib::resources::UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                std::thread::sleep(std::time::Duration::from_millis(5))
+            }
+            viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
+        }
+    }
+    let id = renderer
+        .upload_result_tube(job)
+        .expect("the finished job yields a handle");
+    assert!(renderer.drop_tube(id));
+}
+
+// ---------------------------------------------------------------------------
+// The ribbons the item type holds
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_uploaded_ribbon_resolves_until_it_is_dropped() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let baseline = renderer.resident_bytes().plugin_bytes;
+
+    let item = {
+        let mut item = viewport_lib::renderer::RibbonItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        item.strip_lengths = vec![3];
+        item.width = 0.3;
+        item
+    };
+    let id = renderer.upload_ribbon(&device, &queue, &item);
+    assert!(
+        renderer.resident_bytes().plugin_bytes > baseline,
+        "an uploaded ribbon counts toward the plugin working set"
+    );
+    assert!(renderer.replace_ribbon(&device, &queue, id, &item));
+
+    // A dropped handle stops resolving, and the freed slot comes back at a new
+    // generation so it cannot alias its successor.
+    assert!(renderer.drop_ribbon(id));
+    assert!(!renderer.drop_ribbon(id), "a handle drops once");
+    let reused = renderer.upload_ribbon(&device, &queue, &item);
+    assert_ne!(id, reused, "the reused slot carries a new generation");
+    assert!(!renderer.replace_ribbon(&device, &queue, id, &item));
+    assert!(renderer.drop_ribbon(reused));
+    assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
+}
+
+#[test]
+fn begin_upload_ribbon_drains_to_a_handle() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let job = renderer.begin_upload_ribbon(&device, &queue, {
+        let mut item = viewport_lib::renderer::RibbonItem::default();
+        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        item.strip_lengths = vec![3];
+        item.width = 0.3;
+        item
+    });
+    for _ in 0..200 {
+        renderer.resources_mut().process_uploads(&device, &queue);
+        match renderer.upload_status(job) {
+            viewport_lib::resources::UploadStatus::Ready => break,
+            viewport_lib::resources::UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                std::thread::sleep(std::time::Duration::from_millis(5))
+            }
+            viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
+        }
+    }
+    let id = renderer
+        .upload_result_ribbon(job)
+        .expect("the finished job yields a handle");
+    assert!(renderer.drop_ribbon(id));
+}

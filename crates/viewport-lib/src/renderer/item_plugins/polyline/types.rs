@@ -8,6 +8,15 @@ use crate::renderer::types::items::IDENTITY_MAT4;
 use crate::resources::ColourmapId;
 use crate::scene::material::ItemSettings;
 
+crate::resources::handle::slot_handle! {
+    /// Handle to a polyline uploaded once through
+    /// [`ViewportRenderer::upload_polyline`](crate::renderer::ViewportRenderer::upload_polyline).
+    ///
+    /// Name it from a [`PolylineRefItem`] to draw the stored curve at a
+    /// per-frame model transform without rebuilding its segment buffer.
+    pub struct PolylineId;
+}
+
 /// A polyline (stream tracer) item to render in the viewport.
 ///
 /// All streamlines for one source are concatenated into a single vertex buffer.

@@ -11,6 +11,7 @@
 
 mod decoration;
 mod pipeline;
+mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
@@ -50,6 +51,10 @@ impl PluginItemCollection for Vec<PolylineRefItem> {
 
 #[derive(Default)]
 pub(crate) struct PolylinePlugin {
+    /// The pre-uploaded polylines, owned by the type that draws them. The
+    /// pipelines and the per-frame upload they go through stay with the shared
+    /// line substrate; only the store is this type's.
+    stored: store::PolylineStore,
     gpu: Option<pipeline::PolylineGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references.
@@ -66,6 +71,10 @@ pub(crate) struct PolylinePlugin {
 impl ItemTypePlugin for PolylinePlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.stored.allocated_bytes()
     }
 
     fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
@@ -127,7 +136,7 @@ impl ItemTypePlugin for PolylinePlugin {
             if ref_item.settings.hidden {
                 continue;
             }
-            let Some(entry) = ctx.resources.content.polyline_store.get(ref_item.source) else {
+            let Some(entry) = self.stored.get(ref_item.source) else {
                 continue;
             };
             let mut gpu_data = entry.clone();
@@ -483,10 +492,103 @@ impl ItemTypePlugin for PolylinePlugin {
     }
 }
 
-#[cfg(test)]
 impl PolylinePlugin {
     /// Number of items the last `prepare` produced draw data for.
+    #[cfg(test)]
     pub(crate) fn drawn_count(&self) -> usize {
         self.frame.len()
     }
+
+    /// Pre-upload a polyline and return its handle.
+    ///
+    /// The build goes through the shared line substrate, which is why this
+    /// takes `&mut DeviceResources`: the substrate's pipelines are compiled on
+    /// demand. The store the result lands in is this type's own.
+    pub(crate) fn upload(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &crate::renderer::PolylineItem,
+    ) -> types::PolylineId {
+        let gpu = build(device, queue, resources, item);
+        self.stored.insert_sized(gpu)
+    }
+
+    /// Drop a stored polyline. `false` when the handle does not resolve.
+    pub(crate) fn drop_stored(&mut self, id: types::PolylineId) -> bool {
+        self.stored.remove(id).is_some()
+    }
+
+    /// Replace the segments behind a live handle, keeping the handle.
+    pub(crate) fn replace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        id: types::PolylineId,
+        item: &crate::renderer::PolylineItem,
+    ) -> bool {
+        if !self.stored.contains(id) {
+            return false;
+        }
+        let gpu = build(device, queue, resources, item);
+        self.stored.replace_sized(id, gpu).is_some()
+    }
+
+    /// Hand a built polyline to the job runner so the handle is minted by the
+    /// call that collects it.
+    ///
+    /// Unlike the other stored types, the segment buffer is built here rather
+    /// than on the worker: a polyline goes through the shared line substrate,
+    /// whose pipelines and layouts belong to the renderer rather than to this
+    /// plugin, so the build cannot travel to a thread with no `DeviceResources`
+    /// borrow. A polyline is a vertex buffer and a uniform, so this is a small
+    /// amount of work to keep on the calling thread.
+    pub(crate) fn begin_upload(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: crate::renderer::PolylineItem,
+    ) -> crate::resources::JobId {
+        let gpu = build(device, queue, resources, &item);
+        jobs.submit_cpu(move || gpu)
+    }
+
+    /// Store the polyline a finished job carried and hand back its handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<types::PolylineId> {
+        match jobs.status(id) {
+            crate::resources::UploadStatus::Pending { .. } => {
+                Err(crate::error::ViewportError::JobNotReady)
+            }
+            crate::resources::UploadStatus::Failed(e) => Err(e),
+            _ => match jobs.take::<crate::resources::PolylineGpuData>(id) {
+                Some(gpu) => Ok(self.stored.insert_sized(gpu)),
+                None => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
+        }
+    }
+}
+
+/// Build one stored polyline through the shared line substrate.
+///
+/// The viewport size used for screen-space miter calculations is set from the
+/// most recent reference draw of the polyline, so a stationary caller can rely
+/// on it being correct after the first frame.
+fn build(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    resources: &crate::resources::DeviceResources,
+    item: &crate::renderer::PolylineItem,
+) -> crate::resources::PolylineGpuData {
+    resources.ensure_polyline_pipeline(device);
+    resources.upload_polyline_per_frame(device, queue, item, [1.0, 1.0])
 }

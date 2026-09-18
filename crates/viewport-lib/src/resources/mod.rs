@@ -79,16 +79,15 @@ pub use self::plugin_builders::{
     PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
     SHADOW_DEPTH_FORMAT,
 };
-pub use self::scivis::stores::PolylineId;
 pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
 pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
 pub use crate::renderer::item_plugins::point_cloud::types::PointCloudId;
+pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 pub use crate::renderer::item_plugins::sprite::types::{SpriteInstanceSetId, SpriteSetId};
 pub use crate::renderer::item_plugins::tensor_glyph::types::TensorGlyphSetId;
 // Gaussian splat upload vocabulary. Owned here (not in `renderer`) so nothing in
 // `resources` reaches up to `renderer` for these types.
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
-pub(crate) use self::scivis::stores::PolylineStore;
 pub use viewport_lib_types::data::point::{GaussianSplatData, ShDegree};
 pub use viewport_lib_types::ids::GaussianSplatId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the

@@ -2606,7 +2606,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::PolylineItem,
     ) -> crate::resources::PolylineId {
-        self.resources.upload_polyline(device, queue, item)
+        let host = self.polyline_host();
+        host.plugin.upload(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a polyline. Poll the returned job with
@@ -2618,7 +2619,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::PolylineItem,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_polyline(device, queue, item)
+        let host = self.polyline_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_polyline`](Self::begin_upload_polyline) job.
@@ -2626,7 +2629,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::PolylineId> {
-        self.resources.upload_result_polyline(id)
+        let host = self.polyline_host();
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a polyline handle, keeping the handle valid.
@@ -2638,12 +2642,13 @@ impl ViewportRenderer {
         id: crate::resources::PolylineId,
         item: &crate::renderer::PolylineItem,
     ) -> bool {
-        self.resources.replace_polyline(device, queue, id, item)
+        let host = self.polyline_host();
+        host.plugin.replace(device, queue, host.resources, id, item)
     }
 
     /// Release a polyline. `false` if the handle does not resolve.
     pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
-        self.resources.drop_polyline(id)
+        self.polyline_host().plugin.drop_stored(id)
     }
 
     /// Upload a streamtube for reuse across frames, returning its handle.
@@ -2864,6 +2869,15 @@ impl ViewportRenderer {
     /// Release a point cloud. `false` if the handle does not resolve.
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
         self.point_cloud_host().plugin.drop_stored(id)
+    }
+
+    /// The registered polyline item type, which holds the uploaded curves.
+    fn polyline_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::polyline::PolylinePlugin>
+    {
+        self.item_type_plugin_host(crate::renderer::item_plugins::polyline::TYPE_NAME)
+            .expect("the built-in polyline item type is registered at construction")
     }
 
     /// The registered streamtube item type, which holds the uploaded curves.

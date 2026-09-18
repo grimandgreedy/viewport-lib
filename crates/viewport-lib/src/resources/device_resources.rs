@@ -296,9 +296,6 @@ pub struct ContentResources {
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,
-    /// Pre-uploaded polyline storage; entries are referenced from per-frame
-    /// `PolylineRefItem`s.
-    pub(crate) polyline_store: super::PolylineStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.
