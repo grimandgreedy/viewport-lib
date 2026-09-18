@@ -27,8 +27,11 @@ pub(super) struct ParticleGpu {
 }
 
 impl ParticleGpu {
-    pub(super) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
-        let layouts = &resources.particle.layouts;
+    pub(super) fn new(
+        device: &crate::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &super::store::ParticleLayouts,
+    ) -> Self {
         // Compute pipelines.
         let emit_shader = crate::resources::builders::wgsl_module(
             device,

@@ -3286,22 +3286,32 @@ impl ViewportRenderer {
     }
 
     /// Create a persistent GPU particle system, returning its handle.
-    ///
-    /// Prefer this over the [`DeviceResources`] method of the same name: it is
-    /// the call that keeps working once an item type owns its own storage.
     pub fn create_gpu_particle_system(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         config: &crate::resources::GpuParticleSystemConfig,
     ) -> crate::resources::GpuParticleSystemId {
-        self.resources
-            .create_gpu_particle_system(device, queue, config)
+        let host = self.gpu_particles_host();
+        host.plugin
+            .create_system(device, queue, host.resources, config)
     }
 
-    /// Release a GPU particle system. The handle stops resolving.
+    /// Release a GPU particle system. The handle stops resolving and its
+    /// buffers are freed.
     pub fn drop_gpu_particle_system(&mut self, id: crate::resources::GpuParticleSystemId) {
-        self.resources.drop_gpu_particle_system(id)
+        self.gpu_particles_host().plugin.drop_system(id)
+    }
+
+    /// The registered GPU particle item type, which holds the live systems.
+    fn gpu_particles_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<
+        '_,
+        crate::renderer::item_plugins::gpu_particles::GpuParticlesPlugin,
+    > {
+        self.item_type_plugin_host(crate::renderer::item_plugins::gpu_particles::TYPE_NAME)
+            .expect("the built-in GPU particle item type is registered at construction")
     }
 
     /// Create an instance set drawn from a caller-owned positions buffer.

@@ -4,7 +4,7 @@ pub(crate) mod builders;
 pub(crate) mod custom_data;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;
-/// GPU compute resources: clustered shading, hierarchical-Z, particles, and dynamic resolution.
+/// GPU compute resources: clustered shading, hierarchical-Z, and dynamic resolution.
 pub mod gpu;
 /// Ground-plane pipeline, uniform, and bind group.
 pub(crate) mod ground_plane;
@@ -47,7 +47,6 @@ pub mod volume;
 
 pub use self::gpu::compute_filter::ComputeFilterResult;
 pub use self::gpu::external_instances::{ExternalInstanceSetConfig, ExternalInstanceSetId};
-pub use self::gpu::gpu_particles::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 pub use self::handle::ContentHandle;
 pub use self::light_probes::{
     LightProbe, LightProbeSet, LightProbeVolume, SHCoefficients, evaluate_sh,
@@ -81,6 +80,9 @@ pub use self::plugin_builders::{
 };
 pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
 pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
+pub use crate::renderer::item_plugins::gpu_particles::types::{
+    GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender,
+};
 pub use crate::renderer::item_plugins::point_cloud::types::PointCloudId;
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 pub use crate::renderer::item_plugins::sprite::types::{SpriteInstanceSetId, SpriteSetId};

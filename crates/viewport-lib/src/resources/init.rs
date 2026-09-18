@@ -2444,7 +2444,6 @@ impl DeviceResources {
             },
             pick: crate::resources::types::PickResources::default(),
 
-            particle: crate::resources::gpu::gpu_particles::ParticleResources::new(device),
             external_instances:
                 crate::resources::gpu::external_instances::ExternalInstancesResources::default(),
             sub_highlight: crate::resources::types::SubHighlightResources::default(),

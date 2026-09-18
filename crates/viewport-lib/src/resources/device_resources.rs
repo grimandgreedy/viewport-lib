@@ -551,10 +551,6 @@ pub struct DeviceResources {
     /// See `resources::ground_plane::GroundPlaneResources`.
     pub(crate) ground: crate::resources::ground_plane::GroundPlaneResources,
 
-    // --- GPU particle systems ---
-    /// Particle compute/draw pipelines, their layouts, and the live systems.
-    pub(crate) particle: crate::resources::gpu::gpu_particles::ParticleResources,
-
     // --- External instance sets ---
     /// Consumer-buffer instanced mesh drawing (positions produced by the
     /// consumer's own GPU compute on the shared device).
