@@ -1,5 +1,10 @@
-//! Regression tests: a texture freed or replaced under a pre-uploaded batch
-//! has to reach the screen.
+//! Regression tests for the sprite and ribbon draw paths, at the level where
+//! the device validates them: render a frame and let wgpu object.
+//!
+//! Two families live here. The first is resource revalidation: a texture freed
+//! or replaced under a pre-uploaded batch has to reach the screen. The second
+//! is pipeline-variant selection: every key in a keyed variant set has to
+//! resolve to the pipeline built for it.
 //!
 //! Inline items are rebuilt from the submitted item every frame, so they pick
 //! up a texture change for free. A pre-uploaded batch does not: it is built
@@ -311,4 +316,55 @@ fn a_freed_texture_leaves_a_stored_ribbon_untextured() {
         "a stored ribbon must stop sampling a texture the host freed"
     );
     assert!(renderer.drop_ribbon(id));
+}
+
+// ---------------------------------------------------------------------------
+// Sprite pipeline-variant selection.
+// ---------------------------------------------------------------------------
+
+/// Every sprite blend draws on both paths, lit and unlit.
+///
+/// The keyed variant set is built by iterating the key space and read by a
+/// dense slot index. Those two orders disagreed, so a batch resolved to the
+/// pipeline built for a different key. Additive unlit resolved to AlphaBlend
+/// *lit*, whose layout wants a group-3 normal map that the unlit draw path does
+/// not bind, and the draw failed validation outright rather than merely looking
+/// wrong. Eight of the twelve keys were mismatched, so this walks all of them.
+#[test]
+fn every_sprite_blend_and_lit_combination_draws() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+
+    for hdr in [false, true] {
+        for blend in [
+            crate::renderer::SpriteBlend::AlphaBlend,
+            crate::renderer::SpriteBlend::Additive,
+            crate::renderer::SpriteBlend::Premultiplied,
+        ] {
+            for depth_write in [false, true] {
+                for lit in [false, true] {
+                    let mut renderer =
+                        ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+                    let mut item = crate::renderer::SpriteItem::default();
+                    item.positions = vec![[0.0, 0.0, 0.0]];
+                    item.default_size = 0.9;
+                    item.size_mode = crate::renderer::SpriteSizeMode::WorldSpace;
+                    item.blend = blend;
+                    item.depth_write = depth_write;
+                    item.lit = lit;
+
+                    let mut frame = camera();
+                    frame.scene.sprite_items.push(item);
+                    if !hdr {
+                        frame.effects.display.mode = crate::PipelineMode::Direct;
+                    }
+                    // A wrong-key pipeline fails device validation, so reaching
+                    // the end of the render is the assertion.
+                    let _ = renderer.render_offscreen(&device, &queue, &frame, W, H);
+                }
+            }
+        }
+    }
 }

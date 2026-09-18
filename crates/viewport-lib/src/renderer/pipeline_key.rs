@@ -103,13 +103,24 @@ pub(crate) struct PipelineVariantSet {
 }
 
 impl PipelineVariantSet {
+    /// Build one pipeline per key, placing each at its own
+    /// [`slot`](PipelineKey::slot).
+    ///
+    /// `all()` and `slot()` happen to enumerate in the same order here, so
+    /// pushing in iteration order would work today. Placing by slot does not
+    /// depend on that: they are two separate expressions of the same key, and
+    /// the sibling sprite set shipped a bug where they drifted apart and every
+    /// draw resolved to a pipeline built for a different key.
     pub fn build(mut build: impl FnMut(PipelineKey) -> crate::gpu::RenderPipeline) -> Self {
-        let mut variants: Vec<crate::gpu::RenderPipeline> = Vec::with_capacity(8);
+        let mut slots: Vec<Option<crate::gpu::RenderPipeline>> = (0..8).map(|_| None).collect();
         for key in PipelineKey::all() {
-            variants.push(build(key));
+            slots[key.slot()] = Some(build(key));
         }
         Self {
-            variants: variants
+            variants: slots
+                .into_iter()
+                .map(|v| v.unwrap_or_else(|| unreachable!("every slot is covered by all()")))
+                .collect::<Vec<_>>()
                 .try_into()
                 .unwrap_or_else(|_| unreachable!("PipelineKey::all() yields exactly 8 keys")),
         }

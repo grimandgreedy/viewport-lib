@@ -65,14 +65,27 @@ pub(crate) struct SpriteVariantSet {
     variants: [DualPipeline; 12],
 }
 
+/// Build one value per [`SpriteKey`] and place each at its own
+/// [`slot`](SpriteKey::slot), which is *not* the order `all()` yields them in.
+/// Collecting in iteration order instead puts variants under the wrong keys, so
+/// `get` hands back a pipeline belonging to a different blend or lit-ness: an
+/// unlit draw handed a lit pipeline fails validation, because the unlit draw
+/// path never binds the lit pipeline's group-3 normal map.
+fn place_by_slot<T>(mut build: impl FnMut(SpriteKey) -> T) -> Vec<T> {
+    let mut slots: Vec<Option<T>> = (0..12).map(|_| None).collect();
+    for key in SpriteKey::all() {
+        slots[key.slot()] = Some(build(key));
+    }
+    slots
+        .into_iter()
+        .map(|v| v.unwrap_or_else(|| unreachable!("every slot is covered by all()")))
+        .collect()
+}
+
 impl SpriteVariantSet {
-    pub fn build(mut build: impl FnMut(SpriteKey) -> DualPipeline) -> Self {
-        let mut variants: Vec<DualPipeline> = Vec::with_capacity(12);
-        for key in SpriteKey::all() {
-            variants.push(build(key));
-        }
+    pub fn build(build: impl FnMut(SpriteKey) -> DualPipeline) -> Self {
         Self {
-            variants: variants
+            variants: place_by_slot(build)
                 .try_into()
                 .unwrap_or_else(|_| unreachable!("SpriteKey::all() yields exactly 12 keys")),
         }
@@ -653,5 +666,49 @@ impl SpriteGpu {
                 resource: buf.as_entire_binding(),
             }],
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The variant set is built by iterating `SpriteKey::all()` and read by
+    /// `SpriteKey::slot()`. Those are two separate expressions of the same key
+    /// and they do not enumerate in the same order, so building into a vector
+    /// in iteration order files every variant under the wrong key.
+    ///
+    /// The visible symptom was a validation failure rather than a wrong-looking
+    /// sprite: an unlit Additive batch resolved to an AlphaBlend *lit*
+    /// pipeline, and the unlit draw path does not bind the group-3 normal map
+    /// that pipeline's layout requires.
+    #[test]
+    fn every_key_resolves_to_the_variant_built_for_it() {
+        // Build with the identity, so each slot holds the key it was built for.
+        let placed = place_by_slot(|key| key);
+        for key in SpriteKey::all() {
+            assert_eq!(
+                placed[key.slot()],
+                key,
+                "slot {} holds the variant built for a different key",
+                key.slot()
+            );
+        }
+    }
+
+    /// `slot()` has to be a bijection onto `0..12`, or two keys collide and a
+    /// third slot is never written.
+    #[test]
+    fn slots_are_dense_and_unique() {
+        let mut seen = [false; 12];
+        let mut count = 0;
+        for key in SpriteKey::all() {
+            let slot = key.slot();
+            assert!(!seen[slot], "slot {slot} claimed twice");
+            seen[slot] = true;
+            count += 1;
+        }
+        assert_eq!(count, 12, "all() must yield exactly 12 keys");
+        assert!(seen.iter().all(|s| *s), "every slot must be claimed");
     }
 }
