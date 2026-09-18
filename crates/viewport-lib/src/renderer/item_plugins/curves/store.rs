@@ -1,17 +1,32 @@
-use super::*;
+//! The curve payloads these item types hold on the consumer's behalf, and the
+//! per-frame GPU data every streamtube, tube and ribbon draw is built from.
+//!
+//! All three produce the same [`StreamtubeGpuData`], so the three builders sit
+//! together and the three stores are three handle spaces over one payload. An
+//! inline item is rebuilt each frame; a `*RefItem` names a curve uploaded once
+//! through the matching methods on
+//! [`ViewportRenderer`](crate::renderer::ViewportRenderer).
+//!
+//! The two bind group layouts live here rather than with the pipelines, because
+//! an upload builds its bind group against them and an upload can arrive long
+//! before the first frame that draws one.
+
+use crate::resources::{DeviceResources, Vertex};
+
+pub(crate) use super::types::{RibbonId, StreamtubeId, TubeId};
 
 /// The streamtube and tube bind group layout. Uploads build their bind groups
 /// against it, so it lives here with the stores rather than with the item
 /// types' pipelines, and is created up front: it is a layout, not a compiled
 /// pipeline. The streamtube and tube item types own their own render, pick and
 /// mask pipelines.
-pub(crate) struct StreamtubeResources {
+pub(super) struct StreamtubeResources {
     /// Bind group layout for streamtube and tube uniforms (group 1).
-    pub(crate) bgl: crate::gpu::BindGroupLayout,
+    pub(super) bgl: crate::gpu::BindGroupLayout,
 }
 
 impl StreamtubeResources {
-    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+    pub(super) fn new(device: &crate::gpu::Device) -> Self {
         Self {
             bgl: crate::resources::builders::uniform_bgl(
                 device,
@@ -30,14 +45,14 @@ impl StreamtubeResources {
 /// The layout adds an optional streak texture and sampler alongside the shared
 /// uniform binding. The fragment shader keys off `has_texture` and falls back
 /// to the resolved colour when no texture is bound.
-pub(crate) struct RibbonResources {
+pub(super) struct RibbonResources {
     /// Bind group layout for ribbons (group 1): uniform + optional streak
     /// texture + sampler.
-    pub(crate) bgl: crate::gpu::BindGroupLayout,
+    pub(super) bgl: crate::gpu::BindGroupLayout,
 }
 
 impl RibbonResources {
-    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+    pub(super) fn new(device: &crate::gpu::Device) -> Self {
         Self {
             bgl: crate::resources::builders::uniform_texture_sampler_bgl(
                 device,
@@ -49,20 +64,91 @@ impl RibbonResources {
     }
 }
 
-impl DeviceResources {
-    /// Upload one [`StreamtubeItem`] to the GPU and return draw data.
-    ///
-    /// Generates a connected tube mesh CPU-side using a parallel-transport frame along
-    /// each polyline strip, then uploads the result as a single owned vertex+index buffer.
-    /// Adjacent rings are joined by quads (2 triangles each) giving a smooth, seamless tube
-    /// without the z-fighting or inter-segment gaps that plagued the old instanced approach.
-    pub(crate) fn upload_streamtube_per_frame(
-        &self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::StreamtubeItem,
-        wireframe: bool,
-    ) -> StreamtubeGpuData {
+/// The renderer-owned handles one streamtube or tube upload binds, resolved
+/// from `DeviceResources` before the geometry is built.
+///
+/// wgpu layouts are cheap clonable handles and a LUT is 1 KiB of plain data, so
+/// resolving them up front is what lets the geometry work run on a worker
+/// thread, where no `DeviceResources` borrow exists.
+#[derive(Clone)]
+pub(super) struct TubeBindings {
+    bgl: crate::gpu::BindGroupLayout,
+    /// The item's colourmap as 256 RGBA8 entries, defaulted to mid-grey when
+    /// it names none and none is registered.
+    lut: [[u8; 4]; 256],
+}
+
+/// The same for a ribbon, which also binds an optional streak texture.
+#[derive(Clone)]
+pub(super) struct RibbonBindings {
+    bgl: crate::gpu::BindGroupLayout,
+    lut: [[u8; 4]; 256],
+    texture_view: crate::gpu::TextureView,
+    has_texture: u32,
+    sampler: crate::gpu::Sampler,
+}
+
+/// Resolve the CPU-side colourmap an item names. Viridis when it names none,
+/// mid-grey when nothing is registered yet.
+fn resolve_lut(
+    resources: &DeviceResources,
+    colourmap_id: Option<crate::resources::ColourmapId>,
+) -> [[u8; 4]; 256] {
+    let id = colourmap_id.or_else(|| {
+        resources.builtin_colourmap_id_checked(crate::resources::BuiltinColourmap::Viridis)
+    });
+    id.and_then(|id| resources.get_colourmap_rgba(id).copied())
+        .unwrap_or([[128u8; 4]; 256])
+}
+
+/// Resolve what a streamtube or tube upload needs from the renderer.
+pub(super) fn resolve_tube_bindings(
+    resources: &DeviceResources,
+    layouts: &StreamtubeResources,
+    colourmap_id: Option<crate::resources::ColourmapId>,
+) -> TubeBindings {
+    TubeBindings {
+        bgl: layouts.bgl.clone(),
+        lut: resolve_lut(resources, colourmap_id),
+    }
+}
+
+/// Resolve what a ribbon upload needs from the renderer, reporting a streak
+/// texture uploaded in the wrong colour space through the lib's slot check.
+pub(super) fn resolve_ribbon_bindings(
+    resources: &DeviceResources,
+    layouts: &RibbonResources,
+    item: &crate::renderer::RibbonItem,
+) -> RibbonBindings {
+    resources.check_texture_slot(item.texture_id, crate::resources::TextureSlot::RibbonAlbedo);
+    let (texture_view, has_texture) =
+        match item.texture_id.and_then(|id| resources.texture_view(id)) {
+            Some(view) => (view.clone(), 1),
+            None => (resources.fallback_colourmap_view().clone(), 0),
+        };
+    RibbonBindings {
+        bgl: layouts.bgl.clone(),
+        lut: resolve_lut(resources, item.colourmap_id),
+        texture_view,
+        has_texture,
+        sampler: resources.material_sampler().clone(),
+    }
+}
+
+/// Upload one [`StreamtubeItem`] to the GPU and return draw data.
+///
+/// Generates a connected tube mesh CPU-side using a parallel-transport frame along
+/// each polyline strip, then uploads the result as a single owned vertex+index buffer.
+/// Adjacent rings are joined by quads (2 triangles each) giving a smooth, seamless tube
+/// without the z-fighting or inter-segment gaps that plagued the old instanced approach.
+pub(super) fn build_streamtube(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    binds: &TubeBindings,
+    item: &crate::renderer::StreamtubeItem,
+    wireframe: bool,
+) -> StreamtubeGpuData {
+    {
         const SIDES: usize = 12; // tube cross-section resolution
 
         let radius = item.radius.max(f32::EPSILON);
@@ -304,7 +390,7 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let bgl = &self.streamtube.bgl;
+        let bgl = &binds.bgl;
         let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("streamtube_uniform_bg"),
             layout: bgl,
@@ -345,86 +431,29 @@ impl DeviceResources {
             _uniform_buf: uniform_buf,
         }
     }
+}
 
-    /// Pre-upload a streamtube and return a typed handle.
-    ///
-    /// Submit a [`StreamtubeRefItem`](crate::renderer::StreamtubeRefItem) on
-    /// `SceneFrame::streamtube_refs` each frame to draw the tube at a
-    /// per-frame model transform without rebuilding its mesh.
-    ///
-    /// Prefer [`ViewportRenderer::upload_streamtube`](crate::renderer::ViewportRenderer::upload_streamtube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_streamtube(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::StreamtubeItem,
-    ) -> crate::resources::StreamtubeId {
-        let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
-        self.content.streamtube_store.insert_sized(gpu)
-    }
-
-    /// Remove a pre-uploaded streamtube.
-    ///
-    /// Prefer [`ViewportRenderer::drop_streamtube`](crate::renderer::ViewportRenderer::drop_streamtube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
-        self.content.streamtube_store.remove(id).is_some()
-    }
-
-    /// Replace the geometry of a pre-uploaded streamtube, keeping the same id.
-    ///
-    /// Prefer [`ViewportRenderer::replace_streamtube`](crate::renderer::ViewportRenderer::replace_streamtube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn replace_streamtube(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::StreamtubeId,
-        item: &crate::renderer::StreamtubeItem,
-    ) -> bool {
-        if !self.content.streamtube_store.contains(id) {
-            return false;
-        }
-        let gpu = self.upload_streamtube_per_frame(device, queue, item, false);
-        self.content
-            .streamtube_store
-            .replace_sized(id, gpu)
-            .is_some()
-    }
-
-    // -------------------------------------------------------------------------
-    // General Tube representation
-    // -------------------------------------------------------------------------
-
-    /// Upload one [`TubeItem`] to the GPU and return draw data.
-    ///
-    /// Generates a connected tube mesh CPU-side using a parallel-transport frame.
-    /// Scalar values are baked into per-vertex colours using the CPU-side colourmap copy.
-    /// Uses the same streamtube pipeline; sets `use_vertex_colour=1` when scalars are present.
-    pub(crate) fn upload_tube_per_frame(
-        &self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::TubeItem,
-        wireframe: bool,
-    ) -> StreamtubeGpuData {
+/// Upload one [`TubeItem`](crate::renderer::TubeItem) to the GPU and return
+/// draw data.
+///
+/// Generates a connected tube mesh CPU-side using a parallel-transport frame.
+/// Scalar values are baked into per-vertex colours using the CPU-side colourmap
+/// copy. Uses the same streamtube pipeline; sets `use_vertex_colour = 1` when
+/// scalars are present.
+pub(super) fn build_tube(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    binds: &TubeBindings,
+    item: &crate::renderer::TubeItem,
+    wireframe: bool,
+) -> StreamtubeGpuData {
+    {
         let sides = (item.sides.max(3)) as usize;
 
         // Resolve scalar-to-colour mapping upfront if scalars are provided.
         let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) =
             if !item.scalars.is_empty() {
-                let lut = self
-                    .content
-                    .builtin_colourmap_ids
-                    .and_then(|ids| {
-                        let preset_id = item
-                            .colourmap_id
-                            .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                        self.content.colourmaps_cpu.get(preset_id.0).copied()
-                    })
-                    .unwrap_or([[128u8; 4]; 256]);
-                (1, Some(lut))
+                (1, Some(binds.lut))
             } else {
                 (0, None)
             };
@@ -688,7 +717,7 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let bgl = &self.streamtube.bgl;
+        let bgl = &binds.bgl;
         let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("tube_uniform_bg"),
             layout: bgl,
@@ -729,65 +758,21 @@ impl DeviceResources {
             _uniform_buf: uniform_buf,
         }
     }
+}
 
-    /// Pre-upload a general tube and return a typed handle.
-    ///
-    /// Prefer [`ViewportRenderer::upload_tube`](crate::renderer::ViewportRenderer::upload_tube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_tube(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::TubeItem,
-    ) -> crate::resources::TubeId {
-        let gpu = self.upload_tube_per_frame(device, queue, item, false);
-        self.content.tube_store.insert_sized(gpu)
-    }
-
-    /// Remove a pre-uploaded tube.
-    ///
-    /// Prefer [`ViewportRenderer::drop_tube`](crate::renderer::ViewportRenderer::drop_tube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
-        self.content.tube_store.remove(id).is_some()
-    }
-
-    /// Replace the geometry of a pre-uploaded tube, keeping the same id.
-    ///
-    /// Prefer [`ViewportRenderer::replace_tube`](crate::renderer::ViewportRenderer::replace_tube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn replace_tube(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::TubeId,
-        item: &crate::renderer::TubeItem,
-    ) -> bool {
-        if !self.content.tube_store.contains(id) {
-            return false;
-        }
-        let gpu = self.upload_tube_per_frame(device, queue, item, false);
-        self.content.tube_store.replace_sized(id, gpu).is_some()
-    }
-
-    // -------------------------------------------------------------------------
-    // Ribbon representation
-    // -------------------------------------------------------------------------
-
-    /// Build and upload GPU data for a `RibbonItem`.
-    ///
-    /// Each strip is swept as a flat quad surface. Two vertices are generated per
-    /// point (left and right edges), connected as a triangle strip. The normal is
-    /// the cross product of the tangent and the lateral direction `u`.
-    pub(crate) fn upload_ribbon_per_frame(
-        &self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::RibbonItem,
-        wireframe: bool,
-    ) -> StreamtubeGpuData {
-        self.check_texture_slot(item.texture_id, crate::resources::TextureSlot::RibbonAlbedo);
-
+/// Build the GPU data for one [`RibbonItem`](crate::renderer::RibbonItem).
+///
+/// Each strip is swept as a flat quad surface. Two vertices are generated per
+/// point (left and right edges), connected as a triangle strip. The normal is
+/// the cross product of the tangent and the lateral direction `u`.
+pub(super) fn build_ribbon(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    binds: &RibbonBindings,
+    item: &crate::renderer::RibbonItem,
+    wireframe: bool,
+) -> StreamtubeGpuData {
+    {
         // Per-vertex RGBA (`colour_attribute`) takes precedence over the
         // scalar+LUT path and the flat `colour` fallback. Trails typically
         // drive only the alpha channel to fade along their length.
@@ -797,17 +782,7 @@ impl DeviceResources {
         let (use_vertex_colour, lut_rgba): (u32, Option<[[u8; 4]; 256]>) = if has_colour_attribute {
             (1, None)
         } else if !item.scalars.is_empty() {
-            let lut = self
-                .content
-                .builtin_colourmap_ids
-                .and_then(|ids| {
-                    let preset_id = item
-                        .colourmap_id
-                        .unwrap_or(ids[crate::resources::BuiltinColourmap::Viridis as usize]);
-                    self.content.colourmaps_cpu.get(preset_id.0).copied()
-                })
-                .unwrap_or([[128u8; 4]; 256]);
-            (1, Some(lut))
+            (1, Some(binds.lut))
         } else {
             (0, None)
         };
@@ -1049,15 +1024,7 @@ impl DeviceResources {
             _pad: f32,
         }
         let (texture_view, has_texture): (&crate::gpu::TextureView, u32) =
-            if let Some(id) = item.texture_id {
-                if let Some(tex) = self.content.textures.get(id) {
-                    (&tex.view, 1)
-                } else {
-                    (&self.content.fallback_lut_view, 0)
-                }
-            } else {
-                (&self.content.fallback_lut_view, 0)
-            };
+            (&binds.texture_view, binds.has_texture);
         let uniform_data = RibbonUniform {
             model: item.model,
             colour: item.colour.to_linear_rgba(),
@@ -1078,7 +1045,7 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let bgl = &self.ribbon.bgl;
+        let bgl = &binds.bgl;
         let uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("ribbon_uniform_bg"),
             layout: bgl,
@@ -1093,7 +1060,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&binds.sampler),
                 },
             ],
         });
@@ -1142,474 +1109,15 @@ impl DeviceResources {
             _uniform_buf: uniform_buf,
         }
     }
-
-    /// Pre-upload a ribbon and return a typed handle.
-    ///
-    /// Prefer [`ViewportRenderer::upload_ribbon`](crate::renderer::ViewportRenderer::upload_ribbon),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_ribbon(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::RibbonItem,
-    ) -> crate::resources::RibbonId {
-        let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
-        self.content.ribbon_store.insert_sized(gpu)
-    }
-
-    /// Remove a pre-uploaded ribbon.
-    ///
-    /// Prefer [`ViewportRenderer::drop_ribbon`](crate::renderer::ViewportRenderer::drop_ribbon),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
-        self.content.ribbon_store.remove(id).is_some()
-    }
-
-    /// Replace the geometry of a pre-uploaded ribbon, keeping the same id.
-    ///
-    /// Prefer [`ViewportRenderer::replace_ribbon`](crate::renderer::ViewportRenderer::replace_ribbon),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn replace_ribbon(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::RibbonId,
-        item: &crate::renderer::RibbonItem,
-    ) -> bool {
-        if !self.content.ribbon_store.contains(id) {
-            return false;
-        }
-        let gpu = self.upload_ribbon_per_frame(device, queue, item, false);
-        self.content.ribbon_store.replace_sized(id, gpu).is_some()
-    }
-
-    /// Start an asynchronous streamtube upload.
-    ///
-    /// Prefer [`ViewportRenderer::begin_upload_streamtube`](crate::renderer::ViewportRenderer::begin_upload_streamtube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn begin_upload_streamtube(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::StreamtubeItem,
-    ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<crate::resources::StreamtubeId>::new();
-        let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
-        let queue_for_apply = queue.clone();
-        let id = {
-            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
-                progress.set(0.9);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let sid =
-                            resources.upload_streamtube(&device_for_apply, &queue_for_apply, &item);
-                        slot_for_apply.set(sid);
-                    }),
-                ))
-            })
-        };
-        self.job_results
-            .streamtube
-            .lock()
-            .expect("streamtube result map poisoned")
-            .insert(id, slot);
-        id
-    }
-
-    /// Take the [`StreamtubeId`](crate::resources::StreamtubeId) produced by a
-    /// completed [`begin_upload_streamtube`](Self::begin_upload_streamtube) job.
-    ///
-    /// Prefer [`ViewportRenderer::upload_result_streamtube`](crate::renderer::ViewportRenderer::upload_result_streamtube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_result_streamtube(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::StreamtubeId> {
-        let mut map = self
-            .job_results
-            .streamtube
-            .lock()
-            .expect("streamtube result map poisoned");
-        let slot = match map.get(&id) {
-            Some(s) => s.clone(),
-            None => {
-                return Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                });
-            }
-        };
-        match slot.take() {
-            Some(sid) => {
-                map.remove(&id);
-                Ok(sid)
-            }
-            None => Err(crate::error::ViewportError::JobNotReady),
-        }
-    }
-
-    /// Start an asynchronous tube upload.
-    ///
-    /// Prefer [`ViewportRenderer::begin_upload_tube`](crate::renderer::ViewportRenderer::begin_upload_tube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn begin_upload_tube(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::TubeItem,
-    ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<crate::resources::TubeId>::new();
-        let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
-        let queue_for_apply = queue.clone();
-        let id = {
-            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
-                progress.set(0.9);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let tid = resources.upload_tube(&device_for_apply, &queue_for_apply, &item);
-                        slot_for_apply.set(tid);
-                    }),
-                ))
-            })
-        };
-        self.job_results
-            .tube
-            .lock()
-            .expect("tube result map poisoned")
-            .insert(id, slot);
-        id
-    }
-
-    /// Take the [`TubeId`](crate::resources::TubeId) produced by a completed
-    /// [`begin_upload_tube`](Self::begin_upload_tube) job.
-    ///
-    /// Prefer [`ViewportRenderer::upload_result_tube`](crate::renderer::ViewportRenderer::upload_result_tube),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_result_tube(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::TubeId> {
-        let mut map = self
-            .job_results
-            .tube
-            .lock()
-            .expect("tube result map poisoned");
-        let slot = match map.get(&id) {
-            Some(s) => s.clone(),
-            None => {
-                return Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                });
-            }
-        };
-        match slot.take() {
-            Some(tid) => {
-                map.remove(&id);
-                Ok(tid)
-            }
-            None => Err(crate::error::ViewportError::JobNotReady),
-        }
-    }
-
-    /// Start an asynchronous ribbon upload.
-    ///
-    /// Prefer [`ViewportRenderer::begin_upload_ribbon`](crate::renderer::ViewportRenderer::begin_upload_ribbon),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn begin_upload_ribbon(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::RibbonItem,
-    ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<crate::resources::RibbonId>::new();
-        let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
-        let queue_for_apply = queue.clone();
-        let id = {
-            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
-                progress.set(0.9);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let rid =
-                            resources.upload_ribbon(&device_for_apply, &queue_for_apply, &item);
-                        slot_for_apply.set(rid);
-                    }),
-                ))
-            })
-        };
-        self.job_results
-            .ribbon
-            .lock()
-            .expect("ribbon result map poisoned")
-            .insert(id, slot);
-        id
-    }
-
-    /// Take the [`RibbonId`](crate::resources::RibbonId) produced by a completed
-    /// [`begin_upload_ribbon`](Self::begin_upload_ribbon) job.
-    ///
-    /// Prefer [`ViewportRenderer::upload_result_ribbon`](crate::renderer::ViewportRenderer::upload_result_ribbon),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_result_ribbon(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::RibbonId> {
-        let mut map = self
-            .job_results
-            .ribbon
-            .lock()
-            .expect("ribbon result map poisoned");
-        let slot = match map.get(&id) {
-            Some(s) => s.clone(),
-            None => {
-                return Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                });
-            }
-        };
-        match slot.take() {
-            Some(rid) => {
-                map.remove(&id);
-                Ok(rid)
-            }
-            None => Err(crate::error::ViewportError::JobNotReady),
-        }
-    }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::DeviceResources;
-    use crate::renderer::{RibbonItem, StreamtubeItem, TubeItem};
-    use crate::resources::UploadStatus;
-
-    fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-        let instance = crate::gpu::default_instance();
-        let adapter = pollster::block_on(instance.request_adapter(
-            &crate::gpu::RequestAdapterOptions {
-                power_preference: crate::gpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-                #[cfg(wgpu30)]
-                apply_limit_buckets: false,
-            },
-        ))
-        .ok()?;
-        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
-    }
-
-    fn sample_streamtube() -> StreamtubeItem {
-        StreamtubeItem {
-            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-            strip_lengths: vec![3],
-            radius: 0.1,
-            ..Default::default()
-        }
-    }
-
-    fn sample_tube() -> TubeItem {
-        TubeItem {
-            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-            strip_lengths: vec![3],
-            radius: 0.1,
-            ..Default::default()
-        }
-    }
-
-    fn sample_ribbon() -> RibbonItem {
-        RibbonItem {
-            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-            strip_lengths: vec![3],
-            width: 0.2,
-            ..Default::default()
-        }
-    }
-
-    fn drive_until_ready(
-        resources: &mut DeviceResources,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::JobId,
-        label: &'static str,
-    ) {
-        for _ in 0..200 {
-            resources.process_uploads(device, queue);
-            match resources.upload_status(id) {
-                UploadStatus::Ready => return,
-                UploadStatus::Failed(e) => panic!("{label} upload failed: {e:?}"),
-                UploadStatus::Pending { .. } => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-                UploadStatus::Unknown => panic!("{label} job id disappeared"),
-            }
-        }
-        panic!("{label} upload did not complete in time");
-    }
-
-    const IDENTITY: [[f32; 4]; 4] = [
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ];
-
-    #[test]
-    fn streamtube_default_model_is_identity() {
-        assert_eq!(StreamtubeItem::default().model, IDENTITY);
-    }
-
-    #[test]
-    fn tube_default_model_is_identity() {
-        assert_eq!(TubeItem::default().model, IDENTITY);
-    }
-
-    #[test]
-    fn ribbon_default_model_is_identity() {
-        assert_eq!(RibbonItem::default().model, IDENTITY);
-    }
-
-    #[test]
-    fn streamtube_carries_non_identity_model() {
-        let mut m = IDENTITY;
-        m[3] = [1.0, 2.0, 3.0, 1.0];
-        let item = StreamtubeItem {
-            model: m,
-            ..StreamtubeItem::default()
-        };
-        assert_eq!(item.model[3], [1.0, 2.0, 3.0, 1.0]);
-    }
-
-    #[test]
-    fn tube_carries_non_identity_model() {
-        let mut m = IDENTITY;
-        m[3] = [1.0, 2.0, 3.0, 1.0];
-        let item = TubeItem {
-            model: m,
-            ..TubeItem::default()
-        };
-        assert_eq!(item.model[3], [1.0, 2.0, 3.0, 1.0]);
-    }
-
-    #[test]
-    fn ribbon_carries_non_identity_model() {
-        let mut m = IDENTITY;
-        m[3] = [1.0, 2.0, 3.0, 1.0];
-        let item = RibbonItem {
-            model: m,
-            ..RibbonItem::default()
-        };
-        assert_eq!(item.model[3], [1.0, 2.0, 3.0, 1.0]);
-    }
-
-    #[test]
-    fn upload_streamtube_returns_valid_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let id = resources.upload_streamtube(&device, &queue, &sample_streamtube());
-        assert!(resources.content.streamtube_store.contains(id));
-        assert!(resources.drop_streamtube(id));
-        assert!(!resources.content.streamtube_store.contains(id));
-    }
-
-    #[test]
-    fn upload_tube_returns_valid_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let start = resources.resident_bytes().scivis_bytes;
-        let id = resources.upload_tube(&device, &queue, &sample_tube());
-        assert!(resources.content.tube_store.contains(id));
-        let after_upload = resources.resident_bytes().scivis_bytes;
-        assert!(
-            after_upload > start,
-            "uploading a tube must increase resident scivis bytes"
-        );
-        assert!(resources.drop_tube(id));
-        assert_eq!(
-            resources.resident_bytes().scivis_bytes,
-            start,
-            "dropping the tube must return resident scivis bytes to the start"
-        );
-    }
-
-    #[test]
-    fn upload_ribbon_returns_valid_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let id = resources.upload_ribbon(&device, &queue, &sample_ribbon());
-        assert!(resources.content.ribbon_store.contains(id));
-        assert!(resources.drop_ribbon(id));
-    }
-
-    #[test]
-    fn begin_upload_streamtube_drains_to_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_streamtube(&device, &queue, sample_streamtube());
-        drive_until_ready(&mut resources, &device, &queue, job, "streamtube");
-        let id = resources.upload_result_streamtube(job).expect("ready");
-        assert!(resources.content.streamtube_store.contains(id));
-        let err = resources.upload_result_streamtube(job).unwrap_err();
-        assert!(matches!(
-            err,
-            crate::error::ViewportError::JobResultMissing { .. }
-        ));
-    }
-
-    #[test]
-    fn begin_upload_tube_drains_to_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_tube(&device, &queue, sample_tube());
-        drive_until_ready(&mut resources, &device, &queue, job, "tube");
-        let id = resources.upload_result_tube(job).expect("ready");
-        assert!(resources.content.tube_store.contains(id));
-    }
-
-    #[test]
-    fn begin_upload_ribbon_drains_to_handle() {
-        let Some((device, queue)) = try_make_device() else {
-            eprintln!("skipping: no wgpu adapter available");
-            return;
-        };
-        let mut resources =
-            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
-        let job = resources.begin_upload_ribbon(&device, &queue, sample_ribbon());
-        drive_until_ready(&mut resources, &device, &queue, job, "ribbon");
-        let id = resources.upload_result_ribbon(job).expect("ready");
-        assert!(resources.content.ribbon_store.contains(id));
-    }
-}
-
-/// Per-frame GPU data for one streamtube item, created in `prepare()`.
+/// GPU data for one curve draw, shared by all three types: the inline items
+/// build it each frame, the three stores hold it across frames.
 ///
-/// The connected tube mesh (vertices + indices) is generated CPU-side for the
-/// entire item (all strips) and uploaded as a single owned buffer pair.
+/// The connected mesh (vertices + indices) is generated CPU-side for the entire
+/// item (all strips) and uploaded as a single owned buffer pair.
 #[derive(Clone)]
-pub struct StreamtubeGpuData {
+pub(crate) struct StreamtubeGpuData {
     /// Owned vertex buffer for the connected tube mesh (world-space positions + normals).
     pub(crate) vertex_buffer: crate::gpu::Buffer,
     /// Owned index buffer for the connected tube mesh (triangle indices).
@@ -1747,4 +1255,26 @@ fn build_node_pick_buffer(
     });
     queue.write_buffer(&buffer, 0, bytes);
     Some(buffer)
+}
+
+// ---------------------------------------------------------------------------
+// The three stores
+// ---------------------------------------------------------------------------
+
+/// Slotted store of pre-uploaded streamtubes.
+pub(super) type StreamtubeStore =
+    crate::resources::handle::SlotStore<StreamtubeGpuData, StreamtubeId>;
+/// Slotted store of pre-uploaded tubes. Same payload, separate handle space.
+pub(super) type TubeStore = crate::resources::handle::SlotStore<StreamtubeGpuData, TubeId>;
+/// Slotted store of pre-uploaded ribbons. Same payload, separate handle space.
+pub(super) type RibbonStore = crate::resources::handle::SlotStore<StreamtubeGpuData, RibbonId>;
+
+impl crate::resources::handle::GpuByteSize for StreamtubeGpuData {
+    fn gpu_bytes(&self) -> u64 {
+        self.vertex_buffer.size()
+            + self.index_buffer.size()
+            + self.edge_index_buffer.size()
+            + self._uniform_buf.size()
+            + self.node_pick_buffer.as_ref().map_or(0, |b| b.size())
+    }
 }

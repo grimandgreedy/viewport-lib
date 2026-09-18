@@ -8,22 +8,12 @@
 //! The stores themselves are all [`SlotStore`] instances: this module declares
 //! the handle types, states each payload's GPU byte charge, and pairs the two.
 
+use crate::resources::PolylineGpuData;
 use crate::resources::handle::{GpuByteSize, SlotStore, slot_handle};
-use crate::resources::{PolylineGpuData, StreamtubeGpuData};
 
 impl GpuByteSize for PolylineGpuData {
     fn gpu_bytes(&self) -> u64 {
         self.vertex_buffer.size() + self._uniform_buf.size()
-    }
-}
-
-impl GpuByteSize for StreamtubeGpuData {
-    fn gpu_bytes(&self) -> u64 {
-        self.vertex_buffer.size()
-            + self.index_buffer.size()
-            + self.edge_index_buffer.size()
-            + self._uniform_buf.size()
-            + self.node_pick_buffer.as_ref().map_or(0, |b| b.size())
     }
 }
 
@@ -33,25 +23,4 @@ slot_handle! {
     pub struct PolylineId;
 }
 
-slot_handle! {
-    /// Handle to a pre-uploaded streamtube produced by
-    /// [`DeviceResources::upload_streamtube`](crate::resources::DeviceResources::upload_streamtube).
-    pub struct StreamtubeId;
-}
-
-slot_handle! {
-    /// Handle to a pre-uploaded tube produced by
-    /// [`DeviceResources::upload_tube`](crate::resources::DeviceResources::upload_tube).
-    pub struct TubeId;
-}
-
-slot_handle! {
-    /// Handle to a pre-uploaded ribbon produced by
-    /// [`DeviceResources::upload_ribbon`](crate::resources::DeviceResources::upload_ribbon).
-    pub struct RibbonId;
-}
-
 pub(crate) type PolylineStore = SlotStore<PolylineGpuData, PolylineId>;
-pub(crate) type StreamtubeStore = SlotStore<StreamtubeGpuData, StreamtubeId>;
-pub(crate) type TubeStore = SlotStore<StreamtubeGpuData, TubeId>;
-pub(crate) type RibbonStore = SlotStore<StreamtubeGpuData, RibbonId>;

@@ -47,13 +47,6 @@ pub(crate) struct JobResults {
     >,
     /// Async polyline uploads.
     pub polyline: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::PolylineId>>>,
-    /// Async streamtube uploads.
-    pub streamtube:
-        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::StreamtubeId>>>,
-    /// Async tube uploads.
-    pub tube: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::TubeId>>>,
-    /// Async ribbon uploads.
-    pub ribbon: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::RibbonId>>>,
     /// Async point cloud uploads.
     /// Async glyph set uploads.
     /// Async tensor glyph set uploads.

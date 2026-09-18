@@ -2087,6 +2087,18 @@ impl DeviceResources {
             [preset as usize]
     }
 
+    /// The `ColourmapId` for a built-in preset, or `None` before
+    /// [`ensure_colourmaps_initialized`](Self::ensure_colourmaps_initialized)
+    /// has run.
+    ///
+    /// The non-panicking form of
+    /// [`builtin_colourmap_id`](Self::builtin_colourmap_id), for an item type
+    /// resolving a default in an upload that can legitimately arrive before the
+    /// first frame.
+    pub fn builtin_colourmap_id_checked(&self, preset: BuiltinColourmap) -> Option<ColourmapId> {
+        Some(self.content.builtin_colourmap_ids?[preset as usize])
+    }
+
     /// Ensure built-in colourmaps are uploaded to the GPU.
     ///
     /// Called automatically by `ViewportRenderer::prepare()` on the first frame.

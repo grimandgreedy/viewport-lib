@@ -11,13 +11,12 @@
 //! plugins drawing the same pipeline description compile it twice rather than
 //! reaching into each other.
 
+use super::store::StreamtubeGpuData;
 use crate::resources::builders::{
     DualPipelineDesc, build_dual_pipeline, pipeline_layout, standard_scene_layout, wgsl_module,
     wgsl_source,
 };
-use crate::resources::{
-    DeviceResources, DualPipeline, StreamtubeGpuData, Vertex, VertexBufferLayoutExt,
-};
+use crate::resources::{DeviceResources, DualPipeline, Vertex, VertexBufferLayoutExt};
 
 /// Vertex layout for the pick and mask pipelines: the lib's 64-byte `Vertex`
 /// stride with only position declared.
@@ -277,6 +276,7 @@ impl CurveMeshGpu {
     pub(super) fn new(
         device: &crate::gpu::Device,
         resources: &DeviceResources,
+        layouts: &super::store::StreamtubeResources,
         label: &str,
     ) -> Self {
         let shader_label = format!("{label}_shader");
@@ -288,7 +288,7 @@ impl CurveMeshGpu {
             device,
             &layout_label,
             resources.shared_bindings().group0_layout,
-            &resources.streamtube.bgl,
+            &layouts.bgl,
         );
         let vertex_buffers = [Vertex::buffer_layout()];
         let pipeline = build_dual_pipeline(

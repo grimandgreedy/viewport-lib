@@ -2363,9 +2363,6 @@ impl DeviceResources {
                 texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
                 polyline_store: crate::resources::PolylineStore::default(),
-                streamtube_store: crate::resources::StreamtubeStore::default(),
-                tube_store: crate::resources::TubeStore::default(),
-                ribbon_store: crate::resources::RibbonStore::default(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),
@@ -2419,8 +2416,6 @@ impl DeviceResources {
             lic: crate::resources::postprocess::LicResources::default(),
             glyph: crate::resources::scivis::glyph::GlyphResources::new(),
             polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
-            streamtube: crate::resources::scivis::tube::StreamtubeResources::new(device),
-            ribbon: crate::resources::scivis::tube::RibbonResources::new(device),
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
                 bgl: None,

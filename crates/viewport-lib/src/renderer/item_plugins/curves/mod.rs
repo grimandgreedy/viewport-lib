@@ -17,6 +17,7 @@ mod cpu_pick;
 mod draw;
 mod pipeline;
 mod ribbon;
+pub(crate) mod store;
 mod streamtube;
 mod tube;
 pub(crate) mod types;

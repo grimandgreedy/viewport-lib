@@ -3,6 +3,24 @@
 //! They share a shape (a control polyline plus per-point width) and a pipeline
 //! family, so they share a module the way the plugins that draw them do.
 
+crate::resources::handle::slot_handle! {
+    /// Handle to a streamtube uploaded once through
+    /// [`ViewportRenderer::upload_streamtube`](crate::renderer::ViewportRenderer::upload_streamtube).
+    pub struct StreamtubeId;
+}
+
+crate::resources::handle::slot_handle! {
+    /// Handle to a tube uploaded once through
+    /// [`ViewportRenderer::upload_tube`](crate::renderer::ViewportRenderer::upload_tube).
+    pub struct TubeId;
+}
+
+crate::resources::handle::slot_handle! {
+    /// Handle to a ribbon uploaded once through
+    /// [`ViewportRenderer::upload_ribbon`](crate::renderer::ViewportRenderer::upload_ribbon).
+    pub struct RibbonId;
+}
+
 use crate::renderer::SpriteBlend;
 use crate::renderer::types::items::IDENTITY_MAT4;
 use crate::resources::ColourmapId;

@@ -299,12 +299,6 @@ pub struct ContentResources {
     /// Pre-uploaded polyline storage; entries are referenced from per-frame
     /// `PolylineRefItem`s.
     pub(crate) polyline_store: super::PolylineStore,
-    /// Pre-uploaded streamtube storage.
-    pub(crate) streamtube_store: super::StreamtubeStore,
-    /// Pre-uploaded tube storage.
-    pub(crate) tube_store: super::TubeStore,
-    /// Pre-uploaded ribbon storage.
-    pub(crate) ribbon_store: super::RibbonStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.
@@ -531,9 +525,7 @@ pub struct DeviceResources {
     /// Polyline pipelines and layouts.
     pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,
     /// Streamtube pipelines and layout.
-    pub(crate) streamtube: crate::resources::scivis::tube::StreamtubeResources,
     /// Ribbon pipelines (one per blend) and layout.
-    pub(crate) ribbon: crate::resources::scivis::tube::RibbonResources,
 
     // --- volume rendering (lazily created) ---
     /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.

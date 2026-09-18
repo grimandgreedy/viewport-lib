@@ -2656,7 +2656,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::StreamtubeItem,
     ) -> crate::resources::StreamtubeId {
-        self.resources.upload_streamtube(device, queue, item)
+        let host = self.streamtube_host();
+        host.plugin.upload(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a streamtube. Poll the returned job with
@@ -2668,7 +2669,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::StreamtubeItem,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_streamtube(device, queue, item)
+        let host = self.streamtube_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_streamtube`](Self::begin_upload_streamtube) job.
@@ -2676,7 +2679,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::StreamtubeId> {
-        self.resources.upload_result_streamtube(id)
+        let host = self.streamtube_host();
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a streamtube handle, keeping the handle valid.
@@ -2688,12 +2692,13 @@ impl ViewportRenderer {
         id: crate::resources::StreamtubeId,
         item: &crate::renderer::StreamtubeItem,
     ) -> bool {
-        self.resources.replace_streamtube(device, queue, id, item)
+        let host = self.streamtube_host();
+        host.plugin.replace(device, queue, host.resources, id, item)
     }
 
     /// Release a streamtube. `false` if the handle does not resolve.
     pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
-        self.resources.drop_streamtube(id)
+        self.streamtube_host().plugin.drop_stored(id)
     }
 
     /// Upload a tube for reuse across frames, returning its handle.
@@ -2706,7 +2711,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::TubeItem,
     ) -> crate::resources::TubeId {
-        self.resources.upload_tube(device, queue, item)
+        let host = self.tube_host();
+        host.plugin.upload(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a tube. Poll the returned job with
@@ -2718,7 +2724,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::TubeItem,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_tube(device, queue, item)
+        let host = self.tube_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_tube`](Self::begin_upload_tube) job.
@@ -2726,7 +2734,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::TubeId> {
-        self.resources.upload_result_tube(id)
+        let host = self.tube_host();
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a tube handle, keeping the handle valid.
@@ -2738,12 +2747,13 @@ impl ViewportRenderer {
         id: crate::resources::TubeId,
         item: &crate::renderer::TubeItem,
     ) -> bool {
-        self.resources.replace_tube(device, queue, id, item)
+        let host = self.tube_host();
+        host.plugin.replace(device, queue, host.resources, id, item)
     }
 
     /// Release a tube. `false` if the handle does not resolve.
     pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
-        self.resources.drop_tube(id)
+        self.tube_host().plugin.drop_stored(id)
     }
 
     /// Upload a ribbon for reuse across frames, returning its handle.
@@ -2756,7 +2766,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::RibbonItem,
     ) -> crate::resources::RibbonId {
-        self.resources.upload_ribbon(device, queue, item)
+        let host = self.ribbon_host();
+        host.plugin.upload(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a ribbon. Poll the returned job with
@@ -2768,7 +2779,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::RibbonItem,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_ribbon(device, queue, item)
+        let host = self.ribbon_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_ribbon`](Self::begin_upload_ribbon) job.
@@ -2776,7 +2789,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::RibbonId> {
-        self.resources.upload_result_ribbon(id)
+        let host = self.ribbon_host();
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a ribbon handle, keeping the handle valid.
@@ -2788,12 +2802,13 @@ impl ViewportRenderer {
         id: crate::resources::RibbonId,
         item: &crate::renderer::RibbonItem,
     ) -> bool {
-        self.resources.replace_ribbon(device, queue, id, item)
+        let host = self.ribbon_host();
+        host.plugin.replace(device, queue, host.resources, id, item)
     }
 
     /// Release a ribbon. `false` if the handle does not resolve.
     pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
-        self.resources.drop_ribbon(id)
+        self.ribbon_host().plugin.drop_stored(id)
     }
 
     /// Upload a point cloud for reuse across frames, returning its handle.
@@ -2849,6 +2864,33 @@ impl ViewportRenderer {
     /// Release a point cloud. `false` if the handle does not resolve.
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
         self.point_cloud_host().plugin.drop_stored(id)
+    }
+
+    /// The registered streamtube item type, which holds the uploaded curves.
+    fn streamtube_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::StreamtubePlugin>
+    {
+        self.item_type_plugin_host(crate::renderer::item_plugins::curves::STREAMTUBE_TYPE_NAME)
+            .expect("the built-in streamtube item type is registered at construction")
+    }
+
+    /// The registered tube item type, which holds the uploaded curves.
+    fn tube_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::TubePlugin>
+    {
+        self.item_type_plugin_host(crate::renderer::item_plugins::curves::TUBE_TYPE_NAME)
+            .expect("the built-in tube item type is registered at construction")
+    }
+
+    /// The registered ribbon item type, which holds the uploaded curves.
+    fn ribbon_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::RibbonPlugin>
+    {
+        self.item_type_plugin_host(crate::renderer::item_plugins::curves::RIBBON_TYPE_NAME)
+            .expect("the built-in ribbon item type is registered at construction")
     }
 
     /// The registered glyph item type, which holds the uploaded sets.

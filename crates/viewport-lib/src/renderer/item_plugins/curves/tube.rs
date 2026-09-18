@@ -15,6 +15,7 @@ use super::draw::{
     render_pick_curve_mesh, resolve_curve_sub_object,
 };
 use super::pipeline::{CurveFrame, CurveMeshGpu};
+use super::types::TubeId;
 use crate::plugin_api::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
     PickPassContext, PickRay, PluginItemCollection, RectPickContext,
@@ -27,6 +28,11 @@ pub(crate) const TYPE_NAME: &str = "viewport.tube";
 
 #[derive(Default)]
 pub(crate) struct TubePlugin {
+    /// The pre-uploaded curves, owned by the type that draws them.
+    stored: super::store::TubeStore,
+    /// The group-1 layout every upload builds its bind group against. Created
+    /// on registration, because an upload can arrive before the first frame.
+    layouts: Option<super::store::StreamtubeResources>,
     gpu: Option<CurveMeshGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references.
@@ -53,7 +59,20 @@ impl ItemTypePlugin for TubePlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn init_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        _shared: &crate::plugin_api::SharedBindings<'_>,
+    ) {
+        self.layouts = Some(super::store::StreamtubeResources::new(device));
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.stored.allocated_bytes()
+    }
+
+    fn on_device_recreated(&mut self, device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+        self.layouts = Some(super::store::StreamtubeResources::new(device));
         self.gpu = None;
         self.frame.clear();
     }
@@ -76,18 +95,22 @@ impl ItemTypePlugin for TubePlugin {
         if items.is_empty() && refs.is_empty() {
             return Vec::new();
         }
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::StreamtubeResources::new(device));
+        let stored = &self.stored;
         let gpu = self
             .gpu
-            .get_or_insert_with(|| CurveMeshGpu::new(device, ctx.resources, "tube"));
+            .get_or_insert_with(|| CurveMeshGpu::new(device, ctx.resources, layouts, "tube"));
 
         for item in items {
             if item.settings.hidden || item.positions.is_empty() || item.strip_lengths.is_empty() {
                 continue;
             }
             let wireframe = ctx.wireframe_mode || item.settings.wireframe;
-            let mut gpu_data = ctx
-                .resources
-                .upload_tube_per_frame(device, queue, item, wireframe);
+            let binds =
+                super::store::resolve_tube_bindings(ctx.resources, layouts, item.colourmap_id);
+            let mut gpu_data = super::store::build_tube(device, queue, &binds, item, wireframe);
             if gpu_data.index_count == 0 {
                 continue;
             }
@@ -110,7 +133,7 @@ impl ItemTypePlugin for TubePlugin {
             if ref_item.settings.hidden {
                 continue;
             }
-            let Some(entry) = ctx.resources.content.tube_store.get(ref_item.source) else {
+            let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
             let mut gpu_data = entry.clone();
@@ -267,9 +290,101 @@ impl ItemTypePlugin for TubePlugin {
     }
 }
 
-#[cfg(test)]
 impl TubePlugin {
+    /// Build one curve's GPU data against the plugin's layout.
+    fn build(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &TubeItem,
+    ) -> super::store::StreamtubeGpuData {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::StreamtubeResources::new(device));
+        let binds = super::store::resolve_tube_bindings(resources, layouts, item.colourmap_id);
+        super::store::build_tube(device, queue, &binds, item, false)
+    }
+
+    /// Pre-upload a curve and return its handle.
+    pub(crate) fn upload(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &TubeItem,
+    ) -> TubeId {
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.insert_sized(gpu)
+    }
+
+    /// Drop a stored curve. `false` when the handle does not resolve.
+    pub(crate) fn drop_stored(&mut self, id: TubeId) -> bool {
+        self.stored.remove(id).is_some()
+    }
+
+    /// Replace the geometry behind a live handle, keeping the handle.
+    pub(crate) fn replace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        id: TubeId,
+        item: &TubeItem,
+    ) -> bool {
+        if !self.stored.contains(id) {
+            return false;
+        }
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.replace_sized(id, gpu).is_some()
+    }
+
+    /// Sweep the curve mesh on a worker thread. The handle is minted when
+    /// [`take_upload_result`](Self::take_upload_result) collects the job.
+    ///
+    /// The layout and the colourmap the upload binds are resolved here and
+    /// cloned into the worker: they are the renderer's and a worker has no
+    /// `DeviceResources` borrow.
+    pub(crate) fn begin_upload(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: TubeItem,
+    ) -> crate::resources::JobId {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::StreamtubeResources::new(device));
+        let item = item;
+        let binds = super::store::resolve_tube_bindings(resources, layouts, item.colourmap_id);
+        let device = device.clone();
+        let queue = queue.clone();
+        jobs.submit_cpu(move || super::store::build_tube(&device, &queue, &binds, &item, false))
+    }
+
+    /// Store the curve a finished job built and hand back its handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<TubeId> {
+        match jobs.status(id) {
+            crate::resources::UploadStatus::Pending { .. } => {
+                Err(crate::error::ViewportError::JobNotReady)
+            }
+            crate::resources::UploadStatus::Failed(e) => Err(e),
+            _ => match jobs.take::<super::store::StreamtubeGpuData>(id) {
+                Some(gpu) => Ok(self.stored.insert_sized(gpu)),
+                None => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
+        }
+    }
+
     /// Number of items the last `prepare` produced draw data for.
+    #[cfg(test)]
     pub(crate) fn drawn_count(&self) -> usize {
         self.frame.len()
     }

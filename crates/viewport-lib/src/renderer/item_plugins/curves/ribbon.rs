@@ -14,6 +14,7 @@ use super::draw::{
     resolve_curve_sub_object,
 };
 use super::pipeline::{CurveFrame, CurvePickGpu, draw_mesh, draw_solid_indexed};
+use super::types::RibbonId;
 use crate::plugin_api::pick_helpers::{project_to_screen, ray_triangle, segment_in_rect};
 use crate::plugin_api::{
     ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
@@ -132,7 +133,11 @@ struct RibbonGpu {
 }
 
 impl RibbonGpu {
-    fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
+    fn new(
+        device: &crate::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &super::store::RibbonResources,
+    ) -> Self {
         use crate::resources::builders::{
             DualPipelineDesc, build_dual_pipeline, standard_scene_layout, wgsl_module, wgsl_source,
         };
@@ -142,7 +147,7 @@ impl RibbonGpu {
             device,
             "ribbon_pipeline_layout",
             resources.shared_bindings().group0_layout,
-            &resources.ribbon.bgl,
+            &layouts.bgl,
         );
 
         let additive_blend = crate::gpu::BlendState {
@@ -266,7 +271,7 @@ impl RibbonGpu {
             "",
             &shadow_vertex_layouts,
         );
-        let shadow_extra: [&crate::gpu::BindGroupLayout; 1] = [&resources.ribbon.bgl];
+        let shadow_extra: [&crate::gpu::BindGroupLayout; 1] = [&layouts.bgl];
         shadow_opts.extra_bind_group_layouts = &shadow_extra;
         shadow_opts.primitive.cull_mode = None;
         shadow_opts.depth_compare = crate::gpu::CompareFunction::Less;
@@ -291,6 +296,11 @@ impl RibbonGpu {
 
 #[derive(Default)]
 pub(crate) struct RibbonPlugin {
+    /// The pre-uploaded ribbons, owned by the type that draws them.
+    stored: super::store::RibbonStore,
+    /// The group-1 layout every upload builds its bind group against. Created
+    /// on registration, because an upload can arrive before the first frame.
+    layouts: Option<super::store::RibbonResources>,
     gpu: Option<RibbonGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references.
@@ -305,7 +315,20 @@ impl ItemTypePlugin for RibbonPlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn init_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        _shared: &crate::plugin_api::SharedBindings<'_>,
+    ) {
+        self.layouts = Some(super::store::RibbonResources::new(device));
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.stored.allocated_bytes()
+    }
+
+    fn on_device_recreated(&mut self, device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+        self.layouts = Some(super::store::RibbonResources::new(device));
         self.gpu = None;
         self.frame.clear();
     }
@@ -328,18 +351,21 @@ impl ItemTypePlugin for RibbonPlugin {
         if items.is_empty() && refs.is_empty() {
             return Vec::new();
         }
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let stored = &self.stored;
         let gpu = self
             .gpu
-            .get_or_insert_with(|| RibbonGpu::new(device, ctx.resources));
+            .get_or_insert_with(|| RibbonGpu::new(device, ctx.resources, layouts));
 
         for item in items {
             if item.settings.hidden || item.positions.is_empty() || item.strip_lengths.is_empty() {
                 continue;
             }
             let wireframe = ctx.wireframe_mode || item.settings.wireframe;
-            let mut gpu_data = ctx
-                .resources
-                .upload_ribbon_per_frame(device, queue, item, wireframe);
+            let binds = super::store::resolve_ribbon_bindings(ctx.resources, layouts, item);
+            let mut gpu_data = super::store::build_ribbon(device, queue, &binds, item, wireframe);
             if gpu_data.index_count == 0 {
                 continue;
             }
@@ -362,7 +388,7 @@ impl ItemTypePlugin for RibbonPlugin {
             if ref_item.settings.hidden {
                 continue;
             }
-            let Some(entry) = ctx.resources.content.ribbon_store.get(ref_item.source) else {
+            let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
             let mut gpu_data = entry.clone();
@@ -755,9 +781,101 @@ fn lateral_frames(
     frames
 }
 
-#[cfg(test)]
 impl RibbonPlugin {
+    /// Build one curve's GPU data against the plugin's layout.
+    fn build(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &RibbonItem,
+    ) -> super::store::StreamtubeGpuData {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let binds = super::store::resolve_ribbon_bindings(resources, layouts, item);
+        super::store::build_ribbon(device, queue, &binds, item, false)
+    }
+
+    /// Pre-upload a curve and return its handle.
+    pub(crate) fn upload(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &RibbonItem,
+    ) -> RibbonId {
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.insert_sized(gpu)
+    }
+
+    /// Drop a stored curve. `false` when the handle does not resolve.
+    pub(crate) fn drop_stored(&mut self, id: RibbonId) -> bool {
+        self.stored.remove(id).is_some()
+    }
+
+    /// Replace the geometry behind a live handle, keeping the handle.
+    pub(crate) fn replace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        id: RibbonId,
+        item: &RibbonItem,
+    ) -> bool {
+        if !self.stored.contains(id) {
+            return false;
+        }
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.replace_sized(id, gpu).is_some()
+    }
+
+    /// Sweep the curve mesh on a worker thread. The handle is minted when
+    /// [`take_upload_result`](Self::take_upload_result) collects the job.
+    ///
+    /// The layout and the colourmap the upload binds are resolved here and
+    /// cloned into the worker: they are the renderer's and a worker has no
+    /// `DeviceResources` borrow.
+    pub(crate) fn begin_upload(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: RibbonItem,
+    ) -> crate::resources::JobId {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| super::store::RibbonResources::new(device));
+        let item = item;
+        let binds = super::store::resolve_ribbon_bindings(resources, layouts, &&item);
+        let device = device.clone();
+        let queue = queue.clone();
+        jobs.submit_cpu(move || super::store::build_ribbon(&device, &queue, &binds, &item, false))
+    }
+
+    /// Store the curve a finished job built and hand back its handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<RibbonId> {
+        match jobs.status(id) {
+            crate::resources::UploadStatus::Pending { .. } => {
+                Err(crate::error::ViewportError::JobNotReady)
+            }
+            crate::resources::UploadStatus::Failed(e) => Err(e),
+            _ => match jobs.take::<super::store::StreamtubeGpuData>(id) {
+                Some(gpu) => Ok(self.stored.insert_sized(gpu)),
+                None => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
+        }
+    }
+
     /// Number of items the last `prepare` produced draw data for.
+    #[cfg(test)]
     pub(crate) fn drawn_count(&self) -> usize {
         self.frame.len()
     }

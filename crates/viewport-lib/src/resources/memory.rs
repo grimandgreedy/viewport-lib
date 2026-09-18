@@ -151,10 +151,7 @@ impl crate::resources::DeviceResources {
     /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
     /// [`ResidentBytes`].
     pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
-        let scivis_bytes = self.content.polyline_store.allocated_bytes()
-            + self.content.streamtube_store.allocated_bytes()
-            + self.content.tube_store.allocated_bytes()
-            + self.content.ribbon_store.allocated_bytes();
+        let scivis_bytes = self.content.polyline_store.allocated_bytes();
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.content.textures.allocated_bytes(),

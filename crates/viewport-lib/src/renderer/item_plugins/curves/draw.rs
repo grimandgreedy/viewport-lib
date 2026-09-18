@@ -7,9 +7,10 @@
 //! plugin means the three cannot drift apart in how they answer a pick.
 
 use super::pipeline::{CurveFrame, CurveMeshGpu, CurvePickGpu, draw_mesh, draw_solid_indexed};
+use super::store::StreamtubeGpuData;
 use crate::plugin_api::{PaintContext, PickContext, PickPassContext};
 use crate::renderer::{PickId, PickMask, SubObjectRef};
-use crate::resources::{HDR_COLOR_FORMAT, StreamtubeGpuData};
+use crate::resources::HDR_COLOR_FORMAT;
 
 /// Pixel radius of a world-space radius measured at the curve's first control
 /// point, for the screen-space pick tolerance.
