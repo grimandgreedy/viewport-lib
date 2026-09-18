@@ -7,33 +7,14 @@
 //! colour, renders again, and checks the framebuffer changed. A byte-identical
 //! pair of renders means the update was dropped somewhere in the path.
 
-use super::types::FrameData;
-use super::{CameraFrame, RenderCamera, SceneFrame, ViewportRenderer};
-use crate::camera::Camera;
-use crate::resources::{TextureData, TextureId};
-use crate::scene::material::{BackfacePolicy, Material};
+#[cfg(feature = "wgpu29")]
+use viewport_lib::wgpu;
 
-fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-    let instance = crate::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &crate::gpu::RequestAdapterOptions {
-            power_preference: crate::gpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            #[cfg(wgpu30)]
-            apply_limit_buckets: false,
-        },
-    ))
-    .ok()?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
-            label: Some("instanced_texture_tests"),
-            required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(&adapter),
-            ..Default::default()
-        }))
-        .ok()?;
-    Some((device, queue))
-}
+mod common;
+use common::*;
+
+use viewport_lib::renderer::{CameraFrame, SceneFrame};
+use viewport_lib::resources::{DeformStage, TextureData, TextureId};
 
 const W: u32 = 128;
 const H: u32 = 128;
@@ -63,8 +44,8 @@ fn solid_rgba(w: u32, h: u32, colour: [u8; 4]) -> Vec<u8> {
     v
 }
 
-fn unlit_settings() -> crate::scene::material::ItemSettings {
-    let mut s = crate::scene::material::ItemSettings::default();
+fn unlit_settings() -> viewport_lib::ItemSettings {
+    let mut s = viewport_lib::ItemSettings::default();
     s.unlit = true; // output raw albedo, no lighting mixed in
     s
 }
@@ -81,7 +62,7 @@ fn checksum(bytes: &[u8]) -> u64 {
         .sum()
 }
 
-fn frame_for(items: Vec<crate::SceneRenderItem>) -> FrameData {
+fn frame_for(items: Vec<viewport_lib::SceneRenderItem>) -> FrameData {
     let cf = CameraFrame::new(
         RenderCamera::from_camera(&top_down_camera()),
         [W as f32, H as f32],
@@ -96,7 +77,7 @@ fn frame_for(items: Vec<crate::SceneRenderItem>) -> FrameData {
 /// test comparing a textured render against an untextured one has to move the
 /// generation or it measures nothing. Frames that differ by an upload, a free or
 /// a replace do not need this: those move an epoch, which rebuilds on its own.
-fn frame_gen(items: Vec<crate::SceneRenderItem>, generation: u64) -> FrameData {
+fn frame_gen(items: Vec<viewport_lib::SceneRenderItem>, generation: u64) -> FrameData {
     let mut fd = frame_for(items);
     fd.scene.generation = generation;
     fd
@@ -104,32 +85,31 @@ fn frame_gen(items: Vec<crate::SceneRenderItem>, generation: u64) -> FrameData {
 
 /// A textured plane at world x, unlit and two-sided (the material a windowed
 /// compositor uses for its client planes), sharing `mesh`.
-fn textured_plane(
-    mesh: crate::resources::mesh::mesh_store::MeshId,
-    tex: TextureId,
-    x: f32,
-) -> crate::SceneRenderItem {
+fn textured_plane(mesh: MeshId, tex: TextureId, x: f32) -> viewport_lib::SceneRenderItem {
     let mut material = Material::textured(tex);
     material.backface_policy = BackfacePolicy::Identical;
-    crate::SceneRenderItem {
-        mesh_id: mesh,
-        model: glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d(),
-        material,
-        settings: unlit_settings(),
-        ..Default::default()
-    }
+    let mut item = viewport_lib::SceneRenderItem::default();
+    item.mesh_id = mesh;
+    item.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 0.0)).to_cols_array_2d();
+    item.material = material;
+    item.settings = unlit_settings();
+    item
 }
 
 /// Two textured planes side by side sharing one mesh, plus the second plane's
 /// texture id (the one a test replaces). Both start at `C_START`.
 fn two_textured_planes(
     renderer: &mut ViewportRenderer,
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
-) -> (crate::SceneRenderItem, crate::SceneRenderItem, TextureId) {
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (
+    viewport_lib::SceneRenderItem,
+    viewport_lib::SceneRenderItem,
+    TextureId,
+) {
     let mesh = renderer
         .resources_mut()
-        .upload_mesh_data(device, &crate::primitives::plane(2.0, 2.0))
+        .upload_mesh_data(device, &viewport_lib::primitives::plane(2.0, 2.0))
         .unwrap();
     let tex_a = renderer
         .resources_mut()
@@ -212,15 +192,15 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         eprintln!("skipping instanced_cutout_shadow_reflects_replace_texture: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let ground = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::cuboid(24.0, 24.0, 0.5))
+        .upload_mesh_data(&device, &viewport_lib::primitives::cuboid(24.0, 24.0, 0.5))
         .unwrap();
     let caster_mesh = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(4.0, 4.0))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(4.0, 4.0))
         .unwrap();
     // Start opaque: alpha 255 everywhere, so the cutout keeps every texel and the
     // caster throws a solid shadow.
@@ -233,11 +213,11 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         )
         .unwrap();
 
-    use crate::scene::material::AlphaMode;
+    use viewport_lib::AlphaMode;
     // `with_casters` toggles the casters for the shadow-present sanity check.
     let build = |with_casters: bool| -> FrameData {
         let mut items = Vec::new();
-        let mut g = crate::SceneRenderItem::default();
+        let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
         g.material = Material::from_colour([0.85, 0.85, 0.85]);
@@ -246,7 +226,7 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
             // Two casters sharing one mesh and one texture -> a single instanced
             // batch of 2, which forces the instanced path.
             for x in [-1.0f32, 1.0] {
-                let mut c = crate::SceneRenderItem::default();
+                let mut c = viewport_lib::SceneRenderItem::default();
                 c.mesh_id = caster_mesh;
                 c.model =
                     glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
@@ -269,10 +249,10 @@ fn instanced_cutout_shadow_reflects_replace_texture() {
         // One low, offset sun so the shadow lands beside the casters (not under
         // them), plus a faint hemisphere fill so the shadow reads as clearly
         // darker than the lit ground.
-        let mut l = crate::LightingSettings::default();
+        let mut l = viewport_lib::LightingSettings::default();
         l.lights = vec![{
-            let mut s = crate::LightSource::default();
-            s.kind = crate::LightKind::Directional {
+            let mut s = viewport_lib::LightSource::default();
+            s.kind = viewport_lib::LightKind::Directional {
                 direction: [1.6, 0.0, 1.0],
             };
             s.intensity = 1.0;
@@ -355,7 +335,7 @@ fn instanced_path_reflects_replace_texture() {
         eprintln!("skipping instanced_path_reflects_replace_texture: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let (item_a, item_b, tex_b) = two_textured_planes(&mut renderer, &device, &queue);
 
     let sum1 = checksum(&renderer.render_offscreen(
@@ -405,11 +385,11 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
         );
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let mesh = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(2.0, 2.0))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(2.0, 2.0))
         .unwrap();
     let tex = renderer
         .resources_mut()
@@ -424,14 +404,13 @@ fn instanced_path_reflects_replace_texture_with_untextured_sibling() {
     // The sibling shares the mesh but carries no texture, only a base colour.
     let mut untextured_mat = Material::default();
     untextured_mat.backface_policy = BackfacePolicy::Identical;
-    untextured_mat.base_colour = crate::Colour::srgb(0.85, 0.15, 0.5, 1.0);
-    let untextured = crate::SceneRenderItem {
-        mesh_id: mesh,
-        model: glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).to_cols_array_2d(),
-        material: untextured_mat,
-        settings: unlit_settings(),
-        ..Default::default()
-    };
+    untextured_mat.base_colour = viewport_lib::Colour::srgb(0.85, 0.15, 0.5, 1.0);
+    let mut untextured = viewport_lib::SceneRenderItem::default();
+    untextured.mesh_id = mesh;
+    untextured.model =
+        glam::Mat4::from_translation(glam::Vec3::new(1.05, 0.0, 0.0)).to_cols_array_2d();
+    untextured.material = untextured_mat;
+    untextured.settings = unlit_settings();
 
     let sum1 = checksum(&renderer.render_offscreen(
         &device,
@@ -484,7 +463,7 @@ fn gpu_culling_indirect_path_reflects_replace_texture() {
         eprintln!("skipping gpu_culling_indirect_path_reflects_replace_texture: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     if !renderer.is_gpu_culling_supported() {
         eprintln!(
             "skipping gpu_culling_indirect_path_reflects_replace_texture: \
@@ -543,31 +522,29 @@ fn gpu_culling_indirect_path_reflects_replace_texture() {
 /// the recommended limits. Returns `None` when no adapter is available or the
 /// adapter does not offer the feature set (Metal pre-Tier-2, WebGPU, older HW),
 /// so the test skips instead of failing there.
-fn headless_bindless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-    let instance = crate::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &crate::gpu::RequestAdapterOptions {
-            power_preference: crate::gpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            #[cfg(wgpu30)]
-            apply_limit_buckets: false,
-        },
-    ))
+fn headless_bindless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance = viewport_lib::gpu::default_instance();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        #[cfg(wgpu30)]
+        apply_limit_buckets: false,
+    }))
     .ok()?;
     if !adapter
         .features()
-        .contains(crate::gpu::BINDLESS_TEXTURE_FEATURES)
+        .contains(viewport_lib::gpu::BINDLESS_TEXTURE_FEATURES)
     {
         return None;
     }
     // Request the full recommended feature set (as a real consumer does), so the
     // GPU-culled bindless path is exercised where the adapter also supports
     // indirect draws, not just the direct path.
-    pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("bindless_tests"),
-        required_features: crate::renderer::ViewportRenderer::recommended_device_features(&adapter),
-        required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(&adapter),
+        required_features: ViewportRenderer::recommended_device_features(&adapter),
+        required_limits: ViewportRenderer::recommended_device_limits(&adapter),
         ..Default::default()
     }))
     .ok()
@@ -587,12 +564,12 @@ const BINDLESS_COLOURS: [[u8; 4]; 4] = [
 /// frame plus the item list. `renderer` uploads the mesh and textures.
 fn bindless_scene(
     renderer: &mut ViewportRenderer,
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
 ) -> FrameData {
     let mesh = renderer
         .resources_mut()
-        .upload_mesh_data(device, &crate::primitives::plane(0.8, 0.8))
+        .upload_mesh_data(device, &viewport_lib::primitives::plane(0.8, 0.8))
         .unwrap();
     let xs = [-1.5f32, -0.5, 0.5, 1.5];
     let items = BINDLESS_COLOURS
@@ -634,13 +611,13 @@ fn bindless_matches_per_batch_and_collapses_batches() {
     };
 
     // Per-batch reference (default features, no bindless).
-    let mut per_batch = ViewportRenderer::new(&pd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut per_batch = ViewportRenderer::new(&pd, wgpu::TextureFormat::Rgba8UnormSrgb);
     let per_frame = bindless_scene(&mut per_batch, &pd, &pq);
     let per_img = per_batch.render_offscreen(&pd, &pq, &per_frame, W, H);
     let per_batches = per_batch.last_frame_stats().instanced_batches;
 
     // Bindless device.
-    let mut bindless = ViewportRenderer::new(&bd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut bindless = ViewportRenderer::new(&bd, wgpu::TextureFormat::Rgba8UnormSrgb);
     let bindless_frame = bindless_scene(&mut bindless, &bd, &bq);
     let bindless_img = bindless.render_offscreen(&bd, &bq, &bindless_frame, W, H);
     let bindless_batches = bindless.last_frame_stats().instanced_batches;
@@ -678,38 +655,33 @@ fn bindless_matches_per_batch_and_collapses_batches() {
 /// bindless device with GPU culling, which used to panic.
 #[test]
 fn bindless_survives_deformer_pipeline_rebuild() {
-    use crate::resources::mesh_sidecar::registry::DeformerDesc;
     let Some((device, queue)) = headless_bindless_device() else {
         eprintln!("skipping: no adapter with the bindless texture feature set");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let frame = bindless_scene(&mut renderer, &device, &queue);
 
     // First render builds the instanced (and, with GPU culling, cull) pipelines.
     let _ = renderer.render_offscreen(&device, &queue, &frame, W, H);
 
-    // Registering a deformer marks the mesh pipelines dirty; flushing rebuilds
-    // them through the second build path.
+    // Registering a deformer marks the mesh pipelines dirty; the next prepare
+    // rebuilds them through the second build path.
     let body =
         "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    return v;\n}\n";
     renderer
         .resources_mut()
         .register_deformer(
             &device,
-            DeformerDesc {
+            viewport_lib::resources::DeformerDesc {
                 name: "bindless_noop",
-                stage: crate::resources::mesh_sidecar::registry::DeformStage::ObjectSpace,
+                stage: DeformStage::ObjectSpace,
                 priority: 0,
                 wgsl_body: body.to_string(),
                 per_vertex_stride: 4,
             },
         )
         .expect("register deformer");
-    renderer
-        .resources_mut()
-        .flush_mesh_pipeline_rebuild(&device);
-
     // Rendering again drives the rebuilt bindless pipelines; a layout mismatch
     // here is a validation panic.
     let img = renderer.render_offscreen(&device, &queue, &frame, W, H);
@@ -733,15 +705,15 @@ fn bindless_survives_deformer_pipeline_rebuild() {
 /// HDR on a bindless device, which used to panic.
 #[test]
 fn bindless_keeps_mesh_instance_path_per_batch() {
-    use crate::renderer::{MeshInstanceItem, SpriteBlend};
+    use viewport_lib::renderer::{MeshInstanceItem, SpriteBlend};
     let Some((device, queue)) = headless_bindless_device() else {
         eprintln!("skipping: no adapter with the bindless texture feature set");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mesh = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(0.8, 0.8))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(0.8, 0.8))
         .unwrap();
     let tex = renderer
         .resources_mut()
@@ -760,11 +732,11 @@ fn bindless_keeps_mesh_instance_path_per_batch() {
         .iter()
         .map(|x| glam::Mat4::from_translation(glam::Vec3::new(*x, 0.0, 0.0)).to_cols_array_2d())
         .collect();
-    item.colours = vec![crate::Colour::linear_rgb(1.0, 1.0, 1.0); 2];
+    item.colours = vec![viewport_lib::Colour::linear_rgb(1.0, 1.0, 1.0); 2];
 
     let mut frame = frame_for(vec![]);
     frame.scene.mesh_instances = vec![item];
-    frame.effects.display.mode = crate::PipelineMode::Hdr;
+    frame.effects.display.mode = viewport_lib::PipelineMode::Hdr;
 
     // A layout mismatch here is a validation panic.
     let img = renderer.render_offscreen(&device, &queue, &frame, W, H);
@@ -782,7 +754,7 @@ fn bindless_keeps_mesh_instance_path_per_batch() {
 #[cfg(test)]
 struct AlbedoPlugin;
 #[cfg(test)]
-impl crate::MaterialPlugin for AlbedoPlugin {
+impl viewport_lib::MaterialPlugin for AlbedoPlugin {
     fn name(&self) -> &'static str {
         "bindless_albedo_test"
     }
@@ -804,8 +776,8 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
 #[cfg(test)]
 fn bindless_plugin_scene(
     renderer: &mut ViewportRenderer,
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
 ) -> FrameData {
     let plugin = renderer
         .resources_mut()
@@ -813,7 +785,7 @@ fn bindless_plugin_scene(
         .expect("register plugin");
     let mesh = renderer
         .resources_mut()
-        .upload_mesh_data(device, &crate::primitives::plane(0.8, 0.8))
+        .upload_mesh_data(device, &viewport_lib::primitives::plane(0.8, 0.8))
         .unwrap();
     let xs = [-1.5f32, -0.5, 0.5, 1.5];
     let items = BINDLESS_COLOURS
@@ -855,12 +827,12 @@ fn bindless_plugin_instances_and_matches_per_batch() {
         return;
     };
 
-    let mut per_batch = ViewportRenderer::new(&pd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut per_batch = ViewportRenderer::new(&pd, wgpu::TextureFormat::Rgba8UnormSrgb);
     let per_frame = bindless_plugin_scene(&mut per_batch, &pd, &pq);
     let per_img = per_batch.render_offscreen(&pd, &pq, &per_frame, W, H);
     let per_stats = per_batch.last_frame_stats();
 
-    let mut bindless = ViewportRenderer::new(&bd, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut bindless = ViewportRenderer::new(&bd, wgpu::TextureFormat::Rgba8UnormSrgb);
     let bindless_frame = bindless_plugin_scene(&mut bindless, &bd, &bq);
     let bindless_img = bindless.render_offscreen(&bd, &bq, &bindless_frame, W, H);
     let bindless_stats = bindless.last_frame_stats();
@@ -919,7 +891,7 @@ fn freeing_an_unreferenced_texture_keeps_the_batch_cache() {
         eprintln!("skipping freeing_an_unreferenced_texture_keeps_the_batch_cache: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let (item_a, item_b, _tex_b) = two_textured_planes(&mut renderer, &device, &queue);
     let items = vec![item_a, item_b];
 
@@ -958,7 +930,7 @@ fn freeing_a_referenced_texture_rebuilds_the_batch_cache() {
         eprintln!("skipping freeing_a_referenced_texture_rebuilds_the_batch_cache: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let (item_a, item_b, tex_b) = two_textured_planes(&mut renderer, &device, &queue);
     let items = vec![item_a, item_b];
 
@@ -982,7 +954,7 @@ fn replacing_a_texture_rebuilds_the_batch_cache() {
         eprintln!("skipping replacing_a_texture_rebuilds_the_batch_cache: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let (item_a, item_b, tex_b) = two_textured_planes(&mut renderer, &device, &queue);
     let items = vec![item_a, item_b];
 
@@ -1031,15 +1003,15 @@ fn freeing_a_mesh_drops_its_items_from_the_cached_batches() {
         eprintln!("skipping freeing_a_mesh_drops_its_items_from_the_cached_batches: no adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let keep = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(1.6, 1.6))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(1.6, 1.6))
         .unwrap();
     let doomed = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(1.6, 1.6))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(1.6, 1.6))
         .unwrap();
     let tex = renderer
         .resources_mut()
@@ -1094,13 +1066,13 @@ fn freeing_a_texture_used_only_by_a_submesh_material_reaches_the_screen() {
         eprintln!("skipping freeing_a_texture_used_only_by_a_submesh_material: no adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     // The mesh needs a real submesh range: `active_submesh_materials` falls back
     // to the item material when the mesh has none, which would make this test
     // observe nothing. One range covering every index is the simplest that counts.
-    let mut data = crate::primitives::plane(2.0, 2.0);
-    data.submeshes = vec![crate::resources::SubmeshRange {
+    let mut data = viewport_lib::primitives::plane(2.0, 2.0);
+    data.submeshes = vec![viewport_lib::resources::SubmeshRange {
         first_index: 0,
         index_count: data.indices.len() as u32,
     }];
@@ -1121,7 +1093,7 @@ fn freeing_a_texture_used_only_by_a_submesh_material_reaches_the_screen() {
     // texture, so a cache that looked at `item.material` alone would not know the
     // submesh texture had gone.
     let item = |with_submesh_texture: bool| {
-        let mut it = crate::SceneRenderItem::default();
+        let mut it = viewport_lib::SceneRenderItem::default();
         it.mesh_id = mesh;
         it.material = Material::from_colour([0.1, 0.1, 0.1]);
         it.settings = unlit_settings();
@@ -1178,44 +1150,44 @@ fn update_texture_view_reaches_the_screen() {
         eprintln!("skipping update_texture_view_reaches_the_screen: no adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     // Two caller-owned textures, the kind a compositor hands over per frame.
     let external = |colour: [u8; 4]| {
-        let t = device.create_texture(&crate::gpu::TextureDescriptor {
+        let t = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("external_test_texture"),
-            size: crate::gpu::Extent3d {
+            size: wgpu::Extent3d {
                 width: 2,
                 height: 2,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         queue.write_texture(
-            crate::gpu::TexelCopyTextureInfo {
+            wgpu::TexelCopyTextureInfo {
                 texture: &t,
                 mip_level: 0,
-                origin: crate::gpu::Origin3d::ZERO,
-                aspect: crate::gpu::TextureAspect::All,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
             &solid_rgba(2, 2, colour),
-            crate::gpu::TexelCopyBufferLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(8),
                 rows_per_image: Some(2),
             },
-            crate::gpu::Extent3d {
+            wgpu::Extent3d {
                 width: 2,
                 height: 2,
                 depth_or_array_layers: 1,
             },
         );
-        let view = t.create_view(&crate::gpu::TextureViewDescriptor::default());
+        let view = t.create_view(&wgpu::TextureViewDescriptor::default());
         (t, view)
     };
     let (_keep_a, view_a) = external(C_START);
@@ -1223,7 +1195,7 @@ fn update_texture_view_reaches_the_screen() {
 
     let mesh = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(2.0, 2.0))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(2.0, 2.0))
         .unwrap();
     let id = renderer
         .resources_mut()
@@ -1262,11 +1234,11 @@ fn a_free_racing_an_in_flight_upload_does_not_resurrect_the_texture() {
         eprintln!("skipping a_free_racing_an_in_flight_upload: no adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let mesh = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(2.0, 2.0))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(2.0, 2.0))
         .unwrap();
     let doomed = renderer
         .resources_mut()
@@ -1280,7 +1252,7 @@ fn a_free_racing_an_in_flight_upload_does_not_resurrect_the_texture() {
         textured_plane(mesh, doomed, -1.05),
         textured_plane(mesh, doomed, 1.05),
     ];
-    let untextured: Vec<crate::SceneRenderItem> = items
+    let untextured: Vec<viewport_lib::SceneRenderItem> = items
         .iter()
         .cloned()
         .map(|mut it| {
@@ -1350,15 +1322,15 @@ fn instanced_cutout_shadow_reflects_free_texture() {
         eprintln!("skipping instanced_cutout_shadow_reflects_free_texture: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let ground = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::cuboid(24.0, 24.0, 0.5))
+        .upload_mesh_data(&device, &viewport_lib::primitives::cuboid(24.0, 24.0, 0.5))
         .unwrap();
     let caster_mesh = renderer
         .resources_mut()
-        .upload_mesh_data(&device, &crate::primitives::plane(4.0, 4.0))
+        .upload_mesh_data(&device, &viewport_lib::primitives::plane(4.0, 4.0))
         .unwrap();
     // Fully transparent: the cutout discards every texel, so no shadow.
     let tex = renderer
@@ -1370,16 +1342,16 @@ fn instanced_cutout_shadow_reflects_free_texture() {
         )
         .unwrap();
 
-    use crate::scene::material::AlphaMode;
+    use viewport_lib::AlphaMode;
     let build = || -> FrameData {
         let mut items = Vec::new();
-        let mut g = crate::SceneRenderItem::default();
+        let mut g = viewport_lib::SceneRenderItem::default();
         g.mesh_id = ground;
         g.model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -0.25)).to_cols_array_2d();
         g.material = Material::from_colour([0.85, 0.85, 0.85]);
         items.push(g);
         for x in [-1.0f32, 1.0] {
-            let mut c = crate::SceneRenderItem::default();
+            let mut c = viewport_lib::SceneRenderItem::default();
             c.mesh_id = caster_mesh;
             c.model = glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, 5.0)).to_cols_array_2d();
             let mut m = Material::textured(tex);
@@ -1397,10 +1369,10 @@ fn instanced_cutout_shadow_reflects_free_texture() {
         cam.set_aspect_ratio(EW as f32, EH as f32);
         let cf = CameraFrame::from_camera(&cam, [EW as f32, EH as f32]);
         let mut fd = FrameData::new(cf, SceneFrame::from_surface_items(items));
-        let mut l = crate::LightingSettings::default();
+        let mut l = viewport_lib::LightingSettings::default();
         l.lights = vec![{
-            let mut s = crate::LightSource::default();
-            s.kind = crate::LightKind::Directional {
+            let mut s = viewport_lib::LightSource::default();
+            s.kind = viewport_lib::LightKind::Directional {
                 direction: [1.6, 0.0, 1.0],
             };
             s.intensity = 1.0;

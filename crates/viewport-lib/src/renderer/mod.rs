@@ -56,11 +56,7 @@ pub use shadow_debug_stats::ShadowDebugStats;
 #[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
-mod instanced_texture_tests;
-#[cfg(test)]
 mod lod_instance_tests;
-#[cfg(test)]
-mod sprite_ribbon_draw_tests;
 
 pub use self::types::{
     AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode,

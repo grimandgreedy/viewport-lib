@@ -18,32 +18,14 @@
 //! Each test renders once, changes the texture, renders again, and checks the
 //! framebuffer moved. A byte-identical pair means the change was dropped.
 
-use super::types::FrameData;
-use super::{CameraFrame, RenderCamera, SceneFrame, ViewportRenderer};
-use crate::camera::Camera;
-use crate::resources::{TextureData, TextureId};
+#[cfg(feature = "wgpu29")]
+use viewport_lib::wgpu;
 
-fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
-    let instance = crate::gpu::default_instance();
-    let adapter = pollster::block_on(instance.request_adapter(
-        &crate::gpu::RequestAdapterOptions {
-            power_preference: crate::gpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            #[cfg(wgpu30)]
-            apply_limit_buckets: false,
-        },
-    ))
-    .ok()?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor {
-            label: Some("stored_batch_texture_tests"),
-            required_limits: crate::renderer::ViewportRenderer::recommended_device_limits(&adapter),
-            ..Default::default()
-        }))
-        .ok()?;
-    Some((device, queue))
-}
+mod common;
+use common::*;
+
+use viewport_lib::renderer::{CameraFrame, SceneFrame};
+use viewport_lib::resources::{TextureData, TextureId};
 
 const W: u32 = 128;
 const H: u32 = 128;
@@ -97,8 +79,8 @@ fn side_camera() -> FrameData {
 }
 
 /// Four large textured billboards, the batch each test pre-uploads.
-fn sprite_batch(tex: TextureId) -> crate::renderer::SpriteItem {
-    let mut item = crate::renderer::SpriteItem::default();
+fn sprite_batch(tex: TextureId) -> viewport_lib::renderer::SpriteItem {
+    let mut item = viewport_lib::renderer::SpriteItem::default();
     item.positions = vec![
         [-1.0, -1.0, 0.0],
         [1.0, -1.0, 0.0],
@@ -106,15 +88,15 @@ fn sprite_batch(tex: TextureId) -> crate::renderer::SpriteItem {
         [1.0, 1.0, 0.0],
     ];
     item.sizes = vec![1.6; 4];
-    item.size_mode = crate::renderer::SpriteSizeMode::WorldSpace;
+    item.size_mode = viewport_lib::renderer::SpriteSizeMode::WorldSpace;
     item.texture_id = Some(tex);
     item
 }
 
 fn solid_texture(
     renderer: &mut ViewportRenderer,
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
     colour: [u8; 4],
 ) -> TextureId {
     renderer
@@ -130,15 +112,15 @@ fn solid_texture(
 /// Render the pre-uploaded set once, and return the frame's checksum.
 fn render_set(
     renderer: &mut ViewportRenderer,
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
-    id: crate::resources::SpriteSetId,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    id: viewport_lib::resources::SpriteSetId,
 ) -> u64 {
     let mut frame = camera();
     frame
         .scene
         .sprite_set_refs
-        .push(crate::renderer::SpriteSetRefItem::new(id));
+        .push(viewport_lib::renderer::SpriteSetRefItem::new(id));
     checksum(&renderer.render_offscreen(device, queue, &frame, W, H))
 }
 
@@ -151,7 +133,7 @@ fn a_replaced_texture_reaches_a_stored_sprite_set() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
     let id = renderer.upload_sprite_set(&device, &queue, &sprite_batch(tex));
@@ -185,7 +167,7 @@ fn a_freed_texture_leaves_a_stored_sprite_set_untextured() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
     let id = renderer.upload_sprite_set(&device, &queue, &sprite_batch(tex));
@@ -212,7 +194,7 @@ fn an_unrelated_free_leaves_a_stored_sprite_set_alone() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
     let other = solid_texture(&mut renderer, &device, &queue, C_SWAP);
@@ -229,8 +211,8 @@ fn an_unrelated_free_leaves_a_stored_sprite_set_alone() {
 }
 
 /// A wide ribbon running along X, face-on to [`side_camera`].
-fn ribbon_batch(tex: TextureId) -> crate::renderer::RibbonItem {
-    let mut item = crate::renderer::RibbonItem::default();
+fn ribbon_batch(tex: TextureId) -> viewport_lib::renderer::RibbonItem {
+    let mut item = viewport_lib::renderer::RibbonItem::default();
     item.positions = vec![
         [-2.0, 0.0, 0.0],
         [-0.7, 0.0, 0.0],
@@ -247,15 +229,15 @@ fn ribbon_batch(tex: TextureId) -> crate::renderer::RibbonItem {
 /// Render the pre-uploaded ribbon once, and return the frame's checksum.
 fn render_ribbon(
     renderer: &mut ViewportRenderer,
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
-    id: crate::resources::RibbonId,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    id: viewport_lib::resources::RibbonId,
 ) -> u64 {
     let mut frame = side_camera();
     frame
         .scene
         .ribbon_refs
-        .push(crate::renderer::RibbonRefItem::new(id));
+        .push(viewport_lib::renderer::RibbonRefItem::new(id));
     checksum(&renderer.render_offscreen(device, queue, &frame, W, H))
 }
 
@@ -267,7 +249,7 @@ fn a_replaced_texture_reaches_a_stored_ribbon() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
     let id = renderer.upload_ribbon(&device, &queue, &ribbon_batch(tex));
@@ -302,7 +284,7 @@ fn a_freed_texture_leaves_a_stored_ribbon_untextured() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
     let id = renderer.upload_ribbon(&device, &queue, &ribbon_batch(tex));
@@ -339,18 +321,18 @@ fn every_sprite_blend_and_lit_combination_draws() {
 
     for hdr in [false, true] {
         for blend in [
-            crate::renderer::SpriteBlend::AlphaBlend,
-            crate::renderer::SpriteBlend::Additive,
-            crate::renderer::SpriteBlend::Premultiplied,
+            viewport_lib::renderer::SpriteBlend::AlphaBlend,
+            viewport_lib::renderer::SpriteBlend::Additive,
+            viewport_lib::renderer::SpriteBlend::Premultiplied,
         ] {
             for depth_write in [false, true] {
                 for lit in [false, true] {
                     let mut renderer =
-                        ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
-                    let mut item = crate::renderer::SpriteItem::default();
+                        ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+                    let mut item = viewport_lib::renderer::SpriteItem::default();
                     item.positions = vec![[0.0, 0.0, 0.0]];
                     item.default_size = 0.9;
-                    item.size_mode = crate::renderer::SpriteSizeMode::WorldSpace;
+                    item.size_mode = viewport_lib::renderer::SpriteSizeMode::WorldSpace;
                     item.blend = blend;
                     item.depth_write = depth_write;
                     item.lit = lit;
@@ -358,7 +340,7 @@ fn every_sprite_blend_and_lit_combination_draws() {
                     let mut frame = camera();
                     frame.scene.sprite_items.push(item);
                     if !hdr {
-                        frame.effects.display.mode = crate::PipelineMode::Direct;
+                        frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
                     }
                     // A wrong-key pipeline fails device validation, so reaching
                     // the end of the render is the assertion.
