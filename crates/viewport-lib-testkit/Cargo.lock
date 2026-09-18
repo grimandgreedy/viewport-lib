@@ -4199,8 +4199,6 @@ dependencies = [
 [[package]]
 name = "viewport-lib-io"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b02c708be83e1fb2b1d71ec0393df2ffa10eef391eb6e62e39221e4a2ef08fcd"
 dependencies = [
  "anyhow",
  "fbxcel-dom",
@@ -5699,3 +5697,7 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core 0.5.3",
 ]
+
+[[patch.unused]]
+name = "viewport-lib-lightbake"
+version = "0.1.0"

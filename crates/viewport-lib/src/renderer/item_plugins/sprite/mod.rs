@@ -19,6 +19,7 @@
 //!   scene depth for the soft fade.
 
 mod pipeline;
+pub(crate) mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
@@ -30,7 +31,12 @@ use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, SpriteInstanceSetRefItem, SpriteItem,
     SpriteSetRefItem, SpriteSizeMode, SubObjectRef,
 };
-use crate::resources::SpriteGpuData;
+use store::{
+    SpriteGpuData, SpriteInstanceSetStore, SpriteLayouts, SpriteSetStore, build_sprite,
+    resolve_bindings,
+};
+
+pub(crate) use types::{SpriteInstanceSetId, SpriteSetId};
 
 pub(crate) const TYPE_NAME: &str = "viewport.sprite";
 
@@ -79,6 +85,13 @@ struct SpriteOutline {
 
 #[derive(Default)]
 pub(crate) struct SpritePlugin {
+    /// The pre-uploaded batches, owned by the type that draws them. Two handle
+    /// spaces over one payload: static billboards and entity sprites.
+    sets: SpriteSetStore,
+    instance_sets: SpriteInstanceSetStore,
+    /// The two layouts every upload builds its bind groups against. Created on
+    /// registration, because an upload can arrive before the first frame.
+    layouts: Option<SpriteLayouts>,
     gpu: Option<pipeline::SpriteGpu>,
     /// Per drawn batch, rebuilt each prepare: inline items first, then the two
     /// reference forms, the order the upload loop used before they met here.
@@ -109,6 +122,128 @@ struct RefractionResolve {
 const SCOPES: &[EncoderScope] = &[EncoderScope::AfterOpaque];
 
 impl SpritePlugin {
+    /// Build one batch's GPU data against the plugin's layouts.
+    fn build(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &SpriteItem,
+    ) -> SpriteGpuData {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| SpriteLayouts::new(device));
+        let binds = resolve_bindings(resources, layouts, item);
+        build_sprite(device, queue, &binds, item)
+    }
+
+    /// Pre-upload a static sprite batch and return its handle.
+    pub(crate) fn upload_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &SpriteItem,
+    ) -> SpriteSetId {
+        let gpu = self.build(device, queue, resources, item);
+        self.sets.insert_sized(gpu)
+    }
+
+    /// Drop a stored batch. `false` when the handle does not resolve.
+    pub(crate) fn drop_set(&mut self, id: SpriteSetId) -> bool {
+        self.sets.remove(id).is_some()
+    }
+
+    /// Replace the billboards behind a live handle, keeping the handle.
+    pub(crate) fn replace_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        id: SpriteSetId,
+        item: &SpriteItem,
+    ) -> bool {
+        if !self.sets.contains(id) {
+            return false;
+        }
+        let gpu = self.build(device, queue, resources, item);
+        self.sets.replace_sized(id, gpu).is_some()
+    }
+
+    /// Pre-upload an entity sprite set and return its handle.
+    pub(crate) fn upload_instance_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &SpriteItem,
+    ) -> SpriteInstanceSetId {
+        let gpu = self.build(device, queue, resources, item);
+        self.instance_sets.insert_sized(gpu)
+    }
+
+    /// Drop a stored instance set. `false` when the handle does not resolve.
+    pub(crate) fn drop_instance_set(&mut self, id: SpriteInstanceSetId) -> bool {
+        self.instance_sets.remove(id).is_some()
+    }
+
+    /// Replace the sprites behind a live instance-set handle.
+    pub(crate) fn replace_instance_set(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        id: SpriteInstanceSetId,
+        item: &SpriteItem,
+    ) -> bool {
+        if !self.instance_sets.contains(id) {
+            return false;
+        }
+        let gpu = self.build(device, queue, resources, item);
+        self.instance_sets.replace_sized(id, gpu).is_some()
+    }
+
+    /// Build a batch's buffers on a worker thread. The handle is minted when
+    /// the matching `take_*` collects the job.
+    ///
+    /// The texture views and shared sampler the upload binds are resolved here,
+    /// on the calling thread, and cloned into the worker: they are the
+    /// renderer's and a worker has no `DeviceResources` borrow.
+    pub(crate) fn begin_upload(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: SpriteItem,
+    ) -> crate::resources::JobId {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| SpriteLayouts::new(device));
+        let binds = resolve_bindings(resources, layouts, &item);
+        let device = device.clone();
+        let queue = queue.clone();
+        jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item))
+    }
+
+    /// Store the batch a finished job built as a sprite set.
+    pub(crate) fn take_set_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<SpriteSetId> {
+        take_job(jobs, id).map(|gpu| self.sets.insert_sized(gpu))
+    }
+
+    /// Store the batch a finished job built as a sprite instance set.
+    pub(crate) fn take_instance_set_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<SpriteInstanceSetId> {
+        take_job(jobs, id).map(|gpu| self.instance_sets.insert_sized(gpu))
+    }
+
     /// Draw one bucket through the keyed variant set, binding each pipeline
     /// once and only for the keys the frame actually uses.
     fn draw_bucket(
@@ -149,12 +284,44 @@ impl SpritePlugin {
     }
 }
 
+/// Take a finished upload job's batch, mapping the runner's states onto the
+/// errors the public `upload_result_*` calls report.
+fn take_job(
+    jobs: &crate::resources::Jobs<'_>,
+    id: crate::resources::JobId,
+) -> crate::error::ViewportResult<SpriteGpuData> {
+    match jobs.status(id) {
+        crate::resources::UploadStatus::Pending { .. } => {
+            Err(crate::error::ViewportError::JobNotReady)
+        }
+        crate::resources::UploadStatus::Failed(e) => Err(e),
+        _ => jobs
+            .take::<SpriteGpuData>(id)
+            .ok_or(crate::error::ViewportError::JobResultMissing {
+                reason: "unknown id or wrong upload type",
+            }),
+    }
+}
+
 impl ItemTypePlugin for SpritePlugin {
     fn type_name(&self) -> &'static str {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn init_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        _shared: &crate::plugin_api::SharedBindings<'_>,
+    ) {
+        self.layouts = Some(SpriteLayouts::new(device));
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.sets.allocated_bytes() + self.instance_sets.allocated_bytes()
+    }
+
+    fn on_device_recreated(&mut self, device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+        self.layouts = Some(SpriteLayouts::new(device));
         self.gpu = None;
         self.frame.clear();
         self.outlines.clear();
@@ -183,9 +350,13 @@ impl ItemTypePlugin for SpritePlugin {
         if items.is_empty() && set_refs.is_empty() && instance_refs.is_empty() {
             return Vec::new();
         }
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| SpriteLayouts::new(device));
+        let (sets, instance_sets) = (&self.sets, &self.instance_sets);
         let gpu = self
             .gpu
-            .get_or_insert_with(|| pipeline::SpriteGpu::new(device, ctx.resources));
+            .get_or_insert_with(|| pipeline::SpriteGpu::new(device, ctx.resources, layouts));
 
         // Inline items. `outlines` indexes into `frame`, not into the
         // submitted items, so a hidden batch earlier in the frame cannot shift
@@ -194,7 +365,8 @@ impl ItemTypePlugin for SpritePlugin {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
-            let mut gd = ctx.resources.upload_sprite(device, queue, item);
+            let binds = resolve_bindings(ctx.resources, layouts, item);
+            let mut gd = build_sprite(device, queue, &binds, item);
             gd.wireframe = ctx.wireframe_mode || item.settings.wireframe;
             let frame_index = self.frame.len();
             self.frame.push(gd);
@@ -232,7 +404,7 @@ impl ItemTypePlugin for SpritePlugin {
             if ref_item.settings.hidden {
                 continue;
             }
-            let Some(entry) = ctx.resources.content.sprite_set_store.get(ref_item.source) else {
+            let Some(entry) = sets.get(ref_item.source) else {
                 continue;
             };
             let mut gd = entry.clone();
@@ -245,12 +417,7 @@ impl ItemTypePlugin for SpritePlugin {
             if ref_item.settings.hidden {
                 continue;
             }
-            let Some(entry) = ctx
-                .resources
-                .content
-                .sprite_instance_set_store
-                .get(ref_item.source)
-            else {
+            let Some(entry) = instance_sets.get(ref_item.source) else {
                 continue;
             };
             let mut gd = entry.clone();

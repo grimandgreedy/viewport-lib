@@ -106,8 +106,12 @@ pub(super) struct SpriteGpu {
 }
 
 impl SpriteGpu {
-    pub(super) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
-        let bgl = &resources.sprite.bgl;
+    pub(super) fn new(
+        device: &crate::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &super::store::SpriteLayouts,
+    ) -> Self {
+        let bgl = &layouts.bgl;
 
         // Group 2: scene depth + sampler for soft-particle fade. The shader
         // skips sampling unless soft_particle_distance > 0, so callers may bind
@@ -204,7 +208,7 @@ impl SpriteGpu {
             )
         };
 
-        let lit_bgl = &resources.sprite.lit_bgl;
+        let lit_bgl = &layouts.lit_bgl;
 
         let alpha = crate::gpu::BlendState::ALPHA_BLENDING;
         let additive = crate::resources::builders::ADDITIVE_BLEND;

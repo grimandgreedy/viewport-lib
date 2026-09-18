@@ -2851,6 +2851,15 @@ impl ViewportRenderer {
         self.point_cloud_host().plugin.drop_stored(id)
     }
 
+    /// The registered sprite item type, which holds the uploaded batches.
+    fn sprite_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::sprite::SpritePlugin>
+    {
+        self.item_type_plugin_host(crate::renderer::item_plugins::sprite::TYPE_NAME)
+            .expect("the built-in sprite item type is registered at construction")
+    }
+
     /// The registered point cloud item type, which holds the uploaded clouds.
     fn point_cloud_host(
         &mut self,
@@ -2974,7 +2983,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::SpriteItem,
     ) -> crate::resources::SpriteSetId {
-        self.resources.upload_sprite_set(device, queue, item)
+        let host = self.sprite_host();
+        host.plugin.upload_set(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a sprite set. Poll the returned job with
@@ -2986,7 +2996,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::SpriteItem,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_sprite_set(device, queue, item)
+        let host = self.sprite_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_sprite_set`](Self::begin_upload_sprite_set) job.
@@ -2994,7 +3006,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::SpriteSetId> {
-        self.resources.upload_result_sprite_set(id)
+        let host = self.sprite_host();
+        host.plugin.take_set_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a sprite set handle, keeping the handle valid.
@@ -3006,12 +3019,14 @@ impl ViewportRenderer {
         id: crate::resources::SpriteSetId,
         item: &crate::renderer::SpriteItem,
     ) -> bool {
-        self.resources.replace_sprite_set(device, queue, id, item)
+        let host = self.sprite_host();
+        host.plugin
+            .replace_set(device, queue, host.resources, id, item)
     }
 
     /// Release a sprite set. `false` if the handle does not resolve.
     pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
-        self.resources.drop_sprite_set(id)
+        self.sprite_host().plugin.drop_set(id)
     }
 
     /// Upload a sprite instance set for reuse across frames, returning its handle.
@@ -3024,8 +3039,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::SpriteItem,
     ) -> crate::resources::SpriteInstanceSetId {
-        self.resources
-            .upload_sprite_instance_set(device, queue, item)
+        let host = self.sprite_host();
+        host.plugin
+            .upload_instance_set(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a sprite instance set. Poll the returned job with
@@ -3037,8 +3053,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::SpriteItem,
     ) -> crate::resources::JobId {
-        self.resources
-            .begin_upload_sprite_instance_set(device, queue, item)
+        let host = self.sprite_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_sprite_instance_set`](Self::begin_upload_sprite_instance_set) job.
@@ -3046,7 +3063,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::SpriteInstanceSetId> {
-        self.resources.upload_result_sprite_instance_set(id)
+        let host = self.sprite_host();
+        host.plugin.take_instance_set_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a sprite instance set handle, keeping the handle valid.
@@ -3058,13 +3076,14 @@ impl ViewportRenderer {
         id: crate::resources::SpriteInstanceSetId,
         item: &crate::renderer::SpriteItem,
     ) -> bool {
-        self.resources
-            .replace_sprite_instance_set(device, queue, id, item)
+        let host = self.sprite_host();
+        host.plugin
+            .replace_instance_set(device, queue, host.resources, id, item)
     }
 
     /// Release a sprite instance set. `false` if the handle does not resolve.
     pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
-        self.resources.drop_sprite_instance_set(id)
+        self.sprite_host().plugin.drop_instance_set(id)
     }
 
     /// Upload a scalar volume for GPU marching cubes, returning its handle.

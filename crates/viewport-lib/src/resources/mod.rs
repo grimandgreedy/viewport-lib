@@ -80,16 +80,15 @@ pub use self::plugin_builders::{
     SHADOW_DEPTH_FORMAT,
 };
 pub use self::scivis::stores::{
-    GlyphSetId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,
-    TensorGlyphSetId, TubeId,
+    GlyphSetId, PolylineId, RibbonId, StreamtubeId, TensorGlyphSetId, TubeId,
 };
 pub use crate::renderer::item_plugins::point_cloud::types::PointCloudId;
+pub use crate::renderer::item_plugins::sprite::types::{SpriteInstanceSetId, SpriteSetId};
 // Gaussian splat upload vocabulary. Owned here (not in `renderer`) so nothing in
 // `resources` reaches up to `renderer` for these types.
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub(crate) use self::scivis::stores::{
-    GlyphSetStore, PolylineStore, RibbonStore, SpriteInstanceSetStore, SpriteSetStore,
-    StreamtubeStore, TensorGlyphSetStore, TubeStore,
+    GlyphSetStore, PolylineStore, RibbonStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
 pub use viewport_lib_types::data::point::{GaussianSplatData, ShDegree};
 pub use viewport_lib_types::ids::GaussianSplatId;
@@ -112,9 +111,8 @@ pub(crate) use self::types::{
     ObjectUniform, OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
     OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform, SpriteGpuData, SsaoUniform,
-    StreamtubeGpuData, SubHighlightGpuData, TensorGlyphGpuData, ToneMapUniform, ViewportCullState,
-    ViewportHdrState,
+    ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform, SsaoUniform, StreamtubeGpuData,
+    SubHighlightGpuData, TensorGlyphGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

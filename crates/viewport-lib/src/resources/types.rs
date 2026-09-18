@@ -66,7 +66,6 @@ pub(crate) use crate::resources::scivis::glyph::GlyphBaseMesh;
 pub use crate::resources::scivis::glyph::GlyphGpuData;
 pub use crate::resources::scivis::glyph::TensorGlyphGpuData;
 pub use crate::resources::scivis::polyline::PolylineGpuData;
-pub use crate::resources::scivis::sprite::SpriteGpuData;
 pub use crate::resources::scivis::tube::StreamtubeGpuData;
 pub(crate) use crate::resources::volume::tetmesh::GpuProjectedTetMesh;
 pub(crate) use crate::resources::volume::tetmesh::ProjectedTetChunk;

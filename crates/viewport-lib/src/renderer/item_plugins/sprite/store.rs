@@ -1,13 +1,19 @@
-//! Sprite billboard resources that stay with the renderer: the two bind group
-//! layouts the public upload API builds its bind groups against, the per-item
-//! upload, and the pre-uploaded sprite set and instance set stores.
+//! The sprite batches this item type holds on the consumer's behalf, and the
+//! per-frame GPU data every sprite draw is built from.
 //!
-//! The pipelines that draw sprites live with the sprite item type under
-//! `renderer/item_plugins/sprite/`. Only what the upload path needs is here,
-//! because `upload_sprite_set` is public and hands back bind groups built
-//! over these layouts.
+//! A `SpriteItem` carries its billboards and is rebuilt each frame; a
+//! `SpriteSetRefItem` or `SpriteInstanceSetRefItem` names a batch uploaded once
+//! through the `*_sprite_set` / `*_sprite_instance_set` methods on
+//! [`ViewportRenderer`](crate::renderer::ViewportRenderer). All three end up as
+//! the same [`SpriteGpuData`], which is why the builder is shared.
+//!
+//! The two bind group layouts live here rather than with the pipelines, because
+//! an upload builds its bind groups against them and an upload can arrive long
+//! before the first frame that draws one.
 
-use super::*;
+use crate::resources::DeviceResources;
+
+pub(crate) use super::types::{SpriteInstanceSetId, SpriteSetId};
 
 /// The bind group layouts sprite uploads build against.
 ///
@@ -15,15 +21,15 @@ use super::*;
 /// group 3 carries the optional tangent-space normal map for a lit batch.
 /// Both are built once at startup rather than lazily, because an upload can
 /// arrive before the first frame that draws one.
-pub(crate) struct SpriteResources {
+pub(super) struct SpriteLayouts {
     /// Bind group layout for sprite uniforms + texture + instance buffer (group 1).
-    pub(crate) bgl: crate::gpu::BindGroupLayout,
+    pub(super) bgl: crate::gpu::BindGroupLayout,
     /// Group 3 layout for the optional lit normal map (texture + sampler).
-    pub(crate) lit_bgl: crate::gpu::BindGroupLayout,
+    pub(super) lit_bgl: crate::gpu::BindGroupLayout,
 }
 
-impl SpriteResources {
-    pub(crate) fn new(device: &crate::gpu::Device) -> Self {
+impl SpriteLayouts {
+    pub(super) fn new(device: &crate::gpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("sprite_bgl"),
             entries: &[
@@ -81,17 +87,76 @@ impl SpriteResources {
     }
 }
 
-impl DeviceResources {
-    pub(crate) fn upload_sprite(
-        &self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::SpriteItem,
-    ) -> SpriteGpuData {
-        use crate::resources::TextureSlot;
-        self.check_texture_slot(item.texture_id, TextureSlot::SpriteAlbedo);
-        self.check_texture_slot(item.normal_texture_id, TextureSlot::SpriteNormalMap);
+/// The renderer-owned handles one sprite upload binds, resolved from
+/// `DeviceResources` before the buffers are built.
+///
+/// They are separated out because they are the only thing the build needs that
+/// the plugin does not own, and because wgpu views and samplers are cheap
+/// clonable handles: resolving them up front is what lets the buffer work run
+/// on a worker thread, where no `DeviceResources` borrow exists.
+#[derive(Clone)]
+pub(super) struct SpriteBindings {
+    texture_view: crate::gpu::TextureView,
+    has_texture: u32,
+    normal_view: crate::gpu::TextureView,
+    has_normal_map: u32,
+    sampler: crate::gpu::Sampler,
+    bgl: crate::gpu::BindGroupLayout,
+    lit_bgl: crate::gpu::BindGroupLayout,
+}
 
+/// Resolve the albedo and normal-map views an item names, reporting either
+/// through the lib's texture-slot check when it was uploaded in the wrong
+/// colour space. A missing or stale id binds the neutral fallback for the slot
+/// and clears the shader's `has_*` flag.
+pub(super) fn resolve_bindings(
+    resources: &DeviceResources,
+    layouts: &SpriteLayouts,
+    item: &crate::renderer::SpriteItem,
+) -> SpriteBindings {
+    use crate::resources::TextureSlot;
+    resources.check_texture_slot(item.texture_id, TextureSlot::SpriteAlbedo);
+    resources.check_texture_slot(item.normal_texture_id, TextureSlot::SpriteNormalMap);
+
+    let (texture_view, has_texture) =
+        match item.texture_id.and_then(|id| resources.texture_view(id)) {
+            Some(view) => (view.clone(), 1),
+            None => (resources.fallback_colourmap_view().clone(), 0),
+        };
+    let (normal_view, has_normal_map) = match item
+        .normal_texture_id
+        .and_then(|id| resources.texture_view(id))
+    {
+        Some(view) => (view.clone(), 1),
+        None => (
+            resources
+                .fallback_texture_view(crate::scene::material::TextureSlot::Normal)
+                .clone(),
+            0,
+        ),
+    };
+    SpriteBindings {
+        texture_view,
+        has_texture,
+        normal_view,
+        has_normal_map,
+        sampler: resources.material_sampler().clone(),
+        bgl: layouts.bgl.clone(),
+        lit_bgl: layouts.lit_bgl.clone(),
+    }
+}
+
+/// Build the GPU data for one sprite batch: its buffers and its bind groups.
+///
+/// Shared by the per-frame item path and the two stores, so a reference draw
+/// and an inline draw are bit-for-bit the same work.
+pub(super) fn build_sprite(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    binds: &SpriteBindings,
+    item: &crate::renderer::SpriteItem,
+) -> SpriteGpuData {
+    {
         let count = item.positions.len() as u32;
 
         // Position vertex buffer (one vec3 per sprite, instance-stepped).
@@ -193,16 +258,7 @@ impl DeviceResources {
             _pad_lit_c: u32,
         }
 
-        let (texture_view, has_texture): (&crate::gpu::TextureView, u32) =
-            if let Some(id) = item.texture_id {
-                if let Some(tex) = self.content.textures.get(id) {
-                    (&tex.view, 1)
-                } else {
-                    (&self.content.fallback_lut_view, 0)
-                }
-            } else {
-                (&self.content.fallback_lut_view, 0)
-            };
+        let (texture_view, has_texture) = (&binds.texture_view, binds.has_texture);
 
         let orientation = match item.orientation {
             crate::renderer::SpriteOrientation::CameraFacing => 0u32,
@@ -216,16 +272,7 @@ impl DeviceResources {
             crate::renderer::SpriteNormalMode::NormalMap => 2u32,
         };
 
-        let (normal_view, has_normal_map): (&crate::gpu::TextureView, u32) =
-            if let Some(id) = item.normal_texture_id {
-                if let Some(tex) = self.content.textures.get(id) {
-                    (&tex.view, 1)
-                } else {
-                    (&self.material.normal_map_view, 0)
-                }
-            } else {
-                (&self.material.normal_map_view, 0)
-            };
+        let (normal_view, has_normal_map) = (&binds.normal_view, binds.has_normal_map);
 
         let uniform_data = SpriteUniformData {
             model: item.model,
@@ -259,7 +306,7 @@ impl DeviceResources {
         });
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
-        let bgl = &self.sprite.bgl;
+        let bgl = &binds.bgl;
 
         let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
             label: Some("sprite_bind_group"),
@@ -275,7 +322,7 @@ impl DeviceResources {
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                    resource: crate::gpu::BindingResource::Sampler(&binds.sampler),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 3,
@@ -286,7 +333,7 @@ impl DeviceResources {
 
         let lit_normal_bg = if item.lit {
             Some({
-                let lit_bgl = &self.sprite.lit_bgl;
+                let lit_bgl = &binds.lit_bgl;
                 device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                     label: Some("sprite_lit_normal_bg"),
                     layout: lit_bgl,
@@ -297,7 +344,7 @@ impl DeviceResources {
                         },
                         crate::gpu::BindGroupEntry {
                             binding: 1,
-                            resource: crate::gpu::BindingResource::Sampler(&self.material.sampler),
+                            resource: crate::gpu::BindingResource::Sampler(&binds.sampler),
                         },
                     ],
                 })
@@ -330,246 +377,31 @@ impl DeviceResources {
             _instance_buf: instance_buf,
         }
     }
+}
 
-    /// Lazily create the sprite outline mask pipeline (R8Unorm, mask-only).
-    ///
-    /// Same bind group layout and vertex transform as the normal sprite pipeline but
-    /// outputs a flat mask value.
+// ---------------------------------------------------------------------------
+// The two stores, and the uploads that fill them
+// ---------------------------------------------------------------------------
 
-    /// Prefer [`ViewportRenderer::upload_sprite_set`](crate::renderer::ViewportRenderer::upload_sprite_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_sprite_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::resources::SpriteSetId {
-        let gpu = self.upload_sprite(device, queue, item);
-        self.content.sprite_set_store.insert_sized(gpu)
-    }
+/// Slotted store of pre-uploaded sprite batches: static billboards such as
+/// foliage, signage and light flares.
+pub(super) type SpriteSetStore = crate::resources::handle::SlotStore<SpriteGpuData, SpriteSetId>;
 
-    /// Remove a pre-uploaded sprite set.
-    ///
-    /// Prefer [`ViewportRenderer::drop_sprite_set`](crate::renderer::ViewportRenderer::drop_sprite_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
-        self.content.sprite_set_store.remove(id).is_some()
-    }
+/// Slotted store of pre-uploaded sprite instance sets: entity sprites such as
+/// NPCs, item drops and damage numbers. Same payload, separate handle space.
+pub(super) type SpriteInstanceSetStore =
+    crate::resources::handle::SlotStore<SpriteGpuData, SpriteInstanceSetId>;
 
-    /// Replace the contents of a pre-uploaded sprite set, keeping the same id.
-    ///
-    /// Prefer [`ViewportRenderer::replace_sprite_set`](crate::renderer::ViewportRenderer::replace_sprite_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn replace_sprite_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::SpriteSetId,
-        item: &crate::renderer::SpriteItem,
-    ) -> bool {
-        if !self.content.sprite_set_store.contains(id) {
-            return false;
-        }
-        let gpu = self.upload_sprite(device, queue, item);
-        self.content
-            .sprite_set_store
-            .replace_sized(id, gpu)
-            .is_some()
-    }
-
-    /// Start an asynchronous sprite set upload.
-    ///
-    /// Prefer [`ViewportRenderer::begin_upload_sprite_set`](crate::renderer::ViewportRenderer::begin_upload_sprite_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn begin_upload_sprite_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::SpriteItem,
-    ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<crate::resources::SpriteSetId>::new();
-        let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
-        let queue_for_apply = queue.clone();
-        let id = {
-            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
-                progress.set(0.9);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let sid =
-                            resources.upload_sprite_set(&device_for_apply, &queue_for_apply, &item);
-                        slot_for_apply.set(sid);
-                    }),
-                ))
-            })
-        };
-        self.job_results
-            .sprite_set
-            .lock()
-            .expect("sprite set result map poisoned")
-            .insert(id, slot);
-        id
-    }
-
-    /// Take the [`SpriteSetId`] produced by a completed
-    /// [`begin_upload_sprite_set`](Self::begin_upload_sprite_set) job.
-    ///
-    /// Prefer [`ViewportRenderer::upload_result_sprite_set`](crate::renderer::ViewportRenderer::upload_result_sprite_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_result_sprite_set(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::SpriteSetId> {
-        let mut map = self
-            .job_results
-            .sprite_set
-            .lock()
-            .expect("sprite set result map poisoned");
-        let slot = match map.get(&id) {
-            Some(s) => s.clone(),
-            None => {
-                return Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                });
-            }
-        };
-        match slot.take() {
-            Some(sid) => {
-                map.remove(&id);
-                Ok(sid)
-            }
-            None => Err(crate::error::ViewportError::JobNotReady),
-        }
-    }
-
-    /// Pre-upload a sprite instance set and return a typed handle.
-    ///
-    /// Use this for sprites whose definition (texture, blend, size mode)
-    /// is stable but whose instance transforms change every frame: NPCs,
-    /// item drops, damage numbers. Submit a
-    /// [`SpriteInstanceSetRefItem`](crate::renderer::SpriteInstanceSetRefItem)
-    /// on `SceneFrame::sprite_instance_set_refs` each frame.
-    ///
-    /// The current implementation pre-bakes both the definition and the
-    /// instance transforms; full per-frame instance transform override
-    /// against a stable definition is a planned follow-up.
-    ///
-    /// Prefer [`ViewportRenderer::upload_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_sprite_instance_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::resources::SpriteInstanceSetId {
-        let gpu = self.upload_sprite(device, queue, item);
-        self.content.sprite_instance_set_store.insert_sized(gpu)
-    }
-
-    /// Remove a pre-uploaded sprite instance set.
-    ///
-    /// Prefer [`ViewportRenderer::drop_sprite_instance_set`](crate::renderer::ViewportRenderer::drop_sprite_instance_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
-        self.content.sprite_instance_set_store.remove(id).is_some()
-    }
-
-    /// Replace the contents of a pre-uploaded sprite instance set, keeping
-    /// the same id.
-    ///
-    /// Prefer [`ViewportRenderer::replace_sprite_instance_set`](crate::renderer::ViewportRenderer::replace_sprite_instance_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn replace_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::SpriteInstanceSetId,
-        item: &crate::renderer::SpriteItem,
-    ) -> bool {
-        if !self.content.sprite_instance_set_store.contains(id) {
-            return false;
-        }
-        let gpu = self.upload_sprite(device, queue, item);
-        self.content
-            .sprite_instance_set_store
-            .replace_sized(id, gpu)
-            .is_some()
-    }
-
-    /// Start an asynchronous sprite instance set upload.
-    ///
-    /// Prefer [`ViewportRenderer::begin_upload_sprite_instance_set`](crate::renderer::ViewportRenderer::begin_upload_sprite_instance_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn begin_upload_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::SpriteItem,
-    ) -> crate::resources::JobId {
-        let slot = crate::resources::ResultSlot::<crate::resources::SpriteInstanceSetId>::new();
-        let slot_for_apply = slot.clone();
-        let device_for_apply = device.clone();
-        let queue_for_apply = queue.clone();
-        let id = {
-            let mut runner = self.jobs.lock().expect("upload job runner poisoned");
-            runner.submit_cpu(move |progress| {
-                progress.set(0.9);
-                Ok(crate::resources::upload_jobs::JobProduct::with_apply(
-                    Box::new(move |resources: &mut DeviceResources| {
-                        let sid = resources.upload_sprite_instance_set(
-                            &device_for_apply,
-                            &queue_for_apply,
-                            &item,
-                        );
-                        slot_for_apply.set(sid);
-                    }),
-                ))
-            })
-        };
-        self.job_results
-            .sprite_instance_set
-            .lock()
-            .expect("sprite instance set result map poisoned")
-            .insert(id, slot);
-        id
-    }
-
-    /// Take the [`SpriteInstanceSetId`] produced by a completed
-    /// [`begin_upload_sprite_instance_set`](Self::begin_upload_sprite_instance_set) job.
-    ///
-    /// Prefer [`ViewportRenderer::upload_result_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_result_sprite_instance_set),
-    /// which stays reachable when an item type holds its own storage.
-    pub fn upload_result_sprite_instance_set(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::SpriteInstanceSetId> {
-        let mut map = self
-            .job_results
-            .sprite_instance_set
-            .lock()
-            .expect("sprite instance set result map poisoned");
-        let slot = match map.get(&id) {
-            Some(s) => s.clone(),
-            None => {
-                return Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                });
-            }
-        };
-        match slot.take() {
-            Some(sid) => {
-                map.remove(&id);
-                Ok(sid)
-            }
-            None => Err(crate::error::ViewportError::JobNotReady),
-        }
+impl crate::resources::handle::GpuByteSize for SpriteGpuData {
+    fn gpu_bytes(&self) -> u64 {
+        self.vertex_buffer.size() + self._uniform_buf.size() + self._instance_buf.size()
     }
 }
 
-/// Per-frame GPU data for one sprite batch item, created in `prepare()`.
+/// GPU data for one sprite batch: the inline items build it each frame, the
+/// two stores hold it across frames.
 #[derive(Clone)]
-pub struct SpriteGpuData {
+pub(crate) struct SpriteGpuData {
     /// Object-level pick id shared by every instance in the batch (from the
     /// item's `settings.pick_id`); `PickId::NONE` when not pickable.
     pub(crate) pick_id: crate::PickId,

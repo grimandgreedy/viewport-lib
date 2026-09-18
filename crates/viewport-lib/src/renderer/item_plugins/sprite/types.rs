@@ -1,5 +1,19 @@
 use crate::scene::material::ItemSettings;
 
+crate::resources::handle::slot_handle! {
+    /// Handle to a sprite batch uploaded once through
+    /// [`ViewportRenderer::upload_sprite_set`](crate::renderer::ViewportRenderer::upload_sprite_set).
+    /// Backs static billboards such as foliage, signage and light flares.
+    pub struct SpriteSetId;
+}
+
+crate::resources::handle::slot_handle! {
+    /// Handle to a sprite instance set uploaded once through
+    /// [`ViewportRenderer::upload_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_sprite_instance_set).
+    /// Backs entity sprites such as NPCs, item drops and damage numbers.
+    pub struct SpriteInstanceSetId;
+}
+
 /// Controls whether sprite sizes are measured in screen-space pixels or world-space units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpriteSizeMode {

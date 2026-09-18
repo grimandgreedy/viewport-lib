@@ -89,12 +89,6 @@ pub(crate) struct JobResults {
     pub overlay_texture: std::sync::Mutex<
         std::collections::HashMap<JobId, ResultSlot<crate::renderer::OverlayTextureId>>,
     >,
-    /// Async sprite set uploads.
-    pub sprite_set:
-        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::SpriteSetId>>>,
-    /// Async sprite instance set uploads.
-    pub sprite_instance_set:
-        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::SpriteInstanceSetId>>>,
 }
 
 /// Current state of a submitted job.

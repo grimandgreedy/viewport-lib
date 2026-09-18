@@ -3106,12 +3106,11 @@ impl DeviceResources {
     /// format, so there is nothing to compare.
     ///
     /// Takes a shared borrow, so an item type preparing against
-    /// `&DeviceResources` can call it too.
-    pub(crate) fn check_texture_slot(
-        &self,
-        id: Option<crate::resources::TextureId>,
-        slot: TextureSlot,
-    ) {
+    /// `&DeviceResources` can call it too, and an item type binding a
+    /// consumer's texture into a slot with a documented colour space should:
+    /// the mismatch log is the renderer's, so this is the one part of the
+    /// check a plugin cannot do for itself.
+    pub fn check_texture_slot(&self, id: Option<crate::resources::TextureId>, slot: TextureSlot) {
         let Some(id) = id else { return };
         let Some(found) = self.texture_colour_space(id) else {
             return;

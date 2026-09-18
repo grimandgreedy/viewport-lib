@@ -309,10 +309,6 @@ pub struct ContentResources {
     pub(crate) glyph_set_store: super::GlyphSetStore,
     /// Pre-uploaded tensor glyph set storage.
     pub(crate) tensor_glyph_set_store: super::TensorGlyphSetStore,
-    /// Pre-uploaded sprite set storage.
-    pub(crate) sprite_set_store: super::SpriteSetStore,
-    /// Pre-uploaded sprite instance set storage.
-    pub(crate) sprite_instance_set_store: super::SpriteInstanceSetStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.
@@ -528,7 +524,6 @@ pub struct DeviceResources {
 
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite (emissive + lit) pipelines, layouts, refraction, and soft-particle fallbacks.
-    pub(crate) sprite: crate::resources::scivis::sprite::SpriteResources,
     // The polyline outline mask pipeline lives on `polyline.outline_mask_pipeline`.
 
     // --- point cloud pipelines (lazily created) ---
