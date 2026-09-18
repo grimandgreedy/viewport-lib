@@ -116,49 +116,49 @@ impl crate::renderer::ViewportRenderer {
         // its neighbours the way it always has.
         // First the types that came off the shared scivis draw loop, in the
         // order that loop drew them.
-        self.with_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
-        self.with_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
-        self.with_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
-        self.with_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
-        self.with_item_type_plugin(device, Box::new(curves::StreamtubePlugin::default()));
-        self.with_item_type_plugin(device, Box::new(curves::TubePlugin::default()));
-        self.with_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
-        self.with_item_type_plugin(device, Box::new(tensor_glyph::TensorGlyphPlugin::default()));
-        self.with_item_type_plugin(
+        self.install_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
+        self.install_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
+        self.install_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
+        self.install_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
+        self.install_item_type_plugin(device, Box::new(curves::StreamtubePlugin::default()));
+        self.install_item_type_plugin(device, Box::new(curves::TubePlugin::default()));
+        self.install_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
+        self.install_item_type_plugin(device, Box::new(tensor_glyph::TensorGlyphPlugin::default()));
+        self.install_item_type_plugin(
             device,
             Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
         );
-        self.with_item_type_plugin(device, Box::new(curves::RibbonPlugin::default()));
+        self.install_item_type_plugin(device, Box::new(curves::RibbonPlugin::default()));
         // Then the types that always had a draw site of their own.
-        self.with_item_type_plugin(
+        self.install_item_type_plugin(
             device,
             Box::new(gaussian_splat::GaussianSplatPlugin::default()),
         );
-        self.with_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
-        self.with_item_type_plugin(
+        self.install_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
+        self.install_item_type_plugin(
             device,
             Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
         );
         // Sprites drew after every other non-mesh type, so they register last,
         // with the particles that shared their pass right behind them.
-        self.with_item_type_plugin(device, Box::new(sprite::SpritePlugin::default()));
-        self.with_item_type_plugin(
+        self.install_item_type_plugin(device, Box::new(sprite::SpritePlugin::default()));
+        self.install_item_type_plugin(
             device,
             Box::new(gpu_particles::GpuParticlesPlugin::default()),
         );
         // External instances drew after every plugin paint when they had a pass
         // of their own, so they register after the last type that paints.
-        self.with_item_type_plugin(
+        self.install_item_type_plugin(
             device,
             Box::new(external_instances::ExternalInstancesPlugin::default()),
         );
-        self.with_item_type_plugin(
+        self.install_item_type_plugin(
             device,
             Box::new(decal::DecalPlugin::new(self.decal_cache_stats.clone())),
         );
         // Scatter composites over the finished scene, so it registers after
         // every type whose pixels it absorbs.
-        self.with_item_type_plugin(
+        self.install_item_type_plugin(
             device,
             Box::new(scatter_volume::ScatterVolumePlugin::default()),
         );

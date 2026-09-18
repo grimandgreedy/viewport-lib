@@ -9,6 +9,15 @@
 //! built-in type name into that type's concrete plugin, which is the lookup
 //! plus downcast every call here needs. One per type, rather than one per
 //! method.
+//!
+//! Those lookups cannot fail. A built-in type registers at construction, there
+//! is no call that unregisters one, and
+//! [`RESERVED_TYPE_NAME_PREFIX`](crate::renderer::RESERVED_TYPE_NAME_PREFIX)
+//! stops anything else claiming its name, so the name resolves and the downcast
+//! is to the type that put itself there. The two that return
+//! `ItemTypePluginMissing` instead of asserting do so because the public calls
+//! in front of them already return a `Result` for other reasons, not because
+//! they are more careful.
 
 use super::*;
 
@@ -368,7 +377,9 @@ impl ViewportRenderer {
     ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::polyline::PolylinePlugin>
     {
         self.item_type_plugin_host(crate::renderer::item_plugins::polyline::TYPE_NAME)
-            .expect("the built-in polyline item type is registered at construction")
+            .expect(
+                "the built-in polyline item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// The registered streamtube item type, which holds the uploaded curves.
@@ -377,7 +388,9 @@ impl ViewportRenderer {
     ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::StreamtubePlugin>
     {
         self.item_type_plugin_host(crate::renderer::item_plugins::curves::STREAMTUBE_TYPE_NAME)
-            .expect("the built-in streamtube item type is registered at construction")
+            .expect(
+                "the built-in streamtube item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// The registered tube item type, which holds the uploaded curves.
@@ -386,7 +399,9 @@ impl ViewportRenderer {
     ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::TubePlugin>
     {
         self.item_type_plugin_host(crate::renderer::item_plugins::curves::TUBE_TYPE_NAME)
-            .expect("the built-in tube item type is registered at construction")
+            .expect(
+                "the built-in tube item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// The registered ribbon item type, which holds the uploaded curves.
@@ -395,7 +410,9 @@ impl ViewportRenderer {
     ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::RibbonPlugin>
     {
         self.item_type_plugin_host(crate::renderer::item_plugins::curves::RIBBON_TYPE_NAME)
-            .expect("the built-in ribbon item type is registered at construction")
+            .expect(
+                "the built-in ribbon item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// The registered glyph item type, which holds the uploaded sets.
@@ -404,7 +421,9 @@ impl ViewportRenderer {
     ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::glyph::GlyphPlugin>
     {
         self.item_type_plugin_host(crate::renderer::item_plugins::glyph::TYPE_NAME)
-            .expect("the built-in glyph item type is registered at construction")
+            .expect(
+                "the built-in glyph item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// The registered tensor glyph item type, which holds the uploaded sets.
@@ -415,7 +434,9 @@ impl ViewportRenderer {
         crate::renderer::item_plugins::tensor_glyph::TensorGlyphPlugin,
     > {
         self.item_type_plugin_host(crate::renderer::item_plugins::tensor_glyph::TYPE_NAME)
-            .expect("the built-in tensor glyph item type is registered at construction")
+            .expect(
+                "the built-in tensor glyph item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// The registered sprite item type, which holds the uploaded batches.
@@ -424,7 +445,9 @@ impl ViewportRenderer {
     ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::sprite::SpritePlugin>
     {
         self.item_type_plugin_host(crate::renderer::item_plugins::sprite::TYPE_NAME)
-            .expect("the built-in sprite item type is registered at construction")
+            .expect(
+                "the built-in sprite item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// The registered point cloud item type, which holds the uploaded clouds.
@@ -435,7 +458,9 @@ impl ViewportRenderer {
         crate::renderer::item_plugins::point_cloud::PointCloudPlugin,
     > {
         self.item_type_plugin_host(crate::renderer::item_plugins::point_cloud::TYPE_NAME)
-            .expect("the built-in point cloud item type is registered at construction")
+            .expect(
+                "the built-in point cloud item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// Upload a glyph set for reuse across frames, returning its handle.
@@ -770,7 +795,9 @@ impl ViewportRenderer {
         crate::renderer::item_plugins::gpu_particles::GpuParticlesPlugin,
     > {
         self.item_type_plugin_host(crate::renderer::item_plugins::gpu_particles::TYPE_NAME)
-            .expect("the built-in GPU particle item type is registered at construction")
+            .expect(
+                "the built-in GPU particle item type registers at construction, under a name nothing else can take",
+            )
     }
 
     /// Create an instance set drawn from a caller-owned positions buffer.
@@ -807,6 +834,8 @@ impl ViewportRenderer {
         crate::renderer::item_plugins::external_instances::ExternalInstancesPlugin,
     > {
         self.item_type_plugin_host(crate::renderer::item_plugins::external_instances::TYPE_NAME)
-            .expect("the built-in external instances item type is registered at construction")
+            .expect(
+                "the built-in external instances item type registers at construction, under a name nothing else can take",
+            )
     }
 }

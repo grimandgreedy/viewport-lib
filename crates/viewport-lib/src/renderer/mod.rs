@@ -58,6 +58,15 @@ mod hidden_tests;
 #[cfg(test)]
 mod lod_instance_tests;
 
+/// Item-type names beginning with this prefix belong to the library.
+///
+/// Every built-in item type registers under it (`viewport.sprite`,
+/// `viewport.point_cloud`, and so on), and
+/// [`ViewportRenderer::with_item_type_plugin`] refuses any other plugin that
+/// claims a name in it. One prefix rather than a list of names, so a built-in
+/// type added later is covered without a second place to update.
+pub const RESERVED_TYPE_NAME_PREFIX: &str = "viewport.";
+
 pub use self::types::{
     AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode,
     CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
@@ -1624,7 +1633,40 @@ impl ViewportRenderer {
     /// every frame where
     /// [`SceneFrame::submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items)
     /// has populated a collection under the same name.
+    ///
+    /// # Panics
+    ///
+    /// If `type_name()` starts with [`RESERVED_TYPE_NAME_PREFIX`]. That
+    /// namespace belongs to the built-in item types, which register through
+    /// this same call at construction, and the per-type calls on this renderer
+    /// (`upload_sprite_set`, `create_gpu_particle_system`, and the rest) resolve
+    /// their plugin by that name and downcast it. Replacing one would leave
+    /// those calls looking at a type that is not what they expect, so the
+    /// collision is refused where it is made rather than surfacing as a failure
+    /// in an unrelated upload later. Pick a prefix of your own: the name is only
+    /// ever compared, never parsed.
     pub fn with_item_type_plugin(
+        &mut self,
+        device: &crate::gpu::Device,
+        plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
+    ) {
+        let name = plugin.type_name();
+        assert!(
+            !name.starts_with(RESERVED_TYPE_NAME_PREFIX),
+            "item type name {name:?} is reserved: the {RESERVED_TYPE_NAME_PREFIX:?} prefix \
+             belongs to the built-in item types. Register under a prefix of your own."
+        );
+        self.install_item_type_plugin(device, plugin);
+    }
+
+    /// [`with_item_type_plugin`](Self::with_item_type_plugin) without the
+    /// reserved-name check, which is how the built-in types register.
+    ///
+    /// The check is the only difference. The built-ins deliberately enter
+    /// through the same door an external type does, so that door is known to be
+    /// wide enough for everything an item type needs; what they cannot also do
+    /// is pass a guard that exists to stop anything else taking their names.
+    pub(crate) fn install_item_type_plugin(
         &mut self,
         device: &crate::gpu::Device,
         mut plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
