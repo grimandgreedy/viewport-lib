@@ -56,9 +56,6 @@ impl PolylineVariantSet {
 
 #[cfg(test)]
 mod polyline_key_tests {
-    // These drive the DeviceResources upload calls directly, which is the
-    // point: they test the methods the renderer-level ones forward to.
-    #![allow(deprecated)]
     use super::*;
 
     #[test]
@@ -649,10 +646,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_polyline`](crate::renderer::ViewportRenderer::upload_polyline),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_polyline instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -669,10 +662,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_polyline`](crate::renderer::ViewportRenderer::drop_polyline),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_polyline instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
         self.content.polyline_store.remove(id).is_some()
     }
@@ -685,10 +674,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_polyline`](crate::renderer::ViewportRenderer::replace_polyline),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_polyline instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -716,12 +701,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_polyline`](crate::renderer::ViewportRenderer::begin_upload_polyline),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_polyline instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -760,10 +739,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_polyline`](crate::renderer::ViewportRenderer::upload_result_polyline),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_polyline instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_polyline(
         &mut self,
         id: crate::resources::JobId,
@@ -793,9 +768,6 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod tests {
-    // These drive the DeviceResources upload calls directly, which is the
-    // point: they test the methods the renderer-level ones forward to.
-    #![allow(deprecated)]
     use super::PolylineKey;
     use crate::DeviceResources;
     use crate::renderer::PolylineItem;

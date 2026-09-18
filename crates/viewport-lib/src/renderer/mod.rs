@@ -2600,7 +2600,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -2613,7 +2612,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a polyline. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_polyline`](Self::upload_result_polyline).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -2624,7 +2622,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_polyline`](Self::begin_upload_polyline) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_polyline(
         &mut self,
         id: crate::resources::JobId,
@@ -2634,7 +2631,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a polyline handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_polyline(
         &mut self,
         device: &crate::gpu::Device,
@@ -2646,7 +2642,6 @@ impl ViewportRenderer {
     }
 
     /// Release a polyline. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_polyline(&mut self, id: crate::resources::PolylineId) -> bool {
         self.resources.drop_polyline(id)
     }
@@ -2655,7 +2650,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -2668,7 +2662,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a streamtube. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_streamtube`](Self::upload_result_streamtube).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -2679,7 +2672,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_streamtube`](Self::begin_upload_streamtube) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_streamtube(
         &mut self,
         id: crate::resources::JobId,
@@ -2689,7 +2681,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a streamtube handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -2701,7 +2692,6 @@ impl ViewportRenderer {
     }
 
     /// Release a streamtube. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
         self.resources.drop_streamtube(id)
     }
@@ -2710,7 +2700,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -2723,7 +2712,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a tube. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_tube`](Self::upload_result_tube).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -2734,7 +2722,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_tube`](Self::begin_upload_tube) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_tube(
         &mut self,
         id: crate::resources::JobId,
@@ -2744,7 +2731,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a tube handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -2756,7 +2742,6 @@ impl ViewportRenderer {
     }
 
     /// Release a tube. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
         self.resources.drop_tube(id)
     }
@@ -2765,7 +2750,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -2778,7 +2762,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a ribbon. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_ribbon`](Self::upload_result_ribbon).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -2789,7 +2772,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_ribbon`](Self::begin_upload_ribbon) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_ribbon(
         &mut self,
         id: crate::resources::JobId,
@@ -2799,7 +2781,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a ribbon handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -2811,7 +2792,6 @@ impl ViewportRenderer {
     }
 
     /// Release a ribbon. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
         self.resources.drop_ribbon(id)
     }
@@ -2820,7 +2800,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -2833,7 +2812,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a point cloud. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_point_cloud`](Self::upload_result_point_cloud).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -2844,7 +2822,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_point_cloud`](Self::begin_upload_point_cloud) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_point_cloud(
         &mut self,
         id: crate::resources::JobId,
@@ -2854,7 +2831,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a point cloud handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -2866,7 +2842,6 @@ impl ViewportRenderer {
     }
 
     /// Release a point cloud. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
         self.resources.drop_point_cloud(id)
     }
@@ -2875,7 +2850,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -2888,7 +2862,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a glyph set. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_glyph_set`](Self::upload_result_glyph_set).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -2899,7 +2872,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_glyph_set`](Self::begin_upload_glyph_set) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_glyph_set(
         &mut self,
         id: crate::resources::JobId,
@@ -2909,7 +2881,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a glyph set handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -2921,7 +2892,6 @@ impl ViewportRenderer {
     }
 
     /// Release a glyph set. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
         self.resources.drop_glyph_set(id)
     }
@@ -2930,7 +2900,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -2943,7 +2912,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a tensor glyph set. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_tensor_glyph_set`](Self::upload_result_tensor_glyph_set).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -2955,7 +2923,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_tensor_glyph_set`](Self::begin_upload_tensor_glyph_set) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_tensor_glyph_set(
         &mut self,
         id: crate::resources::JobId,
@@ -2965,7 +2932,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a tensor glyph set handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -2978,7 +2944,6 @@ impl ViewportRenderer {
     }
 
     /// Release a tensor glyph set. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_tensor_glyph_set(&mut self, id: crate::resources::TensorGlyphSetId) -> bool {
         self.resources.drop_tensor_glyph_set(id)
     }
@@ -2987,7 +2952,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -3000,7 +2964,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a sprite set. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_sprite_set`](Self::upload_result_sprite_set).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -3011,7 +2974,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_sprite_set`](Self::begin_upload_sprite_set) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_sprite_set(
         &mut self,
         id: crate::resources::JobId,
@@ -3021,7 +2983,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a sprite set handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -3033,7 +2994,6 @@ impl ViewportRenderer {
     }
 
     /// Release a sprite set. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
         self.resources.drop_sprite_set(id)
     }
@@ -3042,7 +3002,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -3056,7 +3015,6 @@ impl ViewportRenderer {
     /// Start an off-thread upload of a sprite instance set. Poll the returned job with
     /// [`upload_status`](Self::upload_status) and take the handle from
     /// [`upload_result_sprite_instance_set`](Self::upload_result_sprite_instance_set).
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn begin_upload_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -3068,7 +3026,6 @@ impl ViewportRenderer {
     }
 
     /// Take the handle from a finished [`begin_upload_sprite_instance_set`](Self::begin_upload_sprite_instance_set) job.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn upload_result_sprite_instance_set(
         &mut self,
         id: crate::resources::JobId,
@@ -3078,7 +3035,6 @@ impl ViewportRenderer {
 
     /// Replace the geometry behind a sprite instance set handle, keeping the handle valid.
     /// `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn replace_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -3091,7 +3047,6 @@ impl ViewportRenderer {
     }
 
     /// Release a sprite instance set. `false` if the handle does not resolve.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
         self.resources.drop_sprite_instance_set(id)
     }
@@ -3183,7 +3138,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn create_gpu_particle_system(
         &mut self,
         device: &crate::gpu::Device,
@@ -3195,7 +3149,6 @@ impl ViewportRenderer {
     }
 
     /// Release a GPU particle system. The handle stops resolving.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_gpu_particle_system(&mut self, id: crate::resources::GpuParticleSystemId) {
         self.resources.drop_gpu_particle_system(id)
     }
@@ -3204,7 +3157,6 @@ impl ViewportRenderer {
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
     /// the call that keeps working once an item type owns its own storage.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn create_external_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -3214,13 +3166,11 @@ impl ViewportRenderer {
     }
 
     /// Release an external instance set. Items still naming it are skipped.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn drop_external_instance_set(&mut self, id: crate::resources::ExternalInstanceSetId) {
         self.resources.drop_external_instance_set(id)
     }
 
     /// Re-point an external instance set at a different positions buffer.
-    #[allow(deprecated)] // the forwarder is the replacement
     pub fn set_external_instance_set_buffer(
         &mut self,
         id: crate::resources::ExternalInstanceSetId,

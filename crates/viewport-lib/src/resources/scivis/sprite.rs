@@ -338,10 +338,6 @@ impl DeviceResources {
 
     /// Prefer [`ViewportRenderer::upload_sprite_set`](crate::renderer::ViewportRenderer::upload_sprite_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_sprite_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -356,10 +352,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_sprite_set`](crate::renderer::ViewportRenderer::drop_sprite_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_sprite_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_sprite_set(&mut self, id: crate::resources::SpriteSetId) -> bool {
         self.content.sprite_set_store.remove(id).is_some()
     }
@@ -368,10 +360,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_sprite_set`](crate::renderer::ViewportRenderer::replace_sprite_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_sprite_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -393,12 +381,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_sprite_set`](crate::renderer::ViewportRenderer::begin_upload_sprite_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_sprite_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_sprite_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -435,10 +417,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_sprite_set`](crate::renderer::ViewportRenderer::upload_result_sprite_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_sprite_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_sprite_set(
         &mut self,
         id: crate::resources::JobId,
@@ -479,10 +457,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_sprite_instance_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_sprite_instance_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -497,10 +471,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_sprite_instance_set`](crate::renderer::ViewportRenderer::drop_sprite_instance_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_sprite_instance_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_sprite_instance_set(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
         self.content.sprite_instance_set_store.remove(id).is_some()
     }
@@ -510,10 +480,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_sprite_instance_set`](crate::renderer::ViewportRenderer::replace_sprite_instance_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_sprite_instance_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -535,12 +501,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_sprite_instance_set`](crate::renderer::ViewportRenderer::begin_upload_sprite_instance_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_sprite_instance_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_sprite_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -580,10 +540,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_result_sprite_instance_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_sprite_instance_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_sprite_instance_set(
         &mut self,
         id: crate::resources::JobId,

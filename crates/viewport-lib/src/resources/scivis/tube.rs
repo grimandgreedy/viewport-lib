@@ -354,10 +354,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_streamtube`](crate::renderer::ViewportRenderer::upload_streamtube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_streamtube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -372,10 +368,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_streamtube`](crate::renderer::ViewportRenderer::drop_streamtube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_streamtube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_streamtube(&mut self, id: crate::resources::StreamtubeId) -> bool {
         self.content.streamtube_store.remove(id).is_some()
     }
@@ -384,10 +376,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_streamtube`](crate::renderer::ViewportRenderer::replace_streamtube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_streamtube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -746,10 +734,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_tube`](crate::renderer::ViewportRenderer::upload_tube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_tube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -764,10 +748,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_tube`](crate::renderer::ViewportRenderer::drop_tube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_tube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_tube(&mut self, id: crate::resources::TubeId) -> bool {
         self.content.tube_store.remove(id).is_some()
     }
@@ -776,10 +756,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_tube`](crate::renderer::ViewportRenderer::replace_tube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_tube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -1171,10 +1147,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_ribbon`](crate::renderer::ViewportRenderer::upload_ribbon),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_ribbon instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -1189,10 +1161,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_ribbon`](crate::renderer::ViewportRenderer::drop_ribbon),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_ribbon instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_ribbon(&mut self, id: crate::resources::RibbonId) -> bool {
         self.content.ribbon_store.remove(id).is_some()
     }
@@ -1201,10 +1169,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_ribbon`](crate::renderer::ViewportRenderer::replace_ribbon),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_ribbon instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -1223,12 +1187,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_streamtube`](crate::renderer::ViewportRenderer::begin_upload_streamtube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_streamtube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_streamtube(
         &mut self,
         device: &crate::gpu::Device,
@@ -1265,10 +1223,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_streamtube`](crate::renderer::ViewportRenderer::upload_result_streamtube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_streamtube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_streamtube(
         &mut self,
         id: crate::resources::JobId,
@@ -1299,12 +1253,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_tube`](crate::renderer::ViewportRenderer::begin_upload_tube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_tube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_tube(
         &mut self,
         device: &crate::gpu::Device,
@@ -1340,10 +1288,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_tube`](crate::renderer::ViewportRenderer::upload_result_tube),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_tube instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_tube(
         &mut self,
         id: crate::resources::JobId,
@@ -1374,12 +1318,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_ribbon`](crate::renderer::ViewportRenderer::begin_upload_ribbon),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_ribbon instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_ribbon(
         &mut self,
         device: &crate::gpu::Device,
@@ -1416,10 +1354,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_ribbon`](crate::renderer::ViewportRenderer::upload_result_ribbon),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_ribbon instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_ribbon(
         &mut self,
         id: crate::resources::JobId,
@@ -1449,9 +1383,6 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod tests {
-    // These drive the DeviceResources upload calls directly, which is the
-    // point: they test the methods the renderer-level ones forward to.
-    #![allow(deprecated)]
     use crate::DeviceResources;
     use crate::renderer::{RibbonItem, StreamtubeItem, TubeItem};
     use crate::resources::UploadStatus;

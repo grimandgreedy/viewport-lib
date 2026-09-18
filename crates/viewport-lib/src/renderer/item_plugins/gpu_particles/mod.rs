@@ -251,9 +251,6 @@ impl ItemTypePlugin for GpuParticlesPlugin {
 }
 #[cfg(test)]
 mod emission_tests {
-    // These drive the DeviceResources upload calls directly, which is the
-    // point: they test the methods the renderer-level ones forward to.
-    #![allow(deprecated)]
     use super::*;
     use crate::resources::DeviceResources;
     use crate::resources::gpu::gpu_particles::{

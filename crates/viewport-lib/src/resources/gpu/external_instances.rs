@@ -111,10 +111,6 @@ impl crate::resources::DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::create_external_instance_set`](crate::renderer::ViewportRenderer::create_external_instance_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::create_external_instance_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn create_external_instance_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -158,10 +154,6 @@ impl crate::resources::DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::set_external_instance_set_buffer`](crate::renderer::ViewportRenderer::set_external_instance_set_buffer),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::set_external_instance_set_buffer instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn set_external_instance_set_buffer(
         &mut self,
         id: ExternalInstanceSetId,
@@ -192,10 +184,6 @@ impl crate::resources::DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_external_instance_set`](crate::renderer::ViewportRenderer::drop_external_instance_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_external_instance_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_external_instance_set(&mut self, id: ExternalInstanceSetId) {
         self.external_instances.sets.remove(id);
     }
@@ -330,9 +318,6 @@ impl crate::resources::DeviceResources {
 
 #[cfg(test)]
 mod tests {
-    // These drive the DeviceResources upload calls directly, which is the
-    // point: they test the methods the renderer-level ones forward to.
-    #![allow(deprecated)]
     use super::*;
     use crate::DeviceResources;
     use crate::geometry::primitives;

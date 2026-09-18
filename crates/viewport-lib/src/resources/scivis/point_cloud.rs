@@ -339,10 +339,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_point_cloud`](crate::renderer::ViewportRenderer::upload_point_cloud),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_point_cloud instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -357,10 +353,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_point_cloud`](crate::renderer::ViewportRenderer::drop_point_cloud),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_point_cloud instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
         self.content.point_cloud_store.remove(id).is_some()
     }
@@ -369,10 +361,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_point_cloud`](crate::renderer::ViewportRenderer::replace_point_cloud),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_point_cloud instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -394,12 +382,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_point_cloud`](crate::renderer::ViewportRenderer::begin_upload_point_cloud),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_point_cloud instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_point_cloud(
         &mut self,
         device: &crate::gpu::Device,
@@ -439,10 +421,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_point_cloud`](crate::renderer::ViewportRenderer::upload_result_point_cloud),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_point_cloud instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_point_cloud(
         &mut self,
         id: crate::resources::JobId,
@@ -472,9 +450,6 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod tests {
-    // These drive the DeviceResources upload calls directly, which is the
-    // point: they test the methods the renderer-level ones forward to.
-    #![allow(deprecated)]
     use crate::DeviceResources;
     use crate::renderer::PointCloudItem;
     use crate::resources::UploadStatus;

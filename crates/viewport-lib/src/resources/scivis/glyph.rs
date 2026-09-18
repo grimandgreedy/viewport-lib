@@ -579,10 +579,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_glyph_set`](crate::renderer::ViewportRenderer::upload_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -597,10 +593,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_glyph_set`](crate::renderer::ViewportRenderer::drop_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
         self.content.glyph_set_store.remove(id).is_some()
     }
@@ -609,10 +601,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_glyph_set`](crate::renderer::ViewportRenderer::replace_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -634,12 +622,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_glyph_set`](crate::renderer::ViewportRenderer::begin_upload_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -676,10 +658,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_glyph_set`](crate::renderer::ViewportRenderer::upload_result_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_glyph_set(
         &mut self,
         id: crate::resources::JobId,
@@ -710,10 +688,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_tensor_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_tensor_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -728,10 +702,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_tensor_glyph_set`](crate::renderer::ViewportRenderer::drop_tensor_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::drop_tensor_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn drop_tensor_glyph_set(&mut self, id: crate::resources::TensorGlyphSetId) -> bool {
         self.content.tensor_glyph_set_store.remove(id).is_some()
     }
@@ -740,10 +710,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::replace_tensor_glyph_set`](crate::renderer::ViewportRenderer::replace_tensor_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::replace_tensor_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn replace_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -765,12 +731,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::begin_upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::begin_upload_tensor_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::begin_upload_tensor_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
-    // The apply step inserts through the synchronous upload, which goes with it.
-    #[allow(deprecated)]
     pub fn begin_upload_tensor_glyph_set(
         &mut self,
         device: &crate::gpu::Device,
@@ -810,10 +770,6 @@ impl DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::upload_result_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_result_tensor_glyph_set),
     /// which stays reachable when an item type holds its own storage.
-    #[deprecated(
-        since = "0.23.0",
-        note = "call ViewportRenderer::upload_result_tensor_glyph_set instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
-    )]
     pub fn upload_result_tensor_glyph_set(
         &mut self,
         id: crate::resources::JobId,
@@ -843,9 +799,6 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod tests {
-    // These drive the DeviceResources upload calls directly, which is the
-    // point: they test the methods the renderer-level ones forward to.
-    #![allow(deprecated)]
     use crate::DeviceResources;
     use crate::renderer::{GlyphItem, TensorGlyphItem};
     use crate::resources::UploadStatus;
