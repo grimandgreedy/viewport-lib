@@ -7,7 +7,8 @@
 //! against that layout; this module borrows the layout to build pipelines
 //! over it.
 
-use crate::resources::{DeviceResources, PointCloudGpuData, SplatOutlineMaskUniform};
+use super::store::PointCloudGpuData;
+use crate::resources::{DeviceResources, SplatOutlineMaskUniform};
 
 /// Pipelines and layouts, built on the first prepare with items.
 pub(super) struct PointCloudGpu {
@@ -53,9 +54,11 @@ fn position_layout() -> crate::gpu::VertexBufferLayout<'static> {
 }
 
 impl PointCloudGpu {
-    pub(super) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
-        let bgl = &resources.point_cloud.bgl;
-
+    pub(super) fn new(
+        device: &crate::gpu::Device,
+        resources: &DeviceResources,
+        bgl: &crate::gpu::BindGroupLayout,
+    ) -> Self {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "point_cloud_shader",

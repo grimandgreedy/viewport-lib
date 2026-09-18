@@ -80,15 +80,16 @@ pub use self::plugin_builders::{
     SHADOW_DEPTH_FORMAT,
 };
 pub use self::scivis::stores::{
-    GlyphSetId, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,
+    GlyphSetId, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId, StreamtubeId,
     TensorGlyphSetId, TubeId,
 };
+pub use crate::renderer::item_plugins::point_cloud::types::PointCloudId;
 // Gaussian splat upload vocabulary. Owned here (not in `renderer`) so nothing in
 // `resources` reaches up to `renderer` for these types.
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub(crate) use self::scivis::stores::{
-    GlyphSetStore, PointCloudStore, PolylineStore, RibbonStore, SpriteInstanceSetStore,
-    SpriteSetStore, StreamtubeStore, TensorGlyphSetStore, TubeStore,
+    GlyphSetStore, PolylineStore, RibbonStore, SpriteInstanceSetStore, SpriteSetStore,
+    StreamtubeStore, TensorGlyphSetStore, TubeStore,
 };
 pub use viewport_lib_types::data::point::{GaussianSplatData, ShDegree};
 pub use viewport_lib_types::ids::GaussianSplatId;
@@ -127,8 +128,7 @@ pub use self::types::{
 // `plugin_api::shared_wgsl` instead.
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
-    OverlayVertex, PointCloudGpuData, PolylineGpuData, SingleLightUniform, Vertex,
-    VertexBufferLayoutExt,
+    OverlayVertex, PolylineGpuData, SingleLightUniform, Vertex, VertexBufferLayoutExt,
 };
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;

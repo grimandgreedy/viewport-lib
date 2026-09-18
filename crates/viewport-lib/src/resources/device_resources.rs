@@ -305,8 +305,6 @@ pub struct ContentResources {
     pub(crate) tube_store: super::TubeStore,
     /// Pre-uploaded ribbon storage.
     pub(crate) ribbon_store: super::RibbonStore,
-    /// Pre-uploaded point cloud storage.
-    pub(crate) point_cloud_store: super::PointCloudStore,
     /// Pre-uploaded glyph set storage.
     pub(crate) glyph_set_store: super::GlyphSetStore,
     /// Pre-uploaded tensor glyph set storage.
@@ -535,7 +533,6 @@ pub struct DeviceResources {
 
     // --- point cloud pipelines (lazily created) ---
     /// Point-cloud render pipeline and bind group layout (lazy).
-    pub(crate) point_cloud: crate::resources::scivis::point_cloud::PointCloudResources,
 
     // --- glyph rendering (lazily created) ---
     /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.

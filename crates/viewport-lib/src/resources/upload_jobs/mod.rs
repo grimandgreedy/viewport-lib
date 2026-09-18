@@ -55,8 +55,6 @@ pub(crate) struct JobResults {
     /// Async ribbon uploads.
     pub ribbon: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::RibbonId>>>,
     /// Async point cloud uploads.
-    pub point_cloud:
-        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::PointCloudId>>>,
     /// Async glyph set uploads.
     pub glyph_set:
         std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::GlyphSetId>>>,

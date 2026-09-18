@@ -2,6 +2,17 @@ use crate::renderer::types::items::IDENTITY_MAT4;
 use crate::resources::ColourmapId;
 use crate::scene::material::ItemSettings;
 
+crate::resources::handle::slot_handle! {
+    /// Handle to a point cloud uploaded once through
+    /// [`ViewportRenderer::upload_point_cloud`](crate::renderer::ViewportRenderer::upload_point_cloud).
+    ///
+    /// Name it from a [`PointCloudRefItem`] to draw the stored cloud without
+    /// resubmitting its points. Carries the slot index plus the generation the
+    /// slot had when the handle was issued, so a handle whose cloud was
+    /// dropped resolves to nothing rather than aliasing its successor.
+    pub struct PointCloudId;
+}
+
 /// Render mode for point cloud items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PointRenderMode {

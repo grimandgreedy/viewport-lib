@@ -107,13 +107,12 @@ fn every_free_route_agrees_on_a_dropped_handle() {
 
     let id = renderer
         .resources_mut()
-        .upload_point_cloud(&device, &queue, &point_cloud());
+        .upload_polyline(&device, &queue, &polyline());
+    assert!(renderer.drop_polyline(id), "dropped through the renderer");
     assert!(
-        renderer.drop_point_cloud(id),
-        "dropped through the renderer"
-    );
-    assert!(
-        !renderer.replace_point_cloud(&device, &queue, id, &point_cloud()),
+        !renderer
+            .resources_mut()
+            .replace_polyline(&device, &queue, id, &polyline()),
         "a handle dropped through the renderer is dead for the resources route too"
     );
 }

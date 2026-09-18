@@ -6,6 +6,7 @@
 //! `upload_point_cloud`; the renderer routes both fields to this plugin.
 
 mod pipeline;
+mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
@@ -16,6 +17,9 @@ use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, PointCloudItem, PointCloudRefItem, SubObjectRef,
 };
 use crate::resources::HDR_COLOR_FORMAT;
+use store::{PointCloudStore, build_point_cloud, resolve_bindings};
+
+pub(crate) use types::PointCloudId;
 
 pub(crate) const TYPE_NAME: &str = "viewport.point_cloud";
 
@@ -45,6 +49,11 @@ impl PluginItemCollection for Vec<PointCloudRefItem> {
 
 #[derive(Default)]
 pub(crate) struct PointCloudPlugin {
+    /// The pre-uploaded clouds, owned by the type that draws them.
+    stored: PointCloudStore,
+    /// Group-1 layout every upload builds its bind group against. Created on
+    /// registration, because an upload can arrive before the first frame.
+    bgl: Option<crate::gpu::BindGroupLayout>,
     gpu: Option<pipeline::PointCloudGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references, the order the draw loop used before the two collections met
@@ -63,8 +72,21 @@ impl ItemTypePlugin for PointCloudPlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn init_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        _shared: &crate::plugin_api::SharedBindings<'_>,
+    ) {
+        self.bgl = Some(store::build_bgl(device));
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.stored.allocated_bytes()
+    }
+
+    fn on_device_recreated(&mut self, device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
         self.gpu = None;
+        self.bgl = Some(store::build_bgl(device));
         self.frame.clear();
         self.outlines.clear();
     }
@@ -88,17 +110,18 @@ impl ItemTypePlugin for PointCloudPlugin {
         if items.is_empty() && refs.is_empty() {
             return Vec::new();
         }
+        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
+        let stored = &self.stored;
         let gpu = self
             .gpu
-            .get_or_insert_with(|| pipeline::PointCloudGpu::new(device, ctx.resources));
+            .get_or_insert_with(|| pipeline::PointCloudGpu::new(device, ctx.resources, bgl));
 
         for item in items {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
-            let gpu_data = ctx
-                .resources
-                .upload_point_cloud_per_frame(device, queue, item);
+            let binds = resolve_bindings(ctx.resources, bgl, item);
+            let gpu_data = build_point_cloud(device, queue, &binds, item);
             let pick_bind_group = (gpu_data.pick_id != PickId::NONE)
                 .then(|| gpu.pick_bind_group(device, queue, gpu_data.pick_id));
             self.frame.push(pipeline::PointCloudFrame {
@@ -114,7 +137,7 @@ impl ItemTypePlugin for PointCloudPlugin {
             if ref_item.settings.hidden {
                 continue;
             }
-            let Some(entry) = ctx.resources.content.point_cloud_store.get(ref_item.source) else {
+            let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
             let entry = entry.clone();
@@ -318,11 +341,90 @@ impl ItemTypePlugin for PointCloudPlugin {
     }
 }
 
-#[cfg(test)]
 impl PointCloudPlugin {
     /// Number of items the last `prepare` produced draw data for.
+    #[cfg(test)]
     pub(crate) fn drawn_count(&self) -> usize {
         self.frame.len()
+    }
+
+    /// Pre-upload a point cloud and return its handle.
+    pub(crate) fn upload(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &PointCloudItem,
+    ) -> PointCloudId {
+        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
+        let binds = resolve_bindings(resources, bgl, item);
+        let gpu = build_point_cloud(device, queue, &binds, item);
+        self.stored.insert_sized(gpu)
+    }
+
+    /// Drop a pre-uploaded cloud. `false` when the handle does not resolve.
+    pub(crate) fn drop_stored(&mut self, id: PointCloudId) -> bool {
+        self.stored.remove(id).is_some()
+    }
+
+    /// Replace the points behind a live handle, keeping the handle.
+    pub(crate) fn replace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        id: PointCloudId,
+        item: &PointCloudItem,
+    ) -> bool {
+        if !self.stored.contains(id) {
+            return false;
+        }
+        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
+        let binds = resolve_bindings(resources, bgl, item);
+        let gpu = build_point_cloud(device, queue, &binds, item);
+        self.stored.replace_sized(id, gpu).is_some()
+    }
+
+    /// Build a cloud's buffers on a worker thread. The handle is minted when
+    /// [`take_upload_result`](Self::take_upload_result) collects the job.
+    ///
+    /// The colourmap view and shared sampler the upload binds are resolved
+    /// here, on the calling thread, and cloned into the worker: they are the
+    /// renderer's and a worker has no `DeviceResources` borrow. The buffer
+    /// building and the bind group then run off the frame thread.
+    pub(crate) fn begin_upload(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: PointCloudItem,
+    ) -> crate::resources::JobId {
+        let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
+        let binds = resolve_bindings(resources, bgl, &item);
+        let device = device.clone();
+        let queue = queue.clone();
+        jobs.submit_cpu(move || build_point_cloud(&device, &queue, &binds, &item))
+    }
+
+    /// Store the cloud a finished job built and hand back its handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<PointCloudId> {
+        match jobs.status(id) {
+            crate::resources::UploadStatus::Pending { .. } => {
+                Err(crate::error::ViewportError::JobNotReady)
+            }
+            crate::resources::UploadStatus::Failed(e) => Err(e),
+            _ => match jobs.take::<store::PointCloudGpuData>(id) {
+                Some(gpu) => Ok(self.stored.insert_sized(gpu)),
+                None => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
+        }
     }
 }
 

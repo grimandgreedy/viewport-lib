@@ -2806,7 +2806,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::PointCloudItem,
     ) -> crate::resources::PointCloudId {
-        self.resources.upload_point_cloud(device, queue, item)
+        let host = self.point_cloud_host();
+        host.plugin.upload(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a point cloud. Poll the returned job with
@@ -2818,7 +2819,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::PointCloudItem,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_point_cloud(device, queue, item)
+        let host = self.point_cloud_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_point_cloud`](Self::begin_upload_point_cloud) job.
@@ -2826,7 +2829,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::PointCloudId> {
-        self.resources.upload_result_point_cloud(id)
+        let host = self.point_cloud_host();
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a point cloud handle, keeping the handle valid.
@@ -2838,12 +2842,24 @@ impl ViewportRenderer {
         id: crate::resources::PointCloudId,
         item: &crate::renderer::PointCloudItem,
     ) -> bool {
-        self.resources.replace_point_cloud(device, queue, id, item)
+        let host = self.point_cloud_host();
+        host.plugin.replace(device, queue, host.resources, id, item)
     }
 
     /// Release a point cloud. `false` if the handle does not resolve.
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
-        self.resources.drop_point_cloud(id)
+        self.point_cloud_host().plugin.drop_stored(id)
+    }
+
+    /// The registered point cloud item type, which holds the uploaded clouds.
+    fn point_cloud_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<
+        '_,
+        crate::renderer::item_plugins::point_cloud::PointCloudPlugin,
+    > {
+        self.item_type_plugin_host(crate::renderer::item_plugins::point_cloud::TYPE_NAME)
+            .expect("the built-in point cloud item type is registered at construction")
     }
 
     /// Upload a glyph set for reuse across frames, returning its handle.

@@ -65,7 +65,6 @@ pub(crate) use crate::resources::postprocess::uniforms::ToneMapUniform;
 pub(crate) use crate::resources::scivis::glyph::GlyphBaseMesh;
 pub use crate::resources::scivis::glyph::GlyphGpuData;
 pub use crate::resources::scivis::glyph::TensorGlyphGpuData;
-pub use crate::resources::scivis::point_cloud::PointCloudGpuData;
 pub use crate::resources::scivis::polyline::PolylineGpuData;
 pub use crate::resources::scivis::sprite::SpriteGpuData;
 pub use crate::resources::scivis::tube::StreamtubeGpuData;
