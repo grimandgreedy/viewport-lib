@@ -307,8 +307,6 @@ pub struct ContentResources {
     pub(crate) ribbon_store: super::RibbonStore,
     /// Pre-uploaded glyph set storage.
     pub(crate) glyph_set_store: super::GlyphSetStore,
-    /// Pre-uploaded tensor glyph set storage.
-    pub(crate) tensor_glyph_set_store: super::TensorGlyphSetStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.
@@ -504,9 +502,6 @@ pub struct DeviceResources {
     pub(crate) post: crate::resources::postprocess::PostProcessResources,
 
     // --- Outline & x-ray resources ---
-    // The volume outline mask pipeline lives on `volume.outline_mask_pipeline`;
-    // the glyph / tensor-glyph ones on `glyph.outline_mask_pipeline` and
-    // `tensor_glyph.outline_mask_pipeline`.
     /// Outline / x-ray pipelines, offscreen mask/composite targets, and layouts.
     pub(crate) outline: OutlineResources,
 
@@ -533,7 +528,6 @@ pub struct DeviceResources {
     /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
     pub(crate) glyph: crate::resources::scivis::glyph::GlyphResources,
     /// Tensor glyph pipelines and layouts.
-    pub(crate) tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources,
 
     // --- polyline / streamtube / ribbon rendering (lazily created) ---
     /// Polyline pipelines and layouts.

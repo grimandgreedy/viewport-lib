@@ -1,6 +1,15 @@
 //! Per-frame reference to a pre-uploaded tensor glyph set.
 
 use crate::renderer::types::items::IDENTITY_MAT4;
+
+crate::resources::handle::slot_handle! {
+    /// Handle to a tensor glyph set uploaded once through
+    /// [`ViewportRenderer::upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_tensor_glyph_set).
+    ///
+    /// Name it from a [`TensorGlyphSetRefItem`] to draw the stored set without
+    /// rebuilding its instance buffer.
+    pub struct TensorGlyphSetId;
+}
 use crate::scene::material::ItemSettings;
 
 /// Per-frame reference to a pre-uploaded tensor glyph set. See [`PolylineRefItem`].

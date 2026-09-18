@@ -155,8 +155,7 @@ impl crate::resources::DeviceResources {
             + self.content.streamtube_store.allocated_bytes()
             + self.content.tube_store.allocated_bytes()
             + self.content.ribbon_store.allocated_bytes()
-            + self.content.glyph_set_store.allocated_bytes()
-            + self.content.tensor_glyph_set_store.allocated_bytes();
+            + self.content.glyph_set_store.allocated_bytes();
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.content.textures.allocated_bytes(),

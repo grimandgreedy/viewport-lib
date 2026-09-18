@@ -6,6 +6,7 @@
 //! `upload_tensor_glyph_set`; the renderer routes both fields to this plugin.
 
 mod pipeline;
+pub(crate) mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
@@ -16,6 +17,12 @@ use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, SubObjectRef, TensorGlyphItem, TensorGlyphSetRefItem,
 };
 use crate::resources::HDR_COLOR_FORMAT;
+use store::{
+    TensorGlyphGpuData, TensorGlyphResources, TensorGlyphSetStore, build_tensor_glyph_set,
+    resolve_bindings,
+};
+
+pub(crate) use types::TensorGlyphSetId;
 
 pub(crate) const TYPE_NAME: &str = "viewport.tensor_glyph";
 
@@ -45,6 +52,11 @@ impl PluginItemCollection for Vec<TensorGlyphSetRefItem> {
 
 #[derive(Default)]
 pub(crate) struct TensorGlyphPlugin {
+    /// The pre-uploaded sets, owned by the type that draws them.
+    stored: TensorGlyphSetStore,
+    /// The two layouts every upload builds its bind groups against. Created on
+    /// registration, because an upload can arrive before the first frame.
+    layouts: Option<TensorGlyphResources>,
     gpu: Option<pipeline::TensorGlyphGpu>,
     /// Per drawn set, rebuilt each prepare: the inline items first, then the
     /// references.
@@ -60,7 +72,20 @@ impl ItemTypePlugin for TensorGlyphPlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn init_gpu(
+        &mut self,
+        device: &crate::gpu::Device,
+        _shared: &crate::plugin_api::SharedBindings<'_>,
+    ) {
+        self.layouts = Some(TensorGlyphResources::new(device));
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        self.stored.allocated_bytes()
+    }
+
+    fn on_device_recreated(&mut self, device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+        self.layouts = Some(TensorGlyphResources::new(device));
         self.gpu = None;
         self.frame.clear();
     }
@@ -83,18 +108,21 @@ impl ItemTypePlugin for TensorGlyphPlugin {
         if items.is_empty() && refs.is_empty() {
             return Vec::new();
         }
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| TensorGlyphResources::new(device));
+        let stored = &self.stored;
         let gpu = self
             .gpu
-            .get_or_insert_with(|| pipeline::TensorGlyphGpu::new(device, ctx.resources));
+            .get_or_insert_with(|| pipeline::TensorGlyphGpu::new(device, ctx.resources, layouts));
 
         for item in items {
             if item.settings.hidden || item.positions.is_empty() {
                 continue;
             }
             let wireframe = ctx.wireframe_mode || item.settings.wireframe;
-            let gpu_data = ctx
-                .resources
-                .upload_tensor_glyph_set_per_frame(device, queue, item, wireframe);
+            let binds = resolve_bindings(device, ctx.resources, layouts, item);
+            let gpu_data = build_tensor_glyph_set(device, queue, &binds, item, wireframe);
             let pick_bind_group = (gpu_data.pick_id != PickId::NONE).then(|| {
                 gpu.pick_bind_group(device, queue, gpu_data.pick_id, &gpu_data._uniform_buf)
             });
@@ -117,12 +145,7 @@ impl ItemTypePlugin for TensorGlyphPlugin {
             if ref_item.settings.hidden {
                 continue;
             }
-            let Some(entry) = ctx
-                .resources
-                .content
-                .tensor_glyph_set_store
-                .get(ref_item.source)
-            else {
+            let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
             let mut gpu_data = entry.clone();
@@ -422,10 +445,101 @@ fn outline_for(
     (!instances.is_empty()).then_some(Some(instances))
 }
 
-#[cfg(test)]
 impl TensorGlyphPlugin {
     /// Number of sets the last `prepare` produced draw data for.
+    #[cfg(test)]
     pub(crate) fn drawn_count(&self) -> usize {
         self.frame.len()
+    }
+
+    /// Build one set's GPU data against the plugin's layouts.
+    fn build(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &TensorGlyphItem,
+    ) -> TensorGlyphGpuData {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| TensorGlyphResources::new(device));
+        let binds = resolve_bindings(device, resources, layouts, item);
+        build_tensor_glyph_set(device, queue, &binds, item, false)
+    }
+
+    /// Pre-upload a tensor glyph set and return its handle.
+    pub(crate) fn upload(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: &TensorGlyphItem,
+    ) -> TensorGlyphSetId {
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.insert_sized(gpu)
+    }
+
+    /// Drop a stored set. `false` when the handle does not resolve.
+    pub(crate) fn drop_stored(&mut self, id: TensorGlyphSetId) -> bool {
+        self.stored.remove(id).is_some()
+    }
+
+    /// Replace the tensors behind a live handle, keeping the handle.
+    pub(crate) fn replace(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        id: TensorGlyphSetId,
+        item: &TensorGlyphItem,
+    ) -> bool {
+        if !self.stored.contains(id) {
+            return false;
+        }
+        let gpu = self.build(device, queue, resources, item);
+        self.stored.replace_sized(id, gpu).is_some()
+    }
+
+    /// Build a set's buffers on a worker thread. The handle is minted when
+    /// [`take_upload_result`](Self::take_upload_result) collects the job.
+    ///
+    /// The colourmap view, the shared sampler and the sphere base mesh are
+    /// resolved here and cloned into the worker: they are the renderer's and a
+    /// worker has no `DeviceResources` borrow.
+    pub(crate) fn begin_upload(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+        item: TensorGlyphItem,
+    ) -> crate::resources::JobId {
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| TensorGlyphResources::new(device));
+        let binds = resolve_bindings(device, resources, layouts, &item);
+        let device = device.clone();
+        let queue = queue.clone();
+        jobs.submit_cpu(move || build_tensor_glyph_set(&device, &queue, &binds, &item, false))
+    }
+
+    /// Store the set a finished job built and hand back its handle.
+    pub(crate) fn take_upload_result(
+        &mut self,
+        jobs: &crate::resources::Jobs<'_>,
+        id: crate::resources::JobId,
+    ) -> crate::error::ViewportResult<TensorGlyphSetId> {
+        match jobs.status(id) {
+            crate::resources::UploadStatus::Pending { .. } => {
+                Err(crate::error::ViewportError::JobNotReady)
+            }
+            crate::resources::UploadStatus::Failed(e) => Err(e),
+            _ => match jobs.take::<TensorGlyphGpuData>(id) {
+                Some(gpu) => Ok(self.stored.insert_sized(gpu)),
+                None => Err(crate::error::ViewportError::JobResultMissing {
+                    reason: "unknown id or wrong upload type",
+                }),
+            },
+        }
     }
 }

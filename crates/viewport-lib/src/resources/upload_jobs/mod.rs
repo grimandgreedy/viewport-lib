@@ -59,8 +59,6 @@ pub(crate) struct JobResults {
     pub glyph_set:
         std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::GlyphSetId>>>,
     /// Async tensor glyph set uploads.
-    pub tensor_glyph_set:
-        std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::TensorGlyphSetId>>>,
     /// Async volume texture uploads.
     pub volume: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::VolumeId>>>,
     /// Async volume-mesh uploads: mesh id plus face-to-cell map.

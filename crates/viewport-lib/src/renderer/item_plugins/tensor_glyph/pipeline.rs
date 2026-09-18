@@ -6,7 +6,8 @@
 //! `resources`, because `upload_tensor_glyph_set` is public API and builds its
 //! bind groups against them; this module borrows them to build pipelines over.
 
-use crate::resources::{DeviceResources, TensorGlyphGpuData, Vertex, VertexBufferLayoutExt};
+use super::store::TensorGlyphGpuData;
+use crate::resources::{DeviceResources, Vertex, VertexBufferLayoutExt};
 
 /// Pipelines and layouts, built on the first prepare with items.
 pub(super) struct TensorGlyphGpu {
@@ -28,9 +29,13 @@ pub(super) struct TensorGlyphFrame {
 }
 
 impl TensorGlyphGpu {
-    pub(super) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
-        let bgl = &resources.tensor_glyph.bgl;
-        let instance_bgl = &resources.tensor_glyph.instance_bgl;
+    pub(super) fn new(
+        device: &crate::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &super::store::TensorGlyphResources,
+    ) -> Self {
+        let bgl = &layouts.bgl;
+        let instance_bgl = &layouts.instance_bgl;
 
         let shader = crate::resources::builders::wgsl_module(
             device,
