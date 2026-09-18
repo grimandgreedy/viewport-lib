@@ -301,6 +301,10 @@ pub(crate) struct RibbonPlugin {
     /// The group-1 layout every upload builds its bind group against. Created
     /// on registration, because an upload can arrive before the first frame.
     layouts: Option<super::store::RibbonResources>,
+    /// Resource epochs the store was last revalidated against. A stored ribbon
+    /// that draws with a streak texture holds its view in a bind group, so a
+    /// free or a replace since the last frame means it has to be rebound.
+    deps_gate: crate::resources::resource_deps::DepsGate,
     gpu: Option<RibbonGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references.
@@ -308,6 +312,54 @@ pub(crate) struct RibbonPlugin {
     /// Every inline item from the last prepared frame. Reference items are not
     /// here: their geometry lives on the GPU, so they answer the GPU pick only.
     pick_items: Vec<RibbonItem>,
+}
+
+impl RibbonPlugin {
+    /// Rebind stored ribbons whose streak texture was freed or swapped since
+    /// the last frame.
+    ///
+    /// A ribbon is the host's content, held until the host drops the handle, so
+    /// the answer to a freed texture is to rebind against the fallback, never
+    /// to discard the ribbon: the geometry stays, it stops being textured.
+    /// Leaving it alone instead would keep the freed texture alive through the
+    /// bind group and go on sampling it, so the memory the host asked to
+    /// release is never released.
+    ///
+    /// A replace swaps the view behind a live id, which no per-ribbon liveness
+    /// check can see, so every stored ribbon that names a texture is rebound.
+    fn revalidate_store(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+    ) {
+        use crate::resources::resource_deps::Revalidate;
+        let action = self.deps_gate.poll(resources);
+        if action == Revalidate::Valid {
+            return;
+        }
+        let Some(layouts) = self.layouts.as_ref() else {
+            return;
+        };
+        for (_, gpu) in self.stored.iter_mut() {
+            let Some(texture_id) = gpu.rebind.as_ref().map(|r| r.texture_id) else {
+                continue;
+            };
+            let live = resources.has_texture(texture_id);
+            if action == Revalidate::CheckEach && live {
+                continue;
+            }
+            let binds = super::store::resolve_ribbon_texture(resources, layouts, Some(texture_id));
+            super::store::rebind_ribbon(device, queue, &binds, gpu);
+            // A freed id never comes back: ids are generational, so whatever
+            // takes the slot next resolves through a different one. Forget the
+            // ribbon's rebind record, and it stops being re-checked on every
+            // later free.
+            if !live {
+                gpu.rebind = None;
+            }
+        }
+    }
 }
 
 impl ItemTypePlugin for RibbonPlugin {
@@ -341,6 +393,7 @@ impl ItemTypePlugin for RibbonPlugin {
         items: &dyn PluginItemCollection,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
+        self.revalidate_store(device, queue, ctx.resources);
         let items = items
             .as_any()
             .downcast_ref::<Vec<RibbonItem>>()

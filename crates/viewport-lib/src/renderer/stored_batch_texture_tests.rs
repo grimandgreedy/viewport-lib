@@ -65,11 +65,11 @@ fn solid_rgba(w: u32, h: u32, colour: [u8; 4]) -> Vec<u8> {
     v
 }
 
-/// A camera looking down -Z at the XY plane, far enough back that the
-/// billboards below cover a good part of the frame.
-fn camera() -> FrameData {
+/// An empty frame viewed from `orientation`, far enough back that the batches
+/// below cover a good part of it.
+fn frame_from(orientation: glam::Quat) -> FrameData {
     let mut cam = Camera::default();
-    cam.orientation = glam::Quat::IDENTITY; // identity = top view in a Z-up world
+    cam.orientation = orientation;
     cam.center = glam::Vec3::ZERO;
     cam.distance = 6.0;
     cam.aspect = W as f32 / H as f32;
@@ -77,6 +77,18 @@ fn camera() -> FrameData {
         CameraFrame::new(RenderCamera::from_camera(&cam), [W as f32, H as f32]),
         SceneFrame::default(),
     )
+}
+
+/// Looking down -Z at the XY plane, where the billboards below sit.
+fn camera() -> FrameData {
+    frame_from(glam::Quat::IDENTITY) // identity = top view in a Z-up world
+}
+
+/// Looking along +Y at the XZ plane. A ribbon's width runs along the world up
+/// axis, so the strip below presents its edge to the top view and has to be
+/// looked at from the side.
+fn side_camera() -> FrameData {
+    frame_from(glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
 }
 
 /// Four large textured billboards, the batch each test pre-uploads.
@@ -209,4 +221,94 @@ fn an_unrelated_free_leaves_a_stored_sprite_set_alone() {
         before, after,
         "a batch that does not name the freed texture draws exactly as it did"
     );
+}
+
+/// A wide ribbon running along X, face-on to [`side_camera`].
+fn ribbon_batch(tex: TextureId) -> crate::renderer::RibbonItem {
+    let mut item = crate::renderer::RibbonItem::default();
+    item.positions = vec![
+        [-2.0, 0.0, 0.0],
+        [-0.7, 0.0, 0.0],
+        [0.7, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+    ];
+    item.strip_lengths = vec![4];
+    item.width = 2.5;
+    item.texture_id = Some(tex);
+    item.settings.unlit = true;
+    item
+}
+
+/// Render the pre-uploaded ribbon once, and return the frame's checksum.
+fn render_ribbon(
+    renderer: &mut ViewportRenderer,
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    id: crate::resources::RibbonId,
+) -> u64 {
+    let mut frame = side_camera();
+    frame
+        .scene
+        .ribbon_refs
+        .push(crate::renderer::RibbonRefItem::new(id));
+    checksum(&renderer.render_offscreen(device, queue, &frame, W, H))
+}
+
+/// The same contract as the sprite batches, for the other stored type that
+/// binds a host texture: a ribbon's streak map.
+#[test]
+fn a_replaced_texture_reaches_a_stored_ribbon() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    let tex = solid_texture(&mut renderer, &device, &queue, C_START);
+    let id = renderer.upload_ribbon(&device, &queue, &ribbon_batch(tex));
+
+    let before = render_ribbon(&mut renderer, &device, &queue, id);
+    // The ribbon has to be covering pixels, or the comparisons below pass by
+    // measuring an empty frame twice.
+    let empty = checksum(&renderer.render_offscreen(&device, &queue, &side_camera(), W, H));
+    assert_ne!(before, empty, "the stored ribbon draws something");
+
+    renderer
+        .resources_mut()
+        .replace_texture(
+            &device,
+            &queue,
+            tex,
+            TextureData::srgb(2, 2, solid_rgba(2, 2, C_SWAP)),
+        )
+        .expect("replacing a live texture succeeds");
+    let after = render_ribbon(&mut renderer, &device, &queue, id);
+
+    assert_ne!(
+        before, after,
+        "a stored ribbon must draw the replaced pixels, not the ones it was uploaded with"
+    );
+}
+
+/// Freeing the streak texture leaves the ribbon drawn, untextured.
+#[test]
+fn a_freed_texture_leaves_a_stored_ribbon_untextured() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+
+    let tex = solid_texture(&mut renderer, &device, &queue, C_START);
+    let id = renderer.upload_ribbon(&device, &queue, &ribbon_batch(tex));
+
+    let before = render_ribbon(&mut renderer, &device, &queue, id);
+    assert!(renderer.resources_mut().free_texture(tex));
+    let after = render_ribbon(&mut renderer, &device, &queue, id);
+
+    assert_ne!(
+        before, after,
+        "a stored ribbon must stop sampling a texture the host freed"
+    );
+    assert!(renderer.drop_ribbon(id));
 }

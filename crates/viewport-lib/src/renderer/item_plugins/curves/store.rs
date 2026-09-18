@@ -121,18 +121,111 @@ pub(super) fn resolve_ribbon_bindings(
     item: &crate::renderer::RibbonItem,
 ) -> RibbonBindings {
     resources.check_texture_slot(item.texture_id, crate::resources::TextureSlot::RibbonAlbedo);
-    let (texture_view, has_texture) =
-        match item.texture_id.and_then(|id| resources.texture_view(id)) {
-            Some(view) => (view.clone(), 1),
-            None => (resources.fallback_colourmap_view().clone(), 0),
-        };
+    RibbonBindings {
+        lut: resolve_lut(resources, item.colourmap_id),
+        ..resolve_ribbon_texture(resources, layouts, item.texture_id)
+    }
+}
+
+/// The texture half of [`resolve_ribbon_bindings`], against an id rather than
+/// an item, so a stored ribbon can be resolved again after the texture it names
+/// is freed or swapped, where the item that built it is long gone.
+///
+/// The colour-space check is not repeated here: it was reported when the ribbon
+/// was uploaded, and repeating it on every revalidation would spam the log. The
+/// LUT is left at its default, because the caller either overrides it (the
+/// upload above) or is rebinding, where the LUT is already baked into the
+/// vertex colours and cannot change.
+pub(super) fn resolve_ribbon_texture(
+    resources: &DeviceResources,
+    layouts: &RibbonResources,
+    texture_id: Option<crate::resources::TextureId>,
+) -> RibbonBindings {
+    let (texture_view, has_texture) = match texture_id.and_then(|id| resources.texture_view(id)) {
+        Some(view) => (view.clone(), 1),
+        None => (resources.fallback_colourmap_view().clone(), 0),
+    };
     RibbonBindings {
         bgl: layouts.bgl.clone(),
-        lut: resolve_lut(resources, item.colourmap_id),
+        lut: [[128u8; 4]; 256],
         texture_view,
         has_texture,
         sampler: resources.material_sampler().clone(),
     }
+}
+
+/// Point a stored ribbon's bind group at a freshly resolved streak texture,
+/// keeping its geometry and its handle.
+///
+/// A ribbon is uploaded once and drawn for as long as the host holds the
+/// handle, so the view it bound at upload can be freed or swapped underneath
+/// it. Rebuilding is the only correct answer: dropping the ribbon would lose
+/// content the host still owns, and leaving it alone would keep a freed texture
+/// alive and keep sampling it.
+pub(super) fn rebind_ribbon(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    binds: &RibbonBindings,
+    data: &mut StreamtubeGpuData,
+) {
+    let Some(rebind) = data.rebind.as_mut() else {
+        return;
+    };
+    rebind.uniform.has_texture = binds.has_texture;
+    queue.write_buffer(&data._uniform_buf, 0, bytemuck::bytes_of(&rebind.uniform));
+    data.uniform_bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        label: Some("ribbon_uniform_bg"),
+        layout: &binds.bgl,
+        entries: &[
+            crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: data._uniform_buf.as_entire_binding(),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 1,
+                resource: crate::gpu::BindingResource::TextureView(&binds.texture_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 2,
+                resource: crate::gpu::BindingResource::Sampler(&binds.sampler),
+            },
+        ],
+    });
+}
+
+/// Uniform block for one ribbon: transform, colour and the flags the fragment
+/// shader keys off. Layout mirrors `RibbonUniform` in `ribbon.wgsl`.
+///
+/// Kept on the batch rather than written and forgotten, because `has_texture`
+/// depends on a streak texture that can be freed after the upload: a
+/// revalidation rewrites it without needing the item back.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct RibbonUniform {
+    model: [[f32; 4]; 4],
+    colour: [f32; 4],
+    radius: f32,
+    use_vertex_colour: u32,
+    unlit: u32,
+    opacity: f32,
+    wireframe: u32,
+    has_texture: u32,
+    receive_shadows: u32,
+    _pad: f32,
+}
+
+/// What a stored ribbon needs to rebind itself after the streak texture it
+/// named is freed or swapped.
+///
+/// Only a ribbon that names one carries this: a tube or a streamtube binds no
+/// host texture, and neither does a ribbon that draws untextured, so for those
+/// there is nothing a free or a replace could invalidate.
+#[derive(Clone)]
+pub(crate) struct RibbonRebind {
+    /// The streak texture the batch's bind group holds.
+    pub(super) texture_id: crate::resources::TextureId,
+    /// The uniform block as written, so the rebind can clear `has_texture`.
+    pub(super) uniform: RibbonUniform,
 }
 
 /// Upload one [`StreamtubeItem`] to the GPU and return draw data.
@@ -428,6 +521,7 @@ pub(super) fn build_streamtube(
             ),
             tri_segment,
             tri_strip,
+            rebind: None,
             _uniform_buf: uniform_buf,
         }
     }
@@ -755,6 +849,7 @@ pub(super) fn build_tube(
             ),
             tri_segment,
             tri_strip,
+            rebind: None,
             _uniform_buf: uniform_buf,
         }
     }
@@ -1009,20 +1104,6 @@ pub(super) fn build_ribbon(
         }
         let edge_index_count = edge_indices.len() as u32;
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct RibbonUniform {
-            model: [[f32; 4]; 4],
-            colour: [f32; 4],
-            radius: f32,
-            use_vertex_colour: u32,
-            unlit: u32,
-            opacity: f32,
-            wireframe: u32,
-            has_texture: u32,
-            receive_shadows: u32,
-            _pad: f32,
-        }
         let (texture_view, has_texture): (&crate::gpu::TextureView, u32) =
             (&binds.texture_view, binds.has_texture);
         let uniform_data = RibbonUniform {
@@ -1106,6 +1187,10 @@ pub(super) fn build_ribbon(
             ),
             tri_segment,
             tri_strip,
+            rebind: item.texture_id.map(|texture_id| RibbonRebind {
+                texture_id,
+                uniform: uniform_data,
+            }),
             _uniform_buf: uniform_buf,
         }
     }
@@ -1168,6 +1253,10 @@ pub(crate) struct StreamtubeGpuData {
     /// Per-triangle strip index, parallel to [`tri_segment`](Self::tri_segment),
     /// used to resolve `SubObjectRef::Strip`. Empty when not pickable.
     pub(crate) tri_strip: Vec<u32>,
+    /// What this batch needs to rebind itself when the streak texture in its
+    /// bind group is freed or swapped. `None` for a tube, a streamtube, or an
+    /// untextured ribbon: none of them binds a texture the host can free.
+    pub(crate) rebind: Option<RibbonRebind>,
     /// Per-triangle node payload for the POLY_NODE pick pipeline: for each
     /// triangle (parallel to `tri_segment`), the local positions and global node
     /// indices of its segment's two endpoints. The pick fragment reads it by
