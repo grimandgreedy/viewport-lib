@@ -63,7 +63,6 @@ pub(crate) use crate::resources::postprocess::uniforms::ShadowAtlasUniform;
 pub(crate) use crate::resources::postprocess::uniforms::SsaoUniform;
 pub(crate) use crate::resources::postprocess::uniforms::ToneMapUniform;
 pub(crate) use crate::resources::scivis::glyph::GlyphBaseMesh;
-pub use crate::resources::scivis::glyph::GlyphGpuData;
 pub use crate::resources::scivis::polyline::PolylineGpuData;
 pub use crate::resources::scivis::tube::StreamtubeGpuData;
 pub(crate) use crate::resources::volume::tetmesh::GpuProjectedTetMesh;

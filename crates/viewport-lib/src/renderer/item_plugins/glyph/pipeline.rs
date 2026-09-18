@@ -7,7 +7,8 @@
 //! builds its bind groups against those layouts; this module borrows them to
 //! build pipelines over.
 
-use crate::resources::{DeviceResources, GlyphGpuData, Vertex, VertexBufferLayoutExt};
+use super::store::GlyphGpuData;
+use crate::resources::{DeviceResources, Vertex, VertexBufferLayoutExt};
 
 /// Pipelines and layouts, built on the first prepare with items.
 pub(super) struct GlyphGpu {
@@ -29,9 +30,13 @@ pub(super) struct GlyphFrame {
 }
 
 impl GlyphGpu {
-    pub(super) fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
-        let bgl = &resources.glyph.bgl;
-        let instance_bgl = &resources.glyph.instance_bgl;
+    pub(super) fn new(
+        device: &crate::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &super::store::GlyphLayouts,
+    ) -> Self {
+        let bgl = &layouts.bgl;
+        let instance_bgl = &layouts.instance_bgl;
 
         let shader = crate::resources::builders::wgsl_module(
             device,

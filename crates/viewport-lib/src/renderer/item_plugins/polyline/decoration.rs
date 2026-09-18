@@ -1,22 +1,26 @@
 //! The polyline vector-quantity decoration: arrow glyphs generated from a
 //! [`PolylineItem`]'s `node_vectors` and `edge_vectors`.
 //!
-//! This owns a second copy of the glyph render pipelines. The glyph item type
-//! has its own pair inside its plugin, and the two are built from the same
-//! `glyph.wgsl` against the same shared layouts; keeping a copy here is what
-//! lets the two item types stay independent of each other. The copy is confined
-//! to this module so it can be collapsed into a shared one later without
-//! touching anything else.
+//! This owns a second copy of the glyph render pipelines and of the two glyph
+//! bind group layouts. The glyph item type has its own inside its plugin, and
+//! both are built from the same `glyph.wgsl` and the same descriptors; keeping
+//! a copy here is what lets the two item types stay independent of each
+//! other's state. What is shared is the code: the arrows are glyphs, so they go
+//! through the glyph builder and end up as the same `GlyphGpuData`. The copy is
+//! confined to this module so it can be collapsed into a shared one later
+//! without touching anything else.
 
 use crate::plugin_api::ItemFrameContext;
 use crate::renderer::PolylineItem;
-use crate::resources::{
-    DeviceResources, DualPipeline, GlyphGpuData, Vertex, VertexBufferLayoutExt,
+use crate::renderer::item_plugins::glyph::store::{
+    GlyphGpuData, GlyphLayouts, build_glyph_set, resolve_bindings,
 };
+use crate::resources::{DeviceResources, DualPipeline, Vertex, VertexBufferLayoutExt};
 
 /// The decoration's pipelines and this frame's draw data.
 #[derive(Default)]
 pub(super) struct Decoration {
+    layouts: Option<GlyphLayouts>,
     pipelines: Option<Pipelines>,
     frame: Vec<GlyphGpuData>,
 }
@@ -28,6 +32,7 @@ struct Pipelines {
 
 impl Decoration {
     pub(super) fn reset(&mut self) {
+        self.layouts = None;
         self.pipelines = None;
         self.frame.clear();
     }
@@ -50,16 +55,18 @@ impl Decoration {
             return;
         }
         let wireframe = ctx.wireframe_mode || item.settings.wireframe;
+        let layouts = self
+            .layouts
+            .get_or_insert_with(|| GlyphLayouts::new(device));
+        let pipelines = &mut self.pipelines;
+        let frame = &mut self.frame;
         let mut upload = |glyphs: crate::renderer::GlyphItem| {
             if glyphs.positions.is_empty() {
                 return;
             }
-            self.pipelines
-                .get_or_insert_with(|| Pipelines::new(device, ctx.resources));
-            self.frame.push(
-                ctx.resources
-                    .upload_glyph_set_per_frame(device, queue, &glyphs, wireframe),
-            );
+            pipelines.get_or_insert_with(|| Pipelines::new(device, ctx.resources, layouts));
+            let binds = resolve_bindings(device, ctx.resources, layouts, &glyphs);
+            frame.push(build_glyph_set(device, queue, &binds, &glyphs, wireframe));
         };
         if !item.node_vectors.is_empty() {
             upload(crate::quantities::polyline_node_vectors_to_glyphs(item));
@@ -90,7 +97,11 @@ impl Decoration {
 }
 
 impl Pipelines {
-    fn new(device: &crate::gpu::Device, resources: &DeviceResources) -> Self {
+    fn new(
+        device: &crate::gpu::Device,
+        resources: &DeviceResources,
+        layouts: &GlyphLayouts,
+    ) -> Self {
         let shader = crate::resources::builders::wgsl_module(
             device,
             "glyph_shader",
@@ -101,8 +112,8 @@ impl Pipelines {
             "glyph_pipeline_layout",
             &[
                 resources.shared_bindings().group0_layout,
-                &resources.glyph.bgl,
-                &resources.glyph.instance_bgl,
+                &layouts.bgl,
+                &layouts.instance_bgl,
             ],
         );
         let vertex_buffers = [Vertex::buffer_layout()];

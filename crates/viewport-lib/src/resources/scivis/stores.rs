@@ -9,7 +9,7 @@
 //! the handle types, states each payload's GPU byte charge, and pairs the two.
 
 use crate::resources::handle::{GpuByteSize, SlotStore, slot_handle};
-use crate::resources::{GlyphGpuData, PolylineGpuData, StreamtubeGpuData};
+use crate::resources::{PolylineGpuData, StreamtubeGpuData};
 
 impl GpuByteSize for PolylineGpuData {
     fn gpu_bytes(&self) -> u64 {
@@ -24,12 +24,6 @@ impl GpuByteSize for StreamtubeGpuData {
             + self.edge_index_buffer.size()
             + self._uniform_buf.size()
             + self.node_pick_buffer.as_ref().map_or(0, |b| b.size())
-    }
-}
-
-impl GpuByteSize for GlyphGpuData {
-    fn gpu_bytes(&self) -> u64 {
-        self._uniform_buf.size() + self._instance_buf.size()
     }
 }
 
@@ -57,14 +51,7 @@ slot_handle! {
     pub struct RibbonId;
 }
 
-slot_handle! {
-    /// Handle to a pre-uploaded glyph set produced by
-    /// [`DeviceResources::upload_glyph_set`](crate::resources::DeviceResources::upload_glyph_set).
-    pub struct GlyphSetId;
-}
-
 pub(crate) type PolylineStore = SlotStore<PolylineGpuData, PolylineId>;
 pub(crate) type StreamtubeStore = SlotStore<StreamtubeGpuData, StreamtubeId>;
 pub(crate) type TubeStore = SlotStore<StreamtubeGpuData, TubeId>;
 pub(crate) type RibbonStore = SlotStore<StreamtubeGpuData, RibbonId>;
-pub(crate) type GlyphSetStore = SlotStore<GlyphGpuData, GlyphSetId>;

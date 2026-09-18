@@ -305,8 +305,6 @@ pub struct ContentResources {
     pub(crate) tube_store: super::TubeStore,
     /// Pre-uploaded ribbon storage.
     pub(crate) ribbon_store: super::RibbonStore,
-    /// Pre-uploaded glyph set storage.
-    pub(crate) glyph_set_store: super::GlyphSetStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.

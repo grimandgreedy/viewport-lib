@@ -235,3 +235,58 @@ fn a_hidden_reference_item_is_skipped() {
     );
     assert_eq!(hit.map(|h| h.id), None);
 }
+
+// ---------------------------------------------------------------------------
+// The sets the item type holds
+// ---------------------------------------------------------------------------
+
+fn sample_glyph_set() -> viewport_lib::renderer::GlyphItem {
+    let mut item = viewport_lib::renderer::GlyphItem::default();
+    item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+    item.vectors = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    item
+}
+
+#[test]
+fn an_uploaded_glyph_set_resolves_until_it_is_dropped() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let baseline = renderer.resident_bytes().plugin_bytes;
+
+    let id = renderer.upload_glyph_set(&device, &queue, &sample_glyph_set());
+    assert!(renderer.resident_bytes().plugin_bytes > baseline);
+    assert!(renderer.replace_glyph_set(&device, &queue, id, &sample_glyph_set()));
+
+    assert!(renderer.drop_glyph_set(id));
+    assert!(!renderer.drop_glyph_set(id), "a handle drops once");
+    assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
+}
+
+#[test]
+fn begin_upload_glyph_set_drains_to_a_handle() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let job = renderer.begin_upload_glyph_set(&device, &queue, sample_glyph_set());
+    for _ in 0..200 {
+        renderer.resources_mut().process_uploads(&device, &queue);
+        match renderer.upload_status(job) {
+            viewport_lib::resources::UploadStatus::Ready => break,
+            viewport_lib::resources::UploadStatus::Failed(e) => panic!("upload failed: {e:?}"),
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                std::thread::sleep(std::time::Duration::from_millis(5))
+            }
+            viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
+        }
+    }
+    let id = renderer
+        .upload_result_glyph_set(job)
+        .expect("the finished job yields a handle");
+    assert!(renderer.drop_glyph_set(id));
+}

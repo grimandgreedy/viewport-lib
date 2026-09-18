@@ -2851,6 +2851,15 @@ impl ViewportRenderer {
         self.point_cloud_host().plugin.drop_stored(id)
     }
 
+    /// The registered glyph item type, which holds the uploaded sets.
+    fn glyph_host(
+        &mut self,
+    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::glyph::GlyphPlugin>
+    {
+        self.item_type_plugin_host(crate::renderer::item_plugins::glyph::TYPE_NAME)
+            .expect("the built-in glyph item type is registered at construction")
+    }
+
     /// The registered tensor glyph item type, which holds the uploaded sets.
     fn tensor_glyph_host(
         &mut self,
@@ -2892,7 +2901,8 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::GlyphItem,
     ) -> crate::resources::GlyphSetId {
-        self.resources.upload_glyph_set(device, queue, item)
+        let host = self.glyph_host();
+        host.plugin.upload(device, queue, host.resources, item)
     }
 
     /// Start an off-thread upload of a glyph set. Poll the returned job with
@@ -2904,7 +2914,9 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::GlyphItem,
     ) -> crate::resources::JobId {
-        self.resources.begin_upload_glyph_set(device, queue, item)
+        let host = self.glyph_host();
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
     }
 
     /// Take the handle from a finished [`begin_upload_glyph_set`](Self::begin_upload_glyph_set) job.
@@ -2912,7 +2924,8 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::GlyphSetId> {
-        self.resources.upload_result_glyph_set(id)
+        let host = self.glyph_host();
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Replace the geometry behind a glyph set handle, keeping the handle valid.
@@ -2924,12 +2937,13 @@ impl ViewportRenderer {
         id: crate::resources::GlyphSetId,
         item: &crate::renderer::GlyphItem,
     ) -> bool {
-        self.resources.replace_glyph_set(device, queue, id, item)
+        let host = self.glyph_host();
+        host.plugin.replace(device, queue, host.resources, id, item)
     }
 
     /// Release a glyph set. `false` if the handle does not resolve.
     pub fn drop_glyph_set(&mut self, id: crate::resources::GlyphSetId) -> bool {
-        self.resources.drop_glyph_set(id)
+        self.glyph_host().plugin.drop_stored(id)
     }
 
     /// Upload a tensor glyph set for reuse across frames, returning its handle.

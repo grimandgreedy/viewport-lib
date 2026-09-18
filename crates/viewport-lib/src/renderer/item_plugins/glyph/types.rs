@@ -1,6 +1,15 @@
 //! Per-frame reference to a pre-uploaded glyph set.
 
 use crate::renderer::types::items::IDENTITY_MAT4;
+
+crate::resources::handle::slot_handle! {
+    /// Handle to a glyph set uploaded once through
+    /// [`ViewportRenderer::upload_glyph_set`](crate::renderer::ViewportRenderer::upload_glyph_set).
+    ///
+    /// Name it from a [`GlyphSetRefItem`] to draw the stored set without
+    /// rebuilding its instance buffer.
+    pub struct GlyphSetId;
+}
 use crate::scene::material::ItemSettings;
 
 /// Per-frame reference to a pre-uploaded glyph set. See [`PolylineRefItem`].
