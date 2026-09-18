@@ -17,7 +17,7 @@ use crate::scene::material::ItemSettings;
 #[non_exhaustive]
 pub struct GlyphSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_glyph_set`](crate::resources::DeviceResources::upload_glyph_set)
+    /// [`ViewportRenderer::upload_glyph_set`](crate::renderer::ViewportRenderer::upload_glyph_set)
     /// or `begin_upload_glyph_set`.
     pub source: crate::resources::GlyphSetId,
     /// Per-frame model matrix. Composes on top of the per-instance

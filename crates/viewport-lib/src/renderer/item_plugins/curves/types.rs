@@ -219,7 +219,7 @@ impl Default for RibbonItem {
 #[non_exhaustive]
 pub struct StreamtubeRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_streamtube`](crate::resources::DeviceResources::upload_streamtube)
+    /// [`ViewportRenderer::upload_streamtube`](crate::renderer::ViewportRenderer::upload_streamtube)
     /// or `begin_upload_streamtube`.
     pub source: crate::resources::StreamtubeId,
     /// Per-frame model matrix.
@@ -244,7 +244,7 @@ impl StreamtubeRefItem {
 #[non_exhaustive]
 pub struct TubeRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_tube`](crate::resources::DeviceResources::upload_tube)
+    /// [`ViewportRenderer::upload_tube`](crate::renderer::ViewportRenderer::upload_tube)
     /// or `begin_upload_tube`.
     pub source: crate::resources::TubeId,
     /// Per-frame model matrix.
@@ -269,7 +269,7 @@ impl TubeRefItem {
 #[non_exhaustive]
 pub struct RibbonRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_ribbon`](crate::resources::DeviceResources::upload_ribbon)
+    /// [`ViewportRenderer::upload_ribbon`](crate::renderer::ViewportRenderer::upload_ribbon)
     /// or `begin_upload_ribbon`.
     pub source: crate::resources::RibbonId,
     /// Per-frame model matrix.

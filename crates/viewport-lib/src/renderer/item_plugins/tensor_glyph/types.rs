@@ -17,7 +17,7 @@ use crate::scene::material::ItemSettings;
 #[non_exhaustive]
 pub struct TensorGlyphSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_tensor_glyph_set`](crate::resources::DeviceResources::upload_tensor_glyph_set)
+    /// [`ViewportRenderer::upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_tensor_glyph_set)
     /// or `begin_upload_tensor_glyph_set`.
     pub source: crate::resources::TensorGlyphSetId,
     /// Per-frame model matrix. Composes on top of the per-instance

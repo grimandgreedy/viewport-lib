@@ -313,7 +313,7 @@ mod lit_sprite_tests {
 #[non_exhaustive]
 pub struct SpriteSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_sprite_set`](crate::resources::DeviceResources::upload_sprite_set)
+    /// [`ViewportRenderer::upload_sprite_set`](crate::renderer::ViewportRenderer::upload_sprite_set)
     /// or `begin_upload_sprite_set`.
     pub source: crate::resources::SpriteSetId,
     /// Per-item render settings (visibility, wireframe, selection).
@@ -340,7 +340,7 @@ impl SpriteSetRefItem {
 #[non_exhaustive]
 pub struct SpriteInstanceSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_sprite_instance_set`](crate::resources::DeviceResources::upload_sprite_instance_set)
+    /// [`ViewportRenderer::upload_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_sprite_instance_set)
     /// or `begin_upload_sprite_instance_set`.
     pub source: crate::resources::SpriteInstanceSetId,
     /// Per-item render settings.

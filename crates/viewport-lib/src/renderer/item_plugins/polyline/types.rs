@@ -247,7 +247,7 @@ pub fn sphere_wireframe_polyline(
 #[non_exhaustive]
 pub struct PolylineRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_polyline`](crate::resources::DeviceResources::upload_polyline)
+    /// [`ViewportRenderer::upload_polyline`](crate::renderer::ViewportRenderer::upload_polyline)
     /// or `begin_upload_polyline`.
     pub source: crate::resources::PolylineId,
     /// Per-frame model matrix. Identity uses the polyline's own world-space

@@ -95,7 +95,7 @@ impl Default for PointCloudItem {
 #[non_exhaustive]
 pub struct PointCloudRefItem {
     /// Handle to GPU buffers produced by
-    /// [`DeviceResources::upload_point_cloud`](crate::resources::DeviceResources::upload_point_cloud)
+    /// [`ViewportRenderer::upload_point_cloud`](crate::renderer::ViewportRenderer::upload_point_cloud)
     /// or `begin_upload_point_cloud`.
     pub source: crate::resources::PointCloudId,
     /// Per-frame model matrix. Composes on top of the model baked into the
