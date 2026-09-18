@@ -93,3 +93,49 @@ fn a_plugins_own_content_lands_in_the_renderers_resident_bytes() {
     // zero; that is the reason the renderer-level call exists.
     assert_eq!(renderer.resources().resident_bytes().plugin_bytes, 0);
 }
+
+/// `plugin_bytes` is a sum; a policy over its ceiling needs the breakdown to
+/// know which type to free from.
+#[test]
+fn the_per_plugin_breakdown_names_every_registered_type() {
+    let Some((device, _queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // The built-in types are registered at construction and hold nothing yet.
+    let builtins: Vec<_> = renderer.plugin_resident_bytes().collect();
+    assert!(
+        !builtins.is_empty(),
+        "the built-in item types register at construction"
+    );
+    assert!(
+        builtins.iter().all(|(_, bytes)| *bytes == 0),
+        "nothing has been uploaded yet"
+    );
+
+    renderer.with_item_type_plugin(&device, Box::new(SilentPlugin));
+    renderer.with_item_type_plugin(
+        &device,
+        Box::new(AccountingPlugin {
+            name: "accounting_a",
+            bytes: 4096,
+        }),
+    );
+
+    let rows: Vec<_> = renderer.plugin_resident_bytes().collect();
+    assert!(
+        rows.contains(&("accounting_a", 4096)),
+        "a type holding content is named with its figure"
+    );
+    assert!(
+        rows.contains(&("silent_test", 0)),
+        "a type holding nothing still appears, reporting zero"
+    );
+    assert_eq!(
+        rows.iter().map(|(_, bytes)| bytes).sum::<u64>(),
+        renderer.resident_bytes().plugin_bytes,
+        "the breakdown sums to the figure it breaks down"
+    );
+}

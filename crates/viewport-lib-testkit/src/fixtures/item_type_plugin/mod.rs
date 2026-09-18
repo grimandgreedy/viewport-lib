@@ -10,11 +10,16 @@
 //! - [`TriangleItemTypePlugin`]: draws a triangle in the opaque, shadow, and
 //!   pick passes through the plugin pipeline builders, so the shared bind
 //!   layout and the target descriptors are exercised from outside the crate.
+//! - [`StoringItemTypePlugin`]: holds the content it draws and is uploaded
+//!   into from outside the crate, synchronously and through the job runner,
+//!   so the host-side route to a plugin-owned store is exercised too.
 
 mod collection;
 mod logging;
+mod storing;
 mod triangle;
 
 pub use collection::CountedItemCollection;
 pub use logging::LoggingItemTypePlugin;
+pub use storing::{StoredId, StoringItemTypePlugin};
 pub use triangle::TriangleItemTypePlugin;

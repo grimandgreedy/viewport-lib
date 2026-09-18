@@ -1174,3 +1174,45 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         None
     }
 }
+
+/// A registered item-type plugin plus the renderer-owned services an upload
+/// into it needs, handed out together by
+/// [`ViewportRenderer::item_type_plugin_host`](crate::renderer::ViewportRenderer::item_type_plugin_host).
+///
+/// A plugin that stores its own content takes an upload call of its own, and
+/// that call usually wants three things at once: the plugin itself, the job
+/// runner (to build buffers off the frame thread), and read access to the
+/// content shared between item types (textures, colourmaps, volumes, meshes).
+/// All three are separate fields of `ViewportRenderer`, so only the renderer
+/// can lend them out together: taking the plugin through
+/// [`item_type_plugin_mut`](crate::renderer::ViewportRenderer::item_type_plugin_mut)
+/// borrows the whole renderer and the other two are then out of reach.
+///
+/// ```no_run
+/// # use viewport_lib::plugin_api::ItemTypePlugin;
+/// # use viewport_lib::renderer::ViewportRenderer;
+/// # use viewport_lib::resources::{Jobs, JobId};
+/// # struct MyPlugin;
+/// # impl ItemTypePlugin for MyPlugin {
+/// #     fn type_name(&self) -> &'static str { "my.type" }
+/// # }
+/// # impl MyPlugin {
+/// #     fn begin_upload(&mut self, _: &Jobs<'_>, _: &viewport_lib::wgpu::Device) -> JobId { unimplemented!() }
+/// # }
+/// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device) -> Option<JobId> {
+/// let host = renderer.item_type_plugin_host::<MyPlugin>("my.type")?;
+/// Some(host.plugin.begin_upload(&host.jobs, device))
+/// # }
+/// ```
+pub struct ItemTypeHost<'a, T> {
+    /// The registered plugin, as the type it was registered as.
+    pub plugin: &'a mut T,
+    /// The upload-job runner, for CPU work that should not run on the frame
+    /// thread. Submit here and collect the result from a later call; the
+    /// runner is advanced by the renderer's `prepare`.
+    pub jobs: crate::resources::Jobs<'a>,
+    /// Read access to the content shared between item types: meshes,
+    /// textures, 3D volumes and colourmaps, through the accessors on
+    /// [`DeviceResources`](crate::resources::DeviceResources).
+    pub resources: &'a crate::resources::DeviceResources,
+}

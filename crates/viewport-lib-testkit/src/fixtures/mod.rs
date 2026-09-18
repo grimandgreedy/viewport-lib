@@ -72,7 +72,10 @@ pub use deformer::{
 };
 pub use gpu_plugin::LoggingGpuPlugin;
 pub use installer::{DeformAndStepInstaller, DeformAndStepInstallerHandle};
-pub use item_type_plugin::{CountedItemCollection, LoggingItemTypePlugin, TriangleItemTypePlugin};
+pub use item_type_plugin::{
+    CountedItemCollection, LoggingItemTypePlugin, StoredId, StoringItemTypePlugin,
+    TriangleItemTypePlugin,
+};
 pub use material_plugin::{FlatColourMaterialPlugin, TexturedMaterialPlugin};
 pub use post_effect_producer::LoggingPostEffectProducer;
 pub use post_effect_stage::PassthroughPostEffectStage;

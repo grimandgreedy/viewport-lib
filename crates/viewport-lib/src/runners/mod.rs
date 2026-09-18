@@ -337,8 +337,68 @@ impl ViewportInstance {
     }
 
     /// The underlying renderer, for advanced use the instance does not wrap.
+    ///
+    /// This is the route to the per-type upload calls (`upload_polyline`,
+    /// `upload_gaussian_splat`, `upload_volume_for_mc` and the rest). They are
+    /// not mirrored here: they belong to the item types that hold the content,
+    /// and forwarding fifty-odd methods would only mean two places to keep in
+    /// step. `resources_mut` stays the route for content shared between item
+    /// types: meshes, textures, 3D volumes and colourmaps.
     pub fn renderer_mut(&mut self) -> &mut ViewportRenderer {
         &mut self.renderer
+    }
+
+    /// Register an [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin), the
+    /// same call as
+    /// [`ViewportRenderer::with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin).
+    pub fn with_item_type_plugin(
+        &mut self,
+        device: &crate::gpu::Device,
+        plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
+    ) {
+        self.renderer.with_item_type_plugin(device, plugin);
+    }
+
+    /// Borrow a registered item-type plugin back as its concrete type.
+    pub fn item_type_plugin<T: crate::plugin_api::ItemTypePlugin>(
+        &self,
+        type_name: &str,
+    ) -> Option<&T> {
+        self.renderer.item_type_plugin(type_name)
+    }
+
+    /// Mutably borrow a registered item-type plugin back as its concrete type.
+    /// Use [`item_type_plugin_host`](Self::item_type_plugin_host) instead when
+    /// the call also needs the job runner or the shared arenas.
+    pub fn item_type_plugin_mut<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<&mut T> {
+        self.renderer.item_type_plugin_mut(type_name)
+    }
+
+    /// Borrow a registered item-type plugin together with the job runner and
+    /// the shared content arenas, which is what an upload into a plugin-owned
+    /// store needs. See
+    /// [`ViewportRenderer::item_type_plugin_host`](crate::renderer::ViewportRenderer::item_type_plugin_host).
+    pub fn item_type_plugin_host<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<crate::plugin_api::ItemTypeHost<'_, T>> {
+        self.renderer.item_type_plugin_host(type_name)
+    }
+
+    /// Resident GPU bytes for the working set, including what registered item
+    /// types report holding. See
+    /// [`ViewportRenderer::resident_bytes`](crate::renderer::ViewportRenderer::resident_bytes).
+    pub fn resident_bytes(&self) -> crate::resources::ResidentBytes {
+        self.renderer.resident_bytes()
+    }
+
+    /// Resident GPU bytes per registered item type, the breakdown behind
+    /// [`ResidentBytes::plugin_bytes`](crate::resources::ResidentBytes::plugin_bytes).
+    pub fn plugin_resident_bytes(&self) -> impl Iterator<Item = (&'static str, u64)> + '_ {
+        self.renderer.plugin_resident_bytes()
     }
 
     // ---- streaming: upload + bind, and residency ------------------------------

@@ -992,6 +992,24 @@ impl ViewportRenderer {
         bytes
     }
 
+    /// Resident GPU bytes per registered item type, in registration order.
+    ///
+    /// [`ResidentBytes::plugin_bytes`](crate::resources::ResidentBytes::plugin_bytes)
+    /// is the sum of these, which is the right figure to budget against but
+    /// the wrong one to act on: an eviction policy that is over its ceiling
+    /// needs to know which type to free content from. This is the breakdown.
+    ///
+    /// Every registered type appears, including the ones reporting zero (a
+    /// type whose items carry their own geometry holds nothing between
+    /// frames, and a type that has not implemented
+    /// [`resident_bytes`](crate::plugin_api::ItemTypePlugin::resident_bytes)
+    /// reports zero whatever it holds).
+    pub fn plugin_resident_bytes(&self) -> impl Iterator<Item = (&'static str, u64)> + '_ {
+        self.item_type_plugins
+            .iter()
+            .map(|(name, plugin)| (name, plugin.resident_bytes()))
+    }
+
     /// Performance counters from the last completed frame.
     pub fn last_frame_stats(&self) -> crate::renderer::stats::FrameStats {
         self.last_stats
@@ -1661,6 +1679,37 @@ impl ViewportRenderer {
             .get_mut(type_name)?
             .as_any_plugin_mut()
             .downcast_mut::<T>()
+    }
+
+    /// Borrow a registered item-type plugin together with the renderer-owned
+    /// services an upload into it needs: the job runner and read access to the
+    /// shared content arenas.
+    ///
+    /// Use this rather than [`item_type_plugin_mut`](Self::item_type_plugin_mut)
+    /// whenever the call being made on the plugin needs more than the plugin
+    /// itself. `item_type_plugin_mut` borrows the whole renderer, so
+    /// `renderer.resources()` and the job runner are out of reach for as long
+    /// as the plugin is held; these are separate fields, and only the renderer
+    /// can lend them out at the same time. The built-in types that hold their
+    /// own content upload through this.
+    ///
+    /// `None` when nothing is registered under `type_name`, or when something
+    /// is but it is not a `T`.
+    pub fn item_type_plugin_host<T: crate::plugin_api::ItemTypePlugin>(
+        &mut self,
+        type_name: &str,
+    ) -> Option<crate::plugin_api::ItemTypeHost<'_, T>> {
+        let jobs = crate::resources::Jobs::new(&self.resources);
+        let plugin = self
+            .item_type_plugins
+            .get_mut(type_name)?
+            .as_any_plugin_mut()
+            .downcast_mut::<T>()?;
+        Some(crate::plugin_api::ItemTypeHost {
+            plugin,
+            jobs,
+            resources: &self.resources,
+        })
     }
 
     /// Register a [`PostEffectProducer`](crate::plugin_api::PostEffectProducer).
@@ -2534,9 +2583,7 @@ impl ViewportRenderer {
         &mut crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin,
     > {
         let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
-        self.item_type_plugins
-            .get_mut(name)
-            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+        self.item_type_plugin_mut(name)
             .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })
     }
 
@@ -3083,9 +3130,7 @@ impl ViewportRenderer {
         &mut crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin,
     > {
         let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
-        self.item_type_plugins
-            .get_mut(name)
-            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+        self.item_type_plugin_mut(name)
             .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })
     }
 
@@ -3342,14 +3387,13 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         vol: crate::geometry::marching_cubes::VolumeData,
     ) -> crate::resources::JobId {
-        let jobs = crate::resources::Jobs::new(&self.resources);
         let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
-        let plugin: &mut crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin =
-            self.item_type_plugins
-                .get_mut(name)
-                .and_then(|p| p.as_any_plugin_mut().downcast_mut())
-                .expect("the built-in marching cubes item type is registered at construction");
-        plugin.begin_upload(&jobs, device, queue, vol)
+        let host = self
+            .item_type_plugin_host::<crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin>(
+                name,
+            )
+            .expect("the built-in marching cubes item type is registered at construction");
+        host.plugin.begin_upload(&host.jobs, device, queue, vol)
     }
 
     /// Take the [`McVolumeId`](crate::resources::McVolumeId) produced by a
@@ -3361,14 +3405,13 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::McVolumeId> {
-        let jobs = crate::resources::Jobs::new(&self.resources);
         let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
-        let plugin: &mut crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin =
-            self.item_type_plugins
-                .get_mut(name)
-                .and_then(|p| p.as_any_plugin_mut().downcast_mut())
-                .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
-        plugin.take_upload_result(&jobs, id)
+        let host = self
+            .item_type_plugin_host::<crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin>(
+                name,
+            )
+            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Start an asynchronous boundary-only volume mesh upload. See
@@ -3454,14 +3497,13 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         data: crate::renderer::GaussianSplatData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let jobs = crate::resources::Jobs::new(&self.resources);
         let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
-        let plugin: &mut crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin = self
-            .item_type_plugins
-            .get_mut(name)
-            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+        let host = self
+            .item_type_plugin_host::<crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin>(
+                name,
+            )
             .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
-        plugin.begin_upload(&jobs, device, queue, data)
+        host.plugin.begin_upload(&host.jobs, device, queue, data)
     }
 
     /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
@@ -3473,14 +3515,13 @@ impl ViewportRenderer {
         &mut self,
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
-        let jobs = crate::resources::Jobs::new(&self.resources);
         let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
-        let plugin: &mut crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin = self
-            .item_type_plugins
-            .get_mut(name)
-            .and_then(|p| p.as_any_plugin_mut().downcast_mut())
+        let host = self
+            .item_type_plugin_host::<crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin>(
+                name,
+            )
             .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
-        plugin.take_upload_result(&jobs, id)
+        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Start an asynchronous overlay texture upload. See
