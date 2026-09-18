@@ -114,27 +114,49 @@ pub(super) fn resolve_bindings(
     layouts: &SpriteLayouts,
     item: &crate::renderer::SpriteItem,
 ) -> SpriteBindings {
-    use crate::resources::TextureSlot;
-    resources.check_texture_slot(item.texture_id, TextureSlot::SpriteAlbedo);
-    resources.check_texture_slot(item.normal_texture_id, TextureSlot::SpriteNormalMap);
+    resolve_bindings_for(
+        resources,
+        layouts,
+        item.texture_id,
+        item.normal_texture_id,
+        true,
+    )
+}
 
-    let (texture_view, has_texture) =
-        match item.texture_id.and_then(|id| resources.texture_view(id)) {
-            Some(view) => (view.clone(), 1),
-            None => (resources.fallback_colourmap_view().clone(), 0),
-        };
-    let (normal_view, has_normal_map) = match item
-        .normal_texture_id
-        .and_then(|id| resources.texture_view(id))
-    {
+/// [`resolve_bindings`] against ids rather than an item, so a stored batch can
+/// be resolved again after a texture it names is freed or swapped, where the
+/// item that built it is long gone.
+///
+/// `report` is false on that path: the colour-space mismatch was already
+/// reported when the batch was uploaded, and repeating it on every
+/// revalidation would spam the log.
+pub(super) fn resolve_bindings_for(
+    resources: &DeviceResources,
+    layouts: &SpriteLayouts,
+    texture_id: Option<crate::resources::TextureId>,
+    normal_texture_id: Option<crate::resources::TextureId>,
+    report: bool,
+) -> SpriteBindings {
+    use crate::resources::TextureSlot;
+    if report {
+        resources.check_texture_slot(texture_id, TextureSlot::SpriteAlbedo);
+        resources.check_texture_slot(normal_texture_id, TextureSlot::SpriteNormalMap);
+    }
+
+    let (texture_view, has_texture) = match texture_id.and_then(|id| resources.texture_view(id)) {
         Some(view) => (view.clone(), 1),
-        None => (
-            resources
-                .fallback_texture_view(crate::scene::material::TextureSlot::Normal)
-                .clone(),
-            0,
-        ),
+        None => (resources.fallback_colourmap_view().clone(), 0),
     };
+    let (normal_view, has_normal_map) =
+        match normal_texture_id.and_then(|id| resources.texture_view(id)) {
+            Some(view) => (view.clone(), 1),
+            None => (
+                resources
+                    .fallback_texture_view(crate::scene::material::TextureSlot::Normal)
+                    .clone(),
+                0,
+            ),
+        };
     SpriteBindings {
         texture_view,
         has_texture,
@@ -144,6 +166,34 @@ pub(super) fn resolve_bindings(
         bgl: layouts.bgl.clone(),
         lit_bgl: layouts.lit_bgl.clone(),
     }
+}
+
+/// Uniform block for one sprite batch: model matrix + flags + soft-particle
+/// distance + orientation + refraction strength + lit parameters. Layout
+/// mirrors `SpriteUniform` in `sprite_lit.wgsl`; the emissive `sprite.wgsl`
+/// reads only the first half and ignores the trailing lit fields.
+///
+/// Kept on the batch rather than written and forgotten, because the two
+/// `has_*` flags depend on textures that can be freed after the upload: a
+/// revalidation rewrites them without needing the item back.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(super) struct SpriteUniformData {
+    model: [[f32; 4]; 4],
+    world_space: u32,
+    has_texture: u32,
+    soft_particle_distance: f32,
+    orientation: u32,
+    axis: [f32; 3],
+    refraction_strength: f32,
+    lit: u32,
+    normal_mode: u32,
+    has_normal_map: u32,
+    ambient_scale: f32,
+    roughness: f32,
+    receive_shadows: u32,
+    _pad_lit_b: u32,
+    _pad_lit_c: u32,
 }
 
 /// Build the GPU data for one sprite batch: its buffers and its bind groups.
@@ -233,30 +283,6 @@ pub(super) fn build_sprite(
             mapped_at_creation: false,
         });
         queue.write_buffer(&instance_buf, 0, instance_bytes);
-
-        // Uniform buffer: model matrix + flags + soft-particle distance + orientation
-        // + refraction strength + lit parameters. Layout mirrors `SpriteUniform`
-        // in `sprite_lit.wgsl`; the emissive `sprite.wgsl` reads only the first
-        // half and ignores the trailing lit fields.
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct SpriteUniformData {
-            model: [[f32; 4]; 4],
-            world_space: u32,
-            has_texture: u32,
-            soft_particle_distance: f32,
-            orientation: u32,
-            axis: [f32; 3],
-            refraction_strength: f32,
-            lit: u32,
-            normal_mode: u32,
-            has_normal_map: u32,
-            ambient_scale: f32,
-            roughness: f32,
-            receive_shadows: u32,
-            _pad_lit_b: u32,
-            _pad_lit_c: u32,
-        }
 
         let (texture_view, has_texture) = (&binds.texture_view, binds.has_texture);
 
@@ -366,6 +392,9 @@ pub(super) fn build_sprite(
             sprite_count: count,
             pick_id: item.settings.pick_id,
             bind_group,
+            texture_id: item.texture_id,
+            normal_texture_id: item.normal_texture_id,
+            uniform: uniform_data,
             depth_write: item.depth_write,
             blend: item.blend,
             wireframe: false,
@@ -411,6 +440,15 @@ pub(crate) struct SpriteGpuData {
     pub(crate) sprite_count: u32,
     /// Bind group (group 1): uniform + texture + sampler + instance storage buffer.
     pub(crate) bind_group: crate::gpu::BindGroup,
+    /// Albedo texture this batch's bind group holds, when it names one. Kept so
+    /// a stored batch can tell whether the texture is still resident and be
+    /// rebound if it is not.
+    pub(crate) texture_id: Option<crate::resources::TextureId>,
+    /// Normal map this batch's group-3 bind group holds, on the same terms.
+    pub(crate) normal_texture_id: Option<crate::resources::TextureId>,
+    /// The uniform block as written, so a rebind can flip the `has_*` flags
+    /// without rebuilding the batch from an item it no longer has.
+    pub(crate) uniform: SpriteUniformData,
     /// Whether this batch was submitted with `depth_write: true`.
     pub(crate) depth_write: bool,
     /// Blend mode requested by the host for this batch.
@@ -442,4 +480,79 @@ pub(crate) struct SpriteGpuData {
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: crate::gpu::Buffer,
     pub(crate) _instance_buf: crate::gpu::Buffer,
+}
+
+/// The freeable resources one stored batch's bind groups hold.
+///
+/// Both slots go through the same record the rest of the lib uses, so "did a
+/// texture this binding names get freed" has one answer everywhere.
+pub(super) fn deps(data: &SpriteGpuData) -> crate::resources::resource_deps::ResourceDeps {
+    crate::resources::resource_deps::ResourceDeps::textures([
+        data.texture_id,
+        data.normal_texture_id,
+        None,
+        None,
+        None,
+    ])
+}
+
+/// Point a stored batch's bind groups at freshly resolved views, keeping its
+/// buffers and its handle.
+///
+/// A batch is uploaded once and drawn for as long as the host holds the
+/// handle, so the views it bound at upload can be freed or swapped underneath
+/// it. Rebuilding is the only correct answer: dropping the batch would lose
+/// content the host still owns, and leaving it alone would keep a freed
+/// texture alive and keep sampling it.
+pub(super) fn rebind_sprite(
+    device: &crate::gpu::Device,
+    queue: &crate::gpu::Queue,
+    binds: &SpriteBindings,
+    data: &mut SpriteGpuData,
+) {
+    data.uniform.has_texture = binds.has_texture;
+    data.uniform.has_normal_map = binds.has_normal_map;
+    queue.write_buffer(&data._uniform_buf, 0, bytemuck::bytes_of(&data.uniform));
+
+    data.bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        label: Some("sprite_bind_group"),
+        layout: &binds.bgl,
+        entries: &[
+            crate::gpu::BindGroupEntry {
+                binding: 0,
+                resource: data._uniform_buf.as_entire_binding(),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 1,
+                resource: crate::gpu::BindingResource::TextureView(&binds.texture_view),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 2,
+                resource: crate::gpu::BindingResource::Sampler(&binds.sampler),
+            },
+            crate::gpu::BindGroupEntry {
+                binding: 3,
+                resource: data._instance_buf.as_entire_binding(),
+            },
+        ],
+    });
+
+    // Only a lit batch has the group-3 binding; an unlit one never built it
+    // and the normal map it named, if any, is bound nowhere.
+    if data.lit_normal_bg.is_some() {
+        data.lit_normal_bg = Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("sprite_lit_normal_bg"),
+            layout: &binds.lit_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: crate::gpu::BindingResource::TextureView(&binds.normal_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::gpu::BindingResource::Sampler(&binds.sampler),
+                },
+            ],
+        }));
+    }
 }

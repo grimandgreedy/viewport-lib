@@ -89,6 +89,10 @@ pub(crate) struct SpritePlugin {
     /// spaces over one payload: static billboards and entity sprites.
     sets: SpriteSetStore,
     instance_sets: SpriteInstanceSetStore,
+    /// Resource epochs the two stores were last revalidated against. A stored
+    /// batch holds texture views in its bind groups, so a free or a replace
+    /// since the last frame means some of them have to be rebound.
+    deps_gate: crate::resources::resource_deps::DepsGate,
     /// The two layouts every upload builds its bind groups against. Created on
     /// registration, because an upload can arrive before the first frame.
     layouts: Option<SpriteLayouts>,
@@ -226,6 +230,64 @@ impl SpritePlugin {
         jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item))
     }
 
+    /// Rebind stored batches whose textures were freed or swapped since the
+    /// last frame.
+    ///
+    /// A batch is the host's content, held until the host drops the handle, so
+    /// the answer to a freed texture is to rebind the batch against the
+    /// fallback, never to discard it: the sprites stay, they stop being
+    /// textured. Leaving it alone instead would keep the freed texture alive
+    /// through the bind group and go on sampling it, so the memory the host
+    /// asked to release is never released.
+    ///
+    /// A replace swaps the view behind a live id, which no per-batch liveness
+    /// check can see, so every stored batch that names a texture is rebound.
+    fn revalidate_stores(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        resources: &crate::resources::DeviceResources,
+    ) {
+        use crate::resources::resource_deps::Revalidate;
+        let action = self.deps_gate.poll(resources);
+        if action == Revalidate::Valid {
+            return;
+        }
+        let Some(layouts) = self.layouts.as_ref() else {
+            return;
+        };
+        let sets = self.sets.iter_mut().map(|(_, gpu)| gpu);
+        let instance_sets = self.instance_sets.iter_mut().map(|(_, gpu)| gpu);
+        for gpu in sets.chain(instance_sets) {
+            if gpu.texture_id.is_none() && gpu.normal_texture_id.is_none() {
+                continue;
+            }
+            if action == Revalidate::CheckEach && store::deps(gpu).resolves(resources) {
+                continue;
+            }
+            let binds = store::resolve_bindings_for(
+                resources,
+                layouts,
+                gpu.texture_id,
+                gpu.normal_texture_id,
+                false,
+            );
+            store::rebind_sprite(device, queue, &binds, gpu);
+            // A freed id never comes back: ids are generational, so whatever
+            // takes the slot next resolves through a different one. Forget it,
+            // and the batch stops being re-checked on every later free.
+            if gpu.texture_id.is_some_and(|id| !resources.has_texture(id)) {
+                gpu.texture_id = None;
+            }
+            if gpu
+                .normal_texture_id
+                .is_some_and(|id| !resources.has_texture(id))
+            {
+                gpu.normal_texture_id = None;
+            }
+        }
+    }
+
     /// Store the batch a finished job built as a sprite set.
     pub(crate) fn take_set_result(
         &mut self,
@@ -339,6 +401,7 @@ impl ItemTypePlugin for SpritePlugin {
         self.frame.clear();
         self.outlines.clear();
         self.pick_bind_groups.clear();
+        self.revalidate_stores(device, queue, ctx.resources);
         let items = items
             .as_any()
             .downcast_ref::<Vec<SpriteItem>>()

@@ -58,6 +58,8 @@ mod hidden_tests;
 mod instanced_texture_tests;
 #[cfg(test)]
 mod lod_instance_tests;
+#[cfg(test)]
+mod stored_batch_texture_tests;
 
 pub use self::types::{
     AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode,
