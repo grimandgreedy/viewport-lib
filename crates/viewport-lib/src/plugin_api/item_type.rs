@@ -835,49 +835,6 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     ) {
     }
 
-    /// Issue draw calls into the lib's outline-mask render pass.
-    ///
-    /// Called once per frame inside the mask pass with the standard
-    /// group-0 bind group bound. Implementations iterate `items`, draw
-    /// only those whose `item_settings(i).selected` is `true`, and write
-    /// any non-zero R8 value at covered fragments. Use
-    /// [`build_mask_pipeline`](crate::resources::DeviceResources::build_mask_pipeline)
-    /// to construct a compatible pipeline; the fragment helper
-    /// [`SHARED_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_MASK_WGSL)
-    /// provides the trivial `fs_mask` body.
-    ///
-    /// Plugins that do not participate in the outline highlight leave
-    /// this empty.
-    ///
-    /// # When the item type has no edges to trace
-    ///
-    /// This traces a ring around rasterised geometry, so it suits a type whose
-    /// items are solid on screen. A type whose items are a cloud, a billboard
-    /// or a participating-media volume has no silhouette worth ringing, and the
-    /// built-in types in that position show selection as a bounds wireframe
-    /// instead: a box for a volume, great circles for a sphere.
-    ///
-    /// That is not a built-in privilege. The polyline substrate those draw
-    /// through takes consumer items too, and the builders are public, so a
-    /// plugin's consumer draws the same affordance by pushing one item per
-    /// frame:
-    ///
-    /// ```no_run
-    /// # use viewport_lib::{FrameData, Aabb, aabb_wireframe_polyline};
-    /// # fn example(fd: &mut FrameData, bounds: &Aabb, selected: bool) {
-    /// if selected {
-    ///     // The same yellow the built-in bounds outlines use.
-    ///     fd.scene
-    ///         .polylines
-    ///         .push(aabb_wireframe_polyline(bounds, [1.0, 0.9, 0.2, 1.0]));
-    /// }
-    /// # }
-    /// ```
-    ///
-    /// [`sphere_wireframe_polyline`](crate::sphere_wireframe_polyline) does the
-    /// same for a sphere. Set `settings.wireframe` on the pushed item for the
-    /// thin single-pixel line the built-in outlines use, rather than the
-    /// screen-space thick line a data polyline gets.
     /// Build this frame's wireframe polylines for the item type.
     ///
     /// Called during `prepare` for every registered plugin. The returned items
@@ -930,6 +887,49 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         Vec::new()
     }
 
+    /// Issue draw calls into the lib's outline-mask render pass.
+    ///
+    /// Called once per frame inside the mask pass with the standard
+    /// group-0 bind group bound. Implementations iterate `items`, draw
+    /// only those whose `item_settings(i).selected` is `true`, and write
+    /// any non-zero R8 value at covered fragments. Use
+    /// [`build_mask_pipeline`](crate::resources::DeviceResources::build_mask_pipeline)
+    /// to construct a compatible pipeline; the fragment helper
+    /// [`SHARED_MASK_WGSL`](crate::plugin_api::shared_wgsl::SHARED_MASK_WGSL)
+    /// provides the trivial `fs_mask` body.
+    ///
+    /// Plugins that do not participate in the outline highlight leave
+    /// this empty.
+    ///
+    /// # When the item type has no edges to trace
+    ///
+    /// This traces a ring around rasterised geometry, so it suits a type whose
+    /// items are solid on screen. A type whose items are a cloud, a billboard
+    /// or a participating-media volume has no silhouette worth ringing, and the
+    /// built-in types in that position show selection as a bounds wireframe
+    /// instead: a box for a volume, great circles for a sphere.
+    ///
+    /// That is not a built-in privilege. The polyline substrate those draw
+    /// through takes consumer items too, and the builders are public, so a
+    /// plugin's consumer draws the same affordance by pushing one item per
+    /// frame:
+    ///
+    /// ```no_run
+    /// # use viewport_lib::{FrameData, Aabb, aabb_wireframe_polyline};
+    /// # fn example(fd: &mut FrameData, bounds: &Aabb, selected: bool) {
+    /// if selected {
+    ///     // The same yellow the built-in bounds outlines use.
+    ///     fd.scene
+    ///         .polylines
+    ///         .push(aabb_wireframe_polyline(bounds, [1.0, 0.9, 0.2, 1.0]));
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// [`sphere_wireframe_polyline`](crate::sphere_wireframe_polyline) does the
+    /// same for a sphere. Set `settings.wireframe` on the pushed item for the
+    /// thin single-pixel line the built-in outlines use, rather than the
+    /// screen-space thick line a data polyline gets.
     fn outline_mask(
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
