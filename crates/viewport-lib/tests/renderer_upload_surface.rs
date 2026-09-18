@@ -7,6 +7,10 @@
 //! working when storage moves; this pins that they behave identically today,
 //! so the move is invisible at the call site.
 
+// Both routes are exercised on purpose, so the deprecated half is called here
+// deliberately: the property under test is that they reach one store.
+#![allow(deprecated)]
+
 mod common;
 use common::*;
 

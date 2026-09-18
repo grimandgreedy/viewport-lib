@@ -456,6 +456,10 @@ impl crate::resources::DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::create_gpu_particle_system`](crate::renderer::ViewportRenderer::create_gpu_particle_system),
     /// which stays reachable when an item type holds its own storage.
+    #[deprecated(
+        since = "0.23.0",
+        note = "call ViewportRenderer::create_gpu_particle_system instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
+    )]
     pub fn create_gpu_particle_system(
         &mut self,
         device: &crate::gpu::Device,
@@ -825,6 +829,10 @@ impl crate::resources::DeviceResources {
     ///
     /// Prefer [`ViewportRenderer::drop_gpu_particle_system`](crate::renderer::ViewportRenderer::drop_gpu_particle_system),
     /// which stays reachable when an item type holds its own storage.
+    #[deprecated(
+        since = "0.23.0",
+        note = "call ViewportRenderer::drop_gpu_particle_system instead: this content moves to the item type that draws it, which DeviceResources cannot reach"
+    )]
     pub fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId) {
         self.particle.systems.remove(id);
     }
@@ -966,6 +974,9 @@ pub(crate) fn build_sim_params(
 
 #[cfg(test)]
 mod tests {
+    // These drive the DeviceResources upload calls directly, which is the
+    // point: they test the methods the renderer-level ones forward to.
+    #![allow(deprecated)]
     use super::*;
 
     fn srgb_texture(px: u8) -> crate::resources::TextureData {
