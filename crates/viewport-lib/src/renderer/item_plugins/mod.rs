@@ -137,10 +137,6 @@ impl crate::renderer::ViewportRenderer {
         self.with_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
         self.with_item_type_plugin(
             device,
-            Box::new(external_instances::ExternalInstancesPlugin::default()),
-        );
-        self.with_item_type_plugin(
-            device,
             Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
         );
         // Sprites drew after every other non-mesh type, so they register last,
@@ -149,6 +145,12 @@ impl crate::renderer::ViewportRenderer {
         self.with_item_type_plugin(
             device,
             Box::new(gpu_particles::GpuParticlesPlugin::default()),
+        );
+        // External instances drew after every plugin paint when they had a pass
+        // of their own, so they register after the last type that paints.
+        self.with_item_type_plugin(
+            device,
+            Box::new(external_instances::ExternalInstancesPlugin::default()),
         );
         self.with_item_type_plugin(
             device,
