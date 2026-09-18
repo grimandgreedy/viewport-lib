@@ -8,7 +8,7 @@
 //! over it.
 
 use super::store::PointCloudGpuData;
-use crate::resources::{DeviceResources, SplatOutlineMaskUniform};
+use crate::resources::{DeviceResources, PointDiscMaskUniform};
 
 /// Pipelines and layouts, built on the first prepare with items.
 pub(super) struct PointCloudGpu {
@@ -17,7 +17,7 @@ pub(super) struct PointCloudGpu {
     pub(super) pick_id_bgl: crate::gpu::BindGroupLayout,
     pub(super) mask_pipeline: crate::gpu::RenderPipeline,
     /// Group 1 of the outline mask pipeline: the single uniform
-    /// `splat_outline_mask.wgsl` reads.
+    /// `point_disc_mask.wgsl` reads.
     pub(super) mask_bgl: crate::gpu::BindGroupLayout,
 }
 
@@ -130,13 +130,13 @@ impl PointCloudGpu {
         );
 
         // Outline mask: point-sprite discs over a group-1 layout of our own,
-        // holding the single uniform `splat_outline_mask.wgsl` reads. Depth is
+        // holding the single uniform `point_disc_mask.wgsl` reads. Depth is
         // tested so points behind opaque geometry drop out, but not written, so
         // every visible point contributes to the mask.
         let mask_shader = crate::resources::builders::wgsl_module(
             device,
             "point_cloud_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("splat_outline_mask"),
+            crate::resources::builders::wgsl_source!("point_disc_mask"),
         );
         let mask_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("point_cloud_outline_mask_bgl"),
@@ -242,7 +242,7 @@ impl PointCloudGpu {
     ) -> PointCloudOutline {
         use crate::gpu::util::DeviceExt as _;
 
-        let uniform = SplatOutlineMaskUniform {
+        let uniform = PointDiscMaskUniform {
             model,
             viewport_w: viewport_size.x,
             viewport_h: viewport_size.y,

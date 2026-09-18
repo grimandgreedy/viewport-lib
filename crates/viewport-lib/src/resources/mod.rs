@@ -113,8 +113,8 @@ pub(crate) use self::types::{
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
     OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
-    OverlayTextVertex, OverlayUniform, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ShadowAtlasUniform, ShadowCullState, SplatOutlineMaskUniform, SsaoUniform, SubHighlightGpuData,
+    OverlayTextVertex, OverlayUniform, PickInstance, PointDiscMaskUniform, ProjectedTetUniform,
+    SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData,
     ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{

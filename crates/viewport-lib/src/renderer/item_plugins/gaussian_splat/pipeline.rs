@@ -51,7 +51,7 @@ pub(super) struct SplatGpu {
     pub(super) pick_id_bgl: crate::gpu::BindGroupLayout,
     pub(super) mask_pipeline: crate::gpu::RenderPipeline,
     /// Group 1 of the outline mask pipeline: the single uniform
-    /// `splat_outline_mask.wgsl` reads.
+    /// `point_disc_mask.wgsl` reads.
     pub(super) mask_bgl: crate::gpu::BindGroupLayout,
 }
 
@@ -303,8 +303,8 @@ impl SplatGpu {
         // layout (the same shape the point-cloud outline pipeline uses).
         let mask_shader = crate::resources::builders::wgsl_module(
             device,
-            "splat_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("splat_outline_mask"),
+            "point_disc_mask_shader",
+            crate::resources::builders::wgsl_source!("point_disc_mask"),
         );
         let mask_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("gaussian_splat_mask_bgl"),
@@ -331,7 +331,7 @@ impl SplatGpu {
         let mask_pipeline = crate::resources::builders::render_pipeline(
             device,
             crate::resources::builders::RenderPipelineDesc {
-                label: "splat_outline_mask_pipeline",
+                label: "point_disc_mask_pipeline",
                 layout: &mask_layout,
                 vertex_module: &mask_shader,
                 vertex_entry: "vs_main",

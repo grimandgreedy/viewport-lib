@@ -36,7 +36,7 @@ pub use crate::resources::mesh::meshes::{MeshData, SubmeshRange};
 pub(crate) use crate::resources::overlay::highlight::OutlineEdgeUniform;
 pub(crate) use crate::resources::overlay::highlight::OutlineObjectBuffers;
 pub(crate) use crate::resources::overlay::highlight::OutlineUniform;
-pub(crate) use crate::resources::overlay::highlight::SplatOutlineMaskUniform;
+pub(crate) use crate::resources::overlay::highlight::PointDiscMaskUniform;
 pub(crate) use crate::resources::overlay::highlight::SubHighlightGpuData;
 pub(crate) use crate::resources::overlay::overlay_shape::ClipShapeGpu;
 pub(crate) use crate::resources::overlay::overlay_shape::OverlayShadowLayerGpu;

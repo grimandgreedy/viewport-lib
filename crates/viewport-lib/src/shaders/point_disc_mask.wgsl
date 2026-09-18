@@ -1,13 +1,14 @@
-// splat_outline_mask.wgsl : renders selected Gaussian splat positions as
-// screen-space discs into the R8 mask texture used by the outline edge-
-// detection pass.  The resulting mask is identical in format to the one
-// produced by outline_mask.wgsl, so the same edge-detection and composite
-// passes handle both mesh and splat outlines without modification.
+// point_disc_mask.wgsl : renders selected point positions as screen-space
+// discs into the R8 mask texture used by the outline edge-detection pass.
+// Gaussian splats and point clouds both draw through it.  The resulting mask
+// is identical in format to the one produced by outline_mask.wgsl, so the same
+// edge-detection and composite passes handle mesh and point outlines without
+// modification.
 //
 // Group 0: Camera bind group (only view_proj is used).
-// Group 1: SplatOutlineMaskUniform (model matrix, viewport dims, pixel radius).
+// Group 1: PointDiscMaskUniform (model matrix, viewport dims, pixel radius).
 //
-// Each splat position is one instance.  The vertex shader expands it to a
+// Each point position is one instance.  The vertex shader expands it to a
 // screen-space quad.  Per-instance size comes from vertex attribute location 1.
 // The fragment shader discards corners to produce a disc.
 
@@ -17,10 +18,10 @@ struct Camera {
     _pad:      f32,
 };
 
-// 112 bytes, matches SplatOutlineMaskUniform in Rust and OutlineUniform size.
+// 112 bytes, matches PointDiscMaskUniform in Rust and OutlineUniform size.
 // Both share outline_bgl; wgpu enforces the maximum required size (112) across
 // all pipelines using that layout.
-struct SplatOutlineMaskUniform {
+struct PointDiscMaskUniform {
     model:        mat4x4<f32>, // 64 bytes
     viewport_w:   f32,         //  4 bytes
     viewport_h:   f32,         //  4 bytes
@@ -31,7 +32,7 @@ struct SplatOutlineMaskUniform {
 };
 
 @group(0) @binding(0) var<uniform> camera:  Camera;
-@group(1) @binding(0) var<uniform> u:       SplatOutlineMaskUniform;
+@group(1) @binding(0) var<uniform> u:       PointDiscMaskUniform;
 
 // Six vertices per instance (two CCW triangles = one billboard quad).
 fn quad_corner(vi: u32) -> vec2<f32> {

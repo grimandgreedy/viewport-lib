@@ -22,7 +22,7 @@ use crate::plugin_api::{
     PickPassContext, PickRay, PluginItemCollection, RectPickContext,
 };
 use crate::renderer::{GaussianSplatItem, PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
-use crate::resources::{GaussianSplatId, HDR_COLOR_FORMAT, SplatOutlineMaskUniform};
+use crate::resources::{GaussianSplatId, HDR_COLOR_FORMAT, PointDiscMaskUniform};
 use store::{GaussianSplatStore, build_gaussian_splat_set, validate_gaussian_splat_data};
 
 pub(crate) use store::{GaussianSplatData, GaussianSplatGpuSet};
@@ -614,7 +614,7 @@ impl GaussianSplatPlugin {
                         contents: bytemuck::cast_slice(gpu_set.cpu_positions.as_slice()),
                         usage: crate::gpu::BufferUsages::VERTEX,
                     });
-                let uniform = SplatOutlineMaskUniform {
+                let uniform = PointDiscMaskUniform {
                     model: item.model,
                     viewport_w: vp_w,
                     viewport_h: vp_h,
@@ -686,7 +686,7 @@ impl GaussianSplatPlugin {
                     .cloned()
                     .fold(f32::NEG_INFINITY, f32::max)
                     .max(1.0);
-                let uniform = SplatOutlineMaskUniform {
+                let uniform = PointDiscMaskUniform {
                     model: item.model,
                     viewport_w: vp_w,
                     viewport_h: vp_h,
