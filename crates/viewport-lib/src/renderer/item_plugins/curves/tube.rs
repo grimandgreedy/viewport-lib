@@ -24,7 +24,7 @@ use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, SubObjectRef, TubeItem, TubeRefItem,
 };
 
-pub(crate) const TYPE_NAME: &str = "viewport.tube";
+pub(crate) const TYPE_NAME: &str = "vpl.tube";
 
 #[derive(Default)]
 pub(crate) struct TubePlugin {

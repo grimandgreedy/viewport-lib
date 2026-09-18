@@ -15,7 +15,7 @@ use crate::renderer::{
 };
 use crate::resources::HDR_COLOR_FORMAT;
 
-pub(crate) const TYPE_NAME: &str = "viewport.gpu_implicit";
+pub(crate) const TYPE_NAME: &str = "vpl.gpu_implicit";
 
 impl PluginItemCollection for Vec<GpuImplicitItem> {
     fn len(&self) -> usize {

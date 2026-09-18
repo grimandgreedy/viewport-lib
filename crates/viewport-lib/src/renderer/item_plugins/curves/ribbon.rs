@@ -27,7 +27,7 @@ use crate::resources::{
     DeviceResources, DualPipeline, HDR_COLOR_FORMAT, Vertex, VertexBufferLayoutExt,
 };
 
-pub(crate) const TYPE_NAME: &str = "viewport.ribbon";
+pub(crate) const TYPE_NAME: &str = "vpl.ribbon";
 
 /// Ribbon pipeline variant axes: blend mode and thin-wireframe vs solid-triangle
 /// geometry. Both axes select the same shader and bind group layout : only the

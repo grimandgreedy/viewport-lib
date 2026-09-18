@@ -38,7 +38,7 @@ use store::{
 
 pub(crate) use types::{SpriteInstanceSetId, SpriteSetId};
 
-pub(crate) const TYPE_NAME: &str = "viewport.sprite";
+pub(crate) const TYPE_NAME: &str = "vpl.sprite";
 
 impl PluginItemCollection for Vec<SpriteItem> {
     fn len(&self) -> usize {

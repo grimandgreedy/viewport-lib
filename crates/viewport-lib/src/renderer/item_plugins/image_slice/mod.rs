@@ -14,7 +14,7 @@ use crate::plugin_api::{
 use crate::renderer::{ImageSliceItem, PickHit, PickId, PickMask, SliceAxis};
 use crate::resources::HDR_COLOR_FORMAT;
 
-pub(crate) const TYPE_NAME: &str = "viewport.image_slice";
+pub(crate) const TYPE_NAME: &str = "vpl.image_slice";
 
 impl PluginItemCollection for Vec<ImageSliceItem> {
     fn len(&self) -> usize {

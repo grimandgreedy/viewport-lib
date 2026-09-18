@@ -26,7 +26,7 @@ use crate::plugin_api::{
 use crate::renderer::{PickHit, PickId, PickMask, ScatterVolumeItem};
 use crate::scene::scatter_volume::{ScatterShape, ScatterVolume};
 
-pub(crate) const TYPE_NAME: &str = "viewport.scatter_volume";
+pub(crate) const TYPE_NAME: &str = "vpl.scatter_volume";
 
 /// The scatter intermediates and the scene colour they composite onto are both
 /// HDR; the pass has no LDR form.

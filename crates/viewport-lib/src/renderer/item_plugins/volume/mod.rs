@@ -17,7 +17,7 @@ use crate::plugin_api::{
 use crate::renderer::{PickHit, PickId, PickMask, SubObjectRef, VolumeItem};
 use crate::resources::HDR_COLOR_FORMAT;
 
-pub(crate) const TYPE_NAME: &str = "viewport.volume";
+pub(crate) const TYPE_NAME: &str = "vpl.volume";
 
 impl PluginItemCollection for Vec<VolumeItem> {
     fn len(&self) -> usize {

@@ -24,7 +24,7 @@ use crate::renderer::ExternalInstancesItem;
 use store::{ExternalInstanceSetStore, ExternalInstancesGpuData};
 use types::{ExternalInstanceSetConfig, ExternalInstanceSetId};
 
-pub(crate) const TYPE_NAME: &str = "viewport.external_instances";
+pub(crate) const TYPE_NAME: &str = "vpl.external_instances";
 
 impl PluginItemCollection for Vec<ExternalInstancesItem> {
     fn len(&self) -> usize {

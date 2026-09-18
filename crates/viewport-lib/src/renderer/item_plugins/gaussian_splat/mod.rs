@@ -27,7 +27,7 @@ use store::{GaussianSplatStore, build_gaussian_splat_set, validate_gaussian_spla
 
 pub(crate) use store::{GaussianSplatData, GaussianSplatGpuSet};
 
-pub(crate) const TYPE_NAME: &str = "viewport.gaussian_splat";
+pub(crate) const TYPE_NAME: &str = "vpl.gaussian_splat";
 
 impl PluginItemCollection for Vec<GaussianSplatItem> {
     fn len(&self) -> usize {

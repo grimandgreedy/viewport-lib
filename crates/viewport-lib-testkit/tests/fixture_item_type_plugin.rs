@@ -158,7 +158,7 @@ fn item_type_fixture_is_consulted_by_cpu_pick() {
 // resolves, matching the other test binaries in this crate.
 const _: Option<wgpu::TextureFormat> = None;
 
-/// The `viewport.` prefix belongs to the built-in item types, and the
+/// The `vpl.` prefix belongs to the built-in item types, and the
 /// renderer's per-type calls (`upload_sprite_set` and the rest) resolve their
 /// plugin by that name and downcast it. A plugin that took one of those names
 /// would leave those calls looking at a type that is not what they expect, so
@@ -173,10 +173,7 @@ fn a_plugin_cannot_take_a_built_in_item_type_name() {
     };
     harness.renderer.with_item_type_plugin(
         &harness.device,
-        Box::new(LoggingItemTypePlugin::new(
-            CallLog::new(),
-            "viewport.sprite",
-        )),
+        Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.sprite")),
     );
 }
 
@@ -188,7 +185,7 @@ fn a_plugin_may_register_under_any_unreserved_name() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    for name in ["mycrate.sprite", "viewport_sprite", "not.viewport.sprite"] {
+    for name in ["mycrate.sprite", "vpl_sprite", "not.vpl.sprite"] {
         harness.renderer.with_item_type_plugin(
             &harness.device,
             Box::new(LoggingItemTypePlugin::new(CallLog::new(), name)),

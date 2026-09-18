@@ -23,7 +23,7 @@ use crate::renderer::{
 };
 use crate::resources::{HDR_COLOR_FORMAT, PolylineKey};
 
-pub(crate) const TYPE_NAME: &str = "viewport.polyline";
+pub(crate) const TYPE_NAME: &str = "vpl.polyline";
 
 impl PluginItemCollection for Vec<PolylineItem> {
     fn len(&self) -> usize {

@@ -3,7 +3,7 @@
 //! together, the same shape an external item-type crate has.
 //!
 //! Internal plugins register at renderer construction under a
-//! `viewport.`-prefixed type name and read their items from the matching
+//! `vpl.`-prefixed type name and read their items from the matching
 //! `SceneFrame` field via [`plugin_items_for`], so the consumer-facing
 //! submission surface is unchanged: consumers keep filling the field, and
 //! the dispatchers route it to the plugin as if it had been submitted under

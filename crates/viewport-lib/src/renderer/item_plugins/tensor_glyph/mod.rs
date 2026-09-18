@@ -24,7 +24,7 @@ use store::{
 
 pub(crate) use types::TensorGlyphSetId;
 
-pub(crate) const TYPE_NAME: &str = "viewport.tensor_glyph";
+pub(crate) const TYPE_NAME: &str = "vpl.tensor_glyph";
 
 impl PluginItemCollection for Vec<TensorGlyphItem> {
     fn len(&self) -> usize {

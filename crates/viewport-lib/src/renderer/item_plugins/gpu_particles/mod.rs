@@ -23,7 +23,7 @@ use store::{
 };
 use types::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 
-pub(crate) const TYPE_NAME: &str = "viewport.gpu_particles";
+pub(crate) const TYPE_NAME: &str = "vpl.gpu_particles";
 
 impl PluginItemCollection for Vec<GpuParticleSystemItem> {
     fn len(&self) -> usize {

@@ -20,7 +20,7 @@ use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, StreamtubeItem, StreamtubeRefItem, SubObjectRef,
 };
 
-pub(crate) const TYPE_NAME: &str = "viewport.streamtube";
+pub(crate) const TYPE_NAME: &str = "vpl.streamtube";
 
 #[derive(Default)]
 pub(crate) struct StreamtubePlugin {

@@ -18,7 +18,7 @@ use crate::plugin_api::{
 use crate::renderer::picking::helpers::{ray_unit_box_toi, segment_in_rect};
 use crate::renderer::{DecalBlendMode, DecalItem, PickHit, PickId, PickMask};
 
-pub(crate) const TYPE_NAME: &str = "viewport.decal";
+pub(crate) const TYPE_NAME: &str = "vpl.decal";
 
 impl PluginItemCollection for Vec<DecalItem> {
     fn len(&self) -> usize {

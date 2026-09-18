@@ -20,7 +20,7 @@ use store::{GlyphGpuData, GlyphLayouts, GlyphSetStore, build_glyph_set, resolve_
 
 pub(crate) use types::GlyphSetId;
 
-pub(crate) const TYPE_NAME: &str = "viewport.glyph";
+pub(crate) const TYPE_NAME: &str = "vpl.glyph";
 
 impl PluginItemCollection for Vec<GlyphItem> {
     fn len(&self) -> usize {

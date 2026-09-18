@@ -19,7 +19,7 @@ use crate::plugin_api::{
 use crate::renderer::{PickHit, PickId, PickMask, VolumeSurfaceSliceItem};
 use crate::resources::HDR_COLOR_FORMAT;
 
-pub(crate) const TYPE_NAME: &str = "viewport.volume_surface_slice";
+pub(crate) const TYPE_NAME: &str = "vpl.volume_surface_slice";
 
 impl PluginItemCollection for Vec<VolumeSurfaceSliceItem> {
     fn len(&self) -> usize {

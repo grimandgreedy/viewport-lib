@@ -60,12 +60,12 @@ mod lod_instance_tests;
 
 /// Item-type names beginning with this prefix belong to the library.
 ///
-/// Every built-in item type registers under it (`viewport.sprite`,
-/// `viewport.point_cloud`, and so on), and
+/// Every built-in item type registers under it (`vpl.sprite`,
+/// `vpl.point_cloud`, and so on), and
 /// [`ViewportRenderer::with_item_type_plugin`] refuses any other plugin that
 /// claims a name in it. One prefix rather than a list of names, so a built-in
 /// type added later is covered without a second place to update.
-pub const RESERVED_TYPE_NAME_PREFIX: &str = "viewport.";
+pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
     AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode,

@@ -21,7 +21,7 @@ use crate::resources::HDR_COLOR_FORMAT;
 use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_volume_gpu_data};
 use types::McVolumeId;
 
-pub(crate) const TYPE_NAME: &str = "viewport.gpu_marching_cubes";
+pub(crate) const TYPE_NAME: &str = "vpl.gpu_marching_cubes";
 
 impl PluginItemCollection for Vec<GpuMarchingCubesItem> {
     fn len(&self) -> usize {

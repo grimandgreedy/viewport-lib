@@ -21,7 +21,7 @@ use store::{PointCloudStore, build_point_cloud, resolve_bindings};
 
 pub(crate) use types::PointCloudId;
 
-pub(crate) const TYPE_NAME: &str = "viewport.point_cloud";
+pub(crate) const TYPE_NAME: &str = "vpl.point_cloud";
 
 impl PluginItemCollection for Vec<PointCloudItem> {
     fn len(&self) -> usize {
