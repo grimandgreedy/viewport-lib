@@ -301,3 +301,35 @@ fn begin_upload_point_cloud_drains_to_a_handle() {
         Err(viewport_lib::error::ViewportError::JobResultMissing { .. })
     ));
 }
+
+/// A stored upload resolves its colourmap once and keeps what it resolved, so
+/// the built-in LUTs have to be resident by then. They are otherwise uploaded
+/// on the first `prepare`, and pre-uploading at startup is the whole point of
+/// the reference form: an upload that ran first would bind the neutral
+/// fallback and stay grey for the life of the handle.
+#[test]
+fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    assert!(
+        renderer
+            .resources()
+            .builtin_colourmap_id_checked(viewport_lib::resources::BuiltinColourmap::Viridis)
+            .is_none(),
+        "nothing has uploaded the built-in set yet"
+    );
+
+    let id = renderer.upload_point_cloud(&device, &queue, &sample_point_cloud());
+
+    assert!(
+        renderer
+            .resources()
+            .builtin_colourmap_id_checked(viewport_lib::resources::BuiltinColourmap::Viridis)
+            .is_some(),
+        "the upload made the built-in LUTs resident before resolving one"
+    );
+    assert!(renderer.drop_point_cloud(id));
+}

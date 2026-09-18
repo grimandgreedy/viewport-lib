@@ -2661,6 +2661,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::StreamtubeItem,
     ) -> crate::resources::StreamtubeId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.streamtube_host();
         host.plugin.upload(device, queue, host.resources, item)
     }
@@ -2674,6 +2675,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::StreamtubeItem,
     ) -> crate::resources::JobId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.streamtube_host();
         host.plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item)
@@ -2697,6 +2699,7 @@ impl ViewportRenderer {
         id: crate::resources::StreamtubeId,
         item: &crate::renderer::StreamtubeItem,
     ) -> bool {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.streamtube_host();
         host.plugin.replace(device, queue, host.resources, id, item)
     }
@@ -2716,6 +2719,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::TubeItem,
     ) -> crate::resources::TubeId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.tube_host();
         host.plugin.upload(device, queue, host.resources, item)
     }
@@ -2729,6 +2733,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::TubeItem,
     ) -> crate::resources::JobId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.tube_host();
         host.plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item)
@@ -2752,6 +2757,7 @@ impl ViewportRenderer {
         id: crate::resources::TubeId,
         item: &crate::renderer::TubeItem,
     ) -> bool {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.tube_host();
         host.plugin.replace(device, queue, host.resources, id, item)
     }
@@ -2771,6 +2777,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::RibbonItem,
     ) -> crate::resources::RibbonId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.ribbon_host();
         host.plugin.upload(device, queue, host.resources, item)
     }
@@ -2784,6 +2791,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::RibbonItem,
     ) -> crate::resources::JobId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.ribbon_host();
         host.plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item)
@@ -2807,6 +2815,7 @@ impl ViewportRenderer {
         id: crate::resources::RibbonId,
         item: &crate::renderer::RibbonItem,
     ) -> bool {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.ribbon_host();
         host.plugin.replace(device, queue, host.resources, id, item)
     }
@@ -2826,6 +2835,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::PointCloudItem,
     ) -> crate::resources::PointCloudId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.point_cloud_host();
         host.plugin.upload(device, queue, host.resources, item)
     }
@@ -2839,6 +2849,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::PointCloudItem,
     ) -> crate::resources::JobId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.point_cloud_host();
         host.plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item)
@@ -2862,6 +2873,7 @@ impl ViewportRenderer {
         id: crate::resources::PointCloudId,
         item: &crate::renderer::PointCloudItem,
     ) -> bool {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.point_cloud_host();
         host.plugin.replace(device, queue, host.resources, id, item)
     }
@@ -2869,6 +2881,18 @@ impl ViewportRenderer {
     /// Release a point cloud. `false` if the handle does not resolve.
     pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
         self.point_cloud_host().plugin.drop_stored(id)
+    }
+
+    /// Make the built-in colourmap LUTs resident before an upload resolves one.
+    ///
+    /// An item type that colours by scalar reads its LUT when the upload runs
+    /// and keeps what it read for the life of the handle: the view goes into a
+    /// bind group, or the LUT is copied into a buffer. The built-in set is
+    /// otherwise uploaded on the first `prepare`, and a stored upload usually
+    /// happens before that, at startup. Without this the entry would bind the
+    /// neutral fallback and stay grey for good, whatever colourmap it named.
+    fn ensure_upload_colourmaps(&mut self, device: &crate::gpu::Device, queue: &crate::gpu::Queue) {
+        self.resources.ensure_colourmaps_initialized(device, queue);
     }
 
     /// The registered polyline item type, which holds the uploaded curves.
@@ -2957,6 +2981,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::GlyphItem,
     ) -> crate::resources::GlyphSetId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.glyph_host();
         host.plugin.upload(device, queue, host.resources, item)
     }
@@ -2970,6 +2995,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::GlyphItem,
     ) -> crate::resources::JobId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.glyph_host();
         host.plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item)
@@ -2993,6 +3019,7 @@ impl ViewportRenderer {
         id: crate::resources::GlyphSetId,
         item: &crate::renderer::GlyphItem,
     ) -> bool {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.glyph_host();
         host.plugin.replace(device, queue, host.resources, id, item)
     }
@@ -3012,6 +3039,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::TensorGlyphItem,
     ) -> crate::resources::TensorGlyphSetId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.tensor_glyph_host();
         host.plugin.upload(device, queue, host.resources, item)
     }
@@ -3025,6 +3053,7 @@ impl ViewportRenderer {
         queue: &crate::gpu::Queue,
         item: crate::renderer::TensorGlyphItem,
     ) -> crate::resources::JobId {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.tensor_glyph_host();
         host.plugin
             .begin_upload(&host.jobs, device, queue, host.resources, item)
@@ -3048,6 +3077,7 @@ impl ViewportRenderer {
         id: crate::resources::TensorGlyphSetId,
         item: &crate::renderer::TensorGlyphItem,
     ) -> bool {
+        self.ensure_upload_colourmaps(device, queue);
         let host = self.tensor_glyph_host();
         host.plugin.replace(device, queue, host.resources, id, item)
     }
