@@ -25,10 +25,40 @@ struct VertexInput {
 };
 
 // One stacked shadow layer. `params` = (radius, offset_x, offset_y, is_inner).
+// One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
+// `params2` = (spread, falloff, unused, unused).
 struct ShadowLayer {
     colour: vec4<f32>,
     params: vec4<f32>,
+    params2: vec4<f32>,
 };
+
+// Shadow coverage for a point whose signed distance to the (already offset)
+// silhouette is `sd`. `spread` grows the silhouette, `blur` is the fade
+// distance outward from that grown edge, and `falloff` shapes the fade curve:
+// 1.0 is the plain fade, above concentrates it against the item with a longer
+// light tail, below broadens it towards a glow. `aa` keeps a zero-blur edge
+// (a contour) antialiased instead of degenerate.
+fn shadow_coverage(sd: f32, spread: f32, blur: f32, falloff: f32, aa: f32) -> f32 {
+    let d = sd - spread;
+    let w = max(blur, aa);
+    let base = 1.0 - smoothstep(0.0, w, d);
+    if (falloff == 1.0) {
+        return base;
+    }
+    return pow(base, falloff);
+}
+
+// The inner (inset) counterpart: coverage rises from 0 at the shape edge to 1
+// across the blur band, with `spread` starting the band further inside.
+fn inner_shadow_coverage(sd: f32, spread: f32, blur: f32, falloff: f32, aa: f32) -> f32 {
+    let w = max(blur, aa);
+    let base = smoothstep(0.0, w, sd + spread);
+    if (falloff == 1.0) {
+        return base;
+    }
+    return pow(base, falloff);
+}
 
 @group(0) @binding(0) var<storage, read> shadow_layers: array<ShadowLayer>;
 
@@ -491,11 +521,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let layer = shadow_layers[base_index + i];
         let sr = layer.params.x;
         let soff = layer.params.yz;
-        if (sr > 0.0 && layer.colour.a > 0.0) {
+        let sspread = layer.params2.x;
+        let sfall = layer.params2.y;
+        if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
             let spd = (in.local_pos - soff) - pivot;
             let sp_r = vec2<f32>(_rc * spd.x - _rs * spd.y, _rs * spd.x + _rc * spd.y) + pivot;
             let sd = eval_sdf(sp_r, hs, in.shape_type, in.radii);
-            let a = layer.colour.a * (1.0 - smoothstep(0.0, sr, sd));
+            let a = layer.colour.a * shadow_coverage(sd, sspread, sr, sfall, aa);
             let src = vec4<f32>(layer.colour.rgb, a);
             shadow_col = vec4<f32>(
                 mix(shadow_col.rgb, src.rgb, src.a),
@@ -593,11 +625,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let layer = shadow_layers[base_index + outer_count + j];
             let sr = layer.params.x;
             let soff = layer.params.yz;
-            if (sr > 0.0 && layer.colour.a > 0.0) {
+            let sspread = layer.params2.x;
+            let sfall = layer.params2.y;
+            if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
                 let spd = (in.local_pos - soff) - pivot;
                 let sp_ir = vec2<f32>(_rc * spd.x - _rs * spd.y, _rs * spd.x + _rc * spd.y) + pivot;
                 let inner_sd = eval_sdf(sp_ir, hs, in.shape_type, in.radii);
-                let inner_alpha = layer.colour.a * smoothstep(0.0, sr, inner_sd);
+                // Inner shadows ramp the other way: alpha rises as the offset
+                // point falls further outside the shape. Spread starts the band
+                // further in, blur is its fade width, falloff shapes the ramp
+                // the same way it does an outer layer.
+                let inner_alpha =
+                    layer.colour.a * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
                 if (inner_alpha > 0.0) {
                     let ic = vec4<f32>(layer.colour.rgb, inner_alpha);
                     colour = vec4<f32>(

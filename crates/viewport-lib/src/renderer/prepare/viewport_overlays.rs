@@ -2,6 +2,7 @@
 //! shapes.
 
 use super::*;
+use crate::resources::overlay::font::GlyphStyle;
 
 /// Encode an overlay shape into `(shape_type, radii)` for the SDF, matching the
 /// draw path's packing. `hw`/`hh` are the half-extents used to clamp corner radii.
@@ -138,6 +139,20 @@ pub(super) fn emit_vector_shape(
     vp_h: f32,
 ) {
     let mesh = super::overlay_vector::tessellate(subpaths, fill_rule, VECTOR_FILL_TOLERANCE);
+
+    // Shadow layers, behind the fill. A vector path has no distance field, so a
+    // layer is drawn as the filled silhouette plus its contours re-stroked
+    // wider, once per band: the stroke is what supplies the dilation the SDF
+    // path gets from `spread`.
+    for layer in shape
+        .shadows
+        .iter()
+        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+        .filter(|l| l.is_visible())
+    {
+        emit_vector_shadow(batch, shape, subpaths, &mesh, layer, vp_w, vp_h);
+    }
+
     if !mesh.indices.is_empty() {
         let positions = transform_vector_positions(&mesh.positions, shape);
         emit_vector_fill(
@@ -173,6 +188,66 @@ pub(super) fn emit_vector_shape(
                 &pts,
                 shape.border_width,
                 closed,
+                crate::renderer::types::LineJoin::Mitre,
+                VECTOR_BORDER_MITRE_LIMIT,
+                cap,
+                colour,
+                vp_w,
+                vp_h,
+            ));
+        }
+    }
+}
+
+/// Emit one shadow layer of a vector path: the filled silhouette plus its
+/// contours re-stroked at `2 * (spread + d)` for each blur band, all offset by
+/// the layer offset and drawn flat in the layer colour.
+#[allow(clippy::too_many_arguments)]
+fn emit_vector_shadow(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    mesh: &super::overlay_vector::VectorMesh,
+    layer: &crate::renderer::types::ShadowLayer,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let base = layer.colour.to_linear_rgba();
+    let contours = crate::renderer::types::flatten_contours(subpaths);
+    for (d, band_alpha) in overlay_geometry::shadow_bands(layer) {
+        let mut colour = base;
+        colour[3] *= shape.opacity * band_alpha;
+        if colour[3] <= 0.0 {
+            continue;
+        }
+        let shift = |p: &[[f32; 2]]| -> Vec<[f32; 2]> {
+            transform_vector_positions(p, shape)
+                .into_iter()
+                .map(|q| [q[0] + layer.offset[0], q[1] + layer.offset[1]])
+                .collect()
+        };
+        if !mesh.indices.is_empty() {
+            let positions = shift(&mesh.positions);
+            overlay_geometry::emit_flat_mesh(batch, &positions, &mesh.indices, colour, vp_w, vp_h);
+        }
+        let width = 2.0 * (layer.spread + d);
+        if width <= 0.0 {
+            continue;
+        }
+        for (contour, closed) in &contours {
+            if contour.len() < 2 {
+                continue;
+            }
+            let pts = shift(contour);
+            let cap = if *closed {
+                crate::renderer::types::PolylineCap::Butt
+            } else {
+                crate::renderer::types::PolylineCap::Round
+            };
+            batch.extend(tessellate_polyline(
+                &pts,
+                width,
+                *closed,
                 crate::renderer::types::LineJoin::Mitre,
                 VECTOR_BORDER_MITRE_LIMIT,
                 cap,
@@ -497,6 +572,15 @@ impl ViewportRenderer {
                         &translated_storage
                     };
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    // Shadow layers first, behind both the fill and the stroke.
+                    for layer in poly
+                        .shadows
+                        .iter()
+                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                        .filter(|l| l.is_visible())
+                    {
+                        emit_polyline_shadow(&mut batch, poly, layer, poly.opacity, vp_w, vp_h);
+                    }
                     if poly.closed && poly.texture.is_none() {
                         if let Some(fill) = &poly.fill {
                             emit_filled_polyline(
@@ -582,6 +666,7 @@ impl ViewportRenderer {
                             max_w,
                             ppp,
                             device,
+                            GlyphStyle::PLAIN,
                         )
                     } else {
                         self.resources.content.glyph_atlas.layout_text(
@@ -590,6 +675,7 @@ impl ViewportRenderer {
                             label.font,
                             ppp,
                             device,
+                            GlyphStyle::PLAIN,
                         )
                     };
 
@@ -663,6 +749,54 @@ impl ViewportRenderer {
                         }
                     }
 
+                    // Shadow layers, back to front, behind the glyphs. Each is a
+                    // re-layout against a styled atlas cell, so the dilation and
+                    // fade are baked per glyph rather than faked with offset
+                    // copies. Layout is identical to the plain pass, so the
+                    // shadow stays registered with the text it backs.
+                    for layer in label
+                        .shadows
+                        .iter()
+                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                        .filter(|l| l.is_visible())
+                    {
+                        let style = GlyphStyle::from_shadow(
+                            layer.spread * ppp,
+                            layer.blur * ppp,
+                            layer.falloff,
+                        );
+                        let sl = if let Some(max_w) = label.max_width {
+                            self.resources.content.glyph_atlas.layout_text_wrapped(
+                                &label.text,
+                                label.font_size,
+                                label.font,
+                                max_w,
+                                ppp,
+                                device,
+                                style,
+                            )
+                        } else {
+                            self.resources.content.glyph_atlas.layout_text(
+                                &label.text,
+                                label.font_size,
+                                label.font,
+                                ppp,
+                                device,
+                                style,
+                            )
+                        };
+                        let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
+                        emit_glyph_quads(
+                            &mut batch,
+                            &sl.quads,
+                            text_x + layer.offset[0],
+                            text_y + ascent + layer.offset[1],
+                            col,
+                            vp_w,
+                            vp_h,
+                        );
+                    }
+
                     let text_colour = apply_opacity(label.colour.to_linear_rgba(), opacity);
                     // The label origin is the top-left of the text box; add the
                     // ascent to reach the first baseline the quads are relative to.
@@ -728,12 +862,48 @@ impl ViewportRenderer {
                         run.font,
                         ppp,
                         device,
+                        GlyphStyle::PLAIN,
                     );
                     if quads.is_empty() {
                         continue;
                     }
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+
+                    // Shadow layers, back to front, behind the run. Per-glyph
+                    // colours do not carry into a shadow: the whole layer draws
+                    // in the layer colour, which is what makes it read as one
+                    // silhouette rather than a blurred copy of the text.
+                    for layer in run
+                        .shadows
+                        .iter()
+                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                        .filter(|l| l.is_visible())
+                    {
+                        let style = GlyphStyle::from_shadow(
+                            layer.spread * ppp,
+                            layer.blur * ppp,
+                            layer.falloff,
+                        );
+                        let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
+                        let sq = self.resources.content.glyph_atlas.layout_glyph_run(
+                            run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
+                            run.font_size,
+                            run.font,
+                            ppp,
+                            device,
+                            style,
+                        );
+                        emit_glyph_quads_colored(
+                            &mut batch,
+                            &sq,
+                            run_x + layer.offset[0],
+                            run_y + layer.offset[1],
+                            vp_w,
+                            vp_h,
+                        );
+                    }
+
                     // Positions are already relative to the run origin, so the
                     // resolved origin is the only offset added; no ascent, unlike
                     // labels.
@@ -1217,8 +1387,7 @@ impl ViewportRenderer {
                         0.0
                     };
                     for l in &shape.shadows {
-                        let e = l.radius + l.offset[0].abs().max(l.offset[1].abs());
-                        shadow_pad = shadow_pad.max(e);
+                        shadow_pad = shadow_pad.max(l.extent());
                     }
 
                     // Extra quad expansion for shapes whose stroke extends
@@ -1613,7 +1782,8 @@ impl ViewportRenderer {
                                 col[3] *= resolved_opacity;
                                 shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                                     colour: col,
-                                    params: [l.radius, l.offset[0], l.offset[1], 0.0],
+                                    params: [l.blur, l.offset[0], l.offset[1], 0.0],
+                                    params2: [l.spread, l.falloff, 0.0, 0.0],
                                 });
                                 outer_count += 1;
                             }
@@ -1626,6 +1796,7 @@ impl ViewportRenderer {
                                     shape.shadow_offset[1],
                                     0.0,
                                 ],
+                                params2: [0.0, 1.0, 0.0, 0.0],
                             });
                             outer_count += 1;
                         }
@@ -1635,7 +1806,8 @@ impl ViewportRenderer {
                                 col[3] *= resolved_opacity;
                                 shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                                     colour: col,
-                                    params: [l.radius, l.offset[0], l.offset[1], 1.0],
+                                    params: [l.blur, l.offset[0], l.offset[1], 1.0],
+                                    params2: [l.spread, l.falloff, 0.0, 0.0],
                                 });
                                 inner_count += 1;
                             }
@@ -1648,6 +1820,7 @@ impl ViewportRenderer {
                                     shape.shadow_offset[1],
                                     1.0,
                                 ],
+                                params2: [0.0, 1.0, 0.0, 0.0],
                             });
                             inner_count += 1;
                         }
@@ -1815,6 +1988,7 @@ impl ViewportRenderer {
                         shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                             colour: [0.0; 4],
                             params: [0.0; 4],
+                            params2: [0.0, 1.0, 0.0, 0.0],
                         });
                     }
                     let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
