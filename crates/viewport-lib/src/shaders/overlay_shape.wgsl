@@ -98,11 +98,21 @@ struct OverlayInstance {
     clip_index: f32,        // per-frame clip-mask index, or -1 for none
     clip_rect:  vec4<f32>,
     tint:       vec4<f32>,  // per-frame colour multiplier, identity [1,1,1,1]
-    scale:      f32,        // per-frame uniform scale (text stream only; unused here)
-    _pad0:      f32,
-    _pad1:      f32,
-    _pad2:      f32,
+    scale:      f32,        // per-frame uniform scale about the pivot
+    rotation:   f32,        // per-frame rotation in radians about the pivot
+    pivot_x:    f32,        // two scalars, not a vec2: a vec2 would align to 8
+    pivot_y:    f32,
 };
+
+// One level of the composition contract: scale about the pivot, then rotate
+// about it, then translate. With the identity instance this returns `p`.
+fn group_apply(p: vec2<f32>, inst: OverlayInstance) -> vec2<f32> {
+    let piv = vec2<f32>(inst.pivot_x, inst.pivot_y);
+    let d = (p - piv) * inst.scale;
+    let s = sin(inst.rotation);
+    let c = cos(inst.rotation);
+    return piv + vec2<f32>(d.x * c - d.y * s, d.x * s + d.y * c) + inst.translate;
+}
 @group(0) @binding(3) var<storage, read> instances: array<OverlayInstance>;
 
 fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
@@ -152,9 +162,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let inst = instances[in.instance_index];
     let a = inst.opacity;
     let t = inst.tint;
-    // The shape stream does not apply the per-frame scale (that is the text stream;
-    // scaling an SDF shape needs its size/border/radii scaled to match, a later step).
-    out.clip_position   = vec4<f32>(px_to_ndc(in.position + inst.translate), 0.0, 1.0);
+    // Apply the group transform to the quad only. `local_pos`, `half_size` and
+    // `radii` stay in the shape's own frame, so the SDF is still evaluated
+    // unrotated and unscaled and the group transform maps its result: a uniform
+    // scale and a rotation are exactly what that mapping can carry, which is why
+    // the transform's scale is a scalar. Edge anti-aliasing follows because the
+    // fragment derivatives of `local_pos` shrink as the quad grows.
+    out.clip_position   = vec4<f32>(px_to_ndc(group_apply(in.position, inst)), 0.0, 1.0);
     out.local_pos       = in.local_pos;
     // Fold the per-draw opacity and colour tint into the vertex colours (identity
     // for immediate draws). Alpha interpolates linearly, so scaling per-vertex

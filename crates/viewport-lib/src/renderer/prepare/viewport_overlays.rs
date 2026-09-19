@@ -105,22 +105,27 @@ fn transform_vector_positions(
 ) -> Vec<[f32; 2]> {
     let hw = shape.size[0] * 0.5;
     let hh = shape.size[1] * 0.5;
-    let cx = shape.position[0] + hw;
-    let cy = shape.position[1] + hh;
-    let piv = shape.rotation_pivot;
-    let c = shape.rotation.cos();
-    let s = shape.rotation.sin();
+    let cx = shape.transform.translate[0] + hw;
+    let cy = shape.transform.translate[1] + hh;
+    let piv = shape.transform.pivot;
+    let sc = shape.transform.scale;
+    let c = shape.transform.rotation.cos();
+    let s = shape.transform.rotation.sin();
+    let identity = shape.transform.rotation == 0.0 && sc == 1.0;
     local
         .iter()
         .map(|lp| {
             // Path-local -> centred (the unrotated `p` frame in `distance`).
             let cpx = lp[0] - hw;
             let cpy = lp[1] - hh;
-            if shape.rotation == 0.0 {
+            if identity {
                 return [cx + cpx, cy + cpy];
             }
-            let ax = cpx - piv[0];
-            let ay = cpy - piv[1];
+            // Scale about the pivot, then rotate about it: the inner half of
+            // the composition contract, baked in because an immediate item has
+            // no instance slot of its own.
+            let ax = (cpx - piv[0]) * sc;
+            let ay = (cpy - piv[1]) * sc;
             let rx = c * ax - s * ay + piv[0];
             let ry = s * ax + c * ay + piv[1];
             [cx + rx, cy + ry]
@@ -153,6 +158,7 @@ pub(super) fn emit_vector_shape(
         emit_vector_shadow(batch, shape, subpaths, &mesh, layer, vp_w, vp_h);
     }
 
+    let content_start = batch.len();
     if !mesh.indices.is_empty() {
         let positions = transform_vector_positions(&mesh.positions, shape);
         emit_vector_fill(
@@ -196,6 +202,58 @@ pub(super) fn emit_vector_shape(
                 vp_h,
             ));
         }
+    }
+    tint_vertices_from(batch, content_start, shape.tint);
+}
+
+/// Intersect two clip boxes in framebuffer pixels. An all-zero box means "no
+/// clip", so the other wins; two real boxes intersect, and a non-overlapping
+/// pair returns an off-screen box so nothing survives. This mirrors
+/// `combine_clip` in the overlay shaders, which does the same for the instance
+/// half of the clip.
+fn combine_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let a_valid = a[2] > a[0] && a[3] > a[1];
+    let b_valid = b[2] > b[0] && b[3] > b[1];
+    if !a_valid {
+        return b;
+    }
+    if !b_valid {
+        return a;
+    }
+    let r = [
+        a[0].max(b[0]),
+        a[1].max(b[1]),
+        a[2].min(b[2]),
+        a[3].min(b[3]),
+    ];
+    if r[2] <= r[0] || r[3] <= r[1] {
+        return [1.0e9, 1.0e9, 1.0e9 + 1.0, 1.0e9 + 1.0];
+    }
+    r
+}
+
+/// Multiply an item's `tint` into the colours of `batch[from..]`.
+///
+/// Called per emitted range rather than over the whole batch so shadow ranges
+/// are skipped: a tint never reaches a shadow layer, on any path. A compiled
+/// group's shadow colours are baked, so retention could only ever honour that
+/// rule, and content that changed appearance when it moved between the
+/// immediate and retained paths is the defect this vocabulary exists to remove.
+pub(super) fn tint_vertices_from(
+    batch: &mut [crate::resources::OverlayTextVertex],
+    from: usize,
+    tint: [f32; 4],
+) {
+    if tint == [1.0, 1.0, 1.0, 1.0] {
+        return;
+    }
+    for v in &mut batch[from..] {
+        v.colour = [
+            v.colour[0] * tint[0],
+            v.colour[1] * tint[1],
+            v.colour[2] * tint[2],
+            v.colour[3] * tint[3],
+        ];
     }
 }
 
@@ -326,8 +384,8 @@ fn build_clip_shapes(
             center,
             half_size: half,
             radii,
-            params: [shape_type, s.rotation, parent as f32, 0.0],
-            pivot: [s.rotation_pivot[0] * ppp, s.rotation_pivot[1] * ppp],
+            params: [shape_type, s.transform.rotation, parent as f32, 0.0],
+            pivot: [s.transform.pivot[0] * ppp, s.transform.pivot[1] * ppp],
             _pad: [0.0, 0.0],
         });
         bboxes.push([
@@ -525,15 +583,26 @@ impl ViewportRenderer {
                 // describe the same mask.
                 let (clip_shapes, clip_index_of, clip_bboxes) =
                     build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
+                // Stamp an item's clip onto every vertex it emitted: the mask
+                // bbox and index when it names a mask, intersected with the
+                // item's own `clip_rect`. Both are framebuffer-pixel boxes, and
+                // they compose by intersection, so naming both clips to the
+                // overlap.
                 let stamp_clip = |batch: &mut [crate::resources::OverlayTextVertex],
-                                  clip_id: Option<u32>| {
-                    if let Some(id) = clip_id {
-                        if let Some(&ci) = clip_index_of.get(&id) {
-                            let cr = clip_bboxes[ci as usize];
-                            for v in batch.iter_mut() {
-                                v.clip_rect = cr;
-                                v.clip_index = ci as f32;
-                            }
+                                  clip_id: Option<u32>,
+                                  clip_rect: Option<[f32; 4]>| {
+                    let mask = clip_id.and_then(|id| clip_index_of.get(&id).copied());
+                    let rect = clip_rect.map(|r| [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp]);
+                    if mask.is_none() && rect.is_none() {
+                        return;
+                    }
+                    let mask_rect = mask.map_or([0.0; 4], |ci| clip_bboxes[ci as usize]);
+                    let cr = combine_clip_rects(mask_rect, rect.unwrap_or([0.0; 4]));
+                    let ci = mask.map_or(-1.0, |ci| ci as f32);
+                    for v in batch.iter_mut() {
+                        v.clip_rect = cr;
+                        if ci >= 0.0 {
+                            v.clip_index = ci;
                         }
                     }
                 };
@@ -581,6 +650,7 @@ impl ViewportRenderer {
                     {
                         emit_polyline_shadow(&mut batch, poly, layer, poly.opacity, vp_w, vp_h);
                     }
+                    let content_start = batch.len();
                     if poly.closed && poly.texture.is_none() {
                         if let Some(fill) = &poly.fill {
                             emit_filled_polyline(
@@ -598,7 +668,22 @@ impl ViewportRenderer {
                         colour[3] *= poly.opacity;
                         emit_polyline_stroke(&mut batch, poly, colour, vp_w, vp_h);
                     }
-                    stamp_clip(&mut batch, poly.clip_id);
+                    tint_vertices_from(&mut batch, content_start, poly.tint);
+                    // The path turns and scales about its own bounding box,
+                    // shadows included, after every part of it has been emitted.
+                    if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
+                        let rot = OverlayRotation::new(
+                            poly.transform.rotation,
+                            poly.transform.scale,
+                            OverlayRotation::pivot_point(
+                                pmin,
+                                [pmax[0] - pmin[0], pmax[1] - pmin[1]],
+                                poly.transform.pivot,
+                            ),
+                        );
+                        rotate_vertices_from(&mut batch, 0, rot);
+                    }
+                    stamp_clip(&mut batch, poly.clip_id, poly.clip_rect);
                     if !batch.is_empty() {
                         batches.push((poly.z_order, batch));
                     }
@@ -633,10 +718,10 @@ impl ViewportRenderer {
                         continue;
                     };
                     let mut owned = shape.clone();
-                    owned.position = tl;
+                    owned.transform.translate = tl;
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     emit_vector_shape(&mut batch, &owned, subpaths, *fill_rule, vp_w, vp_h);
-                    stamp_clip(&mut batch, owned.clip_id);
+                    stamp_clip(&mut batch, owned.clip_id, owned.clip_rect);
                     if !batch.is_empty() {
                         batches.push((shape.z_order, batch));
                     }
@@ -701,8 +786,8 @@ impl ViewportRenderer {
                         crate::renderer::types::AnchorY::Bottom => -layout.height,
                     };
 
-                    let text_x = anchor_px[0] + align_offset + label.position[0];
-                    let text_y = anchor_px[1] + align_offset_y + label.position[1];
+                    let text_x = anchor_px[0] + align_offset + label.transform.translate[0];
+                    let text_y = anchor_px[1] + align_offset_y + label.transform.translate[1];
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
@@ -711,11 +796,12 @@ impl ViewportRenderer {
                     // world anchor and must keep pointing at it. So the plate and
                     // the text are rotated as two ranges with the leader between.
                     let rot = OverlayRotation::new(
-                        label.rotation,
+                        label.transform.rotation,
+                        label.transform.scale,
                         OverlayRotation::pivot_point(
                             [text_x, text_y],
                             [layout.total_width, layout.height],
-                            label.rotation_pivot,
+                            label.transform.pivot,
                         ),
                     );
                     let bg_start = batch.len();
@@ -745,6 +831,7 @@ impl ViewportRenderer {
                         }
                     }
 
+                    tint_vertices_from(&mut batch, bg_start, label.tint);
                     rotate_vertices_from(&mut batch, bg_start, rot);
 
                     if label.leader_line {
@@ -819,6 +906,7 @@ impl ViewportRenderer {
                     let text_colour = apply_opacity(label.colour.to_linear_rgba(), opacity);
                     // The label origin is the top-left of the text box; add the
                     // ascent to reach the first baseline the quads are relative to.
+                    let glyph_start = batch.len();
                     emit_glyph_quads(
                         &mut batch,
                         &layout.quads,
@@ -828,10 +916,11 @@ impl ViewportRenderer {
                         vp_w,
                         vp_h,
                     );
+                    tint_vertices_from(&mut batch, glyph_start, label.tint);
 
                     rotate_vertices_from(&mut batch, text_start, rot);
 
-                    stamp_clip(&mut batch, label.clip_id);
+                    stamp_clip(&mut batch, label.clip_id, label.clip_rect);
                     batches.push((label.z_order, batch));
                 }
 
@@ -860,10 +949,12 @@ impl ViewportRenderer {
                         max_x = max_x.max(g.x);
                         max_y = max_y.max(g.y);
                     }
-                    let run_x =
-                        origin[0] + run.position[0] + run.align_x.align_shift(max_x - min_x);
-                    let run_y =
-                        origin[1] + run.position[1] + run.align_y.align_shift(max_y - min_y);
+                    let run_x = origin[0]
+                        + run.transform.translate[0]
+                        + run.align_x.align_shift(max_x - min_x);
+                    let run_y = origin[1]
+                        + run.transform.translate[1]
+                        + run.align_y.align_shift(max_y - min_y);
 
                     let opacity = run.opacity.clamp(0.0, 1.0);
                     // Each glyph carries its tint through layout so per-glyph
@@ -892,11 +983,12 @@ impl ViewportRenderer {
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     // The run turns about its glyph-extent box, shadows included.
                     let rot = OverlayRotation::new(
-                        run.rotation,
+                        run.transform.rotation,
+                        run.transform.scale,
                         OverlayRotation::pivot_point(
                             [run_x + min_x, run_y + min_y],
                             [max_x - min_x, max_y - min_y],
-                            run.rotation_pivot,
+                            run.transform.pivot,
                         ),
                     );
 
@@ -937,10 +1029,12 @@ impl ViewportRenderer {
                     // Positions are already relative to the run origin, so the
                     // resolved origin is the only offset added; no ascent, unlike
                     // labels.
+                    let glyph_start = batch.len();
                     emit_glyph_quads_colored(&mut batch, &quads, run_x, run_y, vp_w, vp_h);
+                    tint_vertices_from(&mut batch, glyph_start, run.tint);
                     rotate_vertices_from(&mut batch, 0, rot);
 
-                    stamp_clip(&mut batch, run.clip_id);
+                    stamp_clip(&mut batch, run.clip_id, run.clip_rect);
                     batches.push((run.z_order, batch));
                 }
 
@@ -1018,9 +1112,12 @@ impl ViewportRenderer {
                             ) else {
                                 continue;
                             };
-                            [origin[0] + r.translate[0], origin[1] + r.translate[1]]
+                            [
+                                origin[0] + r.transform.translate[0],
+                                origin[1] + r.transform.translate[1],
+                            ]
                         }
-                        None => r.translate,
+                        None => r.transform.translate,
                     };
                     // Resolve the group's clip mask (if any) to this frame's
                     // clip-shape index and bbox, mirroring the immediate
@@ -1034,13 +1131,8 @@ impl ViewportRenderer {
                     // Outer bbox in framebuffer pixels: the group's explicit
                     // `clip_rect` if set, else the mask's own bbox (a cheap reject
                     // matching the shaped mask), else none.
-                    let clip_rect = if r.clip_rect != [0.0, 0.0, 0.0, 0.0] {
-                        [
-                            r.clip_rect[0] * ppp,
-                            r.clip_rect[1] * ppp,
-                            r.clip_rect[2] * ppp,
-                            r.clip_rect[3] * ppp,
-                        ]
+                    let clip_rect = if let Some(rect) = r.clip_rect {
+                        [rect[0] * ppp, rect[1] * ppp, rect[2] * ppp, rect[3] * ppp]
                     } else if let Some(bb) = mask_bbox {
                         bb
                     } else {
@@ -1053,8 +1145,13 @@ impl ViewportRenderer {
                         clip_index,
                         clip_rect,
                         tint: r.tint,
-                        scale: r.scale,
-                        _pad: [0.0, 0.0, 0.0],
+                        scale: r.transform.scale,
+                        rotation: r.transform.rotation,
+                        // Logical pixels, like `translate`: the instance's
+                        // transform is applied to vertex positions, which are
+                        // logical. Only `clip_rect` is in framebuffer pixels,
+                        // because it is compared against @builtin(position).
+                        pivot: r.transform.pivot,
                     });
                     if let Some((vbuf, vcount)) = text {
                         let draw_index = self.overlay_retained_draws.len() as u32;
@@ -1311,7 +1408,7 @@ impl ViewportRenderer {
                             owned.opacity = track.sample(overlay_time);
                         }
                         if let Some(track) = anims.position {
-                            owned.position = track.sample(overlay_time);
+                            owned.transform.translate = track.sample(overlay_time);
                         }
                         if let Some(track) = anims.size {
                             owned.size = track.sample(overlay_time);
@@ -1327,7 +1424,7 @@ impl ViewportRenderer {
                             owned.border_colour = track.sample(overlay_time).into();
                         }
                         if let Some(track) = anims.rotation {
-                            owned.rotation = track.sample(overlay_time);
+                            owned.transform.rotation = track.sample(overlay_time);
                         }
                         // Path tracks override the matching linear track when
                         // both are set.
@@ -1335,7 +1432,7 @@ impl ViewportRenderer {
                             owned.opacity = track.sample(overlay_time);
                         }
                         if let Some(track) = anims.position_path.as_ref() {
-                            owned.position = track.sample(overlay_time);
+                            owned.transform.translate = track.sample(overlay_time);
                         }
                         if let Some(track) = anims.size_path.as_ref() {
                             owned.size = track.sample(overlay_time);
@@ -1351,7 +1448,7 @@ impl ViewportRenderer {
                             owned.border_colour = track.sample(overlay_time).into();
                         }
                         if let Some(track) = anims.rotation_path.as_ref() {
-                            owned.rotation = track.sample(overlay_time);
+                            owned.transform.rotation = track.sample(overlay_time);
                         }
                     }
                     // Resolve the anchor origin + animated position + alignment
@@ -1365,7 +1462,7 @@ impl ViewportRenderer {
                     let Some(resolved_tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
                         continue;
                     };
-                    owned.position = resolved_tl;
+                    owned.transform.translate = resolved_tl;
                     let shape = &owned;
                     let resolved_opacity = shape.opacity;
 
@@ -1375,8 +1472,8 @@ impl ViewportRenderer {
 
                     let hw = shape.size[0] * 0.5;
                     let hh = shape.size[1] * 0.5;
-                    let cx = shape.position[0] + hw;
-                    let cy = shape.position[1] + hh;
+                    let cx = shape.transform.translate[0] + hw;
+                    let cy = shape.transform.translate[1] + hh;
 
                     // Outer-shadow extent that reaches past the shape edge.
                     // Inner shadows stay inside the shape, so they need no quad
@@ -1407,10 +1504,10 @@ impl ViewportRenderer {
                     // rect, capsule, or off-centre pivot clips against its own
                     // quad. A zero rotation with a zero pivot leaves bx/by
                     // unchanged.
-                    let (rx, ry) = if shape.rotation != 0.0 {
-                        let c = shape.rotation.cos();
-                        let s = shape.rotation.sin();
-                        let piv = shape.rotation_pivot;
+                    let (rx, ry) = if shape.transform.rotation != 0.0 {
+                        let c = shape.transform.rotation.cos();
+                        let s = shape.transform.rotation.sin();
+                        let piv = shape.transform.pivot;
                         let mut mx = 0.0_f32;
                         let mut my = 0.0_f32;
                         for cxp in [-bx, bx] {
@@ -1578,11 +1675,23 @@ impl ViewportRenderer {
                     for colour in &mut stop_colours {
                         colour[3] *= resolved_opacity;
                     }
+                    // Fold the item tint into the fill, gradient, and border
+                    // colours. It stops there: a tint never reaches a shadow
+                    // layer, matching the group tint the shaders apply.
+                    let tint = shape.tint;
+                    for colour in &mut stop_colours {
+                        for (c, t) in colour.iter_mut().zip(tint) {
+                            *c *= t;
+                        }
+                    }
                     let fc = stop_colours[0];
                     let fc2 = stop_colours[1];
                     let _ = (start_colour, end_colour);
                     let mut bc = shape.border_colour.to_linear_rgba();
                     bc[3] *= resolved_opacity;
+                    for (c, t) in bc.iter_mut().zip(tint) {
+                        *c *= t;
+                    }
 
                     let half_size = [hw, hh];
 
@@ -1616,13 +1725,36 @@ impl ViewportRenderer {
                     ];
 
                     // Emit 6 vertices (two triangles) for the bounding quad.
+                    // Scale the quad about the pivot while `local_pos`,
+                    // `half_size` and `radii` stay in the shape's own frame, so
+                    // the SDF is evaluated unscaled and the quad carries the
+                    // scaling, the same way the group transform does in the
+                    // shader. Rotation is not folded in here: it rides the
+                    // `rotation_pivot` vertex attribute and turns the sample
+                    // point instead.
+                    let item_scale = shape.transform.scale;
+                    let pivot_px = [cx + shape.transform.pivot[0], cy + shape.transform.pivot[1]];
+                    let scaled = |x: f32, y: f32| {
+                        if item_scale == 1.0 {
+                            (x, y)
+                        } else {
+                            (
+                                pivot_px[0] + (x - pivot_px[0]) * item_scale,
+                                pivot_px[1] + (y - pivot_px[1]) * item_scale,
+                            )
+                        }
+                    };
+                    let corner = |x: f32, y: f32, lx: f32, ly: f32| {
+                        let (px, py) = scaled(x, y);
+                        (px, py, lx, ly)
+                    };
                     let corners_px = [
-                        (cx - ex, cy - ey, -ex, -ey),
-                        (cx + ex, cy - ey, ex, -ey),
-                        (cx + ex, cy + ey, ex, ey),
-                        (cx - ex, cy - ey, -ex, -ey),
-                        (cx + ex, cy + ey, ex, ey),
-                        (cx - ex, cy + ey, -ex, ey),
+                        corner(cx - ex, cy - ey, -ex, -ey),
+                        corner(cx + ex, cy - ey, ex, -ey),
+                        corner(cx + ex, cy + ey, ex, ey),
+                        corner(cx - ex, cy - ey, -ex, -ey),
+                        corner(cx + ex, cy + ey, ex, ey),
+                        corner(cx - ex, cy + ey, -ex, ey),
                     ];
 
                     // Resolve the clip mask for this shape (shared by the solid,
@@ -1634,10 +1766,17 @@ impl ViewportRenderer {
                         .clip_id
                         .and_then(|id| clip_index_of.get(&id).copied())
                         .unwrap_or(-1);
-                    let clip_rect = if clip_index_i >= 0 {
+                    let mask_rect = if clip_index_i >= 0 {
                         clip_bboxes[clip_index_i as usize]
                     } else {
                         [0.0, 0.0, 0.0, 0.0]
+                    };
+                    let clip_rect = match shape.clip_rect {
+                        Some(r) => combine_clip_rects(
+                            mask_rect,
+                            [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp],
+                        ),
+                        None => mask_rect,
                     };
                     let clip_index = clip_index_i as f32;
 
@@ -1815,9 +1954,9 @@ impl ViewportRenderer {
                             border_mode_f,
                         ];
                         let rotation_pivot = [
-                            shape.rotation,
-                            shape.rotation_pivot[0],
-                            shape.rotation_pivot[1],
+                            shape.transform.rotation,
+                            shape.transform.pivot[0],
+                            shape.transform.pivot[1],
                             0.0,
                         ];
                         let solid_seg_start = solid_verts.len() as u32;

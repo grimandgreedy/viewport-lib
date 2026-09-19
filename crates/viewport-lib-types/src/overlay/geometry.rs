@@ -30,19 +30,35 @@ crate::slot_handle! {
 pub struct RetainedOverlay {
     /// The compiled group to draw.
     pub id: OverlayGeometryId,
-    /// Offset in logical pixels applied to the whole group before it is drawn.
-    /// A scroll container updates this per frame instead of re-compiling.
-    pub translate: [f32; 2],
+    /// Translate, rotate, and scale the whole group, in logical pixels and
+    /// radians. A scroll container updates `translate` per frame instead of
+    /// re-compiling; a pop or a flip rides `scale` and `rotation`.
+    ///
+    /// This is the group half of the composition contract on
+    /// [`OverlayTransform`]: an item inside the group carries its own
+    /// transform, and the two compose as `group_T . item_T`.
+    ///
+    /// Retained glyphs are bitmaps baked at their original size, so a large
+    /// sustained `scale` looks soft: re-compile at the target size when crisp
+    /// large text is needed.
+    ///
+    /// [`OverlayTransform`]: crate::overlay::OverlayTransform
+    pub transform: crate::overlay::OverlayTransform,
     /// Opacity multiplier in `[0, 1]` applied to the group's alpha. `1.0` leaves
     /// the compiled colours unchanged.
     pub opacity: f32,
     /// Cross-family draw order, low to high, matching the `z_order` on the
     /// immediate overlay items. Default `0`.
     pub z_order: i32,
-    /// Outer clip bounding box in logical pixels `[x0, y0, x1, y1]`; all-zero
-    /// means no clip. Fragments of the group outside it are discarded, which is
-    /// how a rectangular scroll viewport clips its content.
-    pub clip_rect: [f32; 4],
+    /// Outer clip bounding box in logical pixels `[x0, y0, x1, y1]`, in
+    /// framebuffer space. Fragments of the group outside it are discarded,
+    /// which is how a rectangular scroll viewport clips its content. `None`
+    /// (the default) applies no rectangular clip.
+    ///
+    /// The box is screen-axis-aligned by definition and does not turn with
+    /// `transform.rotation`, matching a scissor rect and matching the per-item
+    /// `clip_rect`. For a clip that follows a rotated group, use `clip_id`.
+    pub clip_rect: Option<[f32; 4]>,
     /// Clip the group to a mask shape for shaped (non-rectangular) clipping, e.g.
     /// a rounded-rect scroll viewport. The value matches the `clip_mask_id` of an
     /// overlay shape submitted in the same frame (masks are registered per frame
@@ -56,34 +72,45 @@ pub struct RetainedOverlay {
     /// re-compiling the group. On SDF shapes the tint reaches the fill, border, and
     /// gradient colours but not the drop shadow (whose colour is baked).
     pub tint: [f32; 4],
-    /// Per-frame uniform scale about the group's local origin, applied before
-    /// `translate`; identity `1.0`. A pulse or pop rides this instead of
-    /// re-compiling. Applies to the group's text, polyline, and vector geometry;
-    /// SDF shapes are not scaled yet. Retained glyphs are bitmaps baked at their
-    /// original size, so a large sustained scale looks soft: re-compile at the
-    /// target size when crisp large text is needed.
-    pub scale: f32,
 }
 
 impl RetainedOverlay {
-    /// A submission of `id` at the origin, fully opaque, `z_order` 0, unclipped,
-    /// untinted, unscaled.
+    /// A submission of `id` at the origin, fully opaque, `z_order` 0,
+    /// unclipped, untinted, with an identity transform.
     pub fn new(id: OverlayGeometryId) -> Self {
         Self {
             id,
-            translate: [0.0, 0.0],
+            transform: crate::overlay::OverlayTransform::IDENTITY,
             opacity: 1.0,
             z_order: 0,
-            clip_rect: [0.0; 4],
+            clip_rect: None,
             clip_id: None,
             tint: [1.0, 1.0, 1.0, 1.0],
-            scale: 1.0,
         }
+    }
+
+    /// Set the group transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: crate::overlay::OverlayTransform) -> Self {
+        self.transform = transform;
+        self
     }
 
     /// Set the per-frame translate in logical pixels.
     pub fn with_translate(mut self, translate: [f32; 2]) -> Self {
-        self.translate = translate;
+        self.transform.translate = translate;
+        self
+    }
+
+    /// Set the per-frame rotation in radians about the group pivot.
+    pub fn with_rotation(mut self, radians: f32) -> Self {
+        self.transform.rotation = radians;
+        self
+    }
+
+    /// Set the centre of rotation and scaling, in logical pixels from the
+    /// group's local origin.
+    pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
+        self.transform.pivot = pivot;
         self
     }
 
@@ -101,7 +128,7 @@ impl RetainedOverlay {
 
     /// Set the outer clip bounding box in logical pixels.
     pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip_rect = clip_rect;
+        self.clip_rect = Some(clip_rect);
         self
     }
 
@@ -119,11 +146,9 @@ impl RetainedOverlay {
         self
     }
 
-    /// Set the per-frame uniform scale about the group's local origin (identity
-    /// `1.0`). Applies to text, polyline, and vector geometry; SDF shapes are not
-    /// scaled yet.
+    /// Set the per-frame uniform scale about the group pivot (identity `1.0`).
     pub fn with_scale(mut self, scale: f32) -> Self {
-        self.scale = scale;
+        self.transform.scale = scale;
         self
     }
 }

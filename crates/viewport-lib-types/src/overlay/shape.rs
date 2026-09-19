@@ -300,11 +300,35 @@ pub struct OverlayShapeItem {
     /// default `Viewport { Left, Top }` resolves to `[0, 0]`, so with the
     /// default alignment `position` is the absolute top-left.
     pub anchor: OverlayAnchor,
-    /// Placement in logical pixels relative to the resolved `anchor` origin.
-    /// With the default `anchor` and alignment this is the absolute top-left
-    /// from the viewport top-left. This is the channel the `animations.position`
-    /// track drives, so animating it orbits the shape around its anchor.
-    pub position: [f32; 2],
+    /// Translate, rotate, and scale, in logical pixels and radians.
+    ///
+    /// `translate` is the nudge from the resolved `anchor` origin, so with the
+    /// default anchor and alignment it is the absolute screen placement.
+    /// Rotation turns the item inside its extent box, which stays
+    /// axis-aligned, so `align_x` / `align_y` place the unrotated box and the
+    /// content turns within it. See [`OverlayTransform`] for how an item's
+    /// transform composes with the transform of a retained group containing
+    /// it.
+    pub transform: OverlayTransform,
+    /// Per-frame colour multiplier applied to the whole item, identity
+    /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
+    /// and with the tint of a retained group containing it. Never reaches
+    /// shadow layers, on any path: a compiled group's shadow colours are
+    /// baked, so honouring it here would make the same content look different
+    /// on the two paths.
+    pub tint: [f32; 4],
+    /// Axis-aligned clip box in logical pixels `[x0, y0, x1, y1]`, in
+    /// framebuffer space. Fragments outside it are discarded. `None` (the
+    /// default) applies no rectangular clip; composes with `clip_id`, so both
+    /// apply when both are set.
+    ///
+    /// Framebuffer space is the definition, not an approximation: the box stays
+    /// axis-aligned on screen and does **not** turn with the item's own
+    /// rotation or with the rotation of a retained group containing it, the
+    /// same way a scissor rect behaves everywhere else. For a clip that follows
+    /// rotated content, use `clip_id` with a mask shape, which is evaluated per
+    /// fragment against a shape that can itself rotate.
+    pub clip_rect: Option<[f32; 4]>,
     /// How the bounding box sits horizontally on `anchor` + `position`: `Left`
     /// (default) puts the left edge there, `Middle` centres, `Right` the right
     /// edge.
@@ -368,12 +392,6 @@ pub struct OverlayShapeItem {
     /// unclipped. If no mask with the matching id is present in the frame,
     /// the shape is also drawn unclipped.
     pub clip_id: Option<u32>,
-    /// Rotation around the shape centre in radians. Positive rotates
-    /// counter-clockwise in math coordinates. `0.0` keeps the default
-    /// orientation. Applies to fill, border, shadow, and gradient direction;
-    /// the bounding box (`position` + `size`) stays axis-aligned, so the
-    /// rotated shape is drawn inside the unrotated box.
-    pub rotation: f32,
     /// 9-slice texture sampling for the shape's `texture` fill. When `None`
     /// the texture stretches to fill the bounding box (default).
     pub nine_slice: Option<NineSlice>,
@@ -400,11 +418,6 @@ pub struct OverlayShapeItem {
     /// Hue rotation applied to the blurred backdrop, in radians. `0.0` is
     /// unchanged. Only affects shapes with `backdrop_blur > 0.0`.
     pub backdrop_hue_shift: f32,
-    /// Point to rotate around, in logical pixels measured from the shape
-    /// centre. `[0.0, 0.0]` (default) rotates around the centre. Positive X
-    /// is right, positive Y is down, matching the screen-space axes. Applies
-    /// together with [`Self::rotation`] on solid (non-textured) shapes.
-    pub rotation_pivot: [f32; 2],
     /// Stacked outer shadow layers, drawn behind the fill in order (first
     /// entry furthest back). Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
     ///
@@ -423,7 +436,9 @@ impl Default for OverlayShapeItem {
     fn default() -> Self {
         Self {
             anchor: OverlayAnchor::default(),
-            position: [0.0, 0.0],
+            transform: OverlayTransform::IDENTITY,
+            tint: [1.0, 1.0, 1.0, 1.0],
+            clip_rect: None,
             align_x: AnchorX::Left,
             align_y: AnchorY::Top,
             size: [100.0, 100.0],
@@ -438,14 +453,12 @@ impl Default for OverlayShapeItem {
             backdrop_blur: 0.0,
             clip_mask_id: None,
             clip_id: None,
-            rotation: 0.0,
             nine_slice: None,
             texture_transform: TextureTransform::default(),
             animations: None,
             backdrop_saturation: 1.0,
             backdrop_brightness: 1.0,
             backdrop_hue_shift: 0.0,
-            rotation_pivot: [0.0, 0.0],
             shadows: Vec::new(),
             inner_shadows: Vec::new(),
         }
@@ -674,7 +687,7 @@ impl OverlayShapeItem {
     pub fn new(shape: OverlayShape, position: [f32; 2], size: [f32; 2]) -> Self {
         Self {
             shape,
-            position,
+            transform: OverlayTransform::at(position),
             size,
             ..Default::default()
         }
@@ -780,14 +793,14 @@ impl OverlayShapeItem {
 
     /// Set the rotation around the shape centre, in radians.
     pub fn with_rotation(mut self, radians: f32) -> Self {
-        self.rotation = radians;
+        self.transform.rotation = radians;
         self
     }
 
     /// Set the point to rotate around, in logical pixels from the shape
     /// centre. `[0.0, 0.0]` rotates around the centre (the default).
     pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
-        self.rotation_pivot = pivot;
+        self.transform.pivot = pivot;
         self
     }
 
@@ -897,8 +910,8 @@ impl OverlayShapeItem {
     ) -> Option<[f32; 2]> {
         let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
         Some([
-            origin[0] + self.position[0] + self.align_x.align_shift(self.size[0]),
-            origin[1] + self.position[1] + self.align_y.align_shift(self.size[1]),
+            origin[0] + self.transform.translate[0] + self.align_x.align_shift(self.size[0]),
+            origin[1] + self.transform.translate[1] + self.align_y.align_shift(self.size[1]),
         ])
     }
 
@@ -919,17 +932,17 @@ impl OverlayShapeItem {
     pub fn distance(&self, point: [f32; 2]) -> f32 {
         let hw = self.size[0] * 0.5;
         let hh = self.size[1] * 0.5;
-        let cx = self.position[0] + hw;
-        let cy = self.position[1] + hh;
+        let cx = self.transform.translate[0] + hw;
+        let cy = self.transform.translate[1] + hh;
         let dx = point[0] - cx;
         let dy = point[1] - cy;
         // Rotate the query point by -rotation around the rotation pivot (an
         // offset from the shape centre) so the SDF evaluates in the unrotated
         // frame, matching the fragment shader. With a zero pivot this reduces
         // to rotation around the centre.
-        let c = (-self.rotation).cos();
-        let s = (-self.rotation).sin();
-        let piv = self.rotation_pivot;
+        let c = (-self.transform.rotation).cos();
+        let s = (-self.transform.rotation).sin();
+        let piv = self.transform.pivot;
         let rx = dx - piv[0];
         let ry = dy - piv[1];
         let p = [c * rx - s * ry + piv[0], s * rx + c * ry + piv[1]];
@@ -1027,7 +1040,7 @@ mod tests {
 
     fn shape_at(x: f32, y: f32, w: f32, h: f32, shape: OverlayShape) -> OverlayShapeItem {
         OverlayShapeItem {
-            position: [x, y],
+            transform: OverlayTransform::at([x, y]),
             size: [w, h],
             shape,
             ..Default::default()
@@ -1459,13 +1472,13 @@ mod tests {
         // (outside). Rotated 90 degrees, the capsule's long axis becomes
         // vertical and that point is inside the body.
         let mut s = OverlayShapeItem {
-            position: [0.0, 30.0],
+            transform: OverlayTransform::at([0.0, 30.0]),
             size: [100.0, 40.0],
             shape: OverlayShape::Capsule,
             ..Default::default()
         };
         assert!(!s.contains([50.0, 80.0]));
-        s.rotation = std::f32::consts::FRAC_PI_2;
+        s.transform.rotation = std::f32::consts::FRAC_PI_2;
         assert!(s.contains([50.0, 80.0]));
     }
 
@@ -1476,16 +1489,15 @@ mod tests {
         // from the centre swings the whole shape elsewhere, so a point that is
         // inside under centre-rotation falls outside under pivot-rotation.
         let mut s = OverlayShapeItem {
-            position: [0.0, 0.0],
+            transform: OverlayTransform::IDENTITY.with_rotation(std::f32::consts::FRAC_PI_2),
             size: [80.0, 40.0],
             shape: OverlayShape::Rect { corner_radius: 0.0 },
-            rotation: std::f32::consts::FRAC_PI_2,
             ..Default::default()
         };
         // Centre is always inside regardless of pivot.
         assert!(s.contains([40.0, 20.0]));
         // With a large pivot offset the shape rotates away from the centre.
-        s.rotation_pivot = [200.0, 0.0];
+        s.transform.pivot = [200.0, 0.0];
         assert!(!s.contains([40.0, 20.0]));
     }
 
@@ -1540,7 +1552,7 @@ mod tests {
         assert_eq!(tl, [360.0, 270.0]); // 400-40, 300-30
         // The centre of the resolved box is the viewport centre.
         let mut drawn = s.clone();
-        drawn.position = tl;
+        drawn.transform.translate = tl;
         assert!(drawn.contains([400.0, 300.0]));
     }
 
@@ -1591,14 +1603,13 @@ mod tests {
     fn rotation_pivot_zero_matches_centre_rotation() {
         // A zero pivot must reproduce plain centre rotation exactly.
         let base = OverlayShapeItem {
-            position: [10.0, 10.0],
+            transform: OverlayTransform::at([10.0, 10.0]).with_rotation(0.7),
             size: [100.0, 30.0],
             shape: OverlayShape::Capsule,
-            rotation: 0.7,
             ..Default::default()
         };
         let mut piv = base.clone();
-        piv.rotation_pivot = [0.0, 0.0];
+        piv.transform.pivot = [0.0, 0.0];
         for pt in [[60.0, 25.0], [20.0, 20.0], [90.0, 40.0]] {
             assert!((base.distance(pt) - piv.distance(pt)).abs() < 1e-4);
         }
@@ -1625,5 +1636,31 @@ mod size_tests {
             item <= 512,
             "OverlayShapeItem grew to {item} bytes (budget 512)"
         );
+    }
+}
+
+impl OverlayShapeItem {
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.tint = tint;
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip_rect = Some(clip_rect);
+        self
     }
 }

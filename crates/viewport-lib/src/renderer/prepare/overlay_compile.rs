@@ -17,6 +17,7 @@ fn emit_base(
         if poly.points.len() < 2 || poly.opacity <= 0.0 {
             continue;
         }
+        let item_start = verts.len();
         for layer in poly
             .shadows
             .iter()
@@ -25,6 +26,7 @@ fn emit_base(
         {
             overlay_geometry::emit_polyline_shadow(verts, poly, layer, poly.opacity, 0.0, 0.0);
         }
+        let content_start = verts.len();
         if poly.closed && poly.texture.is_none() {
             if let Some(fill) = &poly.fill {
                 overlay_geometry::emit_filled_polyline(
@@ -41,6 +43,28 @@ fn emit_base(
             let mut colour = poly.colour.to_linear_rgba();
             colour[3] *= poly.opacity;
             overlay_geometry::emit_polyline_stroke(verts, poly, colour, 0.0, 0.0);
+        }
+        viewport_overlays::tint_vertices_from(verts, content_start, poly.tint);
+        // The item transform is baked into the compiled geometry; the group
+        // transform rides the instance each frame. A compiled group ignores
+        // `anchor`, so `translate` is a plain offset in group-local pixels.
+        if let Some((pmin, pmax)) = super::projection::polyline_bounds(&poly.points) {
+            let rot = overlay_geometry::OverlayRotation::new(
+                poly.transform.rotation,
+                poly.transform.scale,
+                overlay_geometry::OverlayRotation::pivot_point(
+                    pmin,
+                    [pmax[0] - pmin[0], pmax[1] - pmin[1]],
+                    poly.transform.pivot,
+                ),
+            );
+            overlay_geometry::rotate_vertices_from(verts, item_start, rot);
+        }
+        let t = poly.transform.translate;
+        if t != [0.0, 0.0] {
+            for v in &mut verts[item_start..] {
+                v.position = [v.position[0] + t[0], v.position[1] + t[1]];
+            }
         }
     }
     for shape in vector_shapes {
@@ -77,16 +101,17 @@ fn emit_glyph_run(
         max_x = max_x.max(g.x);
         max_y = max_y.max(g.y);
     }
-    let run_x = run.position[0] + run.align_x.align_shift(max_x - min_x);
-    let run_y = run.position[1] + run.align_y.align_shift(max_y - min_y);
+    let run_x = run.transform.translate[0] + run.align_x.align_shift(max_x - min_x);
+    let run_y = run.transform.translate[1] + run.align_y.align_shift(max_y - min_y);
     let opacity = run.opacity.clamp(0.0, 1.0);
     let rot_start = verts.len();
     let rot = overlay_geometry::OverlayRotation::new(
-        run.rotation,
+        run.transform.rotation,
+        run.transform.scale,
         overlay_geometry::OverlayRotation::pivot_point(
             [run_x + min_x, run_y + min_y],
             [max_x - min_x, max_y - min_y],
-            run.rotation_pivot,
+            run.transform.pivot,
         ),
     );
     let quads = atlas.layout_glyph_run(
@@ -138,7 +163,9 @@ fn emit_glyph_run(
             0.0,
         );
     }
+    let glyph_start = verts.len();
     overlay_geometry::emit_glyph_quads_colored(verts, &quads, run_x, run_y, 0.0, 0.0);
+    viewport_overlays::tint_vertices_from(verts, glyph_start, run.tint);
     overlay_geometry::rotate_vertices_from(verts, rot_start, rot);
 }
 
@@ -204,15 +231,16 @@ fn emit_label(
         AnchorY::Middle => -layout.height * 0.5,
         AnchorY::Bottom => -layout.height,
     };
-    let text_x = align_offset + label.position[0];
-    let text_y = align_offset_y + label.position[1];
+    let text_x = align_offset + label.transform.translate[0];
+    let text_y = align_offset_y + label.transform.translate[1];
 
     let rot = overlay_geometry::OverlayRotation::new(
-        label.rotation,
+        label.transform.rotation,
+        label.transform.scale,
         overlay_geometry::OverlayRotation::pivot_point(
             [text_x, text_y],
             [layout.total_width, layout.height],
-            label.rotation_pivot,
+            label.transform.pivot,
         ),
     );
     let bg_start = verts.len();
@@ -242,6 +270,7 @@ fn emit_label(
         }
     }
 
+    viewport_overlays::tint_vertices_from(verts, bg_start, label.tint);
     overlay_geometry::rotate_vertices_from(verts, bg_start, rot);
 
     if emit_leader && label.leader_line && matches!(label.anchor, OverlayAnchor::World(_)) {
@@ -295,6 +324,7 @@ fn emit_label(
     let text_colour = overlay_geometry::apply_opacity(label.colour.to_linear_rgba(), opacity);
     // The label origin is the text-box top-left; add the ascent to reach the
     // first baseline the quads are relative to.
+    let glyph_start = verts.len();
     overlay_geometry::emit_glyph_quads(
         verts,
         &layout.quads,
@@ -304,6 +334,7 @@ fn emit_label(
         0.0,
         0.0,
     );
+    viewport_overlays::tint_vertices_from(verts, glyph_start, label.tint);
     overlay_geometry::rotate_vertices_from(verts, text_start, rot);
 }
 
@@ -385,8 +416,8 @@ fn emit_sdf_shape(
     let op = shape.opacity;
     let hw = shape.size[0] * 0.5;
     let hh = shape.size[1] * 0.5;
-    let cx = shape.position[0] + hw;
-    let cy = shape.position[1] + hh;
+    let cx = shape.transform.translate[0] + hw;
+    let cy = shape.transform.translate[1] + hh;
 
     let mut shadow_pad = 0.0f32;
     for l in &shape.shadows {
@@ -398,10 +429,10 @@ fn emit_sdf_shape(
     };
     let bx = hw + shape.border_width + extra_expand;
     let by = hh + shape.border_width + extra_expand;
-    let (rx, ry) = if shape.rotation != 0.0 {
-        let c = shape.rotation.cos();
-        let s = shape.rotation.sin();
-        let piv = shape.rotation_pivot;
+    let (rx, ry) = if shape.transform.rotation != 0.0 {
+        let c = shape.transform.rotation.cos();
+        let s = shape.transform.rotation.sin();
+        let piv = shape.transform.pivot;
         let (mut mx, mut my) = (0.0f32, 0.0f32);
         for cxp in [-bx, bx] {
             for cyp in [-by, by] {
@@ -551,10 +582,18 @@ fn emit_sdf_shape(
     for colour in &mut stop_colours {
         colour[3] *= op;
     }
+    for colour in &mut stop_colours {
+        for (c, t) in colour.iter_mut().zip(shape.tint) {
+            *c *= t;
+        }
+    }
     let fc = stop_colours[0];
     let fc2 = stop_colours[1];
     let mut bc = shape.border_colour.to_linear_rgba();
     bc[3] *= op;
+    for (c, t) in bc.iter_mut().zip(shape.tint) {
+        *c *= t;
+    }
     let border_mode_f = match shape.border_mode {
         BorderMode::Inset => 0.0,
         BorderMode::Outer => 1.0,
@@ -596,19 +635,35 @@ fn emit_sdf_shape(
         border_mode_f,
     ];
     let rotation_pivot = [
-        shape.rotation,
-        shape.rotation_pivot[0],
-        shape.rotation_pivot[1],
+        shape.transform.rotation,
+        shape.transform.pivot[0],
+        shape.transform.pivot[1],
         0.0,
     ];
     let half_size = [hw, hh];
+    // Scale the quad about the pivot and leave `local_pos` in the shape's own
+    // frame, the same split the shader uses for a group transform.
+    let item_scale = shape.transform.scale;
+    let pivot_px = [cx + shape.transform.pivot[0], cy + shape.transform.pivot[1]];
+    let corner = |x: f32, y: f32, lx: f32, ly: f32| {
+        if item_scale == 1.0 {
+            (x, y, lx, ly)
+        } else {
+            (
+                pivot_px[0] + (x - pivot_px[0]) * item_scale,
+                pivot_px[1] + (y - pivot_px[1]) * item_scale,
+                lx,
+                ly,
+            )
+        }
+    };
     let corners = [
-        (cx - ex, cy - ey, -ex, -ey),
-        (cx + ex, cy - ey, ex, -ey),
-        (cx + ex, cy + ey, ex, ey),
-        (cx - ex, cy - ey, -ex, -ey),
-        (cx + ex, cy + ey, ex, ey),
-        (cx - ex, cy + ey, -ex, ey),
+        corner(cx - ex, cy - ey, -ex, -ey),
+        corner(cx + ex, cy - ey, ex, -ey),
+        corner(cx + ex, cy + ey, ex, ey),
+        corner(cx - ex, cy - ey, -ex, -ey),
+        corner(cx + ex, cy + ey, ex, ey),
+        corner(cx - ex, cy + ey, -ex, ey),
     ];
     for (px, py, lx, ly) in corners {
         out_verts.push(crate::resources::OverlayShapeVertex {
@@ -661,6 +716,14 @@ impl ViewportRenderer {
     /// therefore ignored here (they only make sense for a single anchor-tracking
     /// label); use [`compile_overlay_label`](Self::compile_overlay_label) for a
     /// label that tracks a viewport corner or a world point.
+    ///
+    /// **Draw order inside a group is submission order, not `z_order`.** The
+    /// families use different vertex streams that have to stay batched, so a
+    /// compiled group draws polylines and vector shapes first, then glyph runs,
+    /// then labels, each in the order given. An item's `z_order` is ignored
+    /// here; it still orders the whole group against other overlay content
+    /// through `RetainedOverlay::z_order`. To control order within a group,
+    /// submit the items in the order you want, or compile several groups.
     pub fn compile_overlay_geometry(
         &mut self,
         device: &crate::gpu::Device,

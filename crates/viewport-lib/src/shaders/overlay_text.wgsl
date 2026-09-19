@@ -41,11 +41,21 @@ struct OverlayInstance {
     clip_index: f32,        // per-frame clip-mask index, or -1 for none
     clip_rect:  vec4<f32>,
     tint:       vec4<f32>,  // per-frame colour multiplier, identity [1,1,1,1]
-    scale:      f32,        // per-frame uniform scale about the local origin
-    _pad0:      f32,
-    _pad1:      f32,
-    _pad2:      f32,
+    scale:      f32,        // per-frame uniform scale about the pivot
+    rotation:   f32,        // per-frame rotation in radians about the pivot
+    pivot_x:    f32,        // two scalars, not a vec2: a vec2 would align to 8
+    pivot_y:    f32,
 };
+
+// One level of the composition contract: scale about the pivot, then rotate
+// about it, then translate. With the identity instance this returns `p`.
+fn group_apply(p: vec2<f32>, inst: OverlayInstance) -> vec2<f32> {
+    let piv = vec2<f32>(inst.pivot_x, inst.pivot_y);
+    let d = (p - piv) * inst.scale;
+    let s = sin(inst.rotation);
+    let c = cos(inst.rotation);
+    return piv + vec2<f32>(d.x * c - d.y * s, d.x * s + d.y * c) + inst.translate;
+}
 @group(0) @binding(4) var<storage, read> instances: array<OverlayInstance>;
 
 struct VertexInput {
@@ -79,10 +89,10 @@ fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let inst = instances[in.instance_index];
-    // Scale about the local origin, then translate (identity scale/translate for
-    // immediate draws). Text-stream geometry is the vertex position itself, so this
-    // scales glyphs, polylines, and vector fills.
-    out.clip_position = vec4<f32>(px_to_ndc(in.position * inst.scale + inst.translate), 0.0, 1.0);
+    // Apply the group transform (identity for immediate draws). Text-stream
+    // geometry is the vertex position itself, so this moves glyphs, polylines,
+    // and vector fills together.
+    out.clip_position = vec4<f32>(px_to_ndc(group_apply(in.position, inst)), 0.0, 1.0);
     out.uv            = in.uv;
     out.colour        = in.colour;
     out.use_texture   = in.use_texture;

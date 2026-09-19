@@ -1,6 +1,7 @@
 //! Text label overlay items.
 
 use super::anchor::{AnchorX, AnchorY, OverlayAnchor};
+use super::transform::OverlayTransform;
 
 /// A text label rendered as a screen-space overlay.
 ///
@@ -32,6 +33,35 @@ pub struct LabelItem {
     /// projected world point.  `position` nudges the text from here and the
     /// leader line draws for an [`OverlayAnchor::World`] anchor.
     pub anchor: OverlayAnchor,
+    /// Translate, rotate, and scale, in logical pixels and radians.
+    ///
+    /// `translate` is the nudge from the resolved `anchor` origin, so with the
+    /// default anchor and alignment it is the absolute screen placement.
+    /// Rotation turns the item inside its extent box, which stays
+    /// axis-aligned, so `align_x` / `align_y` place the unrotated box and the
+    /// content turns within it. See [`OverlayTransform`] for how an item's
+    /// transform composes with the transform of a retained group containing
+    /// it.
+    pub transform: OverlayTransform,
+    /// Per-frame colour multiplier applied to the whole item, identity
+    /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
+    /// and with the tint of a retained group containing it. Never reaches
+    /// shadow layers, on any path: a compiled group's shadow colours are
+    /// baked, so honouring it here would make the same content look different
+    /// on the two paths.
+    pub tint: [f32; 4],
+    /// Axis-aligned clip box in logical pixels `[x0, y0, x1, y1]`, in
+    /// framebuffer space. Fragments outside it are discarded. `None` (the
+    /// default) applies no rectangular clip; composes with `clip_id`, so both
+    /// apply when both are set.
+    ///
+    /// Framebuffer space is the definition, not an approximation: the box stays
+    /// axis-aligned on screen and does **not** turn with the item's own
+    /// rotation or with the rotation of a retained group containing it, the
+    /// same way a scissor rect behaves everywhere else. For a clip that follows
+    /// rotated content, use `clip_id` with a mask shape, which is evaluated per
+    /// fragment against a shape that can itself rotate.
+    pub clip_rect: Option<[f32; 4]>,
 
     /// Text content to display.
     pub text: String,
@@ -77,11 +107,6 @@ pub struct LabelItem {
     /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
     pub anchor_padding: f32,
 
-    /// Placement relative to the resolved `anchor` origin, in logical pixels,
-    /// applied after anchor resolution and alignment. Nudges the label away from
-    /// its anchor without moving the leader line endpoint.  Default: `[0.0, 0.0]`.
-    pub position: [f32; 2],
-
     /// Overall opacity multiplier applied to text, background, and leader
     /// line colours.  Range 0.0 (invisible) to 1.0 (fully opaque).
     pub opacity: f32,
@@ -114,26 +139,6 @@ pub struct LabelItem {
     /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
     /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
     pub shadows: Vec<crate::overlay::ShadowLayer>,
-    /// Rotation around the text-box centre in radians. Positive rotates
-    /// counter-clockwise in math coordinates, which reads as clockwise on
-    /// screen because the Y axis points down. `0.0` keeps the default
-    /// orientation.
-    ///
-    /// The extent box stays axis-aligned: `align_x` / `align_y` place the
-    /// unrotated box on the anchor and the text turns inside it, matching
-    /// [`OverlayShapeItem::rotation`].
-    ///
-    /// [`OverlayShapeItem::rotation`]: crate::overlay::OverlayShapeItem::rotation
-    pub rotation: f32,
-
-    /// Point to rotate around, in logical pixels measured from the text-box
-    /// centre. `[0.0, 0.0]` (default) rotates around the centre. Positive X is
-    /// right, positive Y is down, matching the screen-space axes.
-    ///
-    /// The box is the laid-out text, so it moves when the text, font, or wrap
-    /// width changes. To turn about a fixed corner instead, measure the text
-    /// and offset the pivot by half its extent.
-    pub rotation_pivot: [f32; 2],
 }
 
 impl Default for LabelItem {
@@ -152,15 +157,15 @@ impl Default for LabelItem {
             align_x: AnchorX::Left,
             align_y: AnchorY::Middle,
             anchor_padding: 6.0,
-            position: [0.0, 0.0],
+            transform: OverlayTransform::IDENTITY,
+            tint: [1.0, 1.0, 1.0, 1.0],
+            clip_rect: None,
             opacity: 1.0,
             max_width: None,
             border_radius: 0.0,
             z_order: 0,
             clip_id: None,
             shadows: Vec::new(),
-            rotation: 0.0,
-            rotation_pivot: [0.0, 0.0],
         }
     }
 }
@@ -196,7 +201,7 @@ impl LabelItem {
             x: AnchorX::Left,
             y: AnchorY::Top,
         };
-        self.position = pos;
+        self.transform.translate = pos;
         self
     }
 
@@ -271,7 +276,7 @@ impl LabelItem {
     /// Set the placement relative to the anchor, applied after anchor resolution
     /// and alignment.
     pub fn with_position(mut self, position: [f32; 2]) -> Self {
-        self.position = position;
+        self.transform.translate = position;
         self
     }
 
@@ -332,13 +337,39 @@ impl LabelItem {
 
     /// Set the rotation in radians about the text-box centre.
     pub fn with_rotation(mut self, radians: f32) -> Self {
-        self.rotation = radians;
+        self.transform.rotation = radians;
         self
     }
 
     /// Set the point to rotate about, in logical pixels from the text-box centre.
     pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
-        self.rotation_pivot = pivot;
+        self.transform.pivot = pivot;
+        self
+    }
+}
+
+impl LabelItem {
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.tint = tint;
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip_rect = Some(clip_rect);
         self
     }
 }

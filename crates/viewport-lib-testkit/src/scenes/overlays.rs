@@ -266,7 +266,7 @@ fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_glyph_runs(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut per_glyph = GlyphRunItem::new(run_glyphs(14.0));
     per_glyph.font_size = 22.0;
-    per_glyph.position = [20.0, 90.0];
+    per_glyph.transform.translate = [20.0, 90.0];
     per_glyph.colours = RUN_IDS
         .iter()
         .enumerate()
@@ -278,7 +278,7 @@ fn build_glyph_runs(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     let mut plain = GlyphRunItem::new(run_glyphs(16.0));
     plain.font_size = 26.0;
-    plain.position = [20.0, 30.0];
+    plain.transform.translate = [20.0, 30.0];
     plain.colour = Colour::srgb(1.0, 1.0, 1.0, 1.0);
 
     backdrop(ctx, {
@@ -338,7 +338,7 @@ fn build_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     let mut run = GlyphRunItem::new(run_glyphs(18.0));
     run.font_size = 28.0;
-    run.position = [20.0, 190.0];
+    run.transform.translate = [20.0, 190.0];
     run.colour = Colour::srgb(1.0, 1.0, 1.0, 1.0);
     run.shadows = nameplate;
 
@@ -393,15 +393,15 @@ fn build_rotation(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .with_position([200.0, 60.0])
         .with_font_size(20.0)
         .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0));
-    label.rotation = -0.7;
-    label.rotation_pivot = off_centre;
+    label.transform.rotation = -0.7;
+    label.transform.pivot = off_centre;
 
     let mut run = GlyphRunItem::new(run_glyphs(16.0));
     run.font_size = 24.0;
-    run.position = [60.0, 180.0];
+    run.transform.translate = [60.0, 180.0];
     run.colour = Colour::srgb(0.7, 1.0, 0.6, 1.0);
-    run.rotation = 0.9;
-    run.rotation_pivot = off_centre;
+    run.transform.rotation = 0.9;
+    run.transform.pivot = off_centre;
 
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
@@ -499,7 +499,7 @@ fn group_items() -> (Vec<OverlayPolylineItem>, Vec<LabelItem>, Vec<GlyphRunItem>
     ];
     let mut run = GlyphRunItem::new(run_glyphs(10.0));
     run.font_size = 14.0;
-    run.position = [8.0, 62.0];
+    run.transform.translate = [8.0, 62.0];
     run.colour = Colour::srgb(0.6, 1.0, 0.8, 1.0);
     (polylines, labels, vec![run])
 }
@@ -547,16 +547,19 @@ fn build_composition(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // `group_T . item_T` and a component-wise addition of the two agree in
     // every simpler arrangement and disagree here, so this is the reference
     // that makes the contract fail a build rather than only a doc comment. The
-    // group half of it is incomplete until a retained group can rotate;
-    // re-bless this scene when it can.
+    // Both groups rotate, which is what makes the two rules disagree: an item
+    // offset inside a rotated group must travel along the group's rotated axis.
     let id = compile_group(ctx);
     let retained = vec![
         RetainedOverlay::new(id)
             .with_translate([200.0, 150.0])
+            .with_rotation(0.35)
+            .with_rotation_pivot([60.0, 30.0])
             .with_scale(0.9),
         RetainedOverlay::new(id)
             .with_translate([30.0, 30.0])
-            .with_opacity(0.35),
+            .with_rotation(-0.25)
+            .with_opacity(0.6),
     ];
     // Immediate items carrying their own rotation, over the same backdrop, so
     // the two roles are visible in one image.

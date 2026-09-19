@@ -18,6 +18,7 @@ pub mod label;
 pub mod polyline;
 pub mod shape;
 pub mod texture;
+pub mod transform;
 pub mod vector;
 
 pub use self::anchor::*;
@@ -31,4 +32,5 @@ pub use self::label::*;
 pub use self::polyline::*;
 pub use self::shape::*;
 pub use self::texture::*;
+pub use self::transform::*;
 pub use self::vector::*;

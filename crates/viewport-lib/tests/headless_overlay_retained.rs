@@ -170,15 +170,21 @@ fn retained_per_frame_scale() {
         "scaled-down text square should cover x=16,y=16"
     );
 
-    // Shape stream is not scaled by P2: the same scale leaves the SDF rect at full size.
+    // The shape stream scales too: the group transform maps the quad while the
+    // SDF stays in the shape's own frame, so a rect over 16..48 at scale 0.5
+    // about the origin lands on 8..24 like the text square.
     let shape_id =
         renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], &[], 1.0);
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![RetainedOverlay::new(shape_id).with_scale(0.5)];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
-        is_red(rgb_at(&px, size, 32, 32)),
-        "SDF shape should ignore per-frame scale (P2 scope), still covering the centre"
+        is_background(rgb_at(&px, size, 32, 32)),
+        "scaled-down shape should have vacated the centre"
+    );
+    assert!(
+        is_red(rgb_at(&px, size, 16, 16)),
+        "scaled-down shape should cover x=16,y=16"
     );
 }
 

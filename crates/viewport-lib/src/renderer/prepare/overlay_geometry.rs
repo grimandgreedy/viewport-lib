@@ -1212,20 +1212,27 @@ pub(super) fn emit_flat_mesh(
 pub(super) struct OverlayRotation {
     sin: f32,
     cos: f32,
-    /// Absolute screen-pixel point the vertices turn about.
+    scale: f32,
+    /// Absolute screen-pixel point the vertices turn and scale about.
     centre: [f32; 2],
 }
 
 impl OverlayRotation {
-    /// A rotation about `centre`, or `None` when the angle is zero and nothing
-    /// would move.
-    pub(super) fn new(radians: f32, centre: [f32; 2]) -> Option<Self> {
-        if radians == 0.0 {
+    /// An item transform baked into vertex positions: scale about `centre`,
+    /// then rotate about it. `None` when neither would move anything, so
+    /// callers can pass one through unconditionally.
+    ///
+    /// This is the inner half of the composition contract. The outer half (the
+    /// group transform) rides the GPU instance; an immediate item has no
+    /// instance slot of its own, so its half is folded in here.
+    pub(super) fn new(radians: f32, scale: f32, centre: [f32; 2]) -> Option<Self> {
+        if radians == 0.0 && scale == 1.0 {
             return None;
         }
         Some(Self {
             sin: radians.sin(),
             cos: radians.cos(),
+            scale,
             centre,
         })
     }
@@ -1240,8 +1247,8 @@ impl OverlayRotation {
     }
 
     fn apply(&self, p: [f32; 2]) -> [f32; 2] {
-        let dx = p[0] - self.centre[0];
-        let dy = p[1] - self.centre[1];
+        let dx = (p[0] - self.centre[0]) * self.scale;
+        let dy = (p[1] - self.centre[1]) * self.scale;
         [
             self.centre[0] + self.cos * dx - self.sin * dy,
             self.centre[1] + self.sin * dx + self.cos * dy,
@@ -1249,8 +1256,9 @@ impl OverlayRotation {
     }
 }
 
-/// Rotate the positions of `verts[from..]` in place. A `None` rotation is a
-/// no-op, so callers can pass one through unconditionally.
+/// Apply an item transform to the positions of `verts[from..]` in place. A
+/// `None` transform is a no-op, so callers can pass one through
+/// unconditionally.
 pub(super) fn rotate_vertices_from(
     verts: &mut [crate::resources::OverlayTextVertex],
     from: usize,
@@ -1264,7 +1272,7 @@ pub(super) fn rotate_vertices_from(
     }
 }
 
-/// Rotate the positions of `verts[range]` in place.
+/// Apply an item transform to the positions of `verts[range]` in place.
 pub(super) fn rotate_vertices_range(
     verts: &mut [crate::resources::OverlayTextVertex],
     range: std::ops::Range<usize>,

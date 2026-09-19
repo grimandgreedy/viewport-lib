@@ -301,8 +301,8 @@ mod tests {
         build_axes_overlays(800.0, 600.0, glam::Quat::IDENTITY, &mut shapes);
         // Every shape's centre is near the bottom-left origin region.
         for s in &shapes {
-            let cx = s.position[0] + s.size[0] * 0.5;
-            let cy = s.position[1] + s.size[1] * 0.5;
+            let cx = s.transform.translate[0] + s.size[0] * 0.5;
+            let cy = s.transform.translate[1] + s.size[1] * 0.5;
             assert!(cx < 120.0, "shape too far right: {cx}");
             assert!(cy > 480.0, "shape too far up: {cy}");
         }

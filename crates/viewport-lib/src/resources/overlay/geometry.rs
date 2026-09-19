@@ -57,9 +57,14 @@ pub(crate) struct CompiledSource {
 
 /// Per-draw instance data shared by immediate and retained overlay draws.
 ///
-/// Slot 0 is the identity used by every immediate draw (no translate, full
+/// Slot 0 is the identity used by every immediate draw (no transform, full
 /// opacity, no clip); each retained group gets its own slot. The overlay vertex
 /// shader reads the slot named by `@builtin(instance_index)`.
+///
+/// `translate` / `scale` / `rotation` / `pivot` mirror the group's
+/// `OverlayTransform` and are applied as `translate . rotate_about(pivot) .
+/// scale`, the outer half of the composition contract. An immediate item has no
+/// slot of its own, so its transform is folded into the vertex stream at emit.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct OverlayInstance {
@@ -79,13 +84,16 @@ pub(crate) struct OverlayInstance {
     /// `[1, 1, 1, 1]`. Lets a colour flash or fade ride the instance instead of the
     /// vertex stream.
     pub tint: [f32; 4],
-    /// Uniform scale about the group's local origin, applied before `translate`;
-    /// identity `1.0`. Applied to the text-stream geometry (glyphs, polylines,
-    /// vector fills); the SDF-shape stream ignores it for now.
+    /// Uniform scale about `pivot`, applied before `rotation` and `translate`;
+    /// identity `1.0`.
     pub scale: f32,
-    /// Padding so the struct matches the WGSL storage stride (a `vec4` member
-    /// forces 16-byte alignment). Not read by the shaders.
-    pub _pad: [f32; 3],
+    /// Rotation in radians about `pivot`, applied after `scale` and before
+    /// `translate`.
+    pub rotation: f32,
+    /// Centre of rotation and scaling, in logical pixels in the group's own
+    /// space. Two scalars rather than a `vec2` so the WGSL mirror keeps the
+    /// 4-byte offsets this tail has (a `vec2<f32>` member would align to 8).
+    pub pivot: [f32; 2],
 }
 
 impl OverlayInstance {
@@ -98,6 +106,7 @@ impl OverlayInstance {
         clip_rect: [0.0, 0.0, 0.0, 0.0],
         tint: [1.0, 1.0, 1.0, 1.0],
         scale: 1.0,
-        _pad: [0.0, 0.0, 0.0],
+        rotation: 0.0,
+        pivot: [0.0, 0.0],
     };
 }

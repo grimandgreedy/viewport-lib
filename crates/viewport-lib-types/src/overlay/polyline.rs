@@ -82,9 +82,35 @@ pub struct OverlayPolylineItem {
     /// Origin the path hangs from: a viewport corner (default top-left) or a
     /// projected world point. Every point in `points` is relative to this.
     pub anchor: OverlayAnchor,
-    /// Placement in logical pixels relative to the resolved `anchor` origin,
-    /// added to every point. Default: `[0.0, 0.0]`.
-    pub position: [f32; 2],
+    /// Translate, rotate, and scale, in logical pixels and radians.
+    ///
+    /// `translate` is the nudge from the resolved `anchor` origin, so with the
+    /// default anchor and alignment it is the absolute screen placement.
+    /// Rotation turns the item inside its extent box, which stays
+    /// axis-aligned, so `align_x` / `align_y` place the unrotated box and the
+    /// content turns within it. See [`OverlayTransform`] for how an item's
+    /// transform composes with the transform of a retained group containing
+    /// it.
+    pub transform: OverlayTransform,
+    /// Per-frame colour multiplier applied to the whole item, identity
+    /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
+    /// and with the tint of a retained group containing it. Never reaches
+    /// shadow layers, on any path: a compiled group's shadow colours are
+    /// baked, so honouring it here would make the same content look different
+    /// on the two paths.
+    pub tint: [f32; 4],
+    /// Axis-aligned clip box in logical pixels `[x0, y0, x1, y1]`, in
+    /// framebuffer space. Fragments outside it are discarded. `None` (the
+    /// default) applies no rectangular clip; composes with `clip_id`, so both
+    /// apply when both are set.
+    ///
+    /// Framebuffer space is the definition, not an approximation: the box stays
+    /// axis-aligned on screen and does **not** turn with the item's own
+    /// rotation or with the rotation of a retained group containing it, the
+    /// same way a scissor rect behaves everywhere else. For a clip that follows
+    /// rotated content, use `clip_id` with a mask shape, which is evaluated per
+    /// fragment against a shape that can itself rotate.
+    pub clip_rect: Option<[f32; 4]>,
     /// How the path's bounding box sits horizontally on `anchor` + `position`.
     /// Default `Left` leaves the points as authored.
     pub align_x: AnchorX,
@@ -154,7 +180,9 @@ impl Default for OverlayPolylineItem {
         Self {
             points: Vec::new(),
             anchor: OverlayAnchor::default(),
-            position: [0.0, 0.0],
+            transform: OverlayTransform::IDENTITY,
+            tint: [1.0, 1.0, 1.0, 1.0],
+            clip_rect: None,
             align_x: AnchorX::Left,
             align_y: AnchorY::Top,
             thickness: 2.0,
@@ -203,7 +231,7 @@ impl OverlayPolylineItem {
     /// Set the placement in logical pixels relative to the resolved anchor
     /// origin, added to every point.
     pub fn with_position(mut self, position: [f32; 2]) -> Self {
-        self.position = position;
+        self.transform.translate = position;
         self
     }
 
@@ -241,8 +269,8 @@ impl OverlayPolylineItem {
             }
         }
         Some([
-            origin[0] + self.position[0] + self.align_x.align_shift(max_x - min_x),
-            origin[1] + self.position[1] + self.align_y.align_shift(max_y - min_y),
+            origin[0] + self.transform.translate[0] + self.align_x.align_shift(max_x - min_x),
+            origin[1] + self.transform.translate[1] + self.align_y.align_shift(max_y - min_y),
         ])
     }
 
@@ -522,5 +550,31 @@ mod path_sample_tests {
         };
         closed.set_points_from_path(circle, 4);
         assert!((closed.points[0][0] - closed.points[4][0]).abs() > 1e-3);
+    }
+}
+
+impl OverlayPolylineItem {
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.tint = tint;
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip_rect = Some(clip_rect);
+        self
     }
 }
