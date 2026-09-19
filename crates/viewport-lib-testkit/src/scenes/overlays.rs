@@ -403,11 +403,42 @@ fn build_rotation(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     run.transform.rotation = 0.9;
     run.transform.pivot = off_centre;
 
+    // Polylines rotate too. A stroked path with joins and caps, and a closed
+    // filled one: the join geometry is generated per segment and is the part a
+    // transform applied in the wrong order tears apart.
+    let polylines = vec![
+        OverlayPolylineItem::new(vec![
+            [210.0, 150.0],
+            [250.0, 190.0],
+            [290.0, 150.0],
+            [330.0, 200.0],
+        ])
+        .with_thickness(8.0)
+        .with_colour(Colour::srgb(1.0, 0.8, 0.3, 1.0))
+        .with_join(LineJoin::Mitre)
+        .with_cap(PolylineCap::Round)
+        .with_rotation(0.6)
+        .with_rotation_pivot(off_centre),
+        OverlayPolylineItem::new(vec![
+            [60.0, 215.0],
+            [130.0, 215.0],
+            [150.0, 265.0],
+            [90.0, 285.0],
+            [40.0, 250.0],
+        ])
+        .with_closed(true)
+        .with_thickness(3.0)
+        .with_colour(Colour::srgb(1.0, 1.0, 1.0, 0.9))
+        .with_fill(OverlayFill::Solid(Colour::srgb(0.4, 0.35, 0.8, 0.9)))
+        .with_rotation(-0.5),
+    ];
+
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
         ovl.shapes = shapes;
         ovl.labels = vec![label];
         ovl.glyph_runs = vec![run];
+        ovl.polylines = polylines;
         ovl
     })
 }

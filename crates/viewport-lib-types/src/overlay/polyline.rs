@@ -552,6 +552,23 @@ impl OverlayPolylineItem {
         self
     }
 
+    /// Set the rotation in radians about the pivot.
+    ///
+    /// The points are the caller's, so a consumer drawing immediately could
+    /// always rotate them itself. Under retention it could not: the points are
+    /// baked into the compiled buffer, and turning them means re-compiling.
+    pub fn with_rotation(mut self, radians: f32) -> Self {
+        self.transform.rotation = radians;
+        self
+    }
+
+    /// Set the point to rotate and scale around, in logical pixels from the
+    /// centre of the path's bounding box.
+    pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
+        self.transform.pivot = pivot;
+        self
+    }
+
     /// Set the uniform scale about the transform pivot.
     pub fn with_scale(mut self, scale: f32) -> Self {
         self.transform.scale = scale;
