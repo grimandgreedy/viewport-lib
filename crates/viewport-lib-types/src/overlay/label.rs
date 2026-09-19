@@ -1,6 +1,7 @@
 //! Text label overlay items.
 
 use super::anchor::{AnchorX, AnchorY, OverlayAnchor};
+use super::animation::OverlayAnimations;
 use super::transform::OverlayTransform;
 
 /// A text label rendered as a screen-space overlay.
@@ -50,6 +51,12 @@ pub struct LabelItem {
     /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
     /// this family draws.
     pub style: crate::overlay::OverlayStyle,
+    /// Animation tracks resolved each frame against `OverlayFrame::time`.
+    ///
+    /// Boxed and `None` for a static item: the track block is several times
+    /// the size of the rest of the item, so only items that animate pay for
+    /// it. See [`OverlayAnimations`] for why the channel list is what it is.
+    pub animations: Option<Box<OverlayAnimations>>,
     /// Per-frame colour multiplier applied to the whole item, identity
     /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
     /// and with the tint of a retained group containing it. Never reaches
@@ -156,6 +163,7 @@ impl Default for LabelItem {
             anchor_padding: 6.0,
             transform: OverlayTransform::IDENTITY,
             style: crate::overlay::OverlayStyle::default(),
+            animations: None,
             tint: [1.0, 1.0, 1.0, 1.0],
             clip_rect: None,
             opacity: 1.0,
@@ -362,6 +370,12 @@ impl LabelItem {
     /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
         self.tint = tint;
+        self
+    }
+
+    /// Set the animation tracks.
+    pub fn with_animations(mut self, animations: OverlayAnimations) -> Self {
+        self.animations = Some(Box::new(animations));
         self
     }
 

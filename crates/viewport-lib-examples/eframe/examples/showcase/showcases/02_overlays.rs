@@ -612,7 +612,7 @@ impl OverlaysShowcase {
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.65, 0.25, 0.95)))
             .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw)
-            .with_animations(OverlayAnimations::default().with_position(AnimTrack {
+            .with_animations(OverlayAnimations::default().with_translate(AnimTrack {
                 start_time: 0.0,
                 duration: 1.8,
                 from: [x, y + 20.0],

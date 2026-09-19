@@ -582,6 +582,7 @@ impl ViewportRenderer {
                 // masks scroll containers use.) The bbox and the SDF index come from the
                 // same registry, so a clipped item's `clip_rect` and `clip_index` always
                 // describe the same mask.
+                let overlay_time = frame.overlays.time;
                 let (clip_shapes, clip_index_of, clip_bboxes) =
                     build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
                 // Stamp an item's clip onto every vertex it emitted: the mask
@@ -620,6 +621,27 @@ impl ViewportRenderer {
                     if poly.points.len() < 2 || poly.opacity <= 0.0 {
                         continue;
                     }
+                    // Resolve animation tracks first: a `translate` track drives
+                    // the same channel the anchor offset is measured from, so
+                    // resolving the offset before the track would use last
+                    // frame's translate.
+                    let animated_storage;
+                    let poly: &crate::renderer::types::OverlayPolylineItem =
+                        if poly.animations.is_none() {
+                            poly
+                        } else {
+                            let mut owned = poly.clone();
+                            if let Some(anims) = owned.animations.take() {
+                                anims.apply(
+                                    overlay_time,
+                                    &mut owned.transform,
+                                    &mut owned.opacity,
+                                    &mut owned.tint,
+                                );
+                            }
+                            animated_storage = owned;
+                            &animated_storage
+                        };
                     // Resolve the anchor to a screen-pixel offset and draw the
                     // path there; a culled world anchor skips it. The offset is
                     // baked into a translated copy so the stroke and fill paths
@@ -717,19 +739,28 @@ impl ViewportRenderer {
                     if shape.clip_mask_id.is_some() || shape.opacity <= 0.0 {
                         continue;
                     }
-                    // Resolve the anchor to an absolute top-left so anchored
-                    // vector shapes tessellate where they draw; a culled world
-                    // anchor skips the shape. Vector shapes take no animation
-                    // tracks, so the raw item resolves directly.
-                    let Some(tl) = shape.resolve_top_left([vp_w, vp_h], view, proj) else {
-                        continue;
-                    };
                     super::overlay_style_check::warn_inert_style(
                         "OverlayShape::Vector",
                         crate::renderer::types::OverlayStyleSupport::for_shape(&shape.shape),
                         &shape.style,
                     );
                     let mut owned = shape.clone();
+                    if let Some(anims) = owned.animations.take() {
+                        anims.apply(
+                            overlay_time,
+                            &mut owned.transform,
+                            &mut owned.opacity,
+                            &mut owned.tint,
+                        );
+                    }
+                    // Resolve the anchor to an absolute top-left so anchored
+                    // vector shapes tessellate where they draw; a culled world
+                    // anchor skips the shape. Tracks resolve first, because a
+                    // `translate` track drives the channel the top-left is
+                    // measured from.
+                    let Some(tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
+                        continue;
+                    };
                     owned.transform.translate = tl;
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     emit_vector_shape(&mut batch, &owned, subpaths, *fill_rule, vp_w, vp_h);
@@ -754,6 +785,24 @@ impl ViewportRenderer {
                         continue;
                     };
 
+                    // Resolve animation tracks onto a local copy so the input
+                    // frame stays untouched; a static label skips the clone.
+                    let animated_storage;
+                    let label: &crate::renderer::types::LabelItem = if label.animations.is_none() {
+                        label
+                    } else {
+                        let mut owned = label.clone();
+                        if let Some(anims) = owned.animations.take() {
+                            anims.apply(
+                                overlay_time,
+                                &mut owned.transform,
+                                &mut owned.opacity,
+                                &mut owned.tint,
+                            );
+                        }
+                        animated_storage = owned;
+                        &animated_storage
+                    };
                     let opacity = label.opacity.clamp(0.0, 1.0);
                     super::overlay_style_check::warn_inert_style(
                         "LabelItem",
@@ -947,6 +996,22 @@ impl ViewportRenderer {
                     if run.glyphs.is_empty() || run.opacity <= 0.0 {
                         continue;
                     }
+                    let animated_storage;
+                    let run: &crate::renderer::types::GlyphRunItem = if run.animations.is_none() {
+                        run
+                    } else {
+                        let mut owned = run.clone();
+                        if let Some(anims) = owned.animations.take() {
+                            anims.apply(
+                                overlay_time,
+                                &mut owned.transform,
+                                &mut owned.opacity,
+                                &mut owned.tint,
+                            );
+                        }
+                        animated_storage = owned;
+                        &animated_storage
+                    };
                     super::overlay_style_check::warn_inert_style(
                         "GlyphRunItem",
                         crate::renderer::types::OverlayStyleSupport::for_glyphs(),
@@ -1103,6 +1168,25 @@ impl ViewportRenderer {
                     // Re-emit the group first if its baked glyph UVs went stale
                     // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
                     self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp);
+                    // Resolve the group's tracks. Every channel they drive rides
+                    // the instance, so an animated group never re-compiles; a
+                    // static group skips the clone.
+                    let animated_storage;
+                    let r: &crate::renderer::types::RetainedOverlay = if r.animations.is_none() {
+                        r
+                    } else {
+                        let mut owned = r.clone();
+                        if let Some(anims) = owned.animations.take() {
+                            anims.apply(
+                                frame.overlays.time,
+                                &mut owned.transform,
+                                &mut owned.opacity,
+                                &mut owned.tint,
+                            );
+                        }
+                        animated_storage = owned;
+                        &animated_storage
+                    };
                     let (text, shape, anchor) =
                         match self.resources.content.overlay_geometry.get(r.id) {
                             Some(c) => {
@@ -1431,58 +1515,12 @@ impl ViewportRenderer {
                     // the input frame data stays untouched.
                     let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
                     if let Some(anims) = owned.animations.take() {
-                        if let Some(track) = anims.opacity {
-                            owned.opacity = track.sample(overlay_time);
-                        }
-                        if let Some(track) = anims.position {
-                            owned.transform.translate = track.sample(overlay_time);
-                        }
-                        if let Some(track) = anims.size {
-                            owned.size = track.sample(overlay_time);
-                        }
-                        if let Some(track) = anims.fill {
-                            if let Some(crate::renderer::types::OverlayFill::Solid(_)) =
-                                owned.style.fill
-                            {
-                                owned.style.fill =
-                                    Some(crate::renderer::types::OverlayFill::Solid(
-                                        track.sample(overlay_time).into(),
-                                    ));
-                            }
-                        }
-                        if let Some(track) = anims.border {
-                            owned.border_colour = track.sample(overlay_time).into();
-                        }
-                        if let Some(track) = anims.rotation {
-                            owned.transform.rotation = track.sample(overlay_time);
-                        }
-                        // Path tracks override the matching linear track when
-                        // both are set.
-                        if let Some(track) = anims.opacity_path.as_ref() {
-                            owned.opacity = track.sample(overlay_time);
-                        }
-                        if let Some(track) = anims.position_path.as_ref() {
-                            owned.transform.translate = track.sample(overlay_time);
-                        }
-                        if let Some(track) = anims.size_path.as_ref() {
-                            owned.size = track.sample(overlay_time);
-                        }
-                        if let Some(track) = anims.fill_path.as_ref() {
-                            if let Some(crate::renderer::types::OverlayFill::Solid(_)) =
-                                owned.style.fill
-                            {
-                                owned.style.fill =
-                                    Some(crate::renderer::types::OverlayFill::Solid(
-                                        track.sample(overlay_time).into(),
-                                    ));
-                            }
-                        }
-                        if let Some(track) = anims.border_path.as_ref() {
-                            owned.border_colour = track.sample(overlay_time).into();
-                        }
-                        if let Some(track) = anims.rotation_path.as_ref() {
-                            owned.transform.rotation = track.sample(overlay_time);
-                        }
+                        anims.apply(
+                            overlay_time,
+                            &mut owned.transform,
+                            &mut owned.opacity,
+                            &mut owned.tint,
+                        );
                     }
                     // Resolve the anchor origin + animated position + alignment
                     // to an absolute top-left, then draw the shape as if it were

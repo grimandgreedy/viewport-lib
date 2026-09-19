@@ -1585,18 +1585,17 @@ mod tests {
 mod size_tests {
     use super::*;
 
-    /// The animation block dwarfs the rest of the shape item, so it is boxed
-    /// and only animated shapes pay for it. Assert the win so it cannot
-    /// silently regress when a field is added.
+    /// The animation block is boxed, so a static shape carries a pointer
+    /// rather than a track per channel. Assert both halves so neither can
+    /// regress: the field is one word, and the item stays inside its budget.
     #[test]
     fn shape_item_stays_small_without_animation_state() {
-        let item = std::mem::size_of::<OverlayShapeItem>();
-        let anims = std::mem::size_of::<OverlayAnimations>();
-        assert!(
-            item < anims,
-            "OverlayShapeItem is {item} bytes and OverlayAnimations is {anims}: \
-             the animation block is no longer boxed"
+        assert_eq!(
+            std::mem::size_of::<Option<Box<OverlayAnimations>>>(),
+            std::mem::size_of::<usize>(),
+            "the animation block is no longer boxed"
         );
+        let item = std::mem::size_of::<OverlayShapeItem>();
         assert!(
             item <= 512,
             "OverlayShapeItem grew to {item} bytes (budget 512)"
@@ -1608,6 +1607,12 @@ impl OverlayShapeItem {
     /// Set the transform: translate, rotate, scale, and pivot at once.
     pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
         self.transform = transform;
+        self
+    }
+
+    /// Set the translation in logical pixels from the resolved anchor origin.
+    pub fn with_position(mut self, position: [f32; 2]) -> Self {
+        self.transform.translate = position;
         self
     }
 

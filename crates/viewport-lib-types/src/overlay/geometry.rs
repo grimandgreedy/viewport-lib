@@ -25,7 +25,7 @@ crate::slot_handle! {
 /// (so a scroll container just updates the offset), an `opacity` multiplier, a
 /// `z_order` for cross-family draw order, and an optional outer `clip_rect`. The
 /// group's own geometry is fixed in the handle.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RetainedOverlay {
     /// The compiled group to draw.
@@ -72,6 +72,12 @@ pub struct RetainedOverlay {
     /// re-compiling the group. On SDF shapes the tint reaches the fill, border, and
     /// gradient colours but not the drop shadow (whose colour is baked).
     pub tint: [f32; 4],
+    /// Animation tracks resolved each frame against `OverlayFrame::time`.
+    ///
+    /// Every channel a track can drive rides the per-draw instance, so an
+    /// animated group re-draws from its compiled buffers with no
+    /// re-tessellation. Boxed and `None` for a static group.
+    pub animations: Option<Box<crate::overlay::OverlayAnimations>>,
 }
 
 impl RetainedOverlay {
@@ -86,6 +92,7 @@ impl RetainedOverlay {
             clip_rect: None,
             clip_id: None,
             tint: [1.0, 1.0, 1.0, 1.0],
+            animations: None,
         }
     }
 
@@ -143,6 +150,13 @@ impl RetainedOverlay {
     /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
         self.tint = tint;
+        self
+    }
+
+    /// Set the animation tracks. Every channel they drive rides the instance,
+    /// so an animated group never re-compiles.
+    pub fn with_animations(mut self, animations: crate::overlay::OverlayAnimations) -> Self {
+        self.animations = Some(Box::new(animations));
         self
     }
 

@@ -1155,7 +1155,7 @@ fn row_anim(
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.65, 0.25, 0.95)))
         .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw)
         .with_animations(
-            vpl::OverlayAnimations::default().with_position(vpl::AnimTrack {
+            vpl::OverlayAnimations::default().with_translate(vpl::AnimTrack {
                 start_time: 0.0,
                 duration: 1.8,
                 from: [base_x, y5_mid - 14.0],
@@ -1178,26 +1178,18 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.45, 0.85, 1.0, 0.95)))
         .with_border(Colour::srgb(0.7, 0.95, 1.0, 0.9), bw)
+        // Scale, not size: a scale rides the per-draw instance, so the same
+        // track animates a compiled group without re-tessellating it, and it
+        // pulses about the pivot so nothing has to recentre it.
         .with_animations(
-            vpl::OverlayAnimations::default()
-                .with_size(vpl::AnimTrack {
-                    start_time: 0.0,
-                    duration: 1.4,
-                    from: [44.0, 44.0],
-                    to: [64.0, 64.0],
-                    easing: vpl::OverlayEasing::Pulse,
-                    repeat: vpl::RepeatMode::Loop,
-                })
-                .with_position(vpl::AnimTrack {
-                    // Recentre while the size grows so the circle pulses
-                    // about its centre rather than drifting south-east.
-                    start_time: 0.0,
-                    duration: 1.4,
-                    from: [pulse_cx - 22.0, pulse_cy - 22.0],
-                    to: [pulse_cx - 32.0, pulse_cy - 32.0],
-                    easing: vpl::OverlayEasing::Pulse,
-                    repeat: vpl::RepeatMode::Loop,
-                }),
+            vpl::OverlayAnimations::default().with_scale(vpl::AnimTrack {
+                start_time: 0.0,
+                duration: 1.4,
+                from: 1.0,
+                to: 1.45,
+                easing: vpl::OverlayEasing::Pulse,
+                repeat: vpl::RepeatMode::Loop,
+            }),
         ),
     );
     x5 += row5_h + gap;
@@ -1212,11 +1204,14 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.25, 0.5, 0.95)))
         .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw)
-        .with_animations(vpl::OverlayAnimations::default().with_fill(vpl::AnimTrack {
+        // Tint, not fill: a tint is a per-draw multiplier, so a colour cycle
+        // costs nothing on a compiled group. The authored fill is white here so
+        // the tint reads as the colour.
+        .with_animations(vpl::OverlayAnimations::default().with_tint(vpl::AnimTrack {
             start_time: 0.0,
             duration: 1.6,
-            from: [0.95, 0.25, 0.5, 0.95],
-            to: [0.25, 0.55, 0.95, 0.95],
+            from: [1.0, 0.55, 0.75, 1.0],
+            to: [0.45, 0.75, 1.0, 1.0],
             easing: vpl::OverlayEasing::EaseInOut,
             repeat: vpl::RepeatMode::PingPong,
         })),
@@ -1257,11 +1252,12 @@ fn row_anim(
         let cy = y5_mid;
         let dot_size = 22.0_f32;
 
-        let path = vpl::PathTrack::<[f32; 2]>::new(0.0, 4.5, move |t| {
-            let p = infinity_bezier_point(t, cx, cy);
-            [p[0] - dot_size * 0.5, p[1] - dot_size * 0.5]
-        })
-        .with_repeat(vpl::RepeatMode::Loop);
+        // A genuine motion path is the consumer's: sample the curve at this
+        // frame's time and set `position`. The library's track channels are the
+        // ones that survive compilation, and an arbitrary closure is not one of
+        // them.
+        let phase = (app.ovl_state.start_time.elapsed().as_secs_f32() / 4.5).fract();
+        let dot = infinity_bezier_point(phase, cx, cy);
 
         // Sample the same Bezier closure into the polyline trace.
         let trace = vpl::OverlayPolylineItem::from_path(
@@ -1280,7 +1276,7 @@ fn row_anim(
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.45, 0.85, 1.0)))
             .with_border(Colour::srgb(1.0, 0.7, 0.95, 0.9), bw)
-            .with_animations(vpl::OverlayAnimations::default().with_position_path(path)),
+            .with_position([dot[0] - dot_size * 0.5, dot[1] - dot_size * 0.5]),
         );
         x5 += 260.0 + gap;
     }
