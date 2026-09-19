@@ -26,9 +26,9 @@
 //! Navigation: left/middle drag orbit, right drag pan, scroll zoom (the cube is
 //! just context behind the panel).
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
     AnchorY, LabelItem, Material, Modifiers, OffscreenViewportTarget, OrbitCameraController,
@@ -85,7 +85,7 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + 24.0],
         ];
         swatch.closed = true;
-        swatch.fill = Some(OverlayFill::Solid(
+        swatch.style.fill = Some(OverlayFill::Solid(
             [0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0].into(),
         ));
         lines.push(swatch);

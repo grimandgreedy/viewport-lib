@@ -1,0 +1,260 @@
+//! `OverlayStyleSupport` against what the renderer actually draws.
+//!
+//! The support table is the machine-readable answer to "does setting this do
+//! anything on this family", which a lowering layer branches on. A table that
+//! drifts from the renderer is worse than no table, so every cell is checked
+//! the only way that cannot drift: set the field, render, and see whether the
+//! pixels moved.
+
+#[cfg(feature = "wgpu29")]
+use viewport_lib::wgpu;
+
+mod common;
+use common::*;
+
+use viewport_lib::{
+    BackdropEffects, Colour, GlyphRunItem, GradientStop, LabelItem, OverlayFill, OverlayFrame,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStyle, OverlayStyleSupport,
+    PositionedGlyph, ShadowLayer, SubPath,
+};
+
+const SIZE: u32 = 96;
+
+fn base_frame() -> FrameData {
+    let cam = Camera::default();
+    let mut frame = FrameData::default();
+    frame.camera.render_camera = {
+        let mut rc = RenderCamera::from_camera(&cam);
+        rc.aspect = 1.0;
+        rc
+    };
+    frame.camera.viewport_size = [SIZE as f32, SIZE as f32];
+    frame.viewport.show_grid = false;
+    frame.viewport.show_axes_indicator = false;
+    frame.viewport.background_colour = Some([0.5, 0.5, 0.5, 1.0].into());
+    frame
+}
+
+/// The four style fields the table reports on, each as "the non-default value
+/// to try". `texture_transform` rides `texture` and is not separately queryable.
+fn probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
+    vec![
+        ("fill", |s: &mut OverlayStyle| {
+            s.fill = Some(OverlayFill::LinearGradient {
+                start_colour: Colour::srgb(1.0, 0.0, 0.0, 1.0),
+                end_colour: Colour::srgb(0.0, 0.0, 1.0, 1.0),
+                angle: 0.0,
+            });
+        }),
+        ("shadows", |s: &mut OverlayStyle| {
+            s.shadows = vec![ShadowLayer::outline(Colour::srgb(0.0, 0.0, 0.0, 1.0), 3.0)];
+        }),
+        // An inner shadow needs a spread (or an offset): without one the band
+        // starts at the edge and the whole interior is outside it, so a
+        // blur-only inset layer is invisible by construction rather than by
+        // the family not supporting it.
+        ("inner_shadows", |s: &mut OverlayStyle| {
+            s.inner_shadows = vec![
+                ShadowLayer::new(Colour::srgb(0.0, 0.0, 0.0, 1.0), 6.0, [0.0, 0.0])
+                    .with_spread(8.0),
+            ];
+        }),
+    ]
+}
+
+fn supported(support: &OverlayStyleSupport, field: &str) -> bool {
+    match field {
+        "fill" => support.fill,
+        "shadows" => support.shadows,
+        "inner_shadows" => support.inner_shadows,
+        other => panic!("unknown probe field {other}"),
+    }
+}
+
+/// Render `build(style)` and return the pixels.
+fn render(
+    renderer: &mut ViewportRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    overlays: OverlayFrame,
+) -> Vec<u8> {
+    let mut frame = base_frame();
+    frame.overlays = overlays;
+    renderer.render_offscreen(device, queue, &frame, SIZE, SIZE)
+}
+
+fn differs(a: &[u8], b: &[u8]) -> bool {
+    a.iter().zip(b).any(|(x, y)| x.abs_diff(*y) > 2)
+}
+
+/// For every family and every probe field: the pixels change if and only if the
+/// support table says the field is drawn.
+#[test]
+fn reported_support_matches_what_the_renderer_draws() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let analytic = OverlayShape::Circle;
+    let vector = OverlayShape::Vector {
+        subpaths: vec![SubPath::polygon(&[
+            [-20.0, -20.0],
+            [20.0, -20.0],
+            [20.0, 20.0],
+            [-20.0, 20.0],
+        ])],
+        fill_rule: viewport_lib::FillRule::NonZero,
+    };
+
+    // (family name, support, builder taking a style and producing a frame).
+    type Build = Box<dyn Fn(OverlayStyle) -> OverlayFrame>;
+    let families: Vec<(&str, OverlayStyleSupport, Build)> = vec![
+        (
+            "analytic shape",
+            OverlayStyleSupport::for_shape(&analytic),
+            Box::new(|style| {
+                let mut ovl = OverlayFrame::default();
+                let mut item =
+                    OverlayShapeItem::new(OverlayShape::Circle, [20.0, 20.0], [56.0, 56.0]);
+                item.style = style;
+                ovl.shapes = vec![item];
+                ovl
+            }),
+        ),
+        (
+            "vector shape",
+            OverlayStyleSupport::for_shape(&vector),
+            Box::new(move |style| {
+                let mut ovl = OverlayFrame::default();
+                let mut item = OverlayShapeItem::new(
+                    OverlayShape::Vector {
+                        subpaths: vec![SubPath::polygon(&[
+                            [0.0, 0.0],
+                            [40.0, 0.0],
+                            [40.0, 40.0],
+                            [0.0, 40.0],
+                        ])],
+                        fill_rule: viewport_lib::FillRule::NonZero,
+                    },
+                    [28.0, 28.0],
+                    [40.0, 40.0],
+                );
+                item.style = style;
+                ovl.shapes = vec![item];
+                ovl
+            }),
+        ),
+        (
+            "polyline",
+            OverlayStyleSupport::for_polyline(),
+            Box::new(|style| {
+                let mut ovl = OverlayFrame::default();
+                let mut item = OverlayPolylineItem::new(vec![
+                    [20.0, 20.0],
+                    [70.0, 20.0],
+                    [70.0, 70.0],
+                    [20.0, 70.0],
+                ])
+                .with_closed(true)
+                .with_thickness(4.0)
+                .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0));
+                item.style.shadows = style.shadows.clone();
+                item.style.inner_shadows = style.inner_shadows.clone();
+                item.style.fill = style.fill.clone();
+                ovl.polylines = vec![item];
+                ovl
+            }),
+        ),
+        (
+            "label",
+            OverlayStyleSupport::for_glyphs(),
+            Box::new(|style| {
+                let mut ovl = OverlayFrame::default();
+                let mut item = LabelItem::new("Mg")
+                    .with_position([20.0, 20.0])
+                    .with_font_size(36.0)
+                    .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0));
+                item.style = style;
+                ovl.labels = vec![item];
+                ovl
+            }),
+        ),
+        (
+            "glyph run",
+            OverlayStyleSupport::for_glyphs(),
+            Box::new(|style| {
+                let mut ovl = OverlayFrame::default();
+                let mut item = GlyphRunItem::new(vec![
+                    PositionedGlyph::new(55, 0.0, 0.0),
+                    PositionedGlyph::new(82, 22.0, 0.0),
+                ]);
+                item.font_size = 36.0;
+                item.transform.translate = [20.0, 40.0];
+                item.colour = Colour::srgb(1.0, 1.0, 1.0, 1.0);
+                item.style = style;
+                ovl.glyph_runs = vec![item];
+                ovl
+            }),
+        ),
+    ];
+
+    for (name, support, build) in &families {
+        let plain = render(&mut renderer, &device, &queue, build(base_style(name)));
+        for (field, apply) in probes() {
+            let mut style = base_style(name);
+            apply(&mut style);
+            let with = render(&mut renderer, &device, &queue, build(style));
+            let changed = differs(&plain, &with);
+            assert_eq!(
+                changed,
+                supported(support, field),
+                "{name}: style.{field} reported as {} but the render {} \
+                 (the support table and the renderer disagree)",
+                if supported(support, field) {
+                    "drawn"
+                } else {
+                    "inert"
+                },
+                if changed { "changed" } else { "did not change" },
+            );
+        }
+    }
+}
+
+/// Each family needs a visible baseline, or "the pixels did not change" would
+/// be true for every probe.
+fn base_style(family: &str) -> OverlayStyle {
+    match family {
+        // The glyph families draw from `colour`, not `fill`, until gradient
+        // text lands; a fill here would be the very thing under test.
+        "label" | "glyph run" => OverlayStyle::default(),
+        _ => OverlayStyle::solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
+    }
+}
+
+/// A gradient fill on a shape is not the same pixels as a solid one, so the
+/// probe above is only meaningful if the baseline is genuinely visible.
+#[test]
+fn the_probe_baseline_actually_draws_something() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let empty = render(&mut renderer, &device, &queue, OverlayFrame::default());
+    let mut ovl = OverlayFrame::default();
+    ovl.shapes = vec![
+        OverlayShapeItem::new(OverlayShape::Circle, [20.0, 20.0], [56.0, 56.0])
+            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0))),
+    ];
+    let drawn = render(&mut renderer, &device, &queue, ovl);
+    assert!(differs(&empty, &drawn));
+    let _ = GradientStop {
+        position: 0.0,
+        colour: Colour::srgb(0.0, 0.0, 0.0, 1.0),
+    };
+    let _ = BackdropEffects::default();
+}

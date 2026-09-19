@@ -67,9 +67,9 @@ fn absent_and_transparent_layers_are_inert() {
     transparent.overlays.labels = plain.overlays.labels.clone();
     transparent.overlays.glyph_runs = plain.overlays.glyph_runs.clone();
     transparent.overlays.polylines = plain.overlays.polylines.clone();
-    transparent.overlays.labels[0].shadows = vec![invisible];
-    transparent.overlays.glyph_runs[0].shadows = vec![invisible];
-    transparent.overlays.polylines[0].shadows = vec![invisible];
+    transparent.overlays.labels[0].style.shadows = vec![invisible];
+    transparent.overlays.glyph_runs[0].style.shadows = vec![invisible];
+    transparent.overlays.polylines[0].style.shadows = vec![invisible];
 
     let a = renderer.render_offscreen(&device, &queue, &plain, SIZE, SIZE);
     let b = renderer.render_offscreen(&device, &queue, &transparent, SIZE, SIZE);

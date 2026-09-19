@@ -1,0 +1,315 @@
+//! The baked appearance every overlay item shares, and what each family can
+//! actually draw of it.
+
+use crate::overlay::{OverlayFill, OverlayTextureId, ShadowLayer, TextureTransform};
+
+/// Colour filters applied to the blurred scene behind a shape.
+///
+/// Only active where the renderer owns the command encoder (`render`,
+/// `render_viewport`); in the `paint` / `paint_to` paths a blurred item falls
+/// back to a regular solid fill.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct BackdropEffects {
+    /// Blur radius in logical pixels. `0.0` (the default) disables the whole
+    /// backdrop pass, and the other fields with it.
+    pub blur: f32,
+    /// Saturation multiplier. `1.0` leaves saturation unchanged, `0.0`
+    /// produces greyscale.
+    pub saturation: f32,
+    /// Brightness multiplier. `1.0` is unchanged.
+    pub brightness: f32,
+    /// Hue rotation in radians. `0.0` is unchanged.
+    pub hue_shift: f32,
+}
+
+impl Default for BackdropEffects {
+    fn default() -> Self {
+        Self {
+            blur: 0.0,
+            saturation: 1.0,
+            brightness: 1.0,
+            hue_shift: 0.0,
+        }
+    }
+}
+
+impl BackdropEffects {
+    /// Whether the backdrop pass runs at all.
+    pub fn is_active(&self) -> bool {
+        self.blur > 0.0
+    }
+
+    /// Set the blur radius in logical pixels.
+    pub fn with_blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+
+    /// Set the saturation, brightness, and hue-rotation filters.
+    pub fn with_filters(mut self, saturation: f32, brightness: f32, hue_shift: f32) -> Self {
+        self.saturation = saturation;
+        self.brightness = brightness;
+        self.hue_shift = hue_shift;
+        self
+    }
+}
+
+/// Baked appearance shared by the four overlay item types: what the item is
+/// filled and layered with, as opposed to where it sits.
+///
+/// Changing any of this on a retained group means re-compiling it, which is the
+/// line between this struct and
+/// [`OverlayTransform`](crate::overlay::OverlayTransform): a transform, an
+/// opacity, or a tint can change from frame to frame without touching the
+/// compiled buffers, and a style cannot.
+///
+/// # Not every family draws every field
+///
+/// The three coverage backends differ in what they can express, so a field can
+/// be present and inert. Ask [`OverlayStyleSupport`] rather than guessing, and
+/// see its docs for the per-family table. In debug builds the renderer logs
+/// once when a non-default value lands in a cell that family does not draw.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct OverlayStyle {
+    /// Area fill: solid or gradient. `None` draws no fill, leaving the border,
+    /// the stroke, or the glyphs on their own.
+    pub fill: Option<OverlayFill>,
+    /// Stacked drop shadows and contours drawn behind the item, first entry
+    /// furthest back. Up to
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`](crate::overlay::OVERLAY_MAX_SHADOW_LAYERS)
+    /// are honoured.
+    pub shadows: Vec<ShadowLayer>,
+    /// Stacked inset shadows drawn on top of the fill, under the border.
+    pub inner_shadows: Vec<ShadowLayer>,
+    /// Texture fill. When set, the item samples the image uploaded through
+    /// `upload_overlay_texture`, clipped to the item's coverage, and `fill`
+    /// acts as a tint.
+    pub texture: Option<OverlayTextureId>,
+    /// Affine transform applied to the texture sample before lookup: pan,
+    /// scale, rotate, tile, and flip independently of the item it fills.
+    pub texture_transform: TextureTransform,
+    /// Blur and colour filters applied to the scene behind the item.
+    pub backdrop: BackdropEffects,
+}
+
+impl OverlayStyle {
+    /// A solid fill and nothing else.
+    pub fn solid(colour: impl Into<crate::colour::Colour>) -> Self {
+        Self {
+            fill: Some(OverlayFill::Solid(colour.into())),
+            ..Default::default()
+        }
+    }
+
+    /// The fill to rasterise. A `None` fill resolves to a fully transparent
+    /// solid, which is what "no fill" means once it reaches a shader.
+    pub fn resolved_fill(&self) -> OverlayFill {
+        self.fill
+            .clone()
+            .unwrap_or(OverlayFill::Solid(crate::colour::Colour::linear(
+                0.0, 0.0, 0.0, 0.0,
+            )))
+    }
+
+    /// Set the area fill.
+    pub fn with_fill(mut self, fill: OverlayFill) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    /// Set the stacked outer shadow layers.
+    pub fn with_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
+        self.shadows = shadows;
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers.
+    pub fn with_inner_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
+        self.inner_shadows = shadows;
+        self
+    }
+
+    /// Set the texture fill.
+    pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
+        self.texture = Some(texture);
+        self
+    }
+
+    /// Set the texture sampling transform.
+    pub fn with_texture_transform(mut self, transform: TextureTransform) -> Self {
+        self.texture_transform = transform;
+        self
+    }
+
+    /// Set the backdrop blur and filters.
+    pub fn with_backdrop(mut self, backdrop: BackdropEffects) -> Self {
+        self.backdrop = backdrop;
+        self
+    }
+}
+
+/// Which [`OverlayStyle`] fields a given item actually draws.
+///
+/// The axis that decides this is the coverage backend, not the item type: an
+/// analytic shape has a distance field, a vector path and a polyline are
+/// tessellated triangles, and a label or glyph run is a bitmap atlas. A field
+/// is cheap to share only where all three can express it.
+///
+/// Ask through [`OverlayStyleSupport::for_shape`] and the other constructors.
+/// A lowering layer that builds overlay items from a widget tree should branch
+/// on this and emit a fallback, rather than setting a field that silently does
+/// nothing.
+///
+/// # The fields are the contract; the curve is not
+///
+/// A `ShadowLayer` means the same thing everywhere, but the three backends
+/// compute its falloff differently: the SDF path smoothsteps the distance
+/// field, the glyph path runs two box passes over the coverage bitmap, and the
+/// tessellated path draws five banded steps. Identical values are close but not
+/// identical across families. That is deliberate and is not reported here:
+/// `shadows` is supported by all of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OverlayStyleSupport {
+    /// `fill` is drawn, gradients included.
+    pub fill: bool,
+    /// `shadows` is drawn.
+    pub shadows: bool,
+    /// `inner_shadows` is drawn.
+    pub inner_shadows: bool,
+    /// `texture` and `texture_transform` are sampled.
+    pub texture: bool,
+    /// `backdrop` is composited.
+    pub backdrop: bool,
+}
+
+impl OverlayStyleSupport {
+    /// Everything drawn.
+    pub const ALL: Self = Self {
+        fill: true,
+        shadows: true,
+        inner_shadows: true,
+        texture: true,
+        backdrop: true,
+    };
+
+    /// Nothing drawn.
+    pub const NONE: Self = Self {
+        fill: false,
+        shadows: false,
+        inner_shadows: false,
+        texture: false,
+        backdrop: false,
+    };
+
+    /// What an [`OverlayShapeItem`] draws, which depends on its variant:
+    /// analytic variants have a distance field and draw everything, while
+    /// `OverlayShape::Vector` is tessellated triangles and has no distance
+    /// field to run an inset shadow or a backdrop mask off.
+    ///
+    /// This is why the query takes the shape rather than being a constant per
+    /// type: the variant is known where the item is built, which is where a
+    /// lowering layer needs the answer.
+    ///
+    /// [`OverlayShapeItem`]: crate::overlay::OverlayShapeItem
+    pub const fn for_shape(shape: &crate::overlay::OverlayShape) -> Self {
+        match shape {
+            crate::overlay::OverlayShape::Vector { .. } => Self {
+                fill: true,
+                shadows: true,
+                inner_shadows: false,
+                texture: false,
+                backdrop: false,
+            },
+            _ => Self::ALL,
+        }
+    }
+
+    /// What an `OverlayPolylineItem` draws. A stroke has no interior, so an
+    /// inset shadow is meaningless; a closed polyline with a fill is a
+    /// tessellated area, which is why `fill` and `texture` are drawn.
+    pub const fn for_polyline() -> Self {
+        Self {
+            fill: true,
+            shadows: true,
+            inner_shadows: false,
+            texture: true,
+            backdrop: false,
+        }
+    }
+
+    /// What a `LabelItem` or a `GlyphRunItem` draws. Both rasterise through the
+    /// glyph atlas, where a shadow is a dilated and blurred coverage cell.
+    /// Gradient and texture fills on glyphs are not implemented yet; use
+    /// `colour` (and `colours` on a run) until they are.
+    pub const fn for_glyphs() -> Self {
+        Self {
+            fill: false,
+            shadows: true,
+            inner_shadows: false,
+            texture: false,
+            backdrop: false,
+        }
+    }
+
+    /// The style fields that are set to something other than their default and
+    /// are not drawn by this family, as a list of field names.
+    ///
+    /// Empty when the style is fully honoured. The renderer calls this in debug
+    /// builds to log the mismatch once; a consumer can call it in a test to
+    /// assert that a lowering layer never emits an inert field.
+    pub fn inert_fields(&self, style: &OverlayStyle) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if !self.fill && style.fill.is_some() {
+            out.push("fill");
+        }
+        if !self.shadows && !style.shadows.is_empty() {
+            out.push("shadows");
+        }
+        if !self.inner_shadows && !style.inner_shadows.is_empty() {
+            out.push("inner_shadows");
+        }
+        if !self.texture && style.texture.is_some() {
+            out.push("texture");
+        }
+        if !self.backdrop && style.backdrop.is_active() {
+            out.push("backdrop");
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlay::{OverlayShape, ShadowLayer};
+
+    #[test]
+    fn vector_shapes_report_the_cells_they_cannot_draw() {
+        let style = OverlayStyle::solid([1.0, 0.0, 0.0, 1.0])
+            .with_inner_shadows(vec![ShadowLayer::default()])
+            .with_backdrop(BackdropEffects::default().with_blur(4.0));
+
+        let analytic = OverlayStyleSupport::for_shape(&OverlayShape::Circle);
+        assert!(analytic.inert_fields(&style).is_empty());
+
+        let vector = OverlayStyleSupport::for_shape(&OverlayShape::Vector {
+            subpaths: Vec::new(),
+            fill_rule: crate::overlay::FillRule::NonZero,
+        });
+        assert_eq!(vector.inert_fields(&style), ["inner_shadows", "backdrop"]);
+    }
+
+    #[test]
+    fn a_default_style_is_never_inert() {
+        let style = OverlayStyle::default();
+        assert!(
+            OverlayStyleSupport::for_glyphs()
+                .inert_fields(&style)
+                .is_empty()
+        );
+        assert!(OverlayStyleSupport::NONE.inert_fields(&style).is_empty());
+    }
+}

@@ -328,19 +328,19 @@ fn build_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .with_position([20.0, 100.0])
         .with_font_size(24.0)
         .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0));
-    label.shadows = nameplate.clone();
+    label.style.shadows = nameplate.clone();
 
     let mut contour = LabelItem::new("Contour only")
         .with_position([20.0, 140.0])
         .with_font_size(24.0)
         .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0));
-    contour.shadows = vec![ShadowLayer::outline(Colour::srgb(0.0, 0.0, 0.0, 1.0), 2.0)];
+    contour.style.shadows = vec![ShadowLayer::outline(Colour::srgb(0.0, 0.0, 0.0, 1.0), 2.0)];
 
     let mut run = GlyphRunItem::new(run_glyphs(18.0));
     run.font_size = 28.0;
     run.transform.translate = [20.0, 190.0];
     run.colour = Colour::srgb(1.0, 1.0, 1.0, 1.0);
-    run.shadows = nameplate;
+    run.style.shadows = nameplate;
 
     // A polyline shadow: the tessellated backend's banded falloff.
     let polylines = vec![

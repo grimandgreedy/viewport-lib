@@ -19,6 +19,7 @@ fn emit_base(
         }
         let item_start = verts.len();
         for layer in poly
+            .style
             .shadows
             .iter()
             .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
@@ -27,8 +28,8 @@ fn emit_base(
             overlay_geometry::emit_polyline_shadow(verts, poly, layer, poly.opacity, 0.0, 0.0);
         }
         let content_start = verts.len();
-        if poly.closed && poly.texture.is_none() {
-            if let Some(fill) = &poly.fill {
+        if poly.closed && poly.style.texture.is_none() {
+            if let Some(fill) = &poly.style.fill {
                 overlay_geometry::emit_filled_polyline(
                     verts,
                     &poly.points,
@@ -139,6 +140,7 @@ fn emit_glyph_run(
     // fixed geometry once compiled, so a retained run carries its contour without
     // re-laying it out per frame.
     for layer in run
+        .style
         .shadows
         .iter()
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
@@ -290,6 +292,7 @@ fn emit_label(
     let text_start = verts.len();
 
     for layer in label
+        .style
         .shadows
         .iter()
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
@@ -407,8 +410,8 @@ fn emit_sdf_shape(
     };
     if matches!(shape.shape, OverlayShape::Vector { .. })
         || shape.clip_mask_id.is_some()
-        || shape.texture.is_some()
-        || shape.backdrop_blur > 0.0
+        || shape.style.texture.is_some()
+        || shape.style.backdrop.blur > 0.0
         || shape.opacity <= 0.0
     {
         return;
@@ -420,7 +423,7 @@ fn emit_sdf_shape(
     let cy = shape.transform.translate[1] + hh;
 
     let mut shadow_pad = 0.0f32;
-    for l in &shape.shadows {
+    for l in &shape.style.shadows {
         shadow_pad = shadow_pad.max(l.extent());
     }
     let extra_expand = match &shape.shape {
@@ -520,7 +523,7 @@ fn emit_sdf_shape(
     let mut stop_colours = [[0.0f32; 4]; 4];
     let mut stop_positions = [0.0f32, 1.0, 1.0, 1.0];
     let stop_count: f32;
-    let gradient_params = match &shape.fill {
+    let gradient_params = match &shape.style.resolved_fill() {
         OverlayFill::Solid(c) => {
             stop_colours[0] = c.to_linear_rgba();
             stop_colours[1] = c.to_linear_rgba();
@@ -604,8 +607,8 @@ fn emit_sdf_shape(
     let base_index = out_shadows.len();
     let (mut outer_count, mut inner_count) = (0usize, 0usize);
     let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
-    if !shape.shadows.is_empty() {
-        for l in shape.shadows.iter().take(max_layers) {
+    if !shape.style.shadows.is_empty() {
+        for l in shape.style.shadows.iter().take(max_layers) {
             let mut col = l.colour.to_linear_rgba();
             col[3] *= op;
             out_shadows.push(crate::resources::OverlayShadowLayerGpu {
@@ -616,8 +619,8 @@ fn emit_sdf_shape(
             outer_count += 1;
         }
     }
-    if !shape.inner_shadows.is_empty() {
-        for l in shape.inner_shadows.iter().take(max_layers) {
+    if !shape.style.inner_shadows.is_empty() {
+        for l in shape.style.inner_shadows.iter().take(max_layers) {
             let mut col = l.colour.to_linear_rgba();
             col[3] *= op;
             out_shadows.push(crate::resources::OverlayShadowLayerGpu {

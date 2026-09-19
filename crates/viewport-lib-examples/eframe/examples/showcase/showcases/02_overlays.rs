@@ -986,7 +986,7 @@ impl OverlaysShowcase {
                 Colour::srgb(1.0, 0.9, 0.7, 0.9),
                 2.0,
             );
-            pentagon.texture = Some(tid);
+            pentagon.style.texture = Some(tid);
             pentagon.z_order = 1;
             out.push(pentagon);
         }

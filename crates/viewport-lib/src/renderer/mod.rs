@@ -68,8 +68,8 @@ mod lod_instance_tests;
 pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
-    AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BloomSettings, BorderMode,
-    CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
+    AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects, BloomSettings,
+    BorderMode, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem, ComputeFilterKind,
     ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity, DebugVis,
     DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings, DofSettings,
     EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode, ExposureSettings,
@@ -82,18 +82,18 @@ pub use self::types::{
     Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
     OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchor, OverlayAnimations, OverlayEasing, OverlayFill,
     OverlayFrame, OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    OverlayTextureId, POINT_SHADOW_FACE_SIZE, ParticleMeshAlign, PathSegment, PathTrack,
-    PipelineMode, PointCloudItem, PointCloudRefItem, PointRenderMode, PointShadowMode, PolylineCap,
-    PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem,
-    SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings,
-    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
-    TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
-    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
-    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE,
+    ParticleMeshAlign, PathSegment, PathTrack, PipelineMode, PointCloudItem, PointCloudRefItem,
+    PointRenderMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
+    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
+    SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
+    SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath,
+    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    ViewportFrame, VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
+    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.

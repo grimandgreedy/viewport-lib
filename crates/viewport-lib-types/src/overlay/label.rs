@@ -43,6 +43,13 @@ pub struct LabelItem {
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: OverlayTransform,
+    /// Baked appearance: fill, shadow layers, texture, and backdrop effects.
+    ///
+    /// Shared across the overlay item types, so a field can be present and
+    /// inert here. Ask
+    /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
+    /// this family draws.
+    pub style: crate::overlay::OverlayStyle,
     /// Per-frame colour multiplier applied to the whole item, identity
     /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
     /// and with the tint of a retained group containing it. Never reaches
@@ -129,16 +136,6 @@ pub struct LabelItem {
     /// any overlay shape (rect, rounded rect, circle, ...), and masks may nest.
     /// `None` (the default) draws the label unclipped, as does a missing mask.
     pub clip_id: Option<u32>,
-    /// Stacked drop shadows and contours drawn behind this item, first entry
-    /// furthest back. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
-    ///
-    /// Empty by default, which draws none. A contour that keeps the item legible
-    /// over an unpredictable background is one
-    /// [`ShadowLayer::outline`] entry; a soft drop shadow is a blurred entry.
-    ///
-    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub shadows: Vec<crate::overlay::ShadowLayer>,
 }
 
 impl Default for LabelItem {
@@ -158,6 +155,7 @@ impl Default for LabelItem {
             align_y: AnchorY::Middle,
             anchor_padding: 6.0,
             transform: OverlayTransform::IDENTITY,
+            style: crate::overlay::OverlayStyle::default(),
             tint: [1.0, 1.0, 1.0, 1.0],
             clip_rect: None,
             opacity: 1.0,
@@ -165,7 +163,6 @@ impl Default for LabelItem {
             border_radius: 0.0,
             z_order: 0,
             clip_id: None,
-            shadows: Vec::new(),
         }
     }
 }
@@ -315,13 +312,13 @@ impl LabelItem {
 
     /// Set the stacked shadow layers drawn behind this item.
     pub fn with_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
-        self.shadows = shadows;
+        self.style.shadows = shadows;
         self
     }
 
     /// Add one shadow layer, in front of any already set.
     pub fn with_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
-        self.shadows.push(shadow);
+        self.style.shadows.push(shadow);
         self
     }
 
@@ -330,7 +327,8 @@ impl LabelItem {
     ///
     /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
     pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.shadows
+        self.style
+            .shadows
             .push(crate::overlay::ShadowLayer::outline(colour, width));
         self
     }

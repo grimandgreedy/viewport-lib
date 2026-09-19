@@ -310,6 +310,13 @@ pub struct OverlayShapeItem {
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: OverlayTransform,
+    /// Baked appearance: fill, shadow layers, texture, and backdrop effects.
+    ///
+    /// Shared across the overlay item types, so a field can be present and
+    /// inert here. Ask
+    /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
+    /// this family draws.
+    pub style: OverlayStyle,
     /// Per-frame colour multiplier applied to the whole item, identity
     /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
     /// and with the tint of a retained group containing it. Never reaches
@@ -341,11 +348,6 @@ pub struct OverlayShapeItem {
     pub size: [f32; 2],
     /// Which SDF shape to render.
     pub shape: OverlayShape,
-    /// Fill style: solid colour or linear gradient.
-    ///
-    /// When `texture` is `Some` only `OverlayFill::Solid` is used; the colour
-    /// becomes a tint multiplied with each texture sample.
-    pub fill: OverlayFill,
     /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
     pub opacity: f32,
     /// RGBA border colour in linear float format.
@@ -356,17 +358,6 @@ pub struct OverlayShapeItem {
     pub border_mode: BorderMode,
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
-    /// Optional texture fill. When set the shape samples the image uploaded
-    /// via `DeviceResources::upload_overlay_texture`, clipped by the SDF
-    /// boundary. `fill` acts as a tint when this is `Some`.
-    pub texture: Option<OverlayTextureId>,
-    /// Backdrop blur radius in logical pixels. When greater than zero the scene
-    /// content behind the shape is blurred (frosted glass effect) and the
-    /// `fill` colour is composited on top as a tint. `0.0` disables the
-    /// effect. Only active in render paths where the renderer owns the command
-    /// encoder (`render`, `render_viewport`); in `paint`/`paint_to` paths
-    /// blur shapes fall back to a regular solid fill.
-    pub backdrop_blur: f32,
     /// Marks this shape as a clip mask. The shape itself is not drawn; its
     /// bounding box defines a clipping rectangle for any shape whose
     /// `clip_id` equals this value. `None` means the shape is not a mask.
@@ -395,11 +386,6 @@ pub struct OverlayShapeItem {
     /// 9-slice texture sampling for the shape's `texture` fill. When `None`
     /// the texture stretches to fill the bounding box (default).
     pub nine_slice: Option<NineSlice>,
-    /// Affine transform applied to the texture sample before lookup. Lets a
-    /// single texture pan, scale, rotate, tile, and flip independently of
-    /// the shape it fills. Ignored when `nine_slice` is also set on the
-    /// same shape.
-    pub texture_transform: TextureTransform,
     /// Multi-channel animation tracks for `position`, `size`, `fill`,
     /// `border_colour`, `rotation`, and `opacity`. Each `Some` track replaces
     /// the matching field on the item for the frame.
@@ -408,28 +394,6 @@ pub struct OverlayShapeItem {
     /// the size of the rest of the item, so only shapes that animate pay for
     /// it.
     pub animations: Option<Box<OverlayAnimations>>,
-    /// Saturation multiplier applied to the blurred backdrop. `1.0` leaves
-    /// saturation unchanged, `0.0` produces greyscale. Only affects shapes
-    /// with `backdrop_blur > 0.0`.
-    pub backdrop_saturation: f32,
-    /// Brightness multiplier applied to the blurred backdrop. `1.0` is
-    /// unchanged. Only affects shapes with `backdrop_blur > 0.0`.
-    pub backdrop_brightness: f32,
-    /// Hue rotation applied to the blurred backdrop, in radians. `0.0` is
-    /// unchanged. Only affects shapes with `backdrop_blur > 0.0`.
-    pub backdrop_hue_shift: f32,
-    /// Stacked outer shadow layers, drawn behind the fill in order (first
-    /// entry furthest back). Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
-    ///
-    /// When non-empty this replaces the single legacy `shadow_*` outer
-    /// shadow. Only the solid (non-textured, non-blur) shape path draws
-    /// stacked layers; textured and backdrop-blur shapes fall back to the
-    /// single legacy `shadow_*` shadow.
-    pub shadows: Vec<ShadowLayer>,
-    /// Stacked inner (inset) shadow layers, drawn on top of the fill and
-    /// under the border, in order. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are
-    /// honoured. Same path limitation as [`Self::shadows`].
-    pub inner_shadows: Vec<ShadowLayer>,
 }
 
 impl Default for OverlayShapeItem {
@@ -437,30 +401,25 @@ impl Default for OverlayShapeItem {
         Self {
             anchor: OverlayAnchor::default(),
             transform: OverlayTransform::IDENTITY,
+            style: OverlayStyle {
+                fill: Some(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into())),
+                ..Default::default()
+            },
             tint: [1.0, 1.0, 1.0, 1.0],
             clip_rect: None,
             align_x: AnchorX::Left,
             align_y: AnchorY::Top,
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
-            fill: OverlayFill::default(),
             opacity: 1.0,
             border_colour: [1.0, 1.0, 1.0, 1.0].into(),
             border_width: 0.0,
             border_mode: BorderMode::Inset,
             z_order: 0,
-            texture: None,
-            backdrop_blur: 0.0,
             clip_mask_id: None,
             clip_id: None,
             nine_slice: None,
-            texture_transform: TextureTransform::default(),
             animations: None,
-            backdrop_saturation: 1.0,
-            backdrop_brightness: 1.0,
-            backdrop_hue_shift: 0.0,
-            shadows: Vec::new(),
-            inner_shadows: Vec::new(),
         }
     }
 }
@@ -748,9 +707,15 @@ impl OverlayShapeItem {
         )
     }
 
-    /// Set the fill style (solid colour or gradient).
+    /// Set the whole baked appearance at once.
+    pub fn with_style(mut self, style: OverlayStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the area fill.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
-        self.fill = fill;
+        self.style.fill = Some(fill);
         self
     }
 
@@ -781,13 +746,13 @@ impl OverlayShapeItem {
 
     /// Fill the shape with an uploaded overlay texture, clipped by the SDF.
     pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
-        self.texture = Some(texture);
+        self.style.texture = Some(texture);
         self
     }
 
     /// Set the backdrop blur radius (frosted-glass effect) in logical pixels.
     pub fn with_backdrop_blur(mut self, radius: f32) -> Self {
-        self.backdrop_blur = radius;
+        self.style.backdrop.blur = radius;
         self
     }
 
@@ -813,23 +778,23 @@ impl OverlayShapeItem {
         brightness: f32,
         hue_shift: f32,
     ) -> Self {
-        self.backdrop_saturation = saturation;
-        self.backdrop_brightness = brightness;
-        self.backdrop_hue_shift = hue_shift;
+        self.style.backdrop.saturation = saturation;
+        self.style.backdrop.brightness = brightness;
+        self.style.backdrop.hue_shift = hue_shift;
         self
     }
 
     /// Set the stacked outer shadow layers (drawn behind the fill). Replaces
     /// the single legacy `with_shadow` outer shadow on the solid shape path.
     pub fn with_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
-        self.shadows = shadows;
+        self.style.shadows = shadows;
         self
     }
 
     /// Set the stacked inner (inset) shadow layers (drawn on top of the fill,
     /// under the border).
     pub fn with_inner_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
-        self.inner_shadows = shadows;
+        self.style.inner_shadows = shadows;
         self
     }
 
@@ -837,8 +802,8 @@ impl OverlayShapeItem {
     /// [`TextureTransform::flip_x`] / [`TextureTransform::flip_y`]; sets those
     /// fields on the shape's texture transform.
     pub fn with_texture_flip(mut self, flip_x: bool, flip_y: bool) -> Self {
-        self.texture_transform.flip_x = flip_x;
-        self.texture_transform.flip_y = flip_y;
+        self.style.texture_transform.flip_x = flip_x;
+        self.style.texture_transform.flip_y = flip_y;
         self
     }
 
@@ -864,7 +829,7 @@ impl OverlayShapeItem {
 
     /// Set the affine transform applied to the texture sample before lookup.
     pub fn with_texture_transform(mut self, transform: TextureTransform) -> Self {
-        self.texture_transform = transform;
+        self.style.texture_transform = transform;
         self
     }
 

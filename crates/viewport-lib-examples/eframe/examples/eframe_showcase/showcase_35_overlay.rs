@@ -1682,7 +1682,7 @@ fn row_masks_and_polylines(
                     2.0,
                 );
                 // Leaving uvs None maps the path bounds to [0, 1] UVs.
-                textured.texture = Some(tid);
+                textured.style.texture = Some(tid);
                 textured.z_order = 1;
                 polylines.push(textured);
             }
@@ -1888,7 +1888,7 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     fd.overlays.glyph_runs = runs;
     // Enable HDR callback path so the renderer owns the encoder and can
     // run backdrop blur passes.
-    if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
+    if shapes.iter().any(|s| s.style.backdrop.is_active()) {
         fd.effects.display.mode = vpl::PipelineMode::Hdr;
     }
     fd.overlays.shapes = shapes;

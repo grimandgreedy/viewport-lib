@@ -1134,11 +1134,11 @@ pub(super) fn emit_polyline_shadow(
             .collect();
         // The shadow is one silhouette, so it never carries the item's fill or
         // texture; only the stroke shape matters.
-        shadow_poly.fill = None;
-        shadow_poly.texture = None;
+        shadow_poly.style.fill = None;
+        shadow_poly.style.texture = None;
         let colour = apply_opacity(base, opacity * band_alpha);
         emit_polyline_stroke(verts, &shadow_poly, colour, vp_w, vp_h);
-        if poly.closed && poly.fill.is_some() {
+        if poly.closed && poly.style.fill.is_some() {
             // A filled closed path casts its interior too, not just its edge.
             emit_closed_fill_shadow(verts, &shadow_poly.points, colour, vp_w, vp_h);
         }

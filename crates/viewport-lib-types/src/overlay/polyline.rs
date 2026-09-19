@@ -92,6 +92,13 @@ pub struct OverlayPolylineItem {
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: OverlayTransform,
+    /// Baked appearance: fill, shadow layers, texture, and backdrop effects.
+    ///
+    /// Shared across the overlay item types, so a field can be present and
+    /// inert here. Ask
+    /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
+    /// this family draws.
+    pub style: OverlayStyle,
     /// Per-frame colour multiplier applied to the whole item, identity
     /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
     /// and with the tint of a retained group containing it. Never reaches
@@ -133,24 +140,11 @@ pub struct OverlayPolylineItem {
     pub stroke_pattern: StrokePattern,
     /// When `true`, the last point connects back to the first.
     pub closed: bool,
-    /// Optional interior fill. Only used when `closed` is `true`.
-    ///
-    /// Texture fills use this the same way [`OverlayShapeItem`] does: when
-    /// `texture` is set, `OverlayFill::Solid` acts as a tint. Gradient fills
-    /// are ignored for textured interiors.
-    pub fill: Option<OverlayFill>,
-    /// Optional texture fill for the interior. Only used when `closed` is `true`.
-    ///
-    /// The polygon is clipped by triangulating the closed path. UVs are
-    /// derived from the path bounds unless `uvs` has one entry per point.
-    pub texture: Option<OverlayTextureId>,
     /// Optional per-point UVs for textured interiors.
     ///
     /// When set, this must have the same length as `points`. Otherwise the
     /// renderer falls back to bounds-mapped UVs.
     pub uvs: Option<Vec<[f32; 2]>>,
-    /// Affine transform applied to texture UVs before sampling.
-    pub texture_transform: TextureTransform,
     /// Overall opacity multiplier in `[0, 1]`.
     pub opacity: f32,
     /// Draw order relative to other overlay rects, polylines, and labels.
@@ -163,16 +157,6 @@ pub struct OverlayPolylineItem {
     /// masks may nest. `None` (the default) draws the path unclipped, as does a
     /// missing mask.
     pub clip_id: Option<u32>,
-    /// Stacked drop shadows and contours drawn behind this item, first entry
-    /// furthest back. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
-    ///
-    /// Empty by default, which draws none. A contour that keeps the item legible
-    /// over an unpredictable background is one
-    /// [`ShadowLayer::outline`] entry; a soft drop shadow is a blurred entry.
-    ///
-    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub shadows: Vec<crate::overlay::ShadowLayer>,
 }
 
 impl Default for OverlayPolylineItem {
@@ -181,6 +165,7 @@ impl Default for OverlayPolylineItem {
             points: Vec::new(),
             anchor: OverlayAnchor::default(),
             transform: OverlayTransform::IDENTITY,
+            style: OverlayStyle::default(),
             tint: [1.0, 1.0, 1.0, 1.0],
             clip_rect: None,
             align_x: AnchorX::Left,
@@ -192,14 +177,10 @@ impl Default for OverlayPolylineItem {
             cap: PolylineCap::Butt,
             stroke_pattern: StrokePattern::Solid,
             closed: false,
-            fill: None,
-            texture: None,
             uvs: None,
-            texture_transform: TextureTransform::default(),
             opacity: 1.0,
             z_order: 0,
             clip_id: None,
-            shadows: Vec::new(),
         }
     }
 }
@@ -319,13 +300,13 @@ impl OverlayPolylineItem {
 
     /// Set the interior fill. Only used when the polyline is closed.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
-        self.fill = Some(fill);
+        self.style.fill = Some(fill);
         self
     }
 
     /// Set the interior texture fill. Only used when the polyline is closed.
     pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
-        self.texture = Some(texture);
+        self.style.texture = Some(texture);
         self
     }
 
@@ -337,7 +318,7 @@ impl OverlayPolylineItem {
 
     /// Set the affine transform applied to texture UVs before sampling.
     pub fn with_texture_transform(mut self, texture_transform: TextureTransform) -> Self {
-        self.texture_transform = texture_transform;
+        self.style.texture_transform = texture_transform;
         self
     }
 
@@ -403,7 +384,10 @@ impl OverlayPolylineItem {
             thickness,
             colour: stroke_colour.into(),
             closed: true,
-            fill,
+            style: OverlayStyle {
+                fill,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -425,13 +409,13 @@ impl OverlayPolylineItem {
 
     /// Set the stacked shadow layers drawn behind this item.
     pub fn with_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
-        self.shadows = shadows;
+        self.style.shadows = shadows;
         self
     }
 
     /// Add one shadow layer, in front of any already set.
     pub fn with_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
-        self.shadows.push(shadow);
+        self.style.shadows.push(shadow);
         self
     }
 
@@ -440,7 +424,8 @@ impl OverlayPolylineItem {
     ///
     /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
     pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.shadows
+        self.style
+            .shadows
             .push(crate::overlay::ShadowLayer::outline(colour, width));
         self
     }
@@ -498,7 +483,7 @@ mod path_sample_tests {
         let fill = Some(OverlayFill::Solid([0.2, 0.4, 0.6, 1.0].into()));
         let item = OverlayPolylineItem::closed_from_path(circle, 4, fill.clone(), [1.0; 4], 3.0);
         assert!(item.closed);
-        assert_eq!(item.fill, fill);
+        assert_eq!(item.style.fill, fill);
         assert_eq!(item.thickness, 3.0);
         // 5 points spanning [0, 1); the last is at 4/5, not back at the start.
         assert_eq!(item.points.len(), 5);
