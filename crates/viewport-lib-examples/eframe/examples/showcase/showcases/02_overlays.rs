@@ -16,10 +16,10 @@ use crate::eframe::egui;
 use glam::{Mat4, Vec3};
 use vpl::{
     AnimTrack, BorderMode, Colour, FontHandle, GlyphRunItem, GradientStop, LabelAnchor, LabelItem,
-    LineCap, Material, NineSlice, OverlayAnimation, OverlayAnimations, OverlayEasing, OverlayFill,
+    LineCap, Material, NineSlice, OverlayAnimations, OverlayEasing, OverlayFill,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayTextureId, PolylineCap,
-    PositionedGlyph, RepeatMode, StrokePattern, TextureTransform, TileMode, TriangleDirection,
-    primitives,
+    PositionedGlyph, RepeatMode, ShadowLayer, StrokePattern, TextureTransform, TileMode,
+    TriangleDirection, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -400,10 +400,7 @@ impl OverlaysShowcase {
                     .with_fill(OverlayFill::Solid(Colour::srgb(
                         fill[0], fill[1], fill[2], fill[3],
                     )))
-                    .with_border(
-                        Colour::srgb(border[0], border[1], border[2], border[3]),
-                        bw,
-                    ),
+                    .with_border(Colour::srgb(border[0], border[1], border[2], border[3]), bw),
             );
             x += w + gap;
         }
@@ -504,21 +501,33 @@ impl OverlaysShowcase {
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.95)))
             .with_border(Colour::srgb(0.5, 0.5, 0.6, 0.8), bw)
-            .with_shadow(Colour::srgb(0.0, 0.0, 0.0, 0.5), 12.0, [4.0, 4.0]),
+            .with_shadows(vec![ShadowLayer::new(
+                Colour::srgb(0.0, 0.0, 0.0, 0.5),
+                12.0,
+                [4.0, 4.0],
+            )]),
         );
         x += 152.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.15, 0.35, 0.95)))
                 .with_border(Colour::srgb(0.3, 0.5, 1.0, 0.9), bw)
-                .with_shadow(Colour::srgb(0.2, 0.4, 1.0, 0.6), 16.0, [0.0, 0.0]),
+                .with_shadows(vec![ShadowLayer::new(
+                    Colour::srgb(0.2, 0.4, 1.0, 0.6),
+                    16.0,
+                    [0.0, 0.0],
+                )]),
         );
         x += 102.0;
         out.push(
             OverlayShapeItem::new(OverlayShape::Capsule, [x, y + 15.0], [120.0, 40.0])
                 .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.15, 0.05, 0.95)))
                 .with_border(Colour::srgb(1.0, 0.6, 0.2, 0.9), bw)
-                .with_shadow(Colour::srgb(1.0, 0.5, 0.1, 0.45), 14.0, [0.0, 2.0]),
+                .with_shadows(vec![ShadowLayer::new(
+                    Colour::srgb(1.0, 0.5, 0.1, 0.45),
+                    14.0,
+                    [0.0, 2.0],
+                )]),
         );
         x += 152.0;
         out.push(
@@ -529,8 +538,11 @@ impl OverlaysShowcase {
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.22, 0.24, 0.30, 1.0)))
             .with_border(Colour::srgb(0.05, 0.07, 0.12, 0.9), 1.0)
-            .with_shadow(Colour::srgb(0.0, 0.0, 0.0, 0.7), 14.0, [0.0, 4.0])
-            .with_shadow_inset(true),
+            .with_inner_shadows(vec![ShadowLayer::new(
+                Colour::srgb(0.0, 0.0, 0.0, 0.7),
+                14.0,
+                [0.0, 4.0],
+            )]),
         );
     }
 
@@ -560,15 +572,19 @@ impl OverlaysShowcase {
             );
             x += 106.0;
         }
-        // Pulsing circle (built-in animation, resolved against overlays.time).
+        // Pulsing circle: an opacity track looped through the Pulse easing.
         out.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 1.0, 0.9)))
                 .with_border(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw)
-                .with_animation(OverlayAnimation::Pulse {
+                .with_animations(OverlayAnimations::default().with_opacity(AnimTrack {
                     start_time: 0.0,
-                    period: 2.0,
-                }),
+                    duration: 2.0,
+                    from: 0.0,
+                    to: 0.9,
+                    easing: OverlayEasing::Pulse,
+                    repeat: RepeatMode::Loop,
+                })),
         );
         x += 86.0;
         // Fade-in capsule that restarts every 4 seconds.
@@ -578,10 +594,13 @@ impl OverlaysShowcase {
             OverlayShapeItem::new(OverlayShape::Capsule, [x, y + 15.0], [120.0, 40.0])
                 .with_fill(OverlayFill::Solid(Colour::srgb(0.6, 0.2, 0.1, 0.9)))
                 .with_border(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw)
-                .with_animation(OverlayAnimation::FadeIn {
+                .with_animations(OverlayAnimations::default().with_opacity(AnimTrack {
                     start_time: fade_start,
                     duration: 3.0,
-                }),
+                    from: 0.0,
+                    to: 0.9,
+                    ..Default::default()
+                })),
         );
         x += 136.0;
         // Multi-channel: a sliding rect via the position track.

@@ -55,8 +55,7 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
     BorderMode, BuiltinColourmap, Colour, FontHandle, GlyphRunItem, LabelAnchor, LabelItem,
-    LineCap, OverlayAnimation, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph,
-    TriangleDirection,
+    LineCap, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph, TriangleDirection,
 };
 
 /// System color-emoji fonts to try, in order. First one found is used.
@@ -919,7 +918,11 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.95)))
         .with_border(Colour::srgb(0.5, 0.5, 0.6, 0.8), bw)
-        .with_shadow([0.0, 0.0, 0.0, 0.5], 12.0, [4.0, 4.0]),
+        .with_shadows(vec![vpl::ShadowLayer::new(
+            [0.0, 0.0, 0.0, 0.5],
+            12.0,
+            [4.0, 4.0],
+        )]),
     );
     x4 += 120.0 + gap + 16.0; // extra gap for shadow bleed
 
@@ -929,7 +932,11 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         OverlayShapeItem::new(OverlayShape::Circle, [x4, y4_mid - sz * 0.5], [sz, sz])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.15, 0.35, 0.95)))
             .with_border(Colour::srgb(0.3, 0.5, 1.0, 0.9), bw)
-            .with_shadow([0.2, 0.4, 1.0, 0.6], 16.0, [0.0, 0.0]),
+            .with_shadows(vec![vpl::ShadowLayer::new(
+                [0.2, 0.4, 1.0, 0.6],
+                16.0,
+                [0.0, 0.0],
+            )]),
     );
     x4 += sz + gap + 16.0;
 
@@ -938,7 +945,11 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         OverlayShapeItem::new(OverlayShape::Capsule, [x4, y4_mid - 20.0], [120.0, 40.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.15, 0.05, 0.95)))
             .with_border(Colour::srgb(1.0, 0.6, 0.2, 0.9), bw)
-            .with_shadow([1.0, 0.5, 0.1, 0.45], 14.0, [0.0, 2.0]),
+            .with_shadows(vec![vpl::ShadowLayer::new(
+                [1.0, 0.5, 0.1, 0.45],
+                14.0,
+                [0.0, 2.0],
+            )]),
     );
     x4 += 120.0 + gap + 16.0;
 
@@ -947,7 +958,11 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         OverlayShapeItem::new(OverlayShape::Ellipse, [x4, y4_mid - 30.0], [120.0, 60.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.3, 0.15, 0.95)))
             .with_border(Colour::srgb(0.5, 0.9, 0.3, 0.9), bw)
-            .with_shadow([0.0, 0.0, 0.0, 0.45], 10.0, [3.0, 5.0]),
+            .with_shadows(vec![vpl::ShadowLayer::new(
+                [0.0, 0.0, 0.0, 0.45],
+                10.0,
+                [3.0, 5.0],
+            )]),
     );
     x4 += 120.0 + gap + 16.0;
 
@@ -962,12 +977,16 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.05, 0.25, 0.1, 0.95)))
         .with_border(Colour::srgb(0.3, 1.0, 0.4, 0.9), bw)
-        .with_shadow([0.1, 0.8, 0.2, 0.5], 14.0, [0.0, 0.0]),
+        .with_shadows(vec![vpl::ShadowLayer::new(
+            [0.1, 0.8, 0.2, 0.5],
+            14.0,
+            [0.0, 0.0],
+        )]),
     );
     x4 += 60.0 + gap + 16.0;
 
-    // Pressed-button effect using shadow_inset: a dark inner shadow
-    // offset slightly down makes the surface read as recessed.
+    // Pressed-button effect from an inner shadow layer: dark, and
+    // offset slightly down, so the surface reads as recessed.
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Rect { corner_radius: cr },
@@ -976,8 +995,11 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.22, 0.24, 0.30, 1.0)))
         .with_border(Colour::srgb(0.05, 0.07, 0.12, 0.9), 1.0)
-        .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
-        .with_shadow_inset(true),
+        .with_inner_shadows(vec![vpl::ShadowLayer::new(
+            [0.0, 0.0, 0.0, 0.7],
+            14.0,
+            [0.0, 4.0],
+        )]),
     );
     let _ = x4;
 }
@@ -1045,10 +1067,16 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 1.0, 0.9)))
         .with_border(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw)
-        .with_animation(OverlayAnimation::Pulse {
-            start_time: 0.0,
-            period: 2.0,
-        }),
+        .with_animations(
+            vpl::OverlayAnimations::default().with_opacity(vpl::AnimTrack {
+                start_time: 0.0,
+                duration: 2.0,
+                from: 0.0,
+                to: 0.9,
+                easing: vpl::OverlayEasing::Pulse,
+                repeat: vpl::RepeatMode::Loop,
+            }),
+        ),
     );
     x5 += row5_h + gap;
 
@@ -1060,10 +1088,15 @@ fn row_anim(
         OverlayShapeItem::new(OverlayShape::Capsule, [x5, y5_mid - 20.0], [120.0, 40.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.6, 0.2, 0.1, 0.9)))
             .with_border(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw)
-            .with_animation(OverlayAnimation::FadeIn {
-                start_time: fade_start,
-                duration: 3.0,
-            }),
+            .with_animations(
+                vpl::OverlayAnimations::default().with_opacity(vpl::AnimTrack {
+                    start_time: fade_start,
+                    duration: 3.0,
+                    from: 0.0,
+                    to: 0.9,
+                    ..Default::default()
+                }),
+            ),
     );
     x5 += 120.0 + gap;
 
@@ -1776,30 +1809,30 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.ovl_state.cloud_scalars = scalars;
     app.ovl_state.cloud_built = true;
     let (tw, th, tdata) = build_demo_texture();
-    app.ovl_state.tex_id = Some(
-        renderer
-            .resources_mut()
-            .upload_overlay_texture(&app.device, &app.queue, tw, th, &tdata),
-    );
-    app.ovl_state.carlgauss_tex_id =
-        Some(renderer.resources_mut().upload_overlay_texture(
-            &app.device,
-            &app.queue,
-            CARLGAUSS_WIDTH,
-            CARLGAUSS_HEIGHT,
-            CARLGAUSS_RGBA,
-        ));
+    app.ovl_state.tex_id = Some(renderer.resources_mut().upload_overlay_texture(
+        &app.device,
+        &app.queue,
+        tw,
+        th,
+        &tdata,
+    ));
+    app.ovl_state.carlgauss_tex_id = Some(renderer.resources_mut().upload_overlay_texture(
+        &app.device,
+        &app.queue,
+        CARLGAUSS_WIDTH,
+        CARLGAUSS_HEIGHT,
+        CARLGAUSS_RGBA,
+    ));
     let (nw, nh, ndata) = build_nine_slice_texture();
-    app.ovl_state.nine_slice_tex_id = Some(
-        renderer
-            .resources_mut()
-            .upload_overlay_texture(&app.device, &app.queue, nw, nh, &ndata),
-    );
+    app.ovl_state.nine_slice_tex_id = Some(renderer.resources_mut().upload_overlay_texture(
+        &app.device,
+        &app.queue,
+        nw,
+        nh,
+        &ndata,
+    ));
     // Optional color-emoji font for the glyph-run row.
-    if let Some(bytes) = EMOJI_FONT_PATHS
-        .iter()
-        .find_map(|p| std::fs::read(p).ok())
-    {
+    if let Some(bytes) = EMOJI_FONT_PATHS.iter().find_map(|p| std::fs::read(p).ok()) {
         if let Ok(handle) = renderer.resources_mut().upload_font(&bytes) {
             let ids = emoji_glyph_ids(&bytes);
             if !ids.is_empty() {
@@ -1811,8 +1844,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::new(0.0, 1.57, 0.0),
         distance: 9.0,
-        orientation: glam::Quat::from_rotation_z(0.4)
-            * glam::Quat::from_rotation_x(1.0),
+        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()
     };
 }
@@ -1828,9 +1860,8 @@ pub(crate) fn scene(
     _frame: &crate::eframe::Frame,
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
-    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        (Vec::new(), None, vpl::LightingSettings::default(), 0, 0)
-    };
+    let (items, bg_colour, lighting, scene_gen, sel_gen) =
+        { (Vec::new(), None, vpl::LightingSettings::default(), 0, 0) };
     crate::SceneContents {
         items,
         bg_colour,
@@ -1847,11 +1878,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     fd.overlays.time = app.ovl_state.start_time.elapsed().as_secs_f64();
     let (shapes, labels, polylines) = build_overlay_frame(app);
     fd.overlays.polylines = polylines;
@@ -1884,7 +1911,6 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(_app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -1898,21 +1924,15 @@ pub(crate) fn tick(_app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -1953,7 +1973,12 @@ impl crate::Showcase for ScOverlay {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -1962,7 +1987,12 @@ impl crate::Showcase for ScOverlay {
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         tick(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -1971,7 +2001,12 @@ impl crate::Showcase for ScOverlay {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_overlay(app, ui)
     }
 }

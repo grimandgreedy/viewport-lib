@@ -1306,56 +1306,53 @@ impl ViewportRenderer {
                     // Clone so per-frame animation overrides are local and
                     // the input frame data stays untouched.
                     let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
-                    if let Some(track) = owned.animations.opacity {
-                        // Multi-channel opacity track takes precedence over
-                        // the legacy `animation` field.
-                        owned.opacity = track.sample(overlay_time);
-                        owned.animation = crate::renderer::types::OverlayAnimation::None;
-                    }
-                    if let Some(track) = owned.animations.position {
-                        owned.position = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.size {
-                        owned.size = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.fill {
-                        if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
-                            owned.fill = crate::renderer::types::OverlayFill::Solid(
-                                track.sample(overlay_time).into(),
-                            );
+                    if let Some(anims) = owned.animations.take() {
+                        if let Some(track) = anims.opacity {
+                            owned.opacity = track.sample(overlay_time);
                         }
-                    }
-                    if let Some(track) = owned.animations.border {
-                        owned.border_colour = track.sample(overlay_time).into();
-                    }
-                    if let Some(track) = owned.animations.rotation {
-                        owned.rotation = track.sample(overlay_time);
-                    }
-                    // Path tracks override the matching linear track when
-                    // both are set. `opacity_path` also takes precedence
-                    // over the legacy `animation` field.
-                    if let Some(track) = owned.animations.opacity_path.clone() {
-                        owned.opacity = track.sample(overlay_time);
-                        owned.animation = crate::renderer::types::OverlayAnimation::None;
-                    }
-                    if let Some(track) = owned.animations.position_path.clone() {
-                        owned.position = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.size_path.clone() {
-                        owned.size = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.fill_path.clone() {
-                        if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
-                            owned.fill = crate::renderer::types::OverlayFill::Solid(
-                                track.sample(overlay_time).into(),
-                            );
+                        if let Some(track) = anims.position {
+                            owned.position = track.sample(overlay_time);
                         }
-                    }
-                    if let Some(track) = owned.animations.border_path.clone() {
-                        owned.border_colour = track.sample(overlay_time).into();
-                    }
-                    if let Some(track) = owned.animations.rotation_path.clone() {
-                        owned.rotation = track.sample(overlay_time);
+                        if let Some(track) = anims.size {
+                            owned.size = track.sample(overlay_time);
+                        }
+                        if let Some(track) = anims.fill {
+                            if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
+                                owned.fill = crate::renderer::types::OverlayFill::Solid(
+                                    track.sample(overlay_time).into(),
+                                );
+                            }
+                        }
+                        if let Some(track) = anims.border {
+                            owned.border_colour = track.sample(overlay_time).into();
+                        }
+                        if let Some(track) = anims.rotation {
+                            owned.rotation = track.sample(overlay_time);
+                        }
+                        // Path tracks override the matching linear track when
+                        // both are set.
+                        if let Some(track) = anims.opacity_path.as_ref() {
+                            owned.opacity = track.sample(overlay_time);
+                        }
+                        if let Some(track) = anims.position_path.as_ref() {
+                            owned.position = track.sample(overlay_time);
+                        }
+                        if let Some(track) = anims.size_path.as_ref() {
+                            owned.size = track.sample(overlay_time);
+                        }
+                        if let Some(track) = anims.fill_path.as_ref() {
+                            if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
+                                owned.fill = crate::renderer::types::OverlayFill::Solid(
+                                    track.sample(overlay_time).into(),
+                                );
+                            }
+                        }
+                        if let Some(track) = anims.border_path.as_ref() {
+                            owned.border_colour = track.sample(overlay_time).into();
+                        }
+                        if let Some(track) = anims.rotation_path.as_ref() {
+                            owned.rotation = track.sample(overlay_time);
+                        }
                     }
                     // Resolve the anchor origin + animated position + alignment
                     // to an absolute top-left, then draw the shape as if it were
@@ -1370,31 +1367,7 @@ impl ViewportRenderer {
                     };
                     owned.position = resolved_tl;
                     let shape = &owned;
-                    // Resolve animation to final opacity.
-                    let resolved_opacity = match shape.animation {
-                        crate::renderer::types::OverlayAnimation::None => shape.opacity,
-                        crate::renderer::types::OverlayAnimation::FadeIn {
-                            start_time,
-                            duration,
-                        } => {
-                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6))
-                                .clamp(0.0, 1.0);
-                            shape.opacity * t
-                        }
-                        crate::renderer::types::OverlayAnimation::FadeOut {
-                            start_time,
-                            duration,
-                        } => {
-                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6))
-                                .clamp(0.0, 1.0);
-                            shape.opacity * (1.0 - t)
-                        }
-                        crate::renderer::types::OverlayAnimation::Pulse { start_time, period } => {
-                            let t = ((overlay_time - start_time) as f32) / period.max(1e-6);
-                            let wave = (t * std::f32::consts::TAU).sin() * 0.5 + 0.5;
-                            shape.opacity * wave
-                        }
-                    };
+                    let resolved_opacity = shape.opacity;
 
                     if resolved_opacity <= 0.0 {
                         continue;
@@ -1409,14 +1382,7 @@ impl ViewportRenderer {
                     // Inner shadows stay inside the shape, so they need no quad
                     // padding. Both the legacy single shadow and the stacked
                     // `shadows` layers contribute.
-                    let mut shadow_pad = if shape.shadow_radius > 0.0 {
-                        shape.shadow_radius
-                            + shape.shadow_offset[0]
-                                .abs()
-                                .max(shape.shadow_offset[1].abs())
-                    } else {
-                        0.0
-                    };
+                    let mut shadow_pad = 0.0f32;
                     for l in &shape.shadows {
                         shadow_pad = shadow_pad.max(l.extent());
                     }
@@ -1620,21 +1586,32 @@ impl ViewportRenderer {
 
                     let half_size = [hw, hh];
 
-                    let mut sc = shape.shadow_colour.to_linear_rgba();
-                    sc[3] *= resolved_opacity;
                     let border_mode_f = match shape.border_mode {
                         crate::renderer::types::BorderMode::Inset => 0.0,
                         crate::renderer::types::BorderMode::Outer => 1.0,
                         crate::renderer::types::BorderMode::Center => 2.0,
                     };
-                    // Pack the inset-shadow flag alongside border_mode in
-                    // shadow_params.w. The shader decodes via (combined % 3)
-                    // for border_mode and (combined >= 3) for inset.
-                    let inset_flag = if shape.shadow_inset { 3.0 } else { 0.0 };
+                    // The textured and backdrop-blur shape pipelines carry a
+                    // single shadow on the vertex rather than the stacked
+                    // layer buffer the solid path uses, so they draw the first
+                    // layer only and ignore `spread` and `falloff`. Pack the
+                    // inset flag alongside border_mode in shadow_params.w: the
+                    // shader decodes (combined % 3) for border_mode and
+                    // (combined >= 3) for inset.
+                    let (first_layer, inset_flag) =
+                        match (shape.shadows.first(), shape.inner_shadows.first()) {
+                            (Some(l), _) => (Some(l), 0.0),
+                            (None, Some(l)) => (Some(l), 3.0),
+                            (None, None) => (None, 0.0),
+                        };
+                    let mut sc = first_layer
+                        .map(|l| l.colour.to_linear_rgba())
+                        .unwrap_or([0.0; 4]);
+                    sc[3] *= resolved_opacity;
                     let shadow_params = [
-                        shape.shadow_radius,
-                        shape.shadow_offset[0],
-                        shape.shadow_offset[1],
+                        first_layer.map_or(0.0, |l| l.blur),
+                        first_layer.map_or(0.0, |l| l.offset[0]),
+                        first_layer.map_or(0.0, |l| l.offset[1]),
                         border_mode_f + inset_flag,
                     ];
 
@@ -1818,18 +1795,6 @@ impl ViewportRenderer {
                                 });
                                 outer_count += 1;
                             }
-                        } else if shape.shadow_radius > 0.0 && !shape.shadow_inset {
-                            shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                colour: sc,
-                                params: [
-                                    shape.shadow_radius,
-                                    shape.shadow_offset[0],
-                                    shape.shadow_offset[1],
-                                    0.0,
-                                ],
-                                params2: [0.0, 1.0, 0.0, 0.0],
-                            });
-                            outer_count += 1;
                         }
                         if !shape.inner_shadows.is_empty() {
                             for l in shape.inner_shadows.iter().take(max_layers) {
@@ -1842,18 +1807,6 @@ impl ViewportRenderer {
                                 });
                                 inner_count += 1;
                             }
-                        } else if shape.shadow_radius > 0.0 && shape.shadow_inset {
-                            shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                colour: sc,
-                                params: [
-                                    shape.shadow_radius,
-                                    shape.shadow_offset[0],
-                                    shape.shadow_offset[1],
-                                    1.0,
-                                ],
-                                params2: [0.0, 1.0, 0.0, 0.0],
-                            });
-                            inner_count += 1;
                         }
                         let shadow_index = [
                             base_index as f32,

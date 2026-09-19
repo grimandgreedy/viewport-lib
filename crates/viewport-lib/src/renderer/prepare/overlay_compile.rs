@@ -388,14 +388,7 @@ fn emit_sdf_shape(
     let cx = shape.position[0] + hw;
     let cy = shape.position[1] + hh;
 
-    let mut shadow_pad = if shape.shadow_radius > 0.0 {
-        shape.shadow_radius
-            + shape.shadow_offset[0]
-                .abs()
-                .max(shape.shadow_offset[1].abs())
-    } else {
-        0.0
-    };
+    let mut shadow_pad = 0.0f32;
     for l in &shape.shadows {
         shadow_pad = shadow_pad.max(l.extent());
     }
@@ -562,8 +555,6 @@ fn emit_sdf_shape(
     let fc2 = stop_colours[1];
     let mut bc = shape.border_colour.to_linear_rgba();
     bc[3] *= op;
-    let mut sc = shape.shadow_colour.to_linear_rgba();
-    sc[3] *= op;
     let border_mode_f = match shape.border_mode {
         BorderMode::Inset => 0.0,
         BorderMode::Outer => 1.0,
@@ -585,18 +576,6 @@ fn emit_sdf_shape(
             });
             outer_count += 1;
         }
-    } else if shape.shadow_radius > 0.0 && !shape.shadow_inset {
-        out_shadows.push(crate::resources::OverlayShadowLayerGpu {
-            colour: sc,
-            params: [
-                shape.shadow_radius,
-                shape.shadow_offset[0],
-                shape.shadow_offset[1],
-                0.0,
-            ],
-            params2: [0.0, 1.0, 0.0, 0.0],
-        });
-        outer_count += 1;
     }
     if !shape.inner_shadows.is_empty() {
         for l in shape.inner_shadows.iter().take(max_layers) {
@@ -609,18 +588,6 @@ fn emit_sdf_shape(
             });
             inner_count += 1;
         }
-    } else if shape.shadow_radius > 0.0 && shape.shadow_inset {
-        out_shadows.push(crate::resources::OverlayShadowLayerGpu {
-            colour: sc,
-            params: [
-                shape.shadow_radius,
-                shape.shadow_offset[0],
-                shape.shadow_offset[1],
-                1.0,
-            ],
-            params2: [0.0, 1.0, 0.0, 0.0],
-        });
-        inner_count += 1;
     }
     let shadow_index = [
         base_index as f32,

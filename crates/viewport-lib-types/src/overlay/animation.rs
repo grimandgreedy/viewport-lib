@@ -1,47 +1,5 @@
 //! Time-varying animation parameters for overlay items.
 
-/// Animation applied to shape opacity each frame.
-///
-/// The animation is resolved during `prepare()` using the `time` field on
-/// `OverlayFrame`. All `start_time` and `time` values share the same
-/// application-defined epoch (e.g. seconds since app launch).
-///
-/// viewport-lib does not own the event loop. The host application must
-/// request continuous repaints while animations are active so that
-/// `prepare()` is called often enough to produce smooth updates.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OverlayAnimation {
-    /// No animation; use `opacity` as-is.
-    None,
-    /// Fade from 0 to `opacity` over `duration` seconds.
-    FadeIn {
-        /// Absolute time when the fade starts.
-        start_time: f64,
-        /// Duration of the fade in seconds.
-        duration: f32,
-    },
-    /// Fade from `opacity` to 0 over `duration` seconds.
-    FadeOut {
-        /// Absolute time when the fade starts.
-        start_time: f64,
-        /// Duration of the fade in seconds.
-        duration: f32,
-    },
-    /// Oscillate opacity between 0 and `opacity` with a sinusoidal wave.
-    Pulse {
-        /// Absolute time when the pulse starts.
-        start_time: f64,
-        /// Period of one full oscillation in seconds.
-        period: f32,
-    },
-}
-
-impl Default for OverlayAnimation {
-    fn default() -> Self {
-        OverlayAnimation::None
-    }
-}
-
 /// OverlayEasing curve applied to an [`AnimTrack`]'s normalised parameter `t`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum OverlayEasing {

@@ -98,10 +98,6 @@ pub struct LabelItem {
     /// (further back).  Labels with equal `z_order` are drawn in list order.
     pub z_order: i32,
 
-    /// Reserved for depth-based occlusion.  Currently a no-op: the label
-    /// renders the same whether this is `true` or `false`.
-    pub occlude: bool,
-
     /// When set, this label is clipped to the mask shape whose `clip_mask_id`
     /// matches this value: glyph and background fragments outside the mask are
     /// discarded, so text scrolled inside a region is contained. The mask can be
@@ -161,7 +157,6 @@ impl Default for LabelItem {
             max_width: None,
             border_radius: 0.0,
             z_order: 0,
-            occlude: false,
             clip_id: None,
             shadows: Vec::new(),
             rotation: 0.0,
@@ -302,12 +297,6 @@ impl LabelItem {
     /// Set the draw order. Lower values render first (further back).
     pub fn with_z_order(mut self, z_order: i32) -> Self {
         self.z_order = z_order;
-        self
-    }
-
-    /// Set the depth-occlusion flag (reserved; not yet implemented).
-    pub fn with_occlude(mut self, occlude: bool) -> Self {
-        self.occlude = occlude;
         self
     }
 

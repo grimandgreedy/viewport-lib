@@ -336,16 +336,6 @@ pub struct OverlayShapeItem {
     /// via `DeviceResources::upload_overlay_texture`, clipped by the SDF
     /// boundary. `fill` acts as a tint when this is `Some`.
     pub texture: Option<OverlayTextureId>,
-    /// RGBA colour of the outer shadow/glow halo. Default: transparent (no shadow).
-    pub shadow_colour: crate::colour::Colour,
-    /// Blur spread of the shadow in logical pixels. `0.0` disables the shadow.
-    pub shadow_radius: f32,
-    /// Offset of the shadow centre from the shape centre in logical pixels.
-    /// Positive X shifts right, positive Y shifts down. Default: `[0.0, 0.0]`.
-    pub shadow_offset: [f32; 2],
-    /// Opacity animation. Resolved each frame during `prepare()` using
-    /// `OverlayFrame::time`. Default: `OverlayAnimation::None`.
-    pub animation: OverlayAnimation,
     /// Backdrop blur radius in logical pixels. When greater than zero the scene
     /// content behind the shape is blurred (frosted glass effect) and the
     /// `fill` colour is composited on top as a tint. `0.0` disables the
@@ -392,22 +382,14 @@ pub struct OverlayShapeItem {
     /// the shape it fills. Ignored when `nine_slice` is also set on the
     /// same shape.
     pub texture_transform: TextureTransform,
-    /// When `true`, the existing `shadow_*` fields render as an *inset*
-    /// (inner) shadow that fades from the edge inward instead of an outer
-    /// drop shadow. Default `false` (outer shadow, the legacy behaviour).
-    ///
-    /// Use for pressed buttons, dropdowns, text inputs, scroll wells, and
-    /// other recessed UI surfaces.
-    ///
-    /// A shape currently carries either an outer or an inner shadow, not
-    /// both at once.
-    pub shadow_inset: bool,
     /// Multi-channel animation tracks for `position`, `size`, `fill`,
-    /// `border_colour`, `rotation`, and `opacity`. Each `Some` track
-    /// replaces the matching field on the item for the frame. The
-    /// `opacity` track takes precedence over the legacy
-    /// [`Self::animation`] field when both are set.
-    pub animations: OverlayAnimations,
+    /// `border_colour`, `rotation`, and `opacity`. Each `Some` track replaces
+    /// the matching field on the item for the frame.
+    ///
+    /// Boxed and `None` for a static shape: the track block is several times
+    /// the size of the rest of the item, so only shapes that animate pay for
+    /// it.
+    pub animations: Option<Box<OverlayAnimations>>,
     /// Saturation multiplier applied to the blurred backdrop. `1.0` leaves
     /// saturation unchanged, `0.0` produces greyscale. Only affects shapes
     /// with `backdrop_blur > 0.0`.
@@ -453,18 +435,13 @@ impl Default for OverlayShapeItem {
             border_mode: BorderMode::Inset,
             z_order: 0,
             texture: None,
-            shadow_colour: [0.0, 0.0, 0.0, 0.0].into(),
-            shadow_radius: 0.0,
-            shadow_offset: [0.0, 0.0],
-            animation: OverlayAnimation::None,
             backdrop_blur: 0.0,
             clip_mask_id: None,
             clip_id: None,
             rotation: 0.0,
             nine_slice: None,
-            shadow_inset: false,
             texture_transform: TextureTransform::default(),
-            animations: OverlayAnimations::default(),
+            animations: None,
             backdrop_saturation: 1.0,
             backdrop_brightness: 1.0,
             backdrop_hue_shift: 0.0,
@@ -795,25 +772,6 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Set the outer (or inset) shadow colour, blur radius, and offset.
-    pub fn with_shadow(
-        mut self,
-        colour: impl Into<crate::colour::Colour>,
-        radius: f32,
-        offset: [f32; 2],
-    ) -> Self {
-        self.shadow_colour = colour.into();
-        self.shadow_radius = radius;
-        self.shadow_offset = offset;
-        self
-    }
-
-    /// Render the shadow as an inner (inset) shadow instead of an outer one.
-    pub fn with_shadow_inset(mut self, inset: bool) -> Self {
-        self.shadow_inset = inset;
-        self
-    }
-
     /// Set the backdrop blur radius (frosted-glass effect) in logical pixels.
     pub fn with_backdrop_blur(mut self, radius: f32) -> Self {
         self.backdrop_blur = radius;
@@ -897,15 +855,9 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Set the single-property opacity animation.
-    pub fn with_animation(mut self, animation: OverlayAnimation) -> Self {
-        self.animation = animation;
-        self
-    }
-
     /// Set the multi-channel animation tracks.
     pub fn with_animations(mut self, animations: OverlayAnimations) -> Self {
-        self.animations = animations;
+        self.animations = Some(Box::new(animations));
         self
     }
 
@@ -1650,5 +1602,28 @@ mod tests {
         for pt in [[60.0, 25.0], [20.0, 20.0], [90.0, 40.0]] {
             assert!((base.distance(pt) - piv.distance(pt)).abs() < 1e-4);
         }
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    /// The animation block dwarfs the rest of the shape item, so it is boxed
+    /// and only animated shapes pay for it. Assert the win so it cannot
+    /// silently regress when a field is added.
+    #[test]
+    fn shape_item_stays_small_without_animation_state() {
+        let item = std::mem::size_of::<OverlayShapeItem>();
+        let anims = std::mem::size_of::<OverlayAnimations>();
+        assert!(
+            item < anims,
+            "OverlayShapeItem is {item} bytes and OverlayAnimations is {anims}: \
+             the animation block is no longer boxed"
+        );
+        assert!(
+            item <= 512,
+            "OverlayShapeItem grew to {item} bytes (budget 512)"
+        );
     }
 }
