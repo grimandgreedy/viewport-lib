@@ -181,7 +181,7 @@ impl eframe::App for App {
                 );
                 fd.effects.lighting = built.lighting.clone();
                 if let Some(bg) = built.background {
-                    fd.viewport.background_colour = Some(bg);
+                    fd.viewport.background_colour = Some(bg.into());
                 }
 
                 ui.painter()

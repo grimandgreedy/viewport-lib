@@ -3,10 +3,14 @@
 ## [Unreleased]
 
 ### Breaking
+- **`ShadowLayer::radius` is now `blur`, and the struct is `#[non_exhaustive]`** - build layers with `ShadowLayer::new` / `outline` and the `with_*` setters instead of a struct literal; the rename disambiguates it from the new `spread`.
 - **Several enums are now `#[non_exhaustive]`** - a `match` on `ShadingModel`, `AlphaMode`, `BackfacePolicy`, or the animation-clip enums needs a `_ =>` arm.
 - **`gpu_phase::_RESERVED_INTERNAL` removed** - it reserved a plugin band that will never exist; the other phases are unchanged.
 
 ### Features
+- **Overlay shadows on every overlay family** - `shadows` moves off `OverlayShapeItem` alone and onto `LabelItem`, `GlyphRunItem`, and `OverlayPolylineItem` as well, and now draws on vector paths, which ignored it before. Empty by default.
+- **Overlay text outlines** - `ShadowLayer::outline(colour, width)` is a contour rather than a drop shadow, which is what keeps a label legible over a scene whose background changes every frame. There is no separate outline field: an outline is a shadow with spread and no blur or offset.
+- **`ShadowLayer::spread` and `falloff`** - `spread` grows the silhouette before blurring (CSS `box-shadow` semantics, and what makes a shadow work on thin strokes and small text); `falloff` shapes the fade curve, above 1.0 tightening it against the item and below broadening it toward a glow.
 - **Post-effect plugin surface** - register your own effects before or after tone mapping, in the same chain as the built-in ones.
 - **Vignette** - darken the image toward the corners. Off by default.
 - **Colour-grading LUT** - apply a lookup texture after tone mapping.

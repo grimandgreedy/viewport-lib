@@ -25,6 +25,79 @@ pub use viewport_lib_types::overlay::font::FontHandle;
 // GlyphKey / GlyphEntry : atlas bookkeeping
 // ---------------------------------------------------------------------------
 
+/// How a glyph cell is post-processed after rasterization.
+///
+/// The plain style is the glyph itself. A shadow style grows the coverage by
+/// `spread`, fades it over `blur`, and shapes that fade by `falloff`, producing
+/// a cell that is drawn behind the glyph in the shadow colour. Baking it here
+/// rather than at draw time means the work happens once per distinct style and
+/// size, not per frame, and the result is exact rather than an approximation
+/// built from offset copies.
+///
+/// All three are quantised for the same reason the font size is: to keep the
+/// number of distinct atlas cells bounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) struct GlyphStyle {
+    /// Dilation in tenths of a physical pixel.
+    spread_tenths: u32,
+    /// Fade distance in tenths of a physical pixel.
+    blur_tenths: u32,
+    /// Falloff exponent in tenths. `0` marks the plain (unstyled) glyph.
+    falloff_tenths: u32,
+}
+
+/// Largest dilation or blur honoured on a glyph cell, in physical pixels.
+/// Past this the cell dwarfs the glyph and the atlas cost stops being worth it.
+const MAX_GLYPH_STYLE_PX: f32 = 32.0;
+
+impl GlyphStyle {
+    /// The glyph as rasterized, with no shadow processing.
+    pub(crate) const PLAIN: Self = Self {
+        spread_tenths: 0,
+        blur_tenths: 0,
+        falloff_tenths: 0,
+    };
+
+    /// Build a style from a shadow layer's physical-pixel spread and blur.
+    /// Returns [`GlyphStyle::PLAIN`] when the layer would not change the cell.
+    pub(crate) fn from_shadow(spread_px: f32, blur_px: f32, falloff: f32) -> Self {
+        let spread = spread_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
+        let blur = blur_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
+        if spread <= 0.0 && blur <= 0.0 {
+            return Self::PLAIN;
+        }
+        Self {
+            spread_tenths: (spread * 10.0).round() as u32,
+            blur_tenths: (blur * 10.0).round() as u32,
+            falloff_tenths: ((falloff.clamp(0.05, 16.0)) * 10.0).round().max(1.0) as u32,
+        }
+    }
+
+    fn is_plain(&self) -> bool {
+        self.falloff_tenths == 0
+    }
+
+    fn spread(&self) -> f32 {
+        self.spread_tenths as f32 * 0.1
+    }
+
+    fn blur(&self) -> f32 {
+        self.blur_tenths as f32 * 0.1
+    }
+
+    fn falloff(&self) -> f32 {
+        self.falloff_tenths as f32 * 0.1
+    }
+
+    /// Physical pixels the styled cell grows on every side.
+    fn pad(&self) -> u32 {
+        if self.is_plain() {
+            return 0;
+        }
+        (self.spread() + self.blur()).ceil() as u32 + 1
+    }
+}
+
 /// Unique key for a rasterized glyph in the atlas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct GlyphKey {
@@ -33,6 +106,8 @@ struct GlyphKey {
     /// Font size in tenths of a pixel (e.g. 140 = 14.0 px).
     /// Quantised to avoid unbounded atlas growth from fractional sizes.
     size_tenths: u32,
+    /// Post-processing applied to the cell (plain glyph, or a shadow bake).
+    style: GlyphStyle,
 }
 
 /// Location and metrics of a single rasterized glyph in the atlas texture.
@@ -232,6 +307,7 @@ impl GlyphAtlas {
         font: Option<FontHandle>,
         ppp: f32,
         device: &crate::gpu::Device,
+        style: GlyphStyle,
     ) -> TextLayout {
         let font_index = font.map_or(0, |h| h.0);
         let px = font_size * ppp;
@@ -275,7 +351,8 @@ impl GlyphAtlas {
             // Emit a quad for glyphs with a visible outline, or any glyph in a
             // color font (emoji have no outline, so fontdue reports zero area).
             if (m.width > 0 && m.height > 0) || self.font_has_color[font_index] {
-                let entry = self.ensure_glyph(device, font_index, glyph_index, size_tenths, px);
+                let entry =
+                    self.ensure_glyph(device, font_index, glyph_index, size_tenths, px, style);
                 if entry.width > 0 {
                     let atlas_size = self.size as f32;
                     quads.push(GlyphQuad {
@@ -324,6 +401,7 @@ impl GlyphAtlas {
         max_width: f32,
         ppp: f32,
         device: &crate::gpu::Device,
+        style: GlyphStyle,
     ) -> TextLayout {
         let font_index = font.map_or(0, |h| h.0);
         // Lay out at physical size (see `layout_text`). `max_width` arrives in
@@ -380,8 +458,14 @@ impl GlyphAtlas {
                     prev_glyph = Some(glyph_index);
                     let m = self.fonts[font_index].metrics_indexed(glyph_index, px);
                     if (m.width > 0 && m.height > 0) || self.font_has_color[font_index] {
-                        let entry =
-                            self.ensure_glyph(device, font_index, glyph_index, size_tenths, px);
+                        let entry = self.ensure_glyph(
+                            device,
+                            font_index,
+                            glyph_index,
+                            size_tenths,
+                            px,
+                            style,
+                        );
                         if entry.width > 0 {
                             let atlas_size = self.size as f32;
                             word_quads.push(GlyphQuad {
@@ -476,6 +560,7 @@ impl GlyphAtlas {
         font: Option<FontHandle>,
         ppp: f32,
         device: &crate::gpu::Device,
+        style: GlyphStyle,
     ) -> Vec<(GlyphQuad, P)>
     where
         I: IntoIterator<Item = (u16, f32, f32, P)>,
@@ -496,7 +581,7 @@ impl GlyphAtlas {
                 continue;
             }
 
-            let entry = self.ensure_glyph(device, font_index, glyph_id, size_tenths, px);
+            let entry = self.ensure_glyph(device, font_index, glyph_id, size_tenths, px, style);
             if entry.width == 0 {
                 continue;
             }
@@ -635,11 +720,13 @@ impl GlyphAtlas {
         glyph_index: u16,
         size_tenths: u32,
         px: f32,
+        style: GlyphStyle,
     ) -> GlyphEntry {
         let key = GlyphKey {
             font_index,
             glyph_index,
             size_tenths,
+            style,
         };
 
         if let Some(&entry) = self.entries.get(&key) {
@@ -653,6 +740,24 @@ impl GlyphAtlas {
             if let Some(color) =
                 super::color_glyph::rasterize(&self.font_bytes[font_index], glyph_index, px)
             {
+                if !style.is_plain() {
+                    // A shadow cast by an emoji is its silhouette, not a second
+                    // copy of the emoji. The decoded RGBA is straight (not
+                    // premultiplied), so its alpha is exactly that silhouette.
+                    let coverage: Vec<u8> = color.rgba.iter().map(|p| p[3]).collect();
+                    let (cell, w, h, pad) =
+                        style_coverage(&coverage, color.width, color.height, style);
+                    return self.pack_rgba(
+                        device,
+                        key,
+                        &cell,
+                        w,
+                        h,
+                        color.offset_x - pad as f32,
+                        color.offset_y - pad as f32,
+                        false,
+                    );
+                }
                 return self.pack_rgba(
                     device,
                     key,
@@ -672,6 +777,20 @@ impl GlyphAtlas {
         let h = metrics.height as u32;
         let offset_x = metrics.xmin as f32;
         let offset_y = -(metrics.ymin as f32 + h as f32);
+
+        if !style.is_plain() && w > 0 && h > 0 {
+            let (cell, sw, sh, pad) = style_coverage(&bitmap, w, h, style);
+            return self.pack_rgba(
+                device,
+                key,
+                &cell,
+                sw,
+                sh,
+                offset_x - pad as f32,
+                offset_y - pad as f32,
+                false,
+            );
+        }
 
         if w == 0 || h == 0 {
             // Whitespace glyph: insert a zero-area entry.
@@ -862,4 +981,128 @@ impl crate::resources::DeviceResources {
     pub fn font_bytes(&self, font: Option<FontHandle>) -> Option<&[u8]> {
         self.content.glyph_atlas.font_bytes(font.map_or(0, |h| h.0))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shadow cell baking
+// ---------------------------------------------------------------------------
+
+/// Turn a glyph coverage bitmap into a shadow cell: dilate by the style's
+/// spread, fade over its blur, then shape that fade by its falloff.
+///
+/// Returns the new cell, its dimensions, and the padding added on each side
+/// (the caller shifts the glyph's bearing by this so the cell stays registered
+/// with the glyph it backs).
+///
+/// Dilation is a max over a disc, which keeps round letterforms round; a square
+/// window would square off the contour on curves. The fade is two box passes,
+/// whose triangle kernel is a closer match to the smoothstep the SDF shape path
+/// uses than a single box would be.
+fn style_coverage(
+    coverage: &[u8],
+    w: u32,
+    h: u32,
+    style: GlyphStyle,
+) -> (Vec<[u8; 4]>, u32, u32, u32) {
+    let pad = style.pad();
+    let ow = w + pad * 2;
+    let oh = h + pad * 2;
+
+    // Place the source in the padded cell.
+    let mut a = vec![0u8; (ow * oh) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            a[((y + pad) * ow + (x + pad)) as usize] = coverage[(y * w + x) as usize];
+        }
+    }
+
+    let spread = style.spread();
+    if spread > 0.0 {
+        a = dilate_disc(&a, ow, oh, spread);
+    }
+
+    let blur = style.blur();
+    if blur > 0.0 {
+        // Two box passes of radius blur/4 give a ramp about `blur` wide.
+        let r = (blur * 0.25).round().max(1.0) as u32;
+        a = box_blur(&a, ow, oh, r);
+        a = box_blur(&a, ow, oh, r);
+    }
+
+    let falloff = style.falloff();
+    if (falloff - 1.0).abs() > f32::EPSILON {
+        for v in a.iter_mut() {
+            let t = (*v as f32 / 255.0).powf(falloff);
+            *v = (t * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    let cell: Vec<[u8; 4]> = a.iter().map(|&v| [255, 255, 255, v]).collect();
+    (cell, ow, oh, pad)
+}
+
+/// Grow coverage by taking the maximum over a disc of `radius` pixels.
+fn dilate_disc(src: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
+    let r = radius.ceil() as i32;
+    let r2 = radius * radius;
+    // Offsets inside the disc, computed once rather than per pixel.
+    let mut disc: Vec<(i32, i32)> = Vec::new();
+    for dy in -r..=r {
+        for dx in -r..=r {
+            if (dx * dx + dy * dy) as f32 <= r2 {
+                disc.push((dx, dy));
+            }
+        }
+    }
+
+    let mut out = vec![0u8; src.len()];
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let mut m = 0u8;
+            for &(dx, dy) in &disc {
+                let (sx, sy) = (x + dx, y + dy);
+                if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
+                    continue;
+                }
+                let v = src[(sy * w as i32 + sx) as usize];
+                if v > m {
+                    m = v;
+                    if m == 255 {
+                        break;
+                    }
+                }
+            }
+            out[(y * w as i32 + x) as usize] = m;
+        }
+    }
+    out
+}
+
+/// Separable box blur of the given radius, run horizontally then vertically.
+fn box_blur(src: &[u8], w: u32, h: u32, radius: u32) -> Vec<u8> {
+    let r = radius as i32;
+    let n = (r * 2 + 1) as u32;
+    let mut tmp = vec![0u8; src.len()];
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let mut sum = 0u32;
+            for d in -r..=r {
+                let sx = (x + d).clamp(0, w as i32 - 1);
+                sum += src[(y * w as i32 + sx) as usize] as u32;
+            }
+            tmp[(y * w as i32 + x) as usize] = (sum / n) as u8;
+        }
+    }
+    let mut out = vec![0u8; src.len()];
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let mut sum = 0u32;
+            for d in -r..=r {
+                let sy = (y + d).clamp(0, h as i32 - 1);
+                sum += tmp[(sy * w as i32 + x) as usize] as u32;
+            }
+            out[(y * w as i32 + x) as usize] = (sum / n) as u8;
+        }
+    }
+    out
 }
