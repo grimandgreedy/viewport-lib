@@ -72,6 +72,23 @@ pub struct RetainedOverlay {
     /// re-compiling the group. On SDF shapes the tint reaches the fill, border, and
     /// gradient colours but not the drop shadow (whose colour is baked).
     pub tint: [f32; 4],
+    /// Origin the group hangs from, resolved every frame: a viewport corner
+    /// that follows a resize, or a world point projected through the camera.
+    /// `transform.translate` is then a nudge from that origin, and a world
+    /// anchor behind the camera or off screen culls the group for the frame.
+    ///
+    /// `None` (the default) leaves the group where its `translate` puts it. A
+    /// group compiled from a single `LabelItem` carries the label's own anchor;
+    /// setting this overrides it.
+    pub anchor: Option<crate::overlay::OverlayAnchor>,
+    /// How the group's extent box sits horizontally on the resolved anchor.
+    /// `Left` (the default) puts its left edge there. Ignored when `anchor` is
+    /// `None`.
+    pub align_x: crate::overlay::AnchorX,
+    /// How the group's extent box sits vertically on the resolved anchor.
+    /// `Top` (the default) puts its top edge there. Ignored when `anchor` is
+    /// `None`.
+    pub align_y: crate::overlay::AnchorY,
     /// Animation tracks resolved each frame against `OverlayFrame::time`.
     ///
     /// Every channel a track can drive rides the per-draw instance, so an
@@ -92,6 +109,9 @@ impl RetainedOverlay {
             clip_rect: None,
             clip_id: None,
             tint: [1.0, 1.0, 1.0, 1.0],
+            anchor: None,
+            align_x: crate::overlay::AnchorX::Left,
+            align_y: crate::overlay::AnchorY::Top,
             animations: None,
         }
     }
@@ -150,6 +170,20 @@ impl RetainedOverlay {
     /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
         self.tint = tint;
+        self
+    }
+
+    /// Anchor the group to a viewport corner or a world point, resolved every
+    /// frame. `translate` becomes a nudge from the resolved origin.
+    pub fn with_anchor(mut self, anchor: crate::overlay::OverlayAnchor) -> Self {
+        self.anchor = Some(anchor);
+        self
+    }
+
+    /// Set how the group's extent box sits on the resolved anchor.
+    pub fn with_align(mut self, x: crate::overlay::AnchorX, y: crate::overlay::AnchorY) -> Self {
+        self.align_x = x;
+        self.align_y = y;
         self
     }
 

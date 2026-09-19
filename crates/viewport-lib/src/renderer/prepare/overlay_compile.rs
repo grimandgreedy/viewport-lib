@@ -709,6 +709,33 @@ fn emit_sdf_shape(
     }
 }
 
+/// The extent of a compiled group in its own local logical pixels, over both
+/// vertex streams. `None` when the group compiled nothing.
+///
+/// This is the box `align_x` / `align_y` shift against when a group is
+/// anchored, so it plays the role an item's own extent box plays. Computed once
+/// at compile rather than per frame: the geometry is fixed by definition.
+fn group_bounds(
+    text: &[crate::resources::OverlayTextVertex],
+    shapes: &[crate::resources::OverlayShapeVertex],
+) -> Option<([f32; 2], [f32; 2])> {
+    let mut min = [f32::MAX, f32::MAX];
+    let mut max = [f32::MIN, f32::MIN];
+    let mut any = false;
+    for p in text
+        .iter()
+        .map(|v| v.position)
+        .chain(shapes.iter().map(|v| v.position))
+    {
+        any = true;
+        min[0] = min[0].min(p[0]);
+        min[1] = min[1].min(p[1]);
+        max[0] = max[0].max(p[0]);
+        max[1] = max[1].max(p[1]);
+    }
+    any.then_some((min, max))
+}
+
 impl ViewportRenderer {
     /// Compile a group of polylines, vector shapes, glyph runs, and labels into a
     /// retained overlay-geometry handle.
@@ -850,6 +877,7 @@ impl ViewportRenderer {
                 shadow_buf,
                 source,
                 anchor: None,
+                bounds: group_bounds(&verts, &shape_verts),
             },
             total_bytes,
         )
@@ -928,6 +956,7 @@ impl ViewportRenderer {
                 shadow_buf: None,
                 source: Some(source),
                 anchor: Some(label.anchor),
+                bounds: group_bounds(&verts, &[]),
             },
             bytes,
         )
@@ -994,10 +1023,15 @@ impl ViewportRenderer {
             queue.write_buffer(&vertex_buf, 0, bytemuck::cast_slice(&verts));
         }
 
+        let bounds = group_bounds(&verts, &[]);
         if let Some(c) = self.resources.content.overlay_geometry.get_mut(id) {
             c.vertex_buf = vertex_buf;
             c.vertex_count = verts.len() as u32;
             c.bytes = bytes;
+            // A re-emit re-lays out the glyphs, so the extent can move.
+            if c.shape_vertex_count == 0 {
+                c.bounds = bounds;
+            }
             if let Some(s) = &mut c.source {
                 s.baked_atlas_version = baked_version;
                 s.baked_ppp = ppp;

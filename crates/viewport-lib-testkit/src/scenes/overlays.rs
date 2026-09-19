@@ -41,6 +41,24 @@ pub fn scenes() -> Vec<NamedScene> {
         // glyph-bearing scene in the middle of the list re-blesses everything
         // after it for no behavioural reason.
         scene("overlay_text_fill", build_text_fill),
+        NamedScene {
+            name: "overlay_group_anchor",
+            // A second viewpoint for the catalogue viewer: a world anchor
+            // moves with the camera. The snapshot gate renders the first
+            // camera only, so the culling case is a headless test instead
+            // (`headless_overlay_retained`).
+            cameras: vec![
+                NamedCamera {
+                    name: "iso",
+                    camera: orbit_camera(Vec3::ZERO, 6.0, 0.7, 1.0),
+                },
+                NamedCamera {
+                    name: "behind",
+                    camera: orbit_camera(Vec3::ZERO, 6.0, 3.6, 1.0),
+                },
+            ],
+            build: build_group_anchor,
+        },
     ]
 }
 
@@ -291,6 +309,40 @@ fn build_glyph_runs(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
         ovl.glyph_runs = vec![plain, per_glyph];
+        ovl
+    })
+}
+
+fn build_group_anchor(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // One compiled group, submitted four ways: pinned to each viewport corner
+    // with the matching alignment, and pinned to a world point. The corner
+    // submissions are what a resize has to keep correct; the world one is what
+    // a camera move has to keep correct, and it culls when the point goes
+    // behind the camera.
+    let id = compile_group(ctx);
+    let retained = vec![
+        RetainedOverlay::new(id)
+            .with_anchor(OverlayAnchor::Viewport {
+                x: AnchorX::Left,
+                y: AnchorY::Top,
+            })
+            .with_translate([8.0, 8.0]),
+        RetainedOverlay::new(id)
+            .with_anchor(OverlayAnchor::Viewport {
+                x: AnchorX::Right,
+                y: AnchorY::Bottom,
+            })
+            .with_align(AnchorX::Right, AnchorY::Bottom)
+            .with_translate([-8.0, -8.0])
+            .with_tint([0.6, 1.0, 0.7, 1.0]),
+        RetainedOverlay::new(id)
+            .with_anchor(OverlayAnchor::World([0.0, 0.0, -1.9]))
+            .with_align(AnchorX::Middle, AnchorY::Top)
+            .with_scale(0.7),
+    ];
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.retained = retained;
         ovl
     })
 }

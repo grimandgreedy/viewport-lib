@@ -1235,7 +1235,7 @@ impl ViewportRenderer {
                         animated_storage = owned;
                         &animated_storage
                     };
-                    let (text, shape, anchor) =
+                    let (text, shape, (compiled_anchor, bounds)) =
                         match self.resources.content.overlay_geometry.get(r.id) {
                             Some(c) => {
                                 let text = (c.vertex_count > 0)
@@ -1246,19 +1246,24 @@ impl ViewportRenderer {
                                     }
                                     _ => None,
                                 };
-                                (text, shape, c.anchor)
+                                (text, shape, (c.anchor, c.bounds))
                             }
                             None => continue,
                         };
                     if text.is_none() && shape.is_none() {
                         continue;
                     }
-                    // A compiled label carries its own anchor: resolve it to a
-                    // screen origin (a viewport corner, or a world point projected
-                    // through the camera) and fold it into the translate. The
-                    // submission's translate composes on top (scroll/nudge). A world
-                    // anchor that is culled skips the group for this frame.
-                    let translate = match anchor {
+                    // Resolve the group's anchor to a screen origin (a viewport
+                    // corner, or a world point projected through the camera) and
+                    // fold it into the translate, then shift by the alignment
+                    // against the group's own compiled extent. The submission's
+                    // translate composes on top (scroll/nudge). A world anchor
+                    // that is culled skips the group for this frame.
+                    //
+                    // The submission's anchor wins over the one a group compiled
+                    // from a single label carries, so a caller can re-anchor a
+                    // compiled label without re-compiling it.
+                    let translate = match r.anchor.or(compiled_anchor) {
                         Some(a) => {
                             let Some(origin) = crate::renderer::types::resolve_anchor_origin(
                                 &a,
@@ -1268,9 +1273,20 @@ impl ViewportRenderer {
                             ) else {
                                 continue;
                             };
+                            // Alignment only means something against an extent,
+                            // and a group compiled from one label already placed
+                            // its own alignment at compile time, so it is applied
+                            // only for an anchor the submission set.
+                            let align = match (r.anchor, bounds) {
+                                (Some(_), Some((min, max))) => [
+                                    r.align_x.align_shift(max[0] - min[0]) - min[0],
+                                    r.align_y.align_shift(max[1] - min[1]) - min[1],
+                                ],
+                                _ => [0.0, 0.0],
+                            };
                             [
-                                origin[0] + r.transform.translate[0],
-                                origin[1] + r.transform.translate[1],
+                                origin[0] + align[0] + r.transform.translate[0],
+                                origin[1] + align[1] + r.transform.translate[1],
                             ]
                         }
                         None => r.transform.translate,

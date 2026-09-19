@@ -625,3 +625,54 @@ fn retained_opacity_and_free() {
         "a freed group should draw nothing"
     );
 }
+
+/// A retained group anchors like an item: the same compiled handle pins to a
+/// viewport corner that follows a resize, and to a world point that follows the
+/// camera and culls when it leaves the frustum.
+#[test]
+fn retained_group_anchors_to_a_corner_and_a_world_point() {
+    use viewport_lib::{AnchorX, AnchorY, OverlayAnchor};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+    let id =
+        renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], &[], 1.0);
+
+    // The square is compiled over 16..48 in group-local pixels. Anchored to the
+    // bottom-right corner with matching alignment, its far corner lands on the
+    // viewport corner whatever the viewport size is, so the pixel just inside
+    // it is covered.
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![
+        RetainedOverlay::new(id)
+            .with_anchor(OverlayAnchor::Viewport {
+                x: AnchorX::Right,
+                y: AnchorY::Bottom,
+            })
+            .with_align(AnchorX::Right, AnchorY::Bottom),
+    ];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, size - 2, size - 2)),
+        "a bottom-right anchored group should reach the bottom-right corner"
+    );
+    assert!(
+        is_background(rgb_at(&px, size, 2, 2)),
+        "and should not still be drawing at the origin"
+    );
+
+    // A world anchor behind the camera culls the group rather than drawing it
+    // at a projected-but-meaningless position.
+    let mut behind = overlay_frame(size);
+    behind.overlays.retained =
+        vec![RetainedOverlay::new(id).with_anchor(OverlayAnchor::World([0.0, 0.0, -1000.0]))];
+    let px = renderer.render_offscreen(&device, &queue, &behind, size, size);
+    assert!(
+        px.chunks_exact(4).all(|p| !is_red((p[0], p[1], p[2]))),
+        "a culled world anchor should draw nothing"
+    );
+}

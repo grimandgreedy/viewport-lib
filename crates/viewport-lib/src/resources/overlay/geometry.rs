@@ -36,6 +36,11 @@ pub(crate) struct CompiledOverlay {
     /// it to the per-frame translate, and skips the group when a world anchor is
     /// culled. `None` for every other group, whose translate is taken as-is.
     pub anchor: Option<viewport_lib_types::overlay::OverlayAnchor>,
+    /// The group's extent in its own local logical pixels, `(min, max)`, taken
+    /// over every vertex it compiled. `None` for an empty group. This is what
+    /// `align_x` / `align_y` shift against when a group is anchored, the same
+    /// way an item's extent box does.
+    pub bounds: Option<([f32; 2], [f32; 2])>,
 }
 
 /// The source items a glyph-bearing group retains so its geometry can be
