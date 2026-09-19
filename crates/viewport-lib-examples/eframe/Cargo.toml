@@ -23,7 +23,7 @@ eframe033 = { package = "eframe", version = "=0.33.3", default-features = false,
 eframe035 = { package = "eframe", version = "0.35", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
 eframe036 = { package = "eframe", version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
 # Model/scene import for eframe-showcase.
-viewport-lib-io = { version = "0.7.0" }
+viewport-lib-io = { version = "0.8.0" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Used directly by a handful of showcases: vertex-buffer casts in the GPU-plugin
 # demos, and a glyph-id lookup in the overlay text showcase.
