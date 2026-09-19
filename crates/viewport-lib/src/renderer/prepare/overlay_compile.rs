@@ -3,6 +3,7 @@
 //! re-tessellating them.
 
 use super::*;
+use crate::resources::overlay::font::GlyphStyle;
 
 /// Emit a group's polyline and vector-shape fills into `verts` (local logical
 /// pixels). These are viewport- and DPI-independent, so they are emitted once and
@@ -15,6 +16,14 @@ fn emit_base(
     for poly in polylines {
         if poly.points.len() < 2 || poly.opacity <= 0.0 {
             continue;
+        }
+        for layer in poly
+            .shadows
+            .iter()
+            .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+            .filter(|l| l.is_visible())
+        {
+            overlay_geometry::emit_polyline_shadow(verts, poly, layer, poly.opacity, 0.0, 0.0);
         }
         if poly.closed && poly.texture.is_none() {
             if let Some(fill) = &poly.fill {
@@ -90,7 +99,36 @@ fn emit_glyph_run(
         run.font,
         ppp,
         device,
+        GlyphStyle::PLAIN,
     );
+    // Shadow layers bake into the retained buffer like everything else: they are
+    // fixed geometry once compiled, so a retained run carries its contour without
+    // re-laying it out per frame.
+    for layer in run
+        .shadows
+        .iter()
+        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+        .filter(|l| l.is_visible())
+    {
+        let style = GlyphStyle::from_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
+        let sq = atlas.layout_glyph_run(
+            run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
+            run.font_size,
+            run.font,
+            ppp,
+            device,
+            style,
+        );
+        overlay_geometry::emit_glyph_quads_colored(
+            verts,
+            &sq,
+            run_x + layer.offset[0],
+            run_y + layer.offset[1],
+            0.0,
+            0.0,
+        );
+    }
     overlay_geometry::emit_glyph_quads_colored(verts, &quads, run_x, run_y, 0.0, 0.0);
 }
 
@@ -122,9 +160,24 @@ fn emit_label(
     }
     let opacity = label.opacity.clamp(0.0, 1.0);
     let layout = if let Some(max_w) = label.max_width {
-        atlas.layout_text_wrapped(&label.text, label.font_size, label.font, max_w, ppp, device)
+        atlas.layout_text_wrapped(
+            &label.text,
+            label.font_size,
+            label.font,
+            max_w,
+            ppp,
+            device,
+            GlyphStyle::PLAIN,
+        )
     } else {
-        atlas.layout_text(&label.text, label.font_size, label.font, ppp, device)
+        atlas.layout_text(
+            &label.text,
+            label.font_size,
+            label.font,
+            ppp,
+            device,
+            GlyphStyle::PLAIN,
+        )
     };
     let font_index = label.font.map_or(0, |h| h.0);
     let ascent = atlas.font_ascent(font_index, label.font_size);
@@ -178,6 +231,38 @@ fn emit_label(
             text_y + layout.height * 0.5,
             1.5,
             overlay_geometry::apply_opacity(label.leader_colour.to_linear_rgba(), opacity),
+            0.0,
+            0.0,
+        );
+    }
+
+    for layer in label
+        .shadows
+        .iter()
+        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+        .filter(|l| l.is_visible())
+    {
+        let style = GlyphStyle::from_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        let sl = if let Some(max_w) = label.max_width {
+            atlas.layout_text_wrapped(
+                &label.text,
+                label.font_size,
+                label.font,
+                max_w,
+                ppp,
+                device,
+                style,
+            )
+        } else {
+            atlas.layout_text(&label.text, label.font_size, label.font, ppp, device, style)
+        };
+        let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
+        overlay_geometry::emit_glyph_quads(
+            verts,
+            &sl.quads,
+            text_x + layer.offset[0],
+            text_y + ascent + layer.offset[1],
+            col,
             0.0,
             0.0,
         );
@@ -287,7 +372,7 @@ fn emit_sdf_shape(
         0.0
     };
     for l in &shape.shadows {
-        shadow_pad = shadow_pad.max(l.radius + l.offset[0].abs().max(l.offset[1].abs()));
+        shadow_pad = shadow_pad.max(l.extent());
     }
     let extra_expand = match &shape.shape {
         OverlayShape::Line { thickness, .. } => thickness * 0.5,
@@ -470,7 +555,8 @@ fn emit_sdf_shape(
             col[3] *= op;
             out_shadows.push(crate::resources::OverlayShadowLayerGpu {
                 colour: col,
-                params: [l.radius, l.offset[0], l.offset[1], 0.0],
+                params: [l.blur, l.offset[0], l.offset[1], 0.0],
+                params2: [l.spread, l.falloff, 0.0, 0.0],
             });
             outer_count += 1;
         }
@@ -483,6 +569,7 @@ fn emit_sdf_shape(
                 shape.shadow_offset[1],
                 0.0,
             ],
+            params2: [0.0, 1.0, 0.0, 0.0],
         });
         outer_count += 1;
     }
@@ -492,7 +579,8 @@ fn emit_sdf_shape(
             col[3] *= op;
             out_shadows.push(crate::resources::OverlayShadowLayerGpu {
                 colour: col,
-                params: [l.radius, l.offset[0], l.offset[1], 1.0],
+                params: [l.blur, l.offset[0], l.offset[1], 1.0],
+                params2: [l.spread, l.falloff, 0.0, 0.0],
             });
             inner_count += 1;
         }
@@ -505,6 +593,7 @@ fn emit_sdf_shape(
                 shape.shadow_offset[1],
                 1.0,
             ],
+            params2: [0.0, 1.0, 0.0, 0.0],
         });
         inner_count += 1;
     }
@@ -641,6 +730,7 @@ impl ViewportRenderer {
                 shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                     colour: [0.0; 4],
                     params: [0.0; 4],
+                    params2: [0.0, 1.0, 0.0, 0.0],
                 });
             }
             let sv_bytes = std::mem::size_of_val(&shape_verts[..]) as u64;

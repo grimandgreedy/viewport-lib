@@ -122,25 +122,114 @@ pub enum OverlayShape {
 /// shadow for depth plus a tighter one for contact, or an outer glow for
 /// focus.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct ShadowLayer {
     /// RGBA colour of the shadow, linear float format. The alpha scales the
     /// shadow strength.
     pub colour: crate::colour::Colour,
-    /// Blur spread in logical pixels. `0.0` produces no visible shadow.
-    pub radius: f32,
-    /// Offset of the shadow from the shape centre in logical pixels.
+    /// Blur distance in logical pixels: how far the shadow fades from fully
+    /// opaque to fully transparent, measured outward from the (spread) edge.
+    /// `0.0` gives a hard edge.
+    pub blur: f32,
+    /// Offset of the shadow from the item in logical pixels.
     /// Positive X shifts right, positive Y shifts down.
     pub offset: [f32; 2],
+    /// Grow the silhouette by this many logical pixels before blurring and
+    /// offsetting. Matches the third length of the CSS `box-shadow` shorthand.
+    ///
+    /// This is the knob that makes a shadow work on thin shapes and small text,
+    /// where an offset alone leaves the shadow hidden under the stroke it is
+    /// meant to back. A contour is spread with no blur and no offset: see
+    /// [`ShadowLayer::outline`].
+    pub spread: f32,
+    /// Exponent shaping the blur falloff curve. Default `1.0`, which is the
+    /// plain fade. Above `1.0` concentrates the shadow against the item and
+    /// leaves a longer, lighter tail; below `1.0` broadens it towards a glow.
+    ///
+    /// Has no effect when `blur` is `0.0`, since there is no gradient to shape.
+    pub falloff: f32,
+}
+
+impl Default for ShadowLayer {
+    fn default() -> Self {
+        Self {
+            colour: [0.0, 0.0, 0.0, 0.0].into(),
+            blur: 0.0,
+            offset: [0.0, 0.0],
+            spread: 0.0,
+            falloff: 1.0,
+        }
+    }
 }
 
 impl ShadowLayer {
-    /// Build a shadow layer from colour, blur radius, and offset.
-    pub fn new(colour: impl Into<crate::colour::Colour>, radius: f32, offset: [f32; 2]) -> Self {
+    /// Build a shadow layer from colour, blur distance, and offset, with no
+    /// spread and the default falloff.
+    pub fn new(colour: impl Into<crate::colour::Colour>, blur: f32, offset: [f32; 2]) -> Self {
         Self {
             colour: colour.into(),
-            radius,
+            blur,
             offset,
+            ..Default::default()
         }
+    }
+
+    /// Build a contour: a shadow dilated by `width` with no blur and no offset,
+    /// so it reads as an outline hugging the item on every side.
+    ///
+    /// This is how text and thin strokes get an outline; there is no separate
+    /// outline field. Stacking a blurred layer behind one of these gives an
+    /// outlined item with a drop shadow, ordered by position in the list.
+    pub fn outline(colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
+        Self {
+            colour: colour.into(),
+            spread: width,
+            ..Default::default()
+        }
+    }
+
+    /// Set the shadow colour.
+    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.colour = colour.into();
+        self
+    }
+
+    /// Set the blur distance in logical pixels.
+    pub fn with_blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+
+    /// Set the offset in logical pixels.
+    pub fn with_offset(mut self, offset: [f32; 2]) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Set the spread: how far the silhouette grows before blur and offset.
+    pub fn with_spread(mut self, spread: f32) -> Self {
+        self.spread = spread;
+        self
+    }
+
+    /// Set the falloff exponent shaping the blur curve.
+    pub fn with_falloff(mut self, falloff: f32) -> Self {
+        self.falloff = falloff;
+        self
+    }
+
+    /// How far beyond the item's own bounds this layer can draw, in logical
+    /// pixels. Geometry that emits a shadow pads its bounds by this.
+    pub fn extent(&self) -> f32 {
+        let reach = self.spread + self.blur;
+        reach + self.offset[0].abs().max(self.offset[1].abs())
+    }
+
+    /// Whether this layer draws anything at all.
+    pub fn is_visible(&self) -> bool {
+        let shaped = self.blur > 0.0 || self.spread > 0.0;
+        let displaced = self.offset[0] != 0.0 || self.offset[1] != 0.0;
+        self.colour.to_linear_rgba()[3] > 0.0 && (shaped || displaced)
     }
 }
 

@@ -641,9 +641,12 @@ impl crate::resources::DeviceResources {
 pub(crate) struct OverlayShadowLayerGpu {
     /// RGBA shadow colour (pre-multiplied opacity).
     pub colour: [f32; 4],
-    /// `[radius_px, offset_x, offset_y, is_inner]`. `is_inner` is 0 for an
+    /// `[blur_px, offset_x, offset_y, is_inner]`. `is_inner` is 0 for an
     /// outer drop shadow, 1 for an inner (inset) shadow.
     pub params: [f32; 4],
+    /// `[spread_px, falloff, 0, 0]`. `spread` grows the silhouette before the
+    /// blur is applied; `falloff` is the exponent shaping the blur curve.
+    pub params2: [f32; 4],
 }
 
 /// One clip-mask shape as uploaded to the clip storage buffer, shared by the shape
