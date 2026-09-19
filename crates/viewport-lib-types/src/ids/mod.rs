@@ -1,8 +1,8 @@
-//! Generational and registry handles for GPU content.
+//! Generational handles for GPU content.
 //!
-//! The handle machinery ([`ContentHandle`], [`slot_handle!`],
-//! [`registry_handle!`]) lives here; the individual handle types are defined in
-//! the domain submodules and re-exported.
+//! The handle machinery ([`ContentHandle`] and [`slot_handle!`]) lives here;
+//! the individual handle types are defined in the domain submodules and
+//! re-exported.
 //!
 //! Most GPU content the renderer stores (meshes, textures, splat sets, volumes,
 //! curves) is keyed by a handle into a slotted store. A removed entry leaves an
@@ -14,9 +14,7 @@
 //! [`slot_handle!`] generates one of these handle types with the standard
 //! surface (an `INVALID` sentinel, `index`, and a private `new`), so every
 //! content handle looks and behaves the same. [`ContentHandle`] is the common
-//! interface over them. [`registry_handle!`] generates the append-only variant
-//! for resources that are created once and never freed, so they need no
-//! generation.
+//! interface over them.
 
 /// Common interface implemented by every slotted content handle.
 ///
@@ -116,44 +114,6 @@ macro_rules! slot_handle {
 
             fn from_parts(index: u32, generation: u32) -> Self {
                 <$name>::new(index, generation)
-            }
-        }
-    };
-}
-
-/// Define an append-only registry handle: a stable index into a grow-only store
-/// that never frees or reuses slots, so it needs no generation.
-///
-/// These name resources created once and kept for the session (density volumes,
-/// projected-tet meshes, GPU particle systems). The handle is opaque: it is
-/// obtained from a create / upload call, and its inner index is crate-private so
-/// it cannot be synthesised by hand. If a resource class later becomes
-/// evictable, its handle graduates to [`slot_handle!`] and gains a generation;
-/// because it is already opaque, that is an additive change for consumers.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! registry_handle {
-    ($(#[$meta:meta])* $vis:vis struct $name:ident;) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        $vis struct $name(pub(crate) usize);
-
-        impl $name {
-            /// The raw registry index this handle points at. Stable for the
-            /// session; useful for debug overlays. Do not synthesise handles by
-            /// hand.
-            pub fn index(&self) -> usize {
-                self.0
-            }
-
-            /// Build a handle naming raw registry `index`.
-            ///
-            /// Hidden from the documented surface: production code obtains
-            /// handles from a create / upload call and treats them as opaque.
-            /// The store that owns the registry mints handles this way.
-            #[doc(hidden)]
-            pub fn from_index(index: usize) -> Self {
-                Self(index)
             }
         }
     };

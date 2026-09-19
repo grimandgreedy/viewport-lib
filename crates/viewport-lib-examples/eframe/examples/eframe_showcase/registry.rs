@@ -43,7 +43,7 @@ use ShowcaseMode as M;
 
 /// Every showcase, in the order the selector lists them and the cycle keys
 /// walk them.
-pub(crate) const SHOWCASES: [Entry; 59] = [
+pub(crate) const SHOWCASES: [Entry; 58] = [
     entry(
         1,
         "Rendering Basics",
@@ -211,12 +211,6 @@ pub(crate) const SHOWCASES: [Entry; 59] = [
         "Curve Network Quantities",
         M::CurveNetworkQuantities,
         &crate::showcase_28_curve_network_quantities::SHOWCASE,
-    ),
-    entry(
-        29,
-        "Depth-Composited Images",
-        M::DepthCompositeImages,
-        &crate::showcase_29_depth_composite_images::SHOWCASE,
     ),
     entry(
         30,

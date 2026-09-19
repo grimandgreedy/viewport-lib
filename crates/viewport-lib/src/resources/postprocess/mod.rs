@@ -54,6 +54,9 @@ pub(crate) struct PostProcessResources {
     pub(crate) pp_nearest_sampler: Option<crate::gpu::Sampler>,
     pub(crate) depth_blit_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) depth_blit_bgl: Option<crate::gpu::BindGroupLayout>,
+    /// Depth half of the SSAA resolve: a min reduction over each block.
+    pub(crate) ssaa_depth_resolve_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) ssaa_depth_resolve_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) dyn_res_upscale_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_ds_pipeline: Option<crate::gpu::RenderPipeline>,
     pub(crate) dyn_res_upscale_bgl: Option<crate::gpu::BindGroupLayout>,
@@ -1450,6 +1453,71 @@ impl DeviceResources {
             self.post.depth_blit_pipeline = Some(pipeline);
         }
 
+        // --- SSAA depth resolve pipeline (lazily created once) ---
+        // The depth half of the SSAA resolve: downsamples the supersampled
+        // depth into the scene-resolution buffer, taking the nearest sample of
+        // each block. Separate from `depth_blit` above, which upscales for the
+        // render-scale path and takes a single sub-sample.
+        if self.post.ssaa_depth_resolve_bgl.is_none() {
+            let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+                label: Some("ssaa_depth_resolve_bgl"),
+                entries: &[
+                    crate::gpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: crate::gpu::ShaderStages::FRAGMENT,
+                        ty: crate::gpu::BindingType::Texture {
+                            sample_type: crate::gpu::TextureSampleType::Depth,
+                            view_dimension: crate::gpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    crate::resources::builders::uniform_entry(
+                        1,
+                        crate::gpu::ShaderStages::FRAGMENT,
+                    ),
+                ],
+            });
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "ssaa_depth_resolve_shader",
+                crate::resources::builders::wgsl_source!("ssaa_depth_resolve"),
+            );
+            let layout = crate::resources::builders::pipeline_layout(
+                device,
+                "ssaa_depth_resolve_layout",
+                &[&bgl],
+            );
+            let pipeline = crate::resources::builders::render_pipeline(
+                device,
+                crate::resources::builders::RenderPipelineDesc {
+                    label: "ssaa_depth_resolve_pipeline",
+                    layout: &layout,
+                    vertex_module: &shader,
+                    vertex_entry: "vs_main",
+                    vertex_buffers: &[],
+                    fragment: Some(crate::gpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: crate::gpu::PrimitiveState {
+                        topology: crate::gpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
+                        true,
+                        crate::gpu::CompareFunction::Always,
+                    )),
+                    multisample: crate::gpu::MultisampleState::default(),
+                    cache: None,
+                },
+            );
+            self.post.ssaa_depth_resolve_bgl = Some(bgl);
+            self.post.ssaa_depth_resolve_pipeline = Some(pipeline);
+        }
+
         // --- Foreground depth stamp pipeline (lazily created once) ---
         // Writes near depth into the output depth buffer where the foreground
         // pass drew, so post-tone-map passes are occluded by foreground items.
@@ -1506,9 +1574,6 @@ impl DeviceResources {
             self.post.foreground_stamp_bgl = Some(bgl);
             self.post.foreground_stamp_pipeline = Some(pipeline);
         }
-
-        // --- Decal shared resources ---
-        self.ensure_decal_shared(device);
     }
 
     /// Create a fresh [`ViewportHdrState`] for the given viewport dimensions.
@@ -2140,6 +2205,7 @@ impl DeviceResources {
             ssaa_depth_view,
             ssaa_depth_only_view,
             ssaa_resolve_bind_group,
+            ssaa_depth_blit_bind_group,
             ssaa_uniform_buf,
         ) = if ssaa_factor > 1 {
             let (ssaa_colour_tex, ssaa_colour_view) = alloc.colour(
@@ -2150,6 +2216,7 @@ impl DeviceResources {
             );
             let ssaa_depth = alloc.depth("ssaa_depth_texture", TargetSize::SsaaScene);
             let (ssaa_depth_tex, ssaa_depth_view) = (ssaa_depth.texture, ssaa_depth.view);
+
             let ssaa_depth_only_view = Some(ssaa_depth.depth_only_view);
 
             // Build the resolve bind group if the pipeline is available.
@@ -2199,6 +2266,35 @@ impl DeviceResources {
                 (None, None)
             };
 
+            // Depth half of the resolve. The colour resolve alone leaves
+            // `hdr_depth` untouched for the whole frame, and every pass after
+            // it attaches that buffer and depth-tests against it. Shares the
+            // factor uniform with the colour resolve: the reduction needs the
+            // block size.
+            let ssaa_depth_blit_bg = match (
+                self.post.ssaa_depth_resolve_bgl.as_ref(),
+                ssaa_depth_only_view.as_ref(),
+                ssaa_ubuf.as_ref(),
+            ) {
+                (Some(bgl), Some(depth_view), Some(ubuf)) => {
+                    Some(device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                        label: Some("ssaa_depth_resolve_bg"),
+                        layout: bgl,
+                        entries: &[
+                            crate::gpu::BindGroupEntry {
+                                binding: 0,
+                                resource: crate::gpu::BindingResource::TextureView(depth_view),
+                            },
+                            crate::gpu::BindGroupEntry {
+                                binding: 1,
+                                resource: ubuf.as_entire_binding(),
+                            },
+                        ],
+                    }))
+                }
+                _ => None,
+            };
+
             (
                 Some(ssaa_colour_tex),
                 Some(ssaa_colour_view),
@@ -2206,10 +2302,11 @@ impl DeviceResources {
                 Some(ssaa_depth_view),
                 ssaa_depth_only_view,
                 ssaa_resolve_bg,
+                ssaa_depth_blit_bg,
                 ssaa_ubuf,
             )
         } else {
-            (None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None)
         };
 
         // --- Surface LIC per-viewport textures and bind group -- at scene resolution ---
@@ -2359,9 +2456,6 @@ impl DeviceResources {
             (None, None, None)
         };
 
-        let decal_depth_bg =
-            self.create_decal_depth_bg(device, &hdr_depth_only_view, &hdr_stencil_only_view);
-
         // Auto-exposure compute bind group. Metering reads the sharp scene HDR
         // (`hdr_view`), never the DOF-blurred copy. The buffers are allocated
         // earlier so the tone-map bind group can bind `exposure_state_buf`.
@@ -2428,6 +2522,7 @@ impl DeviceResources {
             ssaa_depth_view,
             ssaa_depth_only_view,
             ssaa_resolve_bind_group,
+            ssaa_depth_blit_bind_group,
             ssaa_uniform_buf,
             ssaa_factor,
             oit_accum_texture: None,
@@ -2472,7 +2567,6 @@ impl DeviceResources {
             upscale_texture,
             upscale_view,
             upscale_bind_group,
-            decal_depth_bg,
         }
     }
 

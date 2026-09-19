@@ -17,11 +17,11 @@
 //! the same `runtime.pre_prepare(...)` pass *after* the wave plugin (lower
 //! priority) so the buoy compute sees fresh wave data.
 
-use viewport_lib::wgpu;
 use bytemuck::{Pod, Zeroable};
 use viewport_lib as vpl;
-use vpl::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
+use viewport_lib::wgpu;
 use viewport_lib::wgpu::util::DeviceExt;
+use vpl::runtime::{GpuFrameContext, GpuPlugin, gpu_phase};
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]

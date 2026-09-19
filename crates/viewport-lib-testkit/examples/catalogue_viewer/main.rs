@@ -47,7 +47,7 @@ fn main() -> eframe::Result {
             for scene in catalogue() {
                 let built = {
                     let mut ctx = BuildCtx {
-                        res: renderer.resources_mut(),
+                        renderer: &mut renderer,
                         device,
                         queue,
                     };

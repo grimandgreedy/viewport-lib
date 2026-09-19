@@ -1,8 +1,9 @@
 # Snapshot failure artifacts written next to references on mismatch. The blessed
-# references (tests/snapshots/*.png) are committed as ordinary git blobs; these
-# per-run actual/diff images are not.
-tests/snapshots/*.actual.png
-tests/snapshots/*.diff.png
+# references are committed as ordinary git blobs; these per-run actual/diff
+# images are not. Matched at any depth: references live in a per-backend
+# subdirectory (tests/snapshots/metal/, ...), so a single-level glob misses them.
+tests/snapshots/**/*.actual.png
+tests/snapshots/**/*.diff.png
 
 # Bench outputs: regenerate locally, commit only benches/baseline.json.
 /frame_bench.csv

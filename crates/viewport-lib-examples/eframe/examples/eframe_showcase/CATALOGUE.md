@@ -314,13 +314,13 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ---
 
-## 27. Camera Framing & HUD  (`showcase_27_camera_framing.rs`, 705 lines)
+## 27. Camera Framing & HUD  (`showcase_27_camera_framing.rs`, 794 lines)
 
-**Demos:** Walled platform scene with warm/cool object pairs and three named cameras (A/B/C). Three sub-modes: Framing (fly-to look-through with corner-bracket + crosshair HUD overlay), Turntable (continuous orbit with speed/tilt), Track (4-keyframe Catmull-Rom path with play/scrub/edit).
+**Demos:** Walled platform scene with warm/cool object pairs and three named cameras (A/B/C). Three sub-modes: Framing (fly-to look-through), Turntable (continuous orbit with speed/tilt), Track (4-keyframe Catmull-Rom path with play/scrub/edit).
 
-**Uses:** `CameraTarget`, `CameraTrack`, `interpolate_camera`, `TurntableController`, `ScreenImageItem`, `ImageAnchor`, `PolylineItem`, `cam_animator.fly_to`.
+**Uses:** `CameraTarget`, `CameraTrack`, `interpolate_camera`, `TurntableController`, `PolylineItem`, `cam_animator.fly_to`.
 
-**Sidebar:** 3 sub-mode labels; mode-specific controls (look-through buttons + alpha/scale; speed/tilt + Start/Stop; Play/Rewind + scrub + Add/Reset/Clear).
+**Sidebar:** 3 sub-mode labels; mode-specific controls (look-through buttons; speed/tilt + Start/Stop; Play/Rewind + scrub + Add/Reset/Clear).
 
 **Drift:** None.
 
@@ -338,25 +338,13 @@ One entry per showcase in `examples/eframe_showcase/`, in menu order. Each entry
 
 ---
 
-## 29. Depth-Composited Images  (`showcase_29_depth_composite_images.rs`, 231 lines)
+## 30. Implicit Surfaces  (`showcase_30_implicit_surface.rs`, 533 lines)
 
-**Demos:** Three spheres at clearly different distances (green near, blue mid, orange far) with a semi-transparent heatmap overlay positioned at the mid-sphere depth plane. Plain vs DepthComposite toggle shows the near sphere poking through and the far sphere being occluded.
+**Demos:** Three-sphere SDF rendered three ways: GPU implicit (descriptor-driven ray-march, default), CPU marching cubes of the smin field (64^3), GPU marching cubes on a gyroid field with live isovalue.
 
-**Uses:** `ScreenImageItem` (with `depth`), `ImageAnchor`, custom `Camera` near/far.
+**Uses:** `GpuImplicitItem`, `GpuImplicitOptions`, `ImplicitPrimitive`, `ImplicitBlendMode`, `GpuMarchingCubesJob`, `VolumeData`, `extract_isosurface`.
 
-**Sidebar:** 2 mode radios; 4 informational labels.
-
-**Drift:** None.
-
----
-
-## 30. Implicit Surfaces  (`showcase_30_implicit_surface.rs`, 514 lines)
-
-**Demos:** Three-sphere SDF rendered five ways: GPU implicit (descriptor-driven ray-march, default), CPU sphere-march with smin blobs, CPU sphere-march with hard min, CPU marching cubes of the smin field (64³), GPU marching cubes on a gyroid field with live isovalue.
-
-**Uses:** `GpuImplicitItem`, `GpuImplicitOptions`, `ImplicitPrimitive`, `ImplicitBlendMode`, `GpuMarchingCubesJob`, `VolumeData`, `extract_isosurface`, `march_implicit_surface_colour`.
-
-**Sidebar:** 5 mode radios; conditional gyroid isovalue; depth-composite + resolution-divisor (sphere-march only).
+**Sidebar:** 3 mode radios; conditional gyroid isovalue.
 
 **Drift:** Header documents three variants; UI has five (added GpuImplicit as default + GpuMarchingCubes with live isovalue).
 

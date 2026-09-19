@@ -23,24 +23,17 @@ pub(crate) struct MaterialBindGroup {
     /// be validated when something is freed. The map's key is a hash, so the ids
     /// cannot be recovered from it; without them the only safe response to a
     /// free is to clear the whole map.
-    pub(crate) mesh_id: crate::resources::mesh::mesh_store::MeshId,
-    pub(crate) textures: [Option<crate::resources::TextureId>; 5],
+    pub(crate) deps: crate::resources::resource_deps::ResourceDeps,
 }
 
 impl MaterialBindGroup {
     /// Whether every resource this bind group samples is still resident.
     ///
-    /// Ids are generational, so a slot freed and reused since resolves through a
-    /// different id and is correctly seen as gone. A texture whose pixels were
-    /// replaced under a live id is NOT detected here and never can be, which is
-    /// why the view epoch clears the map unconditionally.
+    /// A texture whose pixels were replaced under a live id is NOT detected
+    /// here and never can be, which is why the view epoch clears the map
+    /// unconditionally.
     pub(crate) fn resources_resolve(&self, resources: &crate::resources::DeviceResources) -> bool {
-        resources.mesh_store.contains(self.mesh_id)
-            && self
-                .textures
-                .iter()
-                .flatten()
-                .all(|id| resources.content.textures.get(*id).is_some())
+        self.deps.resolves(resources)
     }
 }
 
@@ -137,14 +130,10 @@ pub(crate) struct PerObjectState {
     /// `Some`; a `None` slot falls back to the mesh's single-element bind group
     /// and draws at instance 0.
     pub(crate) object_indices: Vec<u32>,
-    /// `DeviceResources::resource_free_epoch` as of the last prepare. When the
-    /// epoch moves (a texture or mesh was freed), the material bind-group map is
-    /// purged so its bind groups stop pinning the freed resource's memory.
-    pub(crate) free_epoch: u64,
-    /// `DeviceResources::resource_view_epoch` as of the last prepare. A replace
-    /// swaps a view behind a live id, so unlike the free epoch this cannot be
-    /// validated per entry and clears the map when it moves.
-    pub(crate) view_epoch: u64,
+    /// Resource epochs as of the last prepare. A free keeps only the entries
+    /// whose deps still resolve; a replace clears the map, since a swapped
+    /// view behind a live id cannot be validated per entry.
+    pub(crate) deps_gate: crate::resources::resource_deps::ResourceGate,
     /// Per-item bind groups for the current frame, indexed by the item's position
     /// in the frame's item list. Populated from `material_bind_groups` each frame
     /// (cheap reference-counted clones) so the render path can index by item slot.
@@ -179,8 +168,7 @@ impl PerObjectState {
             object_data_capacity: 0,
             object_data_gen: 0,
             object_indices: Vec::new(),
-            free_epoch: 0,
-            view_epoch: 0,
+            deps_gate: crate::resources::resource_deps::ResourceGate::default(),
             bind_groups: Vec::new(),
             submesh_bind_groups: HashMap::new(),
             submesh_indices: HashMap::new(),

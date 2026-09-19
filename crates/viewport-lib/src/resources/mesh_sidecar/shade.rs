@@ -12,10 +12,10 @@
 //! failures roll back with the naga message returned to the caller.
 //!
 //! The hook contract (the `ShadingSurface` / `SurfaceOverride` /
-//! `LightSample` structs and the four hook signatures) is frozen in
-//! `docs/issues/lighting-shader-injection-seam.md`. This module is the
-//! composition mechanism; pipeline selection per material and the
-//! consumer-facing `MaterialPlugin` API build on top of it.
+//! `LightSample` structs and the four hook signatures) is frozen: it is
+//! additive-only, so an existing field or signature never changes shape. This
+//! module is the composition mechanism; pipeline selection per material and
+//! the consumer-facing `MaterialPlugin` API build on top of it.
 
 use crate::error::{ViewportError, ViewportResult};
 use crate::scene::material::MaterialPluginId;
@@ -53,8 +53,7 @@ pub(crate) const SHADE_FAMILY_SHADERS: &[&str] = &[
 /// identifier with `<name>__`, so two hooks cannot collide; the composed
 /// module calls `<name>__shade_light` and friends. `ShadingSurface` and
 /// `LightSample` are declared by the shaders themselves (`shade.wgsl`); their
-/// fields and the hook signatures are a frozen, additive-only contract
-/// recorded in `docs/issues/lighting-shader-injection-seam.md`.
+/// fields and the hook signatures are a frozen, additive-only contract.
 ///
 /// Semantics baked into composition:
 ///

@@ -17,16 +17,22 @@ impl ViewportRenderer {
         w: u32,
         h: u32,
     ) -> crate::gpu::CommandBuffer {
-        // The LDR pipeline has no post chain: item-type plugins and the OIT pass
-        // (needed for transparent volume meshes) only exist on the HDR path.
+        // The LDR pipeline has no post chain: the OIT pass (needed for
+        // transparent volume meshes) only exists on the HDR path, and
+        // item-type plugins draw here only when they opt in via `draws_ldr`.
         // Report each dropped feature once instead of silently omitting it.
         use std::sync::atomic::Ordering::Relaxed;
-        if !frame.scene.plugin_items.is_empty() && !self.ldr_plugin_items_warned.swap(true, Relaxed)
-        {
+        let ldr_skipped_plugin = self.item_type_plugins.iter().any(|(name, plugin)| {
+            !plugin.draws_ldr()
+                && crate::renderer::item_plugins::plugin_items_for(frame, name)
+                    .is_some_and(|items| !items.is_empty())
+        });
+        if ldr_skipped_plugin && !self.ldr_plugin_items_warned.swap(true, Relaxed) {
             tracing::warn!(
-                "item-type plugin items are not drawn on the LDR pipeline \
-                 (PipelineMode::Direct): the plugin paint dispatch only runs in the HDR \
-                 pipeline. Set effects.display.mode = PipelineMode::Hdr to render them."
+                "some item-type plugin items are not drawn on the LDR pipeline \
+                 (PipelineMode::Direct): their plugins do not opt into it via \
+                 ItemTypePlugin::draws_ldr. Opt in (with an LDR-format pipeline) or set \
+                 effects.display.mode = PipelineMode::Hdr to render them."
             );
         }
         if frame
@@ -163,33 +169,7 @@ impl ViewportRenderer {
                     None
                 }
             );
-            emit_scivis_draw_calls!(
-                &self.resources,
-                &mut render_pass,
-                &self.point_cloud_gpu_data,
-                &self.glyph_gpu_data,
-                &self.polyline_gpu_data,
-                &self.volume_gpu_data,
-                &self.streamtube_gpu_data,
-                camera_bg,
-                &self.tube_gpu_data,
-                &self.image_slice_gpu_data,
-                &self.tensor_glyph_gpu_data,
-                &self.ribbon_gpu_data,
-                &self.volume_surface_slice_gpu_data,
-                &self.sprite_gpu_data,
-                &self.mesh_instance_gpu_data,
-                false
-            );
-            // Gaussian splats. Mirrors the block in `paint_to` and the HDR
-            // path so the offscreen LDR path draws splats too.
-            super::draw_gaussian_splats(
-                &mut render_pass,
-                &self.resources,
-                &self.gaussian_splat_draw_data,
-                camera_bg,
-                false,
-            );
+            self.draw_line_and_instance_layers(&mut render_pass, camera_bg, false);
             // TransparentVolumeMesh boundary wireframe overlay.
             if !self.mesh_uniforms.tvm_wireframe_draws.is_empty() {
                 if let Some(ref tvm_bg) = self.mesh_uniforms.tvm_wireframe_bg {
@@ -218,53 +198,11 @@ impl ViewportRenderer {
                     }
                 }
             }
-            // GPU implicit surface.
-            if !self.implicit_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.implicit.pipeline {
-                    render_pass.set_pipeline(dual.for_format(false));
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    for gpu in &self.implicit_gpu_data {
-                        render_pass.set_bind_group(1, &gpu.bind_group, &[]);
-                        render_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
-            // GPU marching cubes indirect draw.
-            if !self.mc_gpu_data.is_empty() {
-                if let Some(ref dual) = self.resources.mc.surface_pipeline {
-                    render_pass.set_pipeline(dual.for_format(false));
-                    render_pass.set_bind_group(0, camera_bg, &[]);
-                    for mc in &self.mc_gpu_data {
-                        let vol = &self.resources.mc.volumes[mc.volume_idx];
-                        render_pass.set_bind_group(1, &mc.render_bg, &[]);
-                        for slab in &vol.slabs {
-                            render_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
-                            render_pass.draw_indirect(&slab.indirect_buf, 0);
-                        }
-                    }
-                }
-            }
+            // Item-type plugin paint (LDR opt-in only): after all built-in
+            // scene content, mirroring the HDR scene-pass position.
+            self.dispatch_plugin_paint(&mut render_pass, frame, false);
             // Outline composite after all scene content.
             emit_outline_composite!(&self.resources, &mut render_pass, Some(slot));
-            // Screen-space image overlays.
-            // Regular items drawn with depth_compare: Always (always on top).
-            // Depth-composite items drawn with depth_compare: LessEqual (occluded by
-            // scene geometry whose depth was already written to the depth attachment).
-            if !self.screen_image_gpu_data.is_empty() {
-                if let Some(overlay_pipeline) = &self.resources.screen_image.pipeline {
-                    let dc_pipeline = self.resources.screen_image.dc_pipeline.as_ref();
-                    for gpu in &self.screen_image_gpu_data {
-                        if let (Some(dc_bg), Some(dc_pipe)) = (&gpu.depth_bind_group, dc_pipeline) {
-                            render_pass.set_pipeline(dc_pipe);
-                            render_pass.set_bind_group(0, dc_bg, &[]);
-                        } else {
-                            render_pass.set_pipeline(overlay_pipeline);
-                            render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                        }
-                        render_pass.draw(0..6, 0..1);
-                    }
-                }
-            }
             // When blur backdrops are needed, skip overlays here. They'll
             // be drawn in a second pass after the blur is applied.
             if !needs_blur {

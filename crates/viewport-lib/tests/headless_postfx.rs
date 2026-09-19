@@ -478,11 +478,11 @@ fn plugin_paint_foreground_draws_into_pass() {
         fn draws_foreground(&self) -> bool {
             true
         }
-        fn paint_foreground<'a>(
-            &'a self,
-            pass: &mut wgpu::RenderPass<'a>,
-            _ctx: &viewport_lib::plugin_api::PaintContext<'a>,
-            _items: &'a dyn PluginItemCollection,
+        fn paint_foreground(
+            &self,
+            pass: &mut wgpu::RenderPass<'_>,
+            _ctx: &viewport_lib::plugin_api::PaintContext<'_>,
+            _items: &dyn PluginItemCollection,
         ) {
             pass.set_pipeline(&self.pipeline);
             pass.draw(0..3, 0..1);

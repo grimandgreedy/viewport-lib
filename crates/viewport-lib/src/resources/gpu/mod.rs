@@ -6,8 +6,5 @@ pub(crate) mod compute_filter;
 pub(crate) mod dyn_res;
 /// Auto-exposure GPU resources (log-luminance histogram + adaptation).
 pub mod exposure;
-/// GPU particle systems: compute-driven emit + sim with sprite draw.
-pub mod external_instances;
-pub mod gpu_particles;
 /// Hierarchical-Z max-depth pyramid for GPU occlusion culling.
 pub(crate) mod hiz;

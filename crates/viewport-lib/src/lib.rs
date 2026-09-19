@@ -194,8 +194,8 @@ pub use scene::aabb;
 pub use scene::material;
 pub use scene::scatter_volume;
 pub use scene::scatter_volume::{
-    ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, RefractionParams,
-    ScatterShape, ScatterVolume,
+    ColourSource, DensityRemap, Emission, EmissionCurve, MAX_SCATTER_VOLUMES, NoiseDriver,
+    RefractionParams, ScatterShape, ScatterVolume,
 };
 pub use scene::traits;
 
@@ -239,9 +239,6 @@ pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, sr
 pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
 
 pub use geometry::bvh::PickAccelerator;
-pub use geometry::implicit::{
-    ImplicitRenderOptions, march_implicit_surface, march_implicit_surface_colour,
-};
 pub use geometry::isoline::{IsolineItem, extract_isolines};
 pub use geometry::marching_cubes::{VolumeData, extract_isosurface};
 
@@ -318,15 +315,15 @@ pub use renderer::{
     PointRenderMode, PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo,
     PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem,
     RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame,
-    SceneRenderItem, ScreenImageItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings,
-    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef,
-    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    SceneRenderItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape,
+    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
+    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
+    StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig,
+    SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode,
+    ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
     ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeItem, VolumeMeshItem,
     VolumeSelectionInfo, VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 

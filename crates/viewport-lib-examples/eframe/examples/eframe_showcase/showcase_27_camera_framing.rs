@@ -19,9 +19,8 @@ use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
 use vpl::{
-    AnchorX, AnchorY, CameraTarget, CameraTrack, LightKind, LightSource, LightingSettings,
-    Material, PolylineItem, ScreenImageItem, TurntableController, ViewportRenderer,
-    interpolate_camera,
+    CameraTarget, CameraTrack, LightKind, LightSource, LightingSettings, Material, PolylineItem,
+    TurntableController, ViewportRenderer, interpolate_camera,
 };
 
 /// Sub-mode for Showcase 27 (camera framing).
@@ -146,8 +145,6 @@ pub(crate) struct AuxState {
     pub built: bool,
     pub scene: vpl::scene::Scene,
     pub frustums: Vec<FrustumData>,
-    pub img_alpha: f32,
-    pub img_scale: f32,
     pub active_frustum: Option<usize>,
     pub sub_mode: AuxSubMode,
     pub turntable: TurntableController,
@@ -163,8 +160,6 @@ impl Default for AuxState {
             built: false,
             scene: vpl::scene::Scene::new(),
             frustums: Vec::new(),
-            img_alpha: 1.0,
-            img_scale: 1.0,
             active_frustum: None,
             sub_mode: AuxSubMode::Framing,
             turntable: TurntableController::new(0.5, 1.1),
@@ -447,9 +442,6 @@ fn controls_aux_framing(app: &mut App, ui: &mut egui::Ui) {
             ));
         }
     }
-    ui.add_space(4.0);
-    ui.add(egui::Slider::new(&mut app.aux_state.img_alpha, 0.0..=1.0).text("Overlay alpha"));
-    ui.add(egui::Slider::new(&mut app.aux_state.img_scale, 0.25..=4.0).text("Overlay scale"));
 }
 
 fn controls_aux_turntable(app: &mut App, ui: &mut egui::Ui) {
@@ -608,108 +600,6 @@ fn controls_aux_track(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-impl App {
-    pub(crate) fn aux_push_screen_images(&self, fd: &mut vpl::FrameData) {
-        // HUD overlay only shown in Framing mode.
-        if self.aux_state.sub_mode != AuxSubMode::Framing {
-            return;
-        }
-
-        // Generate pixel buffers at physical resolution for crisp HiDPI rendering.
-        // item.width/height stay in logical pixels (the visual size); the renderer
-        // infers the physical texture size from the pixel buffer length.
-        let ppp = fd.camera.pixels_per_point;
-        let px = |n: u32| ((n as f32 * ppp).round() as u32).max(1);
-
-        let (colour, size, arm_len, thick) = match self.aux_state.active_frustum {
-            Some(idx) => {
-                let fc = self.aux_state.frustums[idx].colour;
-                let c = [
-                    (fc[0] * 255.0) as u8,
-                    (fc[1] * 255.0) as u8,
-                    (fc[2] * 255.0) as u8,
-                    255u8,
-                ];
-                (c, 72u32, 28u32, 4u32)
-            }
-            None => ([160u8, 160u8, 160u8, 80u8], 40u32, 16u32, 3u32),
-        };
-
-        for (ax, ay, fx, fy) in [
-            (AnchorX::Left, AnchorY::Top, false, false),
-            (AnchorX::Right, AnchorY::Top, true, false),
-            (AnchorX::Left, AnchorY::Bottom, false, true),
-            (AnchorX::Right, AnchorY::Bottom, true, true),
-        ] {
-            let mut item = ScreenImageItem::default();
-            item.pixels = bracket_pixels(colour, px(size), px(arm_len), px(thick), fx, fy);
-            item.width = size;
-            item.height = size;
-            item.anchor_x = ax;
-            item.anchor_y = ay;
-            item.scale = self.aux_state.img_scale;
-            item.alpha = self.aux_state.img_alpha;
-            fd.scene.screen_images.push(item);
-        }
-
-        if self.aux_state.active_frustum.is_some() {
-            let mut item = ScreenImageItem::default();
-            item.pixels = crosshair_pixels(colour, px(40), px(3), px(5));
-            item.width = 40;
-            item.height = 40;
-            item.anchor_x = AnchorX::Middle;
-            item.anchor_y = AnchorY::Middle;
-            item.scale = self.aux_state.img_scale;
-            item.alpha = self.aux_state.img_alpha;
-            fd.scene.screen_images.push(item);
-        }
-    }
-}
-
-fn bracket_pixels(
-    colour: [u8; 4],
-    size: u32,
-    arm: u32,
-    thick: u32,
-    fx: bool,
-    fy: bool,
-) -> Vec<[u8; 4]> {
-    let mut p = vec![[0u8; 4]; (size * size) as usize];
-    for i in 0..arm {
-        for t in 0..thick {
-            let x = if fx { size - 1 - i } else { i };
-            let y = if fy { size - 1 - t } else { t };
-            p[(y * size + x) as usize] = colour;
-            let x2 = if fx { size - 1 - t } else { t };
-            let y2 = if fy { size - 1 - i } else { i };
-            p[(y2 * size + x2) as usize] = colour;
-        }
-    }
-    p
-}
-
-fn crosshair_pixels(colour: [u8; 4], size: u32, thick: u32, gap: u32) -> Vec<[u8; 4]> {
-    let mut p = vec![[0u8; 4]; (size * size) as usize];
-    let c = size / 2;
-    let ht = thick / 2;
-    for i in 0..size {
-        if (i as i32 - c as i32).unsigned_abs() <= gap {
-            continue;
-        }
-        for t in 0..thick {
-            let y = c.saturating_sub(ht) + t;
-            if y < size {
-                p[(y * size + i) as usize] = colour;
-            }
-            let x = c.saturating_sub(ht) + t;
-            if x < size {
-                p[(i * size + x) as usize] = colour;
-            }
-        }
-    }
-    p
-}
-
 // ---------------------------------------------------------------------------
 // Lazy scene build
 // ---------------------------------------------------------------------------
@@ -766,12 +656,11 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
-    // Auxiliary frustums and screen images (Showcase 27) : submitted every frame.
+    // Auxiliary frustums (Showcase 27) : submitted every frame.
     if app.aux_state.built {
         for f in &app.aux_state.frustums {
             fd.scene.polylines.push(frustum_to_polyline(f));
         }
-        app.aux_push_screen_images(&mut *fd);
     }
 
     // Cap far plane for better cascade distribution, but track orbit
@@ -789,7 +678,6 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -802,9 +690,7 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -831,12 +717,9 @@ pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
 
 /// Update this showcase's interactive widgets for the frame.
 
-
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -877,7 +760,12 @@ impl crate::Showcase for ScCameraFraming {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -889,7 +777,12 @@ impl crate::Showcase for ScCameraFraming {
     fn advance(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         advance(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -898,7 +791,12 @@ impl crate::Showcase for ScCameraFraming {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_aux(app, ui)
     }
 }

@@ -778,6 +778,32 @@ fn viewport_mask_fs() -> @location(0) f32 {
 }
 "#;
 
+/// Group-0 declarations for the shadow-cast pass.
+///
+/// The shadow pass binds its own camera at group 0 : a single dynamic-offset
+/// uniform holding the cascade's light view-projection, not the scene bind
+/// group every other pass uses. A shader for
+/// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass)
+/// therefore prepends this instead of [`SHARED_BINDINGS_WGSL`], and a pipeline
+/// built with
+/// [`build_shadow_pipeline`](crate::resources::DeviceResources::build_shadow_pipeline)
+/// matches it.
+///
+/// The pass is depth-only, so the shader needs a vertex stage and no fragment
+/// stage: pass `""` as the fragment entry point.
+pub const SHARED_SHADOW_BINDINGS_WGSL: &str = r#"
+// @viewport-wgsl-version: 1
+// Shared group-0 declarations for the shadow-cast pass. Do not re-declare
+// these bindings in plugin shaders, and do not mix this with
+// SHARED_BINDINGS_WGSL: the two describe different group-0 layouts.
+
+struct ViewportShadowCamera {
+    light_view_proj: mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> shadow_camera: ViewportShadowCamera;
+"#;
+
 /// Fragment helper for the pick-id pass.
 ///
 /// A plugin's pick pipeline reuses its scene-pass vertex stage (extended to
@@ -811,6 +837,48 @@ fn viewport_pick_fs(
     var out: ViewportPickOut;
     out.object_id = pick_id;
     out.primitive_id = 0u;
+    out.depth = frag_pos.z;
+    return out;
+}
+"#;
+
+/// Fragment helper for the pick-id pass that reports the hit instance.
+///
+/// Same contract as [`SHARED_PICK_WGSL`]'s `viewport_pick_fs`, except the
+/// primitive channel carries an instance index the vertex stage passes
+/// through: declare `@builtin(instance_index)` in the vertex input and
+/// forward it flat-interpolated at `@location(1)` of the fragment input.
+/// Unlike [`SHARED_PICK_PRIM_WGSL`], this needs no device feature, matching
+/// the built-in instanced pick path, so instanced plugin items stay
+/// instance-pickable on every device. The renderer hands the read-back
+/// index to the plugin's
+/// [`resolve_sub_object`](crate::plugin_api::ItemTypePlugin::resolve_sub_object)
+/// when the query mask holds `INSTANCE`.
+pub const SHARED_PICK_INSTANCE_WGSL: &str = r#"
+// @viewport-wgsl-version: 1
+// Pick-id fragment helper for the three-target pick pass, instance variant.
+// The vertex stage must provide a flat-interpolated pick_id at @location(0)
+// and a flat-interpolated instance index at @location(1) of the fragment
+// input (forward @builtin(instance_index) from the vertex input).
+//
+// Targets: @location(0) R32Uint object id, @location(1) R32Uint instance
+// index, @location(2) R32Float depth.
+
+struct ViewportPickInstOut {
+    @location(0) object_id: u32,
+    @location(1) primitive_id: u32,
+    @location(2) depth: f32,
+};
+
+@fragment
+fn viewport_pick_instance_fs(
+    @builtin(position) frag_pos: vec4<f32>,
+    @location(0) @interpolate(flat) pick_id: u32,
+    @location(1) @interpolate(flat) instance_id: u32,
+) -> ViewportPickInstOut {
+    var out: ViewportPickInstOut;
+    out.object_id = pick_id;
+    out.primitive_id = instance_id;
     out.depth = frag_pos.z;
     return out;
 }

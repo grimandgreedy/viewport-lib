@@ -33,15 +33,10 @@ impl ViewportRenderer {
         instancing: &mut InstancingState,
         shadow: &mut crate::renderer::shadow_state::ShadowState,
         compute_filter_results: &[crate::resources::ComputeFilterResult],
-        plugins: &std::collections::HashMap<
-            &'static str,
-            Box<dyn crate::plugin_api::ItemTypePlugin>,
-        >,
+        plugins: &crate::renderer::item_plugins::registry::ItemPluginRegistry,
         plugin_frame_index: u64,
         lighting: &crate::renderer::types::LightingSettings,
         scene_items: &[SceneRenderItem],
-        ribbon_gpu_data: &[crate::resources::StreamtubeGpuData],
-        mc_gpu_data: &[crate::resources::volume::gpu_marching_cubes::McFrameData],
         light: &LightingFrame,
         shadows_skipped: bool,
         last_stats: &mut crate::renderer::stats::FrameStats,
@@ -1045,122 +1040,11 @@ impl ViewportRenderer {
                     }
                 }
 
-                // Ribbon shadow casters. Ribbon geometry is regenerated fresh
-                // each frame into `ribbon_gpu_data` (no per-object storage
-                // array like the mesh family), so this is its own small draw
-                // path: group 0 is the same shadow camera bind group as the
-                // mesh loop above; group 1 reuses each ribbon's own
-                // solid-draw `uniform_bind_group` (only the leading `model`
-                // field is read by `ribbon_shadow.wgsl`). One pipeline covers
-                // every ribbon -- there is no two-sided/cutout axis to key
-                // on, ribbons are always thin two-sided quad strips. No
-                // per-item cascade-frustum cull: `StreamtubeGpuData` carries
-                // no world AABB today (unlike mesh items), so every visible
-                // ribbon casts into every cascade its distance would put it
-                // in; add a bounding-sphere test here if ribbon shadow cost
-                // becomes measurable in a scene with many off-screen ribbons.
-                if !ribbon_gpu_data.is_empty() {
-                    if let Some(ribbon_shadow_pipeline) = resources.ribbon.shadow_pipeline.as_ref()
-                    {
-                        for cascade in 0..light.effective_cascade_count {
-                            let tile_col = (cascade % 2) as f32;
-                            let tile_row = (cascade / 2) as f32;
-                            shadow_pass.set_viewport(
-                                tile_col * tile_px,
-                                tile_row * tile_px,
-                                tile_px,
-                                tile_px,
-                                0.0,
-                                1.0,
-                            );
-                            shadow_pass.set_scissor_rect(
-                                (tile_col * tile_px) as u32,
-                                (tile_row * tile_px) as u32,
-                                light.tile_size,
-                                light.tile_size,
-                            );
-                            shadow_pass.set_bind_group(
-                                0,
-                                &resources.shadow.bind_group,
-                                &[cascade as u32 * 256],
-                            );
-                            shadow_pass.set_pipeline(ribbon_shadow_pipeline);
-                            for data in ribbon_gpu_data.iter() {
-                                if !data.cast_shadows || data.index_count == 0 {
-                                    continue;
-                                }
-                                shadow_pass.set_bind_group(1, &data.uniform_bind_group, &[]);
-                                shadow_pass.set_vertex_buffer(0, data.vertex_buffer.slice(..));
-                                shadow_pass.set_index_buffer(
-                                    data.index_buffer.slice(..),
-                                    crate::gpu::IndexFormat::Uint32,
-                                );
-                                shadow_pass.draw_indexed(0..data.index_count, 0, 0..1);
-                                shadow_binds += 2;
-                                shadow_draws += 1;
-                                shadow_draw_cmds += 1;
-                            }
-                        }
-                    }
-                }
-
-                // GPU marching cubes shadow casters. MC vertices are already
-                // world-space (no per-item model matrix anywhere in the MC
-                // path), so there is no group 1 at all -- just the shadow
-                // camera bind group at group 0, then one non-indexed
-                // `draw_indirect` per slab, mirroring the solid draw's own
-                // per-slab loop. Always casts from the solid `vertex_buf`/
-                // `indirect_buf` slab data regardless of `wireframe`: shadows
-                // reflect the actual surface, not its display mode. No
-                // per-item cascade cull, matching the ribbon loop above (MC
-                // frame data carries no world AABB either).
-                if !mc_gpu_data.is_empty() {
-                    if let Some(mc_shadow_pipeline) = resources.mc.shadow_pipeline.as_ref() {
-                        for cascade in 0..light.effective_cascade_count {
-                            let tile_col = (cascade % 2) as f32;
-                            let tile_row = (cascade / 2) as f32;
-                            shadow_pass.set_viewport(
-                                tile_col * tile_px,
-                                tile_row * tile_px,
-                                tile_px,
-                                tile_px,
-                                0.0,
-                                1.0,
-                            );
-                            shadow_pass.set_scissor_rect(
-                                (tile_col * tile_px) as u32,
-                                (tile_row * tile_px) as u32,
-                                light.tile_size,
-                                light.tile_size,
-                            );
-                            shadow_pass.set_bind_group(
-                                0,
-                                &resources.shadow.bind_group,
-                                &[cascade as u32 * 256],
-                            );
-                            shadow_pass.set_pipeline(mc_shadow_pipeline);
-                            for mc in mc_gpu_data.iter() {
-                                if !mc.cast_shadows {
-                                    continue;
-                                }
-                                let vol = &resources.mc.volumes[mc.volume_idx];
-                                for slab in &vol.slabs {
-                                    shadow_pass.set_vertex_buffer(0, slab.vertex_buf.slice(..));
-                                    shadow_pass.draw_indirect(&slab.indirect_buf, 0);
-                                    shadow_binds += 1;
-                                    shadow_draws += 1;
-                                    shadow_draw_cmds += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-
                 // Item-type plugin shadow casting: per-cascade dispatch
                 // with viewport + scissor + cascade bind group set up by
                 // the lib. The plugin map is read through a raw pointer
                 // captured before the mutable resources borrow split off.
-                if !plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
+                if !plugins.is_empty() {
                     for cascade in 0..light.effective_cascade_count {
                         let tile_col = (cascade % 2) as f32;
                         let tile_row = (cascade / 2) as f32;
@@ -1191,8 +1075,10 @@ impl ViewportRenderer {
                             frame_index: plugin_frame_index,
                         };
                         for (name, plugin) in plugins.iter() {
-                            if let Some(items) = frame.scene.plugin_items.get(*name) {
-                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, items.as_ref());
+                            if let Some(items) =
+                                crate::renderer::item_plugins::plugin_items_for(frame, name)
+                            {
+                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, items);
                             }
                         }
                     }

@@ -2025,40 +2025,8 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         rgba_data: &[[u8; 4]; 256],
     ) -> ColourmapId {
-        let texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("lut_texture"),
-            size: crate::gpu::Extent3d {
-                width: 256,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let flat: Vec<u8> = rgba_data.iter().flat_map(|p| p.iter().copied()).collect();
-        queue.write_texture(
-            crate::gpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: crate::gpu::Origin3d::ZERO,
-                aspect: crate::gpu::TextureAspect::All,
-            },
-            &flat,
-            crate::gpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(256 * 4),
-                rows_per_image: Some(1),
-            },
-            crate::gpu::Extent3d {
-                width: 256,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
+        let texture = create_colourmap_texture(device);
+        write_colourmap_texels(queue, &texture, rgba_data);
         let view = texture.create_view(&crate::gpu::TextureViewDescriptor::default());
         let id = ColourmapId(self.content.colourmap_textures.len());
         self.content.colourmap_textures.push(texture);
@@ -2078,80 +2046,35 @@ impl DeviceResources {
 
     /// Return the `ColourmapId` for a built-in preset.
     ///
-    /// Call [`Self::ensure_colourmaps_initialized`] first (done automatically by
-    /// `ViewportRenderer::prepare`).  Panics if colourmaps have not been initialized yet.
+    /// Valid from construction: the built-in LUT textures, views and ids are
+    /// created with the renderer, so an upload that resolves a preset before
+    /// the first frame gets the same id and the same view a later one would.
+    /// The texels are written on the first
+    /// [`ensure_colourmaps_initialized`](Self::ensure_colourmaps_initialized),
+    /// which `ViewportRenderer::prepare` calls before anything draws.
     pub fn builtin_colourmap_id(&self, preset: BuiltinColourmap) -> ColourmapId {
-        self.content
-            .builtin_colourmap_ids
-            .expect("call ensure_colourmaps_initialized before using built-in colourmaps")
-            [preset as usize]
+        self.content.builtin_colourmap_ids[preset as usize]
     }
 
-    /// Ensure built-in colourmaps are uploaded to the GPU.
+    /// Write the built-in colourmap texels.
     ///
     /// Called automatically by `ViewportRenderer::prepare()` on the first frame.
-    /// Safe to call multiple times : no-op after first invocation.
+    /// Safe to call multiple times : no-op after first invocation. The textures
+    /// themselves, and the ids and views naming them, exist from construction,
+    /// so nothing has to call this before resolving a preset.
     pub fn ensure_colourmaps_initialized(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
     ) {
+        let _ = device;
         if self.content.colourmaps_initialized {
             return;
         }
-        let viridis = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::viridis_rgba(),
-        );
-        let plasma = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::plasma_rgba(),
-        );
-        let greyscale = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::greyscale_rgba(),
-        );
-        let coolwarm = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::coolwarm_rgba(),
-        );
-        let rainbow = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::rainbow_rgba(),
-        );
-        let magma = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::magma_rgba(),
-        );
-        let inferno = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::inferno_rgba(),
-        );
-        let turbo = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::turbo_rgba(),
-        );
-        let jet = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::jet_rgba(),
-        );
-        let rdbu = self.upload_colourmap(
-            device,
-            queue,
-            &crate::resources::material::colourmap_data::rdbu_r_rgba(),
-        );
-        self.content.builtin_colourmap_ids = Some([
-            viridis, plasma, greyscale, coolwarm, rainbow, magma, inferno, turbo, jet, rdbu,
-        ]);
+        for id in self.content.builtin_colourmap_ids {
+            let texture = &self.content.colourmap_textures[id.0];
+            write_colourmap_texels(queue, texture, &self.content.colourmaps_cpu[id.0]);
+        }
         self.content.colourmaps_initialized = true;
     }
 
@@ -3104,11 +3027,13 @@ impl DeviceResources {
     /// Called where a texture id becomes a binding. A texture with no recorded
     /// space (an external caller-owned view) is passed: the store cannot see its
     /// format, so there is nothing to compare.
-    pub(crate) fn check_texture_slot(
-        &mut self,
-        id: Option<crate::resources::TextureId>,
-        slot: TextureSlot,
-    ) {
+    ///
+    /// Takes a shared borrow, so an item type preparing against
+    /// `&DeviceResources` can call it too, and an item type binding a
+    /// consumer's texture into a slot with a documented colour space should:
+    /// the mismatch log is the renderer's, so this is the one part of the
+    /// check a plugin cannot do for itself.
+    pub fn check_texture_slot(&self, id: Option<crate::resources::TextureId>, slot: TextureSlot) {
         let Some(id) = id else { return };
         let Some(found) = self.texture_colour_space(id) else {
             return;
@@ -3116,17 +3041,15 @@ impl DeviceResources {
         if found == slot.required_space() {
             return;
         }
+        let Ok(mut recorded) = self.content.texture_slot_mismatches.lock() else {
+            return;
+        };
         // One entry per (texture, slot): a mismatch reported every rebuild would
         // grow without bound while the scene keeps drawing.
-        if self
-            .content
-            .texture_slot_mismatches
-            .iter()
-            .any(|&(t, s)| t == id.raw() && s == slot)
-        {
+        if recorded.iter().any(|&(t, s)| t == id.raw() && s == slot) {
             return;
         }
-        self.content.texture_slot_mismatches.push((id.raw(), slot));
+        recorded.push((id.raw(), slot));
         tracing::error!("{}", slot_mismatch_error(id.raw(), slot));
     }
 
@@ -3134,10 +3057,13 @@ impl DeviceResources {
     ///
     /// Each pair is recorded once, the first time the texture is bound into that
     /// slot, and stays until [`clear_texture_slot_mismatches`](Self::clear_texture_slot_mismatches).
-    /// An empty slice means every texture drawn so far reached a slot that wants
+    /// An empty list means every texture drawn so far reached a slot that wants
     /// the space it was uploaded in.
-    pub fn texture_slot_mismatches(&self) -> &[(u64, TextureSlot)] {
-        &self.content.texture_slot_mismatches
+    pub fn texture_slot_mismatches(&self) -> Vec<(u64, TextureSlot)> {
+        match self.content.texture_slot_mismatches.lock() {
+            Ok(recorded) => recorded.clone(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// The first recorded slot mismatch, as an error naming the slot and the
@@ -3149,7 +3075,10 @@ impl DeviceResources {
     /// as it is seen, because it renders a plausible image and nothing else about
     /// the frame goes wrong.
     pub fn texture_slot_mismatch(&self) -> crate::error::ViewportResult<()> {
-        match self.content.texture_slot_mismatches.first() {
+        let Ok(recorded) = self.content.texture_slot_mismatches.lock() else {
+            return Ok(());
+        };
+        match recorded.first() {
             Some(&(raw, slot)) => Err(slot_mismatch_error(raw, slot)),
             None => Ok(()),
         }
@@ -3158,7 +3087,9 @@ impl DeviceResources {
     /// Forget the recorded slot mismatches, so a texture re-uploaded in the right
     /// space can be reported again if it is still wrong.
     pub fn clear_texture_slot_mismatches(&mut self) {
-        self.content.texture_slot_mismatches.clear();
+        if let Ok(recorded) = self.content.texture_slot_mismatches.get_mut() {
+            recorded.clear();
+        }
     }
 }
 
@@ -3175,4 +3106,100 @@ fn slot_mismatch_error(raw: u64, slot: TextureSlot) -> crate::error::ViewportErr
         constructor: slot.constructor(),
         texture: raw,
     }
+}
+
+/// One 256x1 sRGB LUT texture, the shape every colourmap uses.
+fn create_colourmap_texture(device: &crate::gpu::Device) -> crate::gpu::Texture {
+    device.create_texture(&crate::gpu::TextureDescriptor {
+        label: Some("lut_texture"),
+        size: crate::gpu::Extent3d {
+            width: 256,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: crate::gpu::TextureDimension::D2,
+        format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
+        usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// Write 256 RGBA entries into a LUT texture created by
+/// [`create_colourmap_texture`].
+fn write_colourmap_texels(
+    queue: &crate::gpu::Queue,
+    texture: &crate::gpu::Texture,
+    rgba_data: &[[u8; 4]; 256],
+) {
+    let flat: Vec<u8> = rgba_data.iter().flat_map(|p| p.iter().copied()).collect();
+    queue.write_texture(
+        crate::gpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: crate::gpu::Origin3d::ZERO,
+            aspect: crate::gpu::TextureAspect::All,
+        },
+        &flat,
+        crate::gpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(256 * 4),
+            rows_per_image: Some(1),
+        },
+        crate::gpu::Extent3d {
+            width: 256,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// The built-in colourmap LUTs, made resident at construction.
+///
+/// Only the texels need a queue, and construction has none, so the textures,
+/// their views, the CPU-side copies and the ids naming them are all created
+/// here and the texels are written by the first
+/// [`DeviceResources::ensure_colourmaps_initialized`]. Anything that resolves a
+/// preset before the first frame, which a stored upload usually does, therefore
+/// gets a real id and a view that is filled before it is ever sampled, rather
+/// than the neutral fallback for the life of the handle.
+///
+/// The returned ids are the first ten, in [`BuiltinColourmap`] order, so
+/// `builtin_colourmap_id` is an index rather than a lookup.
+pub(crate) fn create_builtin_colourmaps(
+    device: &crate::gpu::Device,
+) -> (
+    Vec<crate::gpu::Texture>,
+    Vec<crate::gpu::TextureView>,
+    Vec<[[u8; 4]; 256]>,
+    [ColourmapId; 10],
+) {
+    use crate::resources::material::colourmap_data as data;
+
+    let presets = [
+        data::viridis_rgba(),
+        data::plasma_rgba(),
+        data::greyscale_rgba(),
+        data::coolwarm_rgba(),
+        data::rainbow_rgba(),
+        data::magma_rgba(),
+        data::inferno_rgba(),
+        data::turbo_rgba(),
+        data::jet_rgba(),
+        data::rdbu_r_rgba(),
+    ];
+
+    let mut textures = Vec::with_capacity(presets.len());
+    let mut views = Vec::with_capacity(presets.len());
+    let mut cpu = Vec::with_capacity(presets.len());
+    for rgba in presets {
+        let texture = create_colourmap_texture(device);
+        views.push(texture.create_view(&crate::gpu::TextureViewDescriptor::default()));
+        textures.push(texture);
+        cpu.push(rgba);
+    }
+
+    let ids = std::array::from_fn(ColourmapId);
+    (textures, views, cpu, ids)
 }

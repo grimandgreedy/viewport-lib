@@ -46,9 +46,9 @@ mod tests {
         assert!(res.scene.hdr_overlay.is_none());
     }
 
-    /// The completeness guarantee phase 3 of the pipeline-variant-specialization
-    /// plan asks for, applied to the one family migrated to `PipelineVariantSet`
-    /// so far: once built, every key in `PipelineKey::all()` must resolve
+    /// The completeness guarantee, applied to the one family migrated to
+    /// `PipelineVariantSet` so far: once built, every key in
+    /// `PipelineKey::all()` must resolve
     /// through `get()` without panicking. For this family that is guaranteed by
     /// `PipelineVariantSet::build`'s signature (it returns a concrete pipeline,
     /// never `None`), so this test is a regression guard on that contract

@@ -68,11 +68,11 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         Vec::new()
     }
 
-    fn paint<'a>(
-        &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
-        ctx: &PaintContext<'a>,
-        items: &'a dyn PluginItemCollection,
+    fn paint(
+        &self,
+        _pass: &mut wgpu::RenderPass<'_>,
+        ctx: &PaintContext<'_>,
+        items: &dyn PluginItemCollection,
     ) {
         self.log.record(format!(
             "paint:{}:items={}:vp={}",
@@ -82,25 +82,29 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         ));
     }
 
-    fn outline_mask<'a>(
-        &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &OutlineMaskContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn outline_mask(
+        &self,
+        _pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &OutlineMaskContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
         self.log.record(format!("outline_mask:{}", self.type_name));
     }
 
-    fn render_pick<'a>(
-        &'a self,
-        _pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &PickPassContext<'a>,
-        _items: &'a dyn PluginItemCollection,
+    fn render_pick(
+        &self,
+        _pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        _items: &dyn PluginItemCollection,
     ) {
         self.log.record(format!("render_pick:{}", self.type_name));
     }
 
-    fn pick(&self, ray: &PickRay) -> Option<(f32, PickHit)> {
+    fn pick(
+        &self,
+        ray: &PickRay,
+        _ctx: &viewport_lib::plugin_api::PickContext,
+    ) -> Option<(f32, PickHit)> {
         self.log.record(format!(
             "pick:{}:dir_z={:.1}",
             self.type_name, ray.direction.z

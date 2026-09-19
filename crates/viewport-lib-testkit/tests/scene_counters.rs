@@ -62,6 +62,18 @@ fn expected(name: &str) -> Option<Expected> {
         "streamtubes" => e(0, 0, 0, 0, 0, 0),
         "ribbons" => e(0, 0, 0, 0, 0, 0),
         "sprites" => e(0, 0, 0, 0, 0, 0),
+        // The extra sprite scenes carry mesh geometry for the sprites to draw
+        // against: a ground slab and a cube for the soft fade, a cube for the
+        // OIT overlaps, and a textured ground for the refraction to distort.
+        "sprites_soft" => e(2, 2, 2, 2, 0, 24),
+        "sprites_oit" => e(1, 1, 1, 0, 0, 12),
+        "sprites_refraction" => e(1, 1, 1, 0, 0, 12),
+        // Same content as `sprites_soft`, supersampled: the counters are
+        // resolution-independent, so they match it exactly.
+        "supersampled_sprites" => e(2, 2, 2, 2, 0, 24),
+        "supersampled_sprite_refraction" => e(1, 1, 1, 0, 0, 12),
+        // No mesh geometry: the particles are the whole scene.
+        "gpu_particles" => e(0, 0, 0, 0, 0, 0),
         "volume" => e(0, 0, 0, 0, 0, 0),
         "gaussian_splats" => e(0, 0, 0, 0, 0, 0),
         "image_slice" => e(0, 0, 0, 0, 0, 0),
@@ -69,12 +81,41 @@ fn expected(name: &str) -> Option<Expected> {
         "gpu_implicit" => e(0, 0, 0, 0, 0, 0),
         "gpu_marching_cubes" => e(0, 0, 0, 0, 0, 0),
         "mesh_instances" => e(0, 0, 0, 0, 0, 0),
-        // These item-type scenes include mesh geometry (a backdrop for the
-        // screen image; ground and receivers for scatter and decals), so the
-        // mesh counters are live for them.
-        "screen_image" => e(1, 1, 1, 0, 0, 960),
+        // These item-type scenes include mesh geometry (ground and receivers
+        // for scatter and decals), so the mesh counters are live for them.
         "scatter_volume" => e(2, 2, 2, 2, 0, 972),
+        // A fog box containing a dense sphere, downsampled: two volumes over a
+        // slab and a pillar, so the back-to-front order has something to get
+        // wrong.
+        "scatter_layered" => e(2, 2, 2, 2, 0, 24),
+        // A texture-driven volume beside a noise-driven one, against a single
+        // backdrop slab.
+        "scatter_textured" => e(1, 1, 1, 0, 0, 12),
+        // Scrolling noise and heat-haze refraction at a pinned clock, over a
+        // wall and four struts for the shimmer to bend.
+        "scatter_animated" => e(5, 5, 2, 2, 0, 60),
+        // Wireframe-only scene: a volume box, splat rings and sprite quads,
+        // all drawn as lines through the shared substrate. No mesh geometry.
+        "item_wireframes" => e(0, 0, 0, 0, 0, 0),
         "decals" => e(2, 2, 2, 2, 0, 24),
+        // The decal scene again with supersampling on: same content and same
+        // draw structure, only the resolution differs.
+        "supersampled_decals" => e(2, 2, 2, 2, 0, 24),
+        // One slab receiving a decal, with soft-particle sprites over it: the
+        // scene that pins decal ordering against the depth-read pass.
+        "decal_under_soft_sprite" => e(1, 1, 1, 0, 0, 12),
+        // One slab with soft-particle sprites and refractive sprites over it:
+        // the scene that pins what the refraction samples.
+        "refraction_over_soft_sprite" => e(1, 1, 1, 0, 0, 12),
+        // A mesh that opted out of decals beside a GPU implicit surface that
+        // cannot: pins that decals land on any depth writer, not just meshes.
+        "decal_on_non_mesh" => e(1, 1, 1, 0, 0, 960),
+        // Tube, streamtube and ribbon under one decal. No mesh geometry: the
+        // curve types are the whole scene.
+        "decal_on_curves" => e(0, 0, 0, 0, 0, 0),
+        // The same scene from below the projection plane, where the shader's
+        // view-direction check currently removes the decal outright.
+        "decal_from_below" => e(1, 1, 1, 0, 0, 960),
         _ => return None,
     })
 }

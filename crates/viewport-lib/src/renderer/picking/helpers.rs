@@ -1,9 +1,6 @@
 //! Free helper functions shared by the CPU pick and rect-pick paths.
 //!
-//! Ray/segment intersection, strip-index mapping, and CPU evaluators for
-//! implicit-surface and marching-cubes picking.
-
-use super::*;
+//! Ray/segment intersection and strip-index mapping.
 
 /// Warn once if a CPU pick runs while the pick cache is disabled, so the call does
 /// not silently return nothing.
@@ -17,6 +14,53 @@ pub(super) fn warn_pick_cache_disabled() {
     });
 }
 
+/// Project a world-space point to pixel coordinates (origin top-left, y
+/// down), or `None` when the point is behind the camera (`clip.w <= 0`).
+///
+/// This is the projection every CPU pick proximity test uses; plugin pick
+/// implementations use it so their screen-space tolerances agree with the
+/// built-in item types'.
+pub fn project_to_screen(
+    world: glam::Vec3,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+) -> Option<glam::Vec2> {
+    let clip = view_proj * world.extend(1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+    Some(glam::Vec2::new(
+        (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x,
+        (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y,
+    ))
+}
+
+/// Pixel radius of a world-space radius `world_r` measured at `world_centre`.
+///
+/// Item types whose instances are drawn at a world size but picked by
+/// screen-space proximity (glyphs, tensor glyphs, world-space sprites) need
+/// their pick tolerance in pixels. Measuring at the instance centroid rather
+/// than at the model origin keeps the estimate right when the instances sit
+/// far from the origin. The result is floored at 4 pixels so a distant set is
+/// still clickable, and falls back to a scaled world radius when the centre
+/// projects to or behind the eye.
+pub fn world_radius_in_pixels(
+    world_centre: glam::Vec3,
+    world_r: f32,
+    view_proj: glam::Mat4,
+    viewport_size: glam::Vec2,
+) -> f32 {
+    let p0 = view_proj * world_centre.extend(1.0);
+    let p1 = view_proj * (world_centre + glam::Vec3::X * world_r).extend(1.0);
+    if p0.w.abs() > 1e-6 && p1.w.abs() > 1e-6 {
+        let n0 = glam::Vec2::new(p0.x, p0.y) / p0.w;
+        let n1 = glam::Vec2::new(p1.x, p1.y) / p1.w;
+        ((n1 - n0).length() * 0.5 * viewport_size.x.max(viewport_size.y)).max(4.0)
+    } else {
+        (world_r * 100.0_f32).max(4.0)
+    }
+}
+
 /// Ray versus the local unit box `[-0.5, 0.5]^3`, used for decal projection
 /// volumes. `origin` and `dir` are the ray in the box's local space (the world
 /// ray transformed by the inverse of the box's model matrix).
@@ -26,7 +70,7 @@ pub(super) fn warn_pick_cache_disabled() {
 /// parameter on the local ray, the returned `t` is directly comparable to the
 /// world-space `time_of_impact` used by the other pick sections. If the origin
 /// is inside the box, returns `0.0`.
-pub(super) fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f32> {
+pub fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f32> {
     const HALF: f32 = 0.5;
     let mut t_enter = f32::NEG_INFINITY;
     let mut t_exit = f32::INFINITY;
@@ -64,7 +108,7 @@ pub(super) fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f3
 // ---------------------------------------------------------------------------
 
 /// Map a global node index to its strip index by walking `strip_lengths`.
-pub(super) fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
+pub(crate) fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
     let mut offset = 0u32;
     for (i, &len) in strip_lengths.iter().enumerate() {
         offset += len;
@@ -81,7 +125,7 @@ pub(super) fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
 /// are treated as world-space (polylines are always submitted without a model
 /// transform). The hit position is the closest point on the segment in 3D,
 /// interpolated at the same screen-space parameter `t` as the closest screen point.
-pub(super) fn pick_closest_polyline_segment(
+pub fn pick_closest_polyline_segment(
     click_pos: glam::Vec2,
     viewport_size: glam::Vec2,
     view_proj: glam::Mat4,
@@ -90,14 +134,7 @@ pub(super) fn pick_closest_polyline_segment(
     threshold_px: f32,
 ) -> Option<(u32, glam::Vec3)> {
     let project = |p: [f32; 3]| -> Option<glam::Vec2> {
-        let clip = view_proj * glam::Vec4::new(p[0], p[1], p[2], 1.0);
-        if clip.w <= 0.0 {
-            return None;
-        }
-        Some(glam::Vec2::new(
-            (clip.x / clip.w + 1.0) * 0.5 * viewport_size.x,
-            (1.0 - clip.y / clip.w) * 0.5 * viewport_size.y,
-        ))
+        project_to_screen(p.into(), view_proj, viewport_size)
     };
 
     let mut best_dist = threshold_px;
@@ -145,7 +182,7 @@ pub(super) fn pick_closest_polyline_segment(
 }
 
 /// Returns `true` if the 2D segment [a, b] touches or crosses the axis-aligned rect.
-pub(super) fn segment_in_rect(
+pub fn segment_in_rect(
     a: glam::Vec2,
     b: glam::Vec2,
     rect_min: glam::Vec2,
@@ -187,7 +224,7 @@ pub(super) fn segment_in_rect(
 }
 
 /// Map a global segment index to its strip index by walking `strip_lengths`.
-pub(super) fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
+pub(crate) fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
     let mut offset = 0u32;
     for (i, &len) in strip_lengths.iter().enumerate() {
         let segs = len.saturating_sub(1);
@@ -204,7 +241,7 @@ pub(super) fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
 /// Returns the ray parameter `t > 0` on hit, or `None` on miss or backface cull.
 /// Call twice with reversed winding to test both faces.
 #[inline]
-pub(super) fn ray_triangle(
+pub fn ray_triangle(
     ray_orig: glam::Vec3,
     ray_dir: glam::Vec3,
     v0: glam::Vec3,
@@ -233,350 +270,31 @@ pub(super) fn ray_triangle(
     if t > 0.0 { Some(t) } else { None }
 }
 
-/// Reconstruct per-vertex (lateral direction, half-width) for a ribbon item.
+/// Shared body for [`ItemTypePlugin::sub_object_position`] on the item types
+/// whose point-like features are indices into per-item inline positions: the
+/// curve family's control nodes and a point cloud's points.
 ///
-/// Replicates the parallel-transport frame built by `upload_ribbon()` in
-/// `prepare.rs` so click and rect picking can test the actual swept quad
-/// rather than a midpoint proxy.
-pub(super) fn ribbon_lateral_frames(
-    positions: &[[f32; 3]],
-    strip_lengths: &[u32],
-    width: f32,
-    width_attribute: Option<&[f32]>,
-    twist_attribute: Option<&[[f32; 3]]>,
-) -> Vec<(glam::Vec3, f32)> {
-    let n = positions.len();
-    // Initialise with a sentinel so any unvisited vertex has zero width.
-    let mut frames: Vec<(glam::Vec3, f32)> = vec![(glam::Vec3::X, 0.0); n];
-
-    let single;
-    let strips: &[u32] = if strip_lengths.is_empty() {
-        single = [positions.len() as u32];
-        &single
-    } else {
-        strip_lengths
-    };
-
-    let mut node_off = 0usize;
-    for &slen in strips {
-        let slen = slen as usize;
-        if slen < 2 {
-            node_off += slen;
-            continue;
-        }
-
-        let pts: Vec<glam::Vec3> = positions[node_off..node_off + slen]
-            .iter()
-            .map(|&p| glam::Vec3::from(p))
-            .collect();
-
-        let t0 = (pts[1] - pts[0]).normalize_or_zero();
-        if t0.length_squared() < 1e-10 {
-            node_off += slen;
-            continue;
-        }
-        let ref_v = if t0.x.abs() < 0.9 {
-            glam::Vec3::X
-        } else {
-            glam::Vec3::Y
-        };
-        let mut u = t0.cross(ref_v).normalize();
-
-        for k in 0..slen {
-            let tangent = if k + 1 < slen {
-                (pts[k + 1] - pts[k]).normalize_or_zero()
-            } else {
-                (pts[k] - pts[k - 1]).normalize_or_zero()
-            };
-
-            // Parallel transport: rotate u to stay perpendicular to the new tangent.
-            if k > 0 {
-                let t_prev = (pts[k] - pts[k - 1]).normalize_or_zero();
-                let axis = t_prev.cross(tangent);
-                let sin_a = axis.length().min(1.0);
-                if sin_a > 1e-6 {
-                    let cos_a = t_prev.dot(tangent).clamp(-1.0, 1.0);
-                    let ax = axis / sin_a;
-                    u = u * cos_a + ax.cross(u) * sin_a + ax * ax.dot(u) * (1.0 - cos_a);
-                    u = u.normalize_or_zero();
-                }
-            }
-
-            // Apply per-point twist if supplied.
-            let mut lateral = u;
-            if let Some(twist) = twist_attribute {
-                if let Some(&tv) = twist.get(node_off + k) {
-                    let tv = glam::Vec3::from(tv);
-                    let proj = tv - tangent * tangent.dot(tv);
-                    if proj.length_squared() > 1e-10 {
-                        lateral = proj.normalize();
-                    }
-                }
-            }
-
-            let half_w = width_attribute
-                .and_then(|wa| wa.get(node_off + k).copied())
-                .unwrap_or(width)
-                * 0.5;
-
-            frames[node_off + k] = (lateral, half_w);
-        }
-
-        node_off += slen;
-    }
-
-    frames
-}
-
-// ---------------------------------------------------------------------------
-// CPU SDF evaluation for GPU implicit surfaces (mirrors implicit.wgsl)
-// ---------------------------------------------------------------------------
-
-/// Evaluate one implicit primitive's signed distance from `p`.
-pub(super) fn eval_implicit_primitive(
-    p: glam::Vec3,
-    prim: &crate::resources::ImplicitPrimitive,
-) -> f32 {
-    match prim.kind {
-        1 => {
-            // Sphere: center=params[0..3], radius=params[3]
-            let center = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            (p - center).length() - prim.params[3]
-        }
-        2 => {
-            // Box: center=params[0..3], half-extents=params[4..7]
-            let center = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            let half = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
-            let q = (p - center).abs() - half;
-            q.max(glam::Vec3::ZERO).length() + q.x.max(q.y).max(q.z).min(0.0)
-        }
-        3 => {
-            // Plane: normal=params[0..3], offset=params[3]
-            let n =
-                glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]).normalize_or_zero();
-            p.dot(n) + prim.params[3]
-        }
-        4 => {
-            // Capsule: a=params[0..3], radius=params[3], b=params[4..7]
-            let a = glam::Vec3::new(prim.params[0], prim.params[1], prim.params[2]);
-            let r = prim.params[3];
-            let b = glam::Vec3::new(prim.params[4], prim.params[5], prim.params[6]);
-            let pa = p - a;
-            let ba = b - a;
-            let h = (pa.dot(ba) / ba.dot(ba).max(1e-10)).clamp(0.0, 1.0);
-            (pa - ba * h).length() - r
-        }
-        _ => f32::MAX,
-    }
-}
-
-/// Polynomial smooth minimum.
-#[inline]
-pub(super) fn smin_implicit(a: f32, b: f32, k: f32) -> f32 {
-    let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
-    a * h + b * (1.0 - h) - k * h * (1.0 - h)
-}
-
-/// Evaluate the combined SDF for all primitives in one GPU implicit item.
-pub(super) fn eval_implicit_sdf(p: glam::Vec3, item: &GpuImplicitPickItem) -> f32 {
-    use crate::resources::ImplicitBlendMode;
-    let mut d = item.max_distance;
-    for (i, prim) in item.primitives.iter().enumerate() {
-        let pd = eval_implicit_primitive(p, prim);
-        match item.blend_mode {
-            ImplicitBlendMode::Union => {
-                d = d.min(pd);
-            }
-            ImplicitBlendMode::SmoothUnion => {
-                let k = if prim.blend > 0.0 { prim.blend } else { 1e-5 };
-                d = smin_implicit(d, pd, k);
-            }
-            ImplicitBlendMode::Intersection => {
-                if i == 0 {
-                    d = pd;
-                } else {
-                    d = d.max(pd);
-                }
-            }
-        }
-    }
-    d
-}
-
-/// CPU ray-march against the implicit SDF. Returns `(toi, world_pos)` on hit.
-pub(super) fn pick_implicit_sdf(
-    ray_origin: glam::Vec3,
-    ray_dir: glam::Vec3,
-    item: &GpuImplicitPickItem,
-) -> Option<(f32, glam::Vec3)> {
-    let max_steps = item.max_steps.min(512) as usize;
-    let scale = item.step_scale.clamp(0.01, 1.0);
-    let hit_thr = item.hit_threshold;
-    let max_dist = item.max_distance;
-    let min_step = hit_thr * 0.5;
-
-    let mut t = 0.0f32;
-    for _ in 0..max_steps {
-        if t > max_dist {
-            break;
-        }
-        let p = ray_origin + ray_dir * t;
-        let d = eval_implicit_sdf(p, item);
-        if d < hit_thr {
-            return Some((t, p));
-        }
-        t += d.abs().max(min_step) * scale;
-    }
-    None
-}
-
-// ---------------------------------------------------------------------------
-// CPU volume ray-march for GPU marching cubes isosurface picking
-// ---------------------------------------------------------------------------
-
-/// Slab test: returns (t_enter, t_exit) for a ray vs axis-aligned box, or None.
-pub(super) fn ray_aabb_slab(
-    ray_orig: glam::Vec3,
-    ray_dir: glam::Vec3,
-    bbox_min: glam::Vec3,
-    bbox_max: glam::Vec3,
-) -> Option<(f32, f32)> {
-    // Avoid division by zero for axis-aligned rays.
-    let inv = glam::Vec3::new(
-        if ray_dir.x.abs() > 1e-30 {
-            1.0 / ray_dir.x
-        } else {
-            f32::INFINITY * ray_dir.x.signum()
-        },
-        if ray_dir.y.abs() > 1e-30 {
-            1.0 / ray_dir.y
-        } else {
-            f32::INFINITY * ray_dir.y.signum()
-        },
-        if ray_dir.z.abs() > 1e-30 {
-            1.0 / ray_dir.z
-        } else {
-            f32::INFINITY * ray_dir.z.signum()
-        },
-    );
-    let t1 = (bbox_min - ray_orig) * inv;
-    let t2 = (bbox_max - ray_orig) * inv;
-    let tmin = t1.min(t2);
-    let tmax = t1.max(t2);
-    let t_enter = tmin.x.max(tmin.y).max(tmin.z);
-    let t_exit = tmax.x.min(tmax.y).min(tmax.z);
-    if t_enter <= t_exit && t_exit >= 0.0 {
-        Some((t_enter, t_exit))
-    } else {
-        None
-    }
-}
-
-/// Bisect to refine the isovalue crossing between t_lo and t_hi (8 iterations).
-pub(super) fn bisect_mc_crossing(
-    ray_orig: glam::Vec3,
-    ray_dir: glam::Vec3,
-    vol: &crate::geometry::marching_cubes::VolumeData,
-    isovalue: f32,
-    mut t_lo: f32,
-    mut t_hi: f32,
-) -> f32 {
-    let s0 = crate::geometry::marching_cubes::trilinear_sample(
-        vol,
-        (ray_orig + ray_dir * t_lo).to_array(),
-    ) - isovalue;
-    let mut lo_sign = s0 < 0.0;
-    for _ in 0..8 {
-        let mid = (t_lo + t_hi) * 0.5;
-        let s = crate::geometry::marching_cubes::trilinear_sample(
-            vol,
-            (ray_orig + ray_dir * mid).to_array(),
-        ) - isovalue;
-        if (s < 0.0) == lo_sign {
-            t_lo = mid;
-        } else {
-            t_hi = mid;
-            lo_sign = !lo_sign;
-        }
-    }
-    (t_lo + t_hi) * 0.5
-}
-
-/// CPU ray-march against a MC isosurface. Returns `(toi, world_pos)` on hit.
+/// `parts` yields `(pick_id, positions, model)` for one item. The item owning
+/// `pick_id` is found by scan, which is what the renderer did before this moved
+/// behind the seam: the lists are short and the call happens once per pick, not
+/// per frame.
 ///
-/// Steps through the volume AABB at half-cell intervals and refines any
-/// isovalue crossing to 8 bisection steps.
-pub(super) fn pick_mc_volume(
-    ray_orig: glam::Vec3,
-    ray_dir: glam::Vec3,
-    item: &GpuMcPickItem,
-) -> Option<(f32, glam::Vec3)> {
-    use crate::geometry::marching_cubes::trilinear_sample;
-
-    let vol = &item.volume_data;
-    let isovalue = item.isovalue;
-    let [nx, ny, nz] = vol.dims;
-    let origin = glam::Vec3::from(vol.origin);
-    let spacing = glam::Vec3::from(vol.spacing);
-    let extent = spacing * glam::Vec3::new(nx as f32, ny as f32, nz as f32);
-
-    let (t_enter, t_exit) = ray_aabb_slab(ray_orig, ray_dir, origin, origin + extent)?;
-    let t_start = t_enter.max(0.0);
-    if t_start >= t_exit {
+/// `None` when the feature is not a point, when no item carries the id, or when
+/// the index is out of range, which is the case for a reference item whose
+/// positions live in an upload store rather than on the frame.
+///
+/// [`ItemTypePlugin::sub_object_position`]: crate::plugin_api::ItemTypePlugin::sub_object_position
+pub(crate) fn inline_point_position<T: 'static>(
+    items: &dyn crate::plugin_api::PluginItemCollection,
+    pick_id: crate::renderer::PickId,
+    sub_object: crate::renderer::SubObjectRef,
+    parts: impl Fn(&T) -> (crate::renderer::PickId, &[[f32; 3]], &[[f32; 4]; 4]),
+) -> Option<glam::Vec3> {
+    let crate::renderer::SubObjectRef::Point(index) = sub_object else {
         return None;
-    }
-
-    // Step at half the smallest cell spacing so we don't skip thin features.
-    let step = spacing.min_element() * 0.5;
-    let mut t = t_start;
-    let mut prev = trilinear_sample(vol, (ray_orig + ray_dir * t).to_array()) - isovalue;
-
-    loop {
-        t += step;
-        if t > t_exit {
-            break;
-        }
-        let p = ray_orig + ray_dir * t;
-        let cur = trilinear_sample(vol, p.to_array()) - isovalue;
-        if prev * cur <= 0.0 {
-            // Sign change detected: bisect and return.
-            let t_hit = bisect_mc_crossing(ray_orig, ray_dir, vol, isovalue, t - step, t);
-            let world_pos = ray_orig + ray_dir * t_hit;
-            return Some((t_hit, world_pos));
-        }
-        prev = cur;
-    }
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ray_unit_box_toi;
-    use glam::Vec3;
-
-    #[test]
-    fn ray_box_hit_from_outside_returns_front_face_toi() {
-        // Looking down -Z from z=2: enters the box front face at z=0.5, t=1.5.
-        let toi = ray_unit_box_toi(Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 0.0, -1.0));
-        assert!(toi.is_some());
-        assert!((toi.unwrap() - 1.5).abs() < 1e-5, "got {:?}", toi);
-    }
-
-    #[test]
-    fn ray_missing_the_box_returns_none() {
-        // Parallel to Z but offset in X/Y well outside the [-0.5, 0.5] slab.
-        assert!(ray_unit_box_toi(Vec3::new(2.0, 2.0, 2.0), Vec3::new(0.0, 0.0, -1.0)).is_none());
-    }
-
-    #[test]
-    fn ray_origin_inside_the_box_returns_zero() {
-        let toi = ray_unit_box_toi(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0));
-        assert_eq!(toi, Some(0.0));
-    }
-
-    #[test]
-    fn box_entirely_behind_the_ray_returns_none() {
-        // Origin at z=2 pointing away (+Z): the box is behind, no hit.
-        assert!(ray_unit_box_toi(Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 0.0, 1.0)).is_none());
-    }
+    };
+    let items = items.as_any().downcast_ref::<Vec<T>>()?;
+    let (_, positions, model) = items.iter().map(&parts).find(|(id, _, _)| *id == pick_id)?;
+    let p = positions.get(index as usize)?;
+    Some(glam::Mat4::from_cols_array_2d(model).transform_point3(glam::Vec3::from(*p)))
 }

@@ -1,7 +1,6 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
 use crate::gpu::util::DeviceExt;
-use crate::resources::CurveMeshOutlineItem;
 
 mod instanced;
 mod lighting;
@@ -17,7 +16,6 @@ mod shadow_pass;
 mod viewport_interaction;
 mod viewport_misc;
 mod viewport_overlays;
-mod wireframe;
 
 use math::*;
 use mesh_material::*;
@@ -26,7 +24,6 @@ pub(crate) use mesh_material::{
 };
 use overlay_geometry::*;
 use projection::*;
-use wireframe::*;
 
 /// One cube-map face of a point-light shadow: which atlas slot and face it
 /// occupies, the light-space view-projection used to render it, and the light
@@ -273,6 +270,8 @@ impl ViewportRenderer {
             &mut self.last_cluster_stats,
             &mut self.last_frustum_culled_lights,
             &self.viewport_slots,
+            &self.item_type_plugins,
+            plugin_frame_index,
             scene_fx,
             device,
             queue,
@@ -412,20 +411,10 @@ impl ViewportRenderer {
         let instancing_ms = instanced_start.elapsed().as_secs_f32() * 1000.0;
 
         let geometry_start = web_time::Instant::now();
-        Self::upload_geometry_glyphs(
-            resources,
-            &mut self.point_cloud_gpu_data,
-            &mut self.glyph_gpu_data,
-            &mut self.sprite_gpu_data,
-            &mut self.particle_gpu_data,
-            &mut self.tensor_glyph_gpu_data,
-            device,
-            queue,
-            frame,
-            sink,
-        );
-        self.external_instances_gpu_data =
-            resources.upload_external_instances(device, queue, &frame.scene.external_instances);
+        // The particle systems' draw bind groups bake a texture view in at
+        // creation, so a free or replace since the last frame has to be picked
+        // up before the item type draws from them. The store stays here, so
+        // this does too.
         let (inst_resolved, inst_switches, inst_culled, inst_reduced) = Self::upload_mesh_instances(
             resources,
             &mut self.mesh_instance_gpu_data,
@@ -438,59 +427,10 @@ impl ViewportRenderer {
         lod_switches += inst_switches;
         lod_culled += inst_culled;
         lod_items_reduced += inst_reduced;
-        Self::upload_polylines(
-            resources,
-            &mut self.polyline_gpu_data,
-            &mut self.polyline_selected_gpu_indices,
-            &mut self.glyph_gpu_data,
-            device,
-            queue,
-            frame,
-        );
-        let decal_cache_stats = Self::upload_implicit_decals_mc(
-            resources,
-            &mut self.implicit_gpu_data,
-            &mut self.pick_implicit_items,
-            &mut self.decal_gpu_data,
-            &mut self.decal_cache,
-            &mut self.decal_exclude_items,
-            &mut self.mc_gpu_data,
-            &mut self.pick_mc_items,
-            device,
-            queue,
-            frame,
-        );
+        Self::upload_polylines(resources, &mut self.polyline_gpu_data, device, queue, frame);
         // Refresh any deform slots bound to a same-device consumer buffer,
         // GPU-to-GPU, before the mesh render pass reads them.
         resources.run_deform_slot_copies(device, queue);
-        Self::upload_images(
-            resources,
-            &mut self.screen_image_gpu_data,
-            device,
-            queue,
-            frame,
-        );
-        Self::upload_tubes_ribbons(
-            resources,
-            &mut self.streamtube_gpu_data,
-            &mut self.streamtube_selected_gpu_indices,
-            &mut self.tube_gpu_data,
-            &mut self.tube_selected_gpu_indices,
-            &mut self.ribbon_gpu_data,
-            &mut self.ribbon_selected_gpu_indices,
-            device,
-            queue,
-            frame,
-        );
-        Self::upload_slices(
-            resources,
-            &mut self.image_slice_gpu_data,
-            &mut self.volume_surface_slice_gpu_data,
-            device,
-            queue,
-            frame,
-        );
-        let vp_size = frame.camera.viewport_size;
         // Surface LIC GPU data upload.
         // ------------------------------------------------------------------
         self.lic_gpu_data.clear();
@@ -578,59 +518,7 @@ impl ViewportRenderer {
             }
         }
 
-        // ------------------------------------------------------------------
-        // Volume GPU data upload.
-        // Note: clip_planes are per-viewport but passed here for culling.
-        // ------------------------------------------------------------------
-        self.volume_gpu_data.clear();
-        if !frame.scene.volumes.is_empty() {
-            resources.ensure_volume_pipeline(device);
-            let clip_objects_for_vol = &frame.effects.clip.objects;
-            // Under budget pressure with allow_volume_quality_reduction, double the
-            // step size (half the sample count) to reduce GPU raymarch cost.
-            let vol_step_multiplier = if self.degradation_volume_quality_reduced {
-                2.0_f32
-            } else {
-                1.0_f32
-            };
-            for item in &frame.scene.volumes {
-                if item.settings.hidden {
-                    continue;
-                }
-                let mut gpu = resources.upload_volume_frame(
-                    device,
-                    queue,
-                    item,
-                    clip_objects_for_vol,
-                    vol_step_multiplier,
-                );
-                gpu.wireframe = frame.viewport.wireframe_mode || item.settings.wireframe;
-                self.volume_gpu_data.push(gpu);
-            }
-        }
-
         // Volume wireframe overlay: OBB from bbox + model matrix.
-        let need_vol_wf = frame.viewport.wireframe_mode
-            || frame
-                .scene
-                .volumes
-                .iter()
-                .any(|v| !v.settings.hidden && v.settings.wireframe);
-        if need_vol_wf {
-            resources.ensure_polyline_pipeline(device);
-            for item in &frame.scene.volumes {
-                if item.settings.hidden {
-                    continue;
-                }
-                if !(frame.viewport.wireframe_mode || item.settings.wireframe) {
-                    continue;
-                }
-                let polyline = volume_obb_polyline(item);
-                let gpu = resources.upload_polyline_per_frame(device, queue, &polyline, vp_size);
-                self.polyline_gpu_data.push(gpu);
-            }
-        }
-
         // Transparent volume meshes wireframe: boundary mesh edge overlay.
         // Items rendering as opaque already participate in the standard
         // wireframe pass via the surface submission; here we only need to
@@ -844,6 +732,9 @@ impl ViewportRenderer {
                 .filter(|(item, inst)| !item.settings.hidden && !**inst)
                 .count() as u32;
 
+            let decal_cache_stats = self
+                .decal_cache_stats
+                .load(std::sync::atomic::Ordering::Relaxed);
             self.last_stats = crate::renderer::stats::FrameStats {
                 total_objects: total,
                 visible_objects: visible,
@@ -854,8 +745,8 @@ impl ViewportRenderer {
                 per_object_bind_groups_built,
                 batches_reuploaded,
                 batches_skipped,
-                decal_uploads: decal_cache_stats.uploads,
-                decal_reused: decal_cache_stats.reused,
+                decal_uploads: (decal_cache_stats >> 32) as u32,
+                decal_reused: decal_cache_stats as u32,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0,    // Updated below in shadow pass.
                 shadow_draw_commands: 0, // Updated below in shadow pass.
@@ -898,8 +789,6 @@ impl ViewportRenderer {
             plugin_frame_index,
             lighting,
             scene_items,
-            &self.ribbon_gpu_data,
-            &self.mc_gpu_data,
             &lighting_frame,
             self.degradation_shadows_skipped,
             &mut self.last_stats,
@@ -939,6 +828,12 @@ impl ViewportRenderer {
         // re-upload after they intern in `prepare_viewport_internal`.
         self.resources.upload_material_gpu(queue);
         self.resources.upload_custom_data(queue);
+
+        // Item-type wireframes join the shared line substrate, after its own
+        // producers (isolines, clip outlines) filled it in `upload_polylines`.
+        // Placed at the end of scene prepare because the plugin context borrows
+        // `resources` shared while the upload above holds it mutably.
+        self.dispatch_plugin_wireframes(device, queue, frame);
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.
@@ -1006,9 +901,6 @@ impl ViewportRenderer {
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
-        self.prepare_splat_sort(device, queue, frame);
-        self.prepare_splat_wireframe(device, queue, frame);
-        self.prepare_sprite_wireframe(device, queue, frame);
         self.prepare_debug_buffer(frame);
         self.prepare_atlas_blit(queue, frame, viewport_fx);
     }
@@ -1066,6 +958,20 @@ impl ViewportRenderer {
         let prepare_start = web_time::Instant::now();
         self.prepare_breakdown = crate::renderer::stats::PrepareBreakdown::default();
 
+        // Resolve which surfaces opted out of decal projection before any
+        // plugin prepare runs: the flag lives on mesh items, so a projection
+        // item type can only get it from here.
+        self.decal_excluded_surfaces.clear();
+        {
+            let crate::SurfaceSubmission::Flat(ref surfaces) = frame.scene.surfaces;
+            self.decal_excluded_surfaces.extend(
+                surfaces
+                    .iter()
+                    .filter(|item| !item.receives_decals && !item.settings.hidden)
+                    .map(|item| (item.mesh_id, item.model)),
+            );
+        }
+
         let plugin_start = web_time::Instant::now();
 
         // Dispatch item-type plugin prepare work first so any GPU outputs
@@ -1077,7 +983,7 @@ impl ViewportRenderer {
 
         // Run plugin culling for the current camera frustum so subsequent
         // plugin paint/shadow calls can skip culled items.
-        if !self.item_type_plugins.is_empty() && !frame.scene.plugin_items.is_empty() {
+        if !self.item_type_plugins.is_empty() {
             let vp = frame.camera.render_camera.view_proj();
             let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
             self.dispatch_plugin_cull(&frustum, frame);
@@ -1256,8 +1162,10 @@ impl ViewportRenderer {
         // Snapshot geometry upload bytes accumulated since the last frame, then reset.
         let upload_bytes = self.resources.frame_upload_bytes;
         self.resources.frame_upload_bytes = 0;
-        let pipelines_built_this_frame = self.resources.frame_pipelines_built;
-        self.resources.frame_pipelines_built = 0;
+        let pipelines_built_this_frame = self
+            .resources
+            .frame_pipelines_built
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
 
         // Resolve effective scale bounds and degradation flags.
         // When a preset is set it overrides the individual fields; the individual
@@ -1346,69 +1254,6 @@ impl ViewportRenderer {
         // renderer.pick()/pick_rect() leave it off (see set_cpu_pick_cache).
         if self.cpu_pick_cache_enabled {
             self.cache_pick_items(frame);
-        }
-
-        // Prepare scatter volumes for rendering. Independent of picking: always runs.
-        {
-            self.prepared_scatter_volumes.clear();
-            self.prepared_refraction_volumes.clear();
-            let global_wireframe = frame.viewport.wireframe_mode;
-            let eye = frame.camera.render_camera.eye_position;
-            for item in &frame.scene.scatter_volumes {
-                if item.settings.hidden || item.settings.wireframe || global_wireframe {
-                    continue;
-                }
-                let mut flags: u32 = 0;
-                if item.settings.unlit {
-                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_UNLIT;
-                }
-                if item.settings.receive_shadows {
-                    flags |= crate::scene::scatter_volume::SCATTER_FLAG_RECEIVE_SHADOWS;
-                }
-                self.prepared_scatter_volumes.push((
-                    item.volume.clone(),
-                    item.settings.opacity,
-                    flags,
-                ));
-                if item.volume.refraction.is_some() {
-                    self.prepared_refraction_volumes
-                        .push((item.volume.clone(), item.settings.opacity));
-                }
-            }
-            // Sort back-to-front for the per-volume scatter draws. The
-            // metric is the maximum corner distance of the volume's world
-            // AABB from the eye, descending. Centroid distance flips order
-            // when one volume contains another (huge fog containing a small
-            // fire) -- the fire centroid can land on either side of the fog
-            // centroid as the camera orbits, causing the alpha-over composite
-            // to swap visibly. Sorting by far-corner distance keeps
-            // containers (whose far corner is much further from the eye)
-            // strictly behind contained volumes regardless of camera angle.
-            self.prepared_scatter_volumes.sort_by(|a, b| {
-                let aabb_a = a.0.world_aabb();
-                let aabb_b = b.0.world_aabb();
-                let far_corner = |aabb: &crate::Aabb| -> f32 {
-                    let cx = if (aabb.min.x - eye[0]).abs() > (aabb.max.x - eye[0]).abs() {
-                        aabb.min.x
-                    } else {
-                        aabb.max.x
-                    };
-                    let cy = if (aabb.min.y - eye[1]).abs() > (aabb.max.y - eye[1]).abs() {
-                        aabb.min.y
-                    } else {
-                        aabb.max.y
-                    };
-                    let cz = if (aabb.min.z - eye[2]).abs() > (aabb.max.z - eye[2]).abs() {
-                        aabb.min.z
-                    } else {
-                        aabb.max.z
-                    };
-                    (cx - eye[0]).powi(2) + (cy - eye[1]).powi(2) + (cz - eye[2]).powi(2)
-                };
-                let da = far_corner(&aabb_a);
-                let db = far_corner(&aabb_b);
-                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
-            });
         }
 
         let (scene_fx, viewport_fx) = frame.effects.split();

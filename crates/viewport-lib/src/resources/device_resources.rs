@@ -60,6 +60,12 @@ pub(crate) struct ViewportHdrState {
     pub ssaa_depth_only_view: Option<crate::gpu::TextureView>,
     /// Bind group for the SSAA resolve pass (reads ssaa_colour_texture). `None` when ssaa_factor == 1.
     pub ssaa_resolve_bind_group: Option<crate::gpu::BindGroup>,
+    /// Bind group for the depth half of the SSAA resolve: reads
+    /// `ssaa_depth_only_view` so the blit can write the supersampled depth down
+    /// into `hdr_depth_view`. Without it that buffer stays unwritten for the
+    /// whole frame and every pass after the resolve depth-tests against
+    /// nothing. `None` when ssaa_factor == 1.
+    pub ssaa_depth_blit_bind_group: Option<crate::gpu::BindGroup>,
     /// Uniform buffer holding the ssaa_factor value for the resolve shader.
     pub ssaa_uniform_buf: Option<crate::gpu::Buffer>,
     /// The ssaa_factor this state was created with (1 = no SSAA).
@@ -144,81 +150,12 @@ pub(crate) struct ViewportHdrState {
     /// Effective scene resolution after render scale: [output_size * render_scale].
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
-
-    // --- Decal pass depth binding ---
-    /// Bind group for group 1 of the decal pass: reads hdr_depth_only_view as a depth texture.
-    /// Rebuilt on viewport resize alongside the other viewport-sized bind groups.
-    pub decal_depth_bg: crate::gpu::BindGroup,
-}
-/// Per-viewport scatter-pass intermediates: two RGBA16F ping-pong targets
-/// driven by the temporal-accumulation logic, plus the composite bind groups
-/// and previous-frame view-projection used for reprojection.
-///
-/// Lives on `ViewportRenderer` (not `ViewportHdrState`) so that the scatter
-/// pass can allocate and mutate it without conflicting with the immutable
-/// `slot_hdr` borrow held across the larger paint phase.
-pub(crate) struct ScatterViewportState {
-    // Textures keep the GPU allocation alive; views are sampled or rendered
-    // into.
-    /// Per-volume scatter draws accumulate into this target each frame.
-    /// Cleared at the start of the scatter pass.
-    #[allow(dead_code)]
-    pub raw_current_texture: crate::gpu::Texture,
-    pub raw_current_view: crate::gpu::TextureView,
-    /// History ping-pong. The temporal-resolve pass reads one slot
-    /// (history_prev) and writes the other (history_new). `parity` selects.
-    #[allow(dead_code)]
-    pub history_a_texture: crate::gpu::Texture,
-    pub history_a_view: crate::gpu::TextureView,
-    #[allow(dead_code)]
-    pub history_b_texture: crate::gpu::Texture,
-    pub history_b_view: crate::gpu::TextureView,
-    /// Composite bind group reading the raw-current texture.
-    /// Used when temporal accumulation is disabled.
-    pub composite_bg_raw: crate::gpu::BindGroup,
-    /// Composite bind groups reading either history slot, used as the source
-    /// after the temporal-resolve pass has written history_new.
-    pub composite_bg_history_a: crate::gpu::BindGroup,
-    pub composite_bg_history_b: crate::gpu::BindGroup,
-    /// Temporal-resolve bind groups, keyed by which history slot is being
-    /// read as the previous-frame input. Each binds raw_current + the chosen
-    /// history slot.
-    pub temporal_resolve_bg_read_a: crate::gpu::BindGroup,
-    pub temporal_resolve_bg_read_b: crate::gpu::BindGroup,
-    /// Current allocated intermediate size, [width, height].
-    pub size: [u32; 2],
-    /// Whether `size` reflects the downsampled (half-res) allocation.
-    pub downsampled: bool,
-    /// Index of the history slot the next frame writes to (0 = A, 1 = B).
-    /// The other slot is read as the previous-frame history.
-    pub parity: u32,
-    /// True when the history slot opposite `parity` holds a usable
-    /// previous-frame composite result.
-    pub history_valid: bool,
-    /// Previous frame's view-projection (row-major mat4).
-    pub prev_view_proj: [[f32; 4]; 4],
-    /// Scene colour copy sampled by the refraction pass. Allocated on demand
-    /// when at least one volume has refraction enabled. Matches the HDR
-    /// target's size and format.
-    #[allow(dead_code)]
-    pub refraction_source_texture: Option<crate::gpu::Texture>,
-    /// View paired with `refraction_source_texture`. Bound as the source
-    /// during the refraction pass and as the render target during the
-    /// preceding blit-copy of the HDR scene.
-    pub refraction_source_view: Option<crate::gpu::TextureView>,
-    /// Per-viewport bind group binding `(refraction_source_view, depth)` to
-    /// the refraction pass.
-    pub refraction_source_bg: Option<crate::gpu::BindGroup>,
-    /// Per-viewport bind group binding the HDR view as the source for the
-    /// blit-copy that fills `refraction_source_view`.
-    pub refraction_blit_bg: Option<crate::gpu::BindGroup>,
-    /// Allocated size of the refraction source, matched to the HDR target.
-    pub refraction_source_size: [u32; 2],
 }
 /// A render pipeline compiled for both the LDR swapchain format and the HDR
 /// intermediate format (`Rgba16Float`). Used for pipelines that draw into the
 /// primary scene colour attachment, which may be either format depending on
 /// whether post-processing is active.
+#[derive(Clone)]
 pub(crate) struct DualPipeline {
     pub ldr: crate::gpu::RenderPipeline,
     pub hdr: crate::gpu::RenderPipeline,
@@ -255,94 +192,6 @@ pub(crate) struct PickResources {
     /// the primitive channel. Reuses `vertex_mesh_bgl` for group 2. Only built with
     /// SHADER_PRIMITIVE_INDEX.
     pub(crate) edge_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Curve POLY_NODE pick pipeline: draws the tube/ribbon/streamtube mesh and
-    /// writes the nearer of the hit triangle's two segment endpoints (global node
-    /// index) into the primitive channel. Only built with SHADER_PRIMITIVE_INDEX.
-    pub(crate) node_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for `node_pipeline`: the per-triangle node payload buffer
-    /// (read-only storage).
-    pub(crate) node_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for glyph sets. Reuses the render glyph transform and writes
-    /// the set's object id.
-    pub(crate) glyph_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Pick pipeline for tensor glyph sets.
-    pub(crate) tensor_glyph_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 1 layout shared by the glyph and tensor glyph pick pipelines: the
-    /// set's uniform (binding 0) plus the object-id uniform (binding 3).
-    pub(crate) glyph_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for polylines. Reuses the polyline render vertex expansion
-    /// and writes the item's object id.
-    pub(crate) polyline_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the polyline pick pipeline (per-draw object-id uniform).
-    pub(crate) polyline_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for voxel volumes: rasterises the volume bounding cube and
-    /// raymarches to the first in-threshold voxel, writing the item's object id
-    /// and that voxel's depth. Reuses the volume render group-1 layout.
-    pub(crate) volume_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the volume pick pipeline (per-item object-id uniform).
-    pub(crate) volume_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for GPU implicit SDF surfaces: raymarches the isosurface on a
-    /// full-screen quad and writes the item's object id and hit depth. Reuses the
-    /// implicit render group-1 uniform layout.
-    pub(crate) implicit_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the implicit pick pipeline (per-item object-id uniform).
-    pub(crate) implicit_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for GPU marching-cubes surfaces: rasterises the generated MC
-    /// vertex buffer and writes the job's object id and depth.
-    pub(crate) mc_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 1 layout for the MC pick pipeline (per-job object-id uniform).
-    pub(crate) mc_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for point clouds: reuses the render screen-space quad
-    /// expansion and writes the item's object id plus the hit point's instance
-    /// index.
-    pub(crate) point_cloud_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the point cloud pick pipeline (per-item object-id uniform).
-    pub(crate) point_cloud_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for Gaussian splats: reuses the render covariance
-    /// projection and writes the item's object id plus the hit splat's instance
-    /// index.
-    pub(crate) gaussian_splat_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the Gaussian splat pick pipeline (per-item object-id uniform).
-    pub(crate) gaussian_splat_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for image slices: reuses the render quad-from-vertex-index
-    /// expansion and writes the item's object id. Object-level.
-    pub(crate) image_slice_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the image slice pick pipeline (per-item object-id uniform).
-    pub(crate) image_slice_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Pick pipeline for volume surface slices: reuses the render mesh vertex
-    /// buffer and writes the item's object id. Object-level.
-    pub(crate) volume_surface_slice_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 2 layout for the volume surface slice pick pipeline (per-item object-id uniform).
-    pub(crate) volume_surface_slice_pick_id_bgl: Option<crate::gpu::BindGroupLayout>,
-}
-
-/// GPU implicit-surface ray-march pipeline and layout. Lazily built.
-#[derive(Default)]
-pub(crate) struct ImplicitResources {
-    /// Render pipeline for GPU-side implicit surface ray-marching.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Group 1 layout (ImplicitUniformRaw).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Outline mask pipeline for implicit surfaces. None until first selected item.
-    pub(crate) outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
-}
-
-/// Screen-space image quad pipelines (plain + depth-composite) and the rect
-/// outline mask pipeline. Lazily built.
-#[derive(Default)]
-pub(crate) struct ScreenImageResources {
-    /// Render pipeline for screen-space image quads.
-    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 0 layout (uniform + texture + sampler).
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Depth-composite pipeline (LessEqual depth, per-pixel image depth).
-    pub(crate) dc_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Group 0 layout for the dc pipeline (uniform + colour + sampler + depth).
-    pub(crate) dc_bgl: Option<crate::gpu::BindGroupLayout>,
-    /// Outline mask pipeline for screen-space rect images. None until first selected.
-    pub(crate) rect_outline_mask_pipeline: Option<crate::gpu::RenderPipeline>,
-    /// Layout for the rect outline mask pipeline (NdcRectUniform).
-    pub(crate) rect_outline_bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Sub-object highlight pipelines (fill / edge / sprite, HDR + LDR) and layout.
@@ -382,7 +231,7 @@ pub(crate) struct ProjectedTetResources {
 }
 
 /// Selection-outline and x-ray pipelines, the offscreen mask/composite targets,
-/// and their layouts. The mask/edge/xray/splat pipelines are built eagerly at
+/// and their layouts. The mask/edge/xray pipelines are built eagerly at
 /// init; the offscreen textures and composite pipelines are lazily created.
 pub(crate) struct OutlineResources {
     /// Group 1 layout for OutlineUniform (mask/xray pipelines).
@@ -397,8 +246,6 @@ pub(crate) struct OutlineResources {
     pub(crate) edge_bgl: crate::gpu::BindGroupLayout,
     /// X-ray pipeline: draws selected objects through occluders (depth Always).
     pub(crate) xray_pipeline: crate::gpu::RenderPipeline,
-    /// Billboard disc pipeline for the Gaussian splat outline mask pass.
-    pub(crate) splat_mask_pipeline: crate::gpu::RenderPipeline,
     /// Offscreen RGBA texture the outline stencil pass renders into.
     pub(crate) colour_texture: Option<crate::gpu::Texture>,
     pub(crate) colour_view: Option<crate::gpu::TextureView>,
@@ -414,15 +261,6 @@ pub(crate) struct OutlineResources {
     pub(crate) composite_bgl: Option<crate::gpu::BindGroupLayout>,
     pub(crate) composite_bind_group: Option<crate::gpu::BindGroup>,
     pub(crate) composite_sampler: Option<crate::gpu::Sampler>,
-}
-
-/// Image slice render pipeline and layout. Lazily built.
-#[derive(Default)]
-pub(crate) struct ImageSliceResources {
-    /// Image slice render pipeline. None until first slice item is submitted.
-    pub(crate) pipeline: Option<DualPipeline>,
-    /// Group 1 layout for image slice uniforms.
-    pub(crate) bgl: Option<crate::gpu::BindGroupLayout>,
 }
 
 /// Former name of [`DeviceResources`]. Renamed to reflect that this holds the
@@ -451,32 +289,13 @@ pub struct ContentResources {
     /// recorded as (raw texture id, slot) where the binding is built and drained
     /// by `prepare` into a `TextureColourSpaceMismatch`. One entry per pair, so a
     /// scene that keeps redrawing does not grow it.
+    /// Behind a lock so a binding built from a shared borrow can record one:
+    /// item types prepare against `&DeviceResources`.
     pub(crate) texture_slot_mismatches:
-        Vec<(u64, crate::resources::material::textures::TextureSlot)>,
+        std::sync::Mutex<Vec<(u64, crate::resources::material::textures::TextureSlot)>>,
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,
-    /// Pre-uploaded polyline storage; entries are referenced from per-frame
-    /// `PolylineRefItem`s.
-    pub(crate) polyline_store: super::PolylineStore,
-    /// Pre-uploaded streamtube storage.
-    pub(crate) streamtube_store: super::StreamtubeStore,
-    /// Pre-uploaded tube storage.
-    pub(crate) tube_store: super::TubeStore,
-    /// Pre-uploaded ribbon storage.
-    pub(crate) ribbon_store: super::RibbonStore,
-    /// Pre-uploaded point cloud storage.
-    pub(crate) point_cloud_store: super::PointCloudStore,
-    /// Pre-uploaded glyph set storage.
-    pub(crate) glyph_set_store: super::GlyphSetStore,
-    /// Pre-uploaded tensor glyph set storage.
-    pub(crate) tensor_glyph_set_store: super::TensorGlyphSetStore,
-    /// Pre-uploaded sprite set storage.
-    pub(crate) sprite_set_store: super::SpriteSetStore,
-    /// Pre-uploaded sprite instance set storage.
-    pub(crate) sprite_instance_set_store: super::SpriteInstanceSetStore,
-    /// Slotted store of all uploaded Gaussian splat sets.
-    pub(crate) gaussian_splat_store: GaussianSplatStore,
     /// Uploaded 3D volume textures, keyed by `VolumeId`. Slotted with
     /// generational ids so a freed slot cannot alias a later upload, and the
     /// per-entry byte charge feeds `ResidentBytes::volume_bytes`.
@@ -553,14 +372,16 @@ pub struct ContentResources {
     /// `vec2(0.0)`.
     pub(crate) fallback_uv1_buf: crate::gpu::Buffer,
     /// IDs of built-in preset colourmaps, in BuiltinColourmap discriminant order.
-    /// `None` until `ensure_colourmaps_initialized()` has been called.
-    pub(crate) builtin_colourmap_ids: Option<[ColourmapId; 10]>,
-    /// Whether built-in colourmaps have been uploaded to the GPU.
+    /// Assigned at construction, so resolving a preset never depends on a frame
+    /// having run.
+    pub(crate) builtin_colourmap_ids: [ColourmapId; 10],
+    /// Whether the built-in colourmap texels have been written. The textures and
+    /// views exist from construction; only the pixels wait for a queue.
     pub(crate) colourmaps_initialized: bool,
 }
 
 /// Device-shared GPU resources: pipelines, layouts, samplers, fallbacks, LUTs,
-/// and the per-feature pipeline clusters (`decal`, `scatter`, `volume`, ...).
+/// and the per-feature pipeline clusters (`volume`, `pt`, ...).
 /// Created once at init and shared across every viewport.
 ///
 /// Typically stored in the host framework's resource container and accessed
@@ -672,9 +493,6 @@ pub struct DeviceResources {
     pub(crate) post: crate::resources::postprocess::PostProcessResources,
 
     // --- Outline & x-ray resources ---
-    // The volume outline mask pipeline lives on `volume.outline_mask_pipeline`;
-    // the glyph / tensor-glyph ones on `glyph.outline_mask_pipeline` and
-    // `tensor_glyph.outline_mask_pipeline`.
     /// Outline / x-ray pipelines, offscreen mask/composite targets, and layouts.
     pub(crate) outline: OutlineResources,
 
@@ -690,40 +508,26 @@ pub struct DeviceResources {
     /// Surface LIC pipelines and layouts (surface + advect passes).
     pub(crate) lic: crate::resources::postprocess::LicResources,
 
-    // --- Gaussian splat pipelines (lazily created) ---
-    /// Gaussian splat render/sort pipelines and their bind group layouts.
-    pub(crate) gaussian_splat: crate::resources::scivis::gaussian_splat::GaussianSplatResources,
-
     // --- Sprite billboard pipelines (lazily created) ---
     /// Sprite (emissive + lit) pipelines, layouts, refraction, and soft-particle fallbacks.
-    pub(crate) sprite: crate::resources::scivis::sprite::SpriteResources,
     // The polyline outline mask pipeline lives on `polyline.outline_mask_pipeline`.
 
     // --- point cloud pipelines (lazily created) ---
     /// Point-cloud render pipeline and bind group layout (lazy).
-    pub(crate) point_cloud: crate::resources::scivis::point_cloud::PointCloudResources,
 
     // --- glyph rendering (lazily created) ---
     /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
     pub(crate) glyph: crate::resources::scivis::glyph::GlyphResources,
     /// Tensor glyph pipelines and layouts.
-    pub(crate) tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources,
 
     // --- polyline / streamtube / ribbon rendering (lazily created) ---
     /// Polyline pipelines and layouts.
     pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,
     /// Streamtube pipelines and layout.
-    pub(crate) streamtube: crate::resources::scivis::tube::StreamtubeResources,
     /// Ribbon pipelines (one per blend) and layout.
-    pub(crate) ribbon: crate::resources::scivis::tube::RibbonResources,
-
-    // --- Image slice rendering (lazily created) ---
-    /// Image slice render pipeline and layout.
-    pub(crate) image_slice: ImageSliceResources,
 
     // --- volume rendering (lazily created) ---
     /// Volume render/surface-slice/outline pipelines, layouts, cube geometry, and default LUT.
-    pub(crate) volume: crate::resources::volume::volumes::VolumeResources,
 
     // --- GPU compute filtering (lazily created) ---
     /// Compute-filter pipeline and bind group layout (lazy).
@@ -739,10 +543,6 @@ pub struct DeviceResources {
     /// Projected-tetrahedra pipeline, layouts, and LUT bind group cache.
     pub(crate) pt: ProjectedTetResources,
 
-    // --- Scatter-volume (participating media) rendering (lazily created) ---
-    /// Scatter-volume pipelines, layouts, and per-frame upload buffers.
-    pub(crate) scatter: crate::resources::volume::scatter_volume::ScatterResources,
-
     // --- IBL / environment map resources ---
     /// Image-based-lighting views, fallbacks, owned array textures, environment
     /// zone count, and the skybox pipeline. See `material::environment::IblResources`.
@@ -753,27 +553,8 @@ pub struct DeviceResources {
     /// See `resources::ground_plane::GroundPlaneResources`.
     pub(crate) ground: crate::resources::ground_plane::GroundPlaneResources,
 
-    // --- GPU implicit surface (lazily created) ---
-    /// Implicit-surface ray-march pipeline, layout, and outline mask.
-    pub(crate) implicit: ImplicitResources,
-
-    // --- GPU marching cubes (lazily created) ---
-    /// Marching-cubes compute/render pipelines, layouts, case tables, and per-item volumes.
-    pub(crate) mc: crate::resources::volume::gpu_marching_cubes::McResources,
-
-    // --- GPU particle systems ---
-    /// Particle compute/draw pipelines, their layouts, and the live systems.
-    pub(crate) particle: crate::resources::gpu::gpu_particles::ParticleResources,
-
     // --- External instance sets ---
     /// Consumer-buffer instanced mesh drawing (positions produced by the
-    /// consumer's own GPU compute on the shared device).
-    pub(crate) external_instances:
-        crate::resources::gpu::external_instances::ExternalInstancesResources,
-
-    // --- Screen-space image overlays (lazily created) ---
-    /// Screen-space image pipelines (plain + depth-composite) and rect outline mask.
-    pub(crate) screen_image: ScreenImageResources,
 
     // --- GPU object-ID picking (lazily created) ---
     /// Object-ID pick pipeline and its bind group layouts.
@@ -829,7 +610,10 @@ pub struct DeviceResources {
     /// Incremented by the `ensure_*` pipeline builders when they actually
     /// create pipelines (not on their no-op early returns). Read and reset
     /// each `prepare()` call to populate `FrameStats::pipelines_built_this_frame`.
-    pub(crate) frame_pipelines_built: u32,
+    ///
+    /// Atomic because some builders run behind a shared reference, so an item
+    /// type's plugin can trigger them from `prepare`.
+    pub(crate) frame_pipelines_built: std::sync::atomic::AtomicU32,
     /// Bumped by `free_texture` and `free_mesh`. The per-object draw cache
     /// holds bind groups that keep their referenced GPU resources alive; when
     /// this changes, the cache purges its stale entries so a freed resource's
@@ -845,10 +629,6 @@ pub struct DeviceResources {
     /// and indices. Default `true`. See
     /// `DeviceResources::set_retain_mesh_cpu_geometry`.
     pub(crate) retain_mesh_cpu_geometry: bool,
-
-    // --- Screen-space decal pipelines (lazily created) ---
-    /// Decal render/exclude pipelines and their bind group layouts.
-    pub(crate) decal: crate::resources::decal::DecalResources,
 
     // --- HiZ occlusion culling ---
     /// When true, the main-camera GPU cull runs the HiZ occlusion test on top
@@ -1379,8 +1159,9 @@ impl DeviceResources {
     /// `site` is the `file!()`/`line!()` of the builder, emitted at debug level
     /// under the `viewport_lib::pipelines` target so a hitch traced to a lazy
     /// compile can be attributed to the exact builder.
-    pub(crate) fn note_pipeline_built(&mut self, site: &'static str) {
-        self.frame_pipelines_built += 1;
+    pub(crate) fn note_pipeline_built(&self, site: &'static str) {
+        self.frame_pipelines_built
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         tracing::debug!(target: "viewport_lib::pipelines", site, "lazy pipeline build");
     }
 }

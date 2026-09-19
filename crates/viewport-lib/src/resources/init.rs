@@ -1919,6 +1919,12 @@ impl DeviceResources {
         let fallback_lut_view =
             fallback_lut_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
+        // The built-in LUTs are resident from here: textures, views, CPU copies
+        // and ids. Only their texels wait for a queue, which construction has
+        // not got.
+        let (colourmap_textures, colourmap_views, colourmaps_cpu, builtin_colourmap_ids) =
+            crate::resources::material::textures::create_builtin_colourmaps(device);
+
         let fallback_scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_scalar_buf"),
             size: 4,
@@ -2095,70 +2101,6 @@ impl DeviceResources {
         );
         let outline_mask_pipeline = outline_masks.mask;
         let outline_mask_two_sided_pipeline = outline_masks.mask_two_sided;
-
-        // Billboard disc pipeline for the Gaussian splat outline mask pass.
-        // Reuses the same pipeline layout as the mesh mask pipelines (camera_bgl + outline_bgl).
-        // Positions are instance-stepped vec3; each instance expands to a 6-vertex quad.
-        let splat_outline_mask_shader = crate::resources::builders::wgsl_module(
-            device,
-            "splat_outline_mask_shader",
-            crate::resources::builders::wgsl_source!("splat_outline_mask"),
-        );
-        let splat_outline_pos_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }];
-        let splat_outline_pos_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 12, // vec3<f32>
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &splat_outline_pos_attrs,
-        };
-        let splat_outline_size_attrs = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 1,
-            format: crate::gpu::VertexFormat::Float32,
-        }];
-        let splat_outline_size_layout = crate::gpu::VertexBufferLayout {
-            array_stride: 4, // f32
-            step_mode: crate::gpu::VertexStepMode::Instance,
-            attributes: &splat_outline_size_attrs,
-        };
-        let splat_outline_mask_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "splat_outline_mask_pipeline",
-                layout: &outline_pipeline_layout,
-                vertex_module: &splat_outline_mask_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[splat_outline_pos_layout, splat_outline_size_layout],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &splat_outline_mask_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::R8Unorm,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Less,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
 
         // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
         // outputs an anti-aliased outline ring to the outline colour texture.
@@ -2424,18 +2366,8 @@ impl DeviceResources {
             },
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
-                texture_slot_mismatches: Vec::new(),
+                texture_slot_mismatches: std::sync::Mutex::new(Vec::new()),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
-                polyline_store: crate::resources::PolylineStore::new(),
-                streamtube_store: crate::resources::StreamtubeStore::new(),
-                tube_store: crate::resources::TubeStore::new(),
-                ribbon_store: crate::resources::RibbonStore::new(),
-                point_cloud_store: crate::resources::PointCloudStore::new(),
-                glyph_set_store: crate::resources::GlyphSetStore::new(),
-                tensor_glyph_set_store: crate::resources::TensorGlyphSetStore::new(),
-                sprite_set_store: crate::resources::SpriteSetStore::new(),
-                sprite_instance_set_store: crate::resources::SpriteInstanceSetStore::new(),
-                gaussian_splat_store: crate::resources::types::GaussianSplatStore::new(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
                 glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),
@@ -2447,9 +2379,9 @@ impl DeviceResources {
                 fallback_matcap_view: None,
                 matcaps_initialized: false,
                 builtin_matcap_ids: None,
-                colourmap_textures: Vec::new(),
-                colourmap_views: Vec::new(),
-                colourmaps_cpu: Vec::new(),
+                colourmap_textures,
+                colourmap_views,
+                colourmaps_cpu,
                 fallback_lut_texture,
                 fallback_lut_view,
                 fallback_scalar_buf,
@@ -2459,7 +2391,7 @@ impl DeviceResources {
                 fallback_normal_override_buf,
                 fallback_extension_attr_buf,
                 fallback_uv1_buf,
-                builtin_colourmap_ids: None,
+                builtin_colourmap_ids,
                 colourmaps_initialized: false,
             },
             jobs: std::sync::Mutex::new(crate::resources::upload_jobs::JobRunner::new()),
@@ -2472,7 +2404,6 @@ impl DeviceResources {
                 edge_pipeline: outline_edge_pipeline,
                 edge_bgl: outline_edge_bgl,
                 xray_pipeline,
-                splat_mask_pipeline: splat_outline_mask_pipeline,
                 colour_texture: None,
                 colour_view: None,
                 depth_texture: None,
@@ -2488,28 +2419,14 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             lic: crate::resources::postprocess::LicResources::default(),
-            gaussian_splat:
-                crate::resources::scivis::gaussian_splat::GaussianSplatResources::default(),
-            sprite: crate::resources::scivis::sprite::SpriteResources::default(),
-            point_cloud: crate::resources::scivis::point_cloud::PointCloudResources {
-                pipeline: None,
-                bgl: None,
-            },
-            glyph: crate::resources::scivis::glyph::GlyphResources::default(),
-            tensor_glyph: crate::resources::scivis::glyph::TensorGlyphResources::default(),
-            volume: crate::resources::volume::volumes::VolumeResources::default(),
-            polyline: crate::resources::scivis::polyline::PolylineResources::default(),
-            streamtube: crate::resources::scivis::tube::StreamtubeResources::default(),
-            ribbon: crate::resources::scivis::tube::RibbonResources::default(),
-            image_slice: crate::resources::types::ImageSliceResources::default(),
+            glyph: crate::resources::scivis::glyph::GlyphResources::new(),
+            polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
                 bgl: None,
             },
             oit: crate::resources::postprocess::OitResources::default(),
             pt: crate::resources::types::ProjectedTetResources::default(),
-            // Scatter-volume (participating media) pipeline (lazily created).
-            scatter: crate::resources::volume::scatter_volume::ScatterResources::default(),
             // IBL / environment map resources.
             ibl: crate::resources::material::environment::IblResources {
                 irradiance_view: None,
@@ -2532,13 +2449,7 @@ impl DeviceResources {
                 skybox_pipeline,
             },
             pick: crate::resources::types::PickResources::default(),
-            implicit: crate::resources::types::ImplicitResources::default(),
-            mc: crate::resources::volume::gpu_marching_cubes::McResources::default(),
 
-            particle: crate::resources::gpu::gpu_particles::ParticleResources::default(),
-            external_instances:
-                crate::resources::gpu::external_instances::ExternalInstancesResources::default(),
-            screen_image: crate::resources::types::ScreenImageResources::default(),
             sub_highlight: crate::resources::types::SubHighlightResources::default(),
             overlay_text: crate::resources::overlay::overlay_text::OverlayTextResources::default(),
             overlay_shape: crate::resources::overlay::overlay_shape::OverlayShapeResources::default(
@@ -2550,24 +2461,18 @@ impl DeviceResources {
             instance_custom_data_buf,
             custom_data_builder: crate::resources::custom_data::CustomDataBuilder::default(),
             frame_upload_bytes: 0,
-            frame_pipelines_built: 0,
+            frame_pipelines_built: std::sync::atomic::AtomicU32::new(0),
             resource_free_epoch: 0,
             resource_view_epoch: 0,
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
-            decal: crate::resources::decal::DecalResources::default(),
         };
-        // Decal pipelines are built here rather than on the first frame that
-        // submits a decal: decals tend to appear mid-session (impact marks,
-        // scorches), and a lazy build would stall that frame by the compile
-        // cost (~8 ms measured on a desktop GPU).
-        resources.ensure_decal_shared(device);
-        resources.ensure_decal_pipeline(device);
-        mark("decal_pipelines");
         // Pipelines built during construction are load-time cost, not a frame
         // hitch; keep them out of the first frame's stats.
-        resources.frame_pipelines_built = 0;
+        resources
+            .frame_pipelines_built
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         // GPU skinning is opt-in: hosts call
         // `viewport_lib::plugins::skinning::SkinningPlugin::install(&mut resources, &device)`
         // before uploading any skin data. The renderer otherwise carries no

@@ -42,7 +42,6 @@ mod showcase_25_surface_vectors;
 mod showcase_26_volume_mesh;
 mod showcase_27_camera_framing;
 mod showcase_28_curve_network_quantities;
-mod showcase_29_depth_composite_images;
 mod showcase_30_implicit_surface;
 mod showcase_31_sparse_volume_grid;
 mod showcase_32_extended_quantities;
@@ -202,8 +201,6 @@ fn main() -> eframe::Result {
 
                 cnq_state: showcase_28_curve_network_quantities::CnqState::default(),
 
-                dc_state: showcase_29_depth_composite_images::DcState::default(),
-
                 is_state: showcase_30_implicit_surface::IsState::default(),
 
                 eq_state: showcase_32_extended_quantities::EqState::default(),
@@ -287,7 +284,6 @@ enum ShowcaseMode {
     VolumeMesh,
     Auxiliary,
     CurveNetworkQuantities,
-    DepthCompositeImages,
     ImplicitSurface,
     SparseVolumeGrid,
     ExtendedQuantities,
@@ -448,9 +444,6 @@ pub(crate) struct App {
 
     // --- Showcase 28 ---
     pub(crate) cnq_state: showcase_28_curve_network_quantities::CnqState,
-
-    // --- Showcase 29 ---
-    dc_state: showcase_29_depth_composite_images::DcState,
 
     // --- Showcase 30 ---
     is_state: showcase_30_implicit_surface::IsState,

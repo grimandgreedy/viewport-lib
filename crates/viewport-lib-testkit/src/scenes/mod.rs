@@ -25,15 +25,17 @@ use viewport_lib::{
     BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GaussianSplatItem, GlyphItem,
     GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, LightingSettings, Material, MeshData,
     MeshId, MeshInstanceItem, PointCloudItem, PolylineItem, RibbonItem, ScatterSettings,
-    ScatterVolumeItem, SceneFrame, SceneRenderItem, ScreenImageItem, SpriteItem, StreamtubeItem,
-    TensorGlyphItem, TubeItem, ViewportGpuResources, VolumeItem, VolumeSurfaceSliceItem,
-    primitives,
+    ScatterVolumeItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, TensorGlyphItem,
+    TubeItem, ViewportRenderer, VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
-    /// Long-lived GPU resources (mesh and texture stores).
-    pub res: &'a mut ViewportGpuResources,
+    /// The renderer the scene uploads into. Content an item type holds itself
+    /// (splat sets, marching-cubes volumes) is uploaded straight through here;
+    /// shared content (meshes, textures, volumes) through
+    /// `renderer.resources_mut()`.
+    pub renderer: &'a mut ViewportRenderer,
     /// The wgpu device.
     pub device: &'a wgpu::Device,
     /// The wgpu queue (needed for texture uploads).
@@ -72,6 +74,12 @@ pub struct BuiltScene {
     pub ribbon_items: Vec<RibbonItem>,
     /// Sprite (billboard) items.
     pub sprite_items: Vec<SpriteItem>,
+    /// GPU particle systems advanced and drawn each frame. The simulation runs
+    /// on the GPU and carries state between frames, so a scene using these is
+    /// only reproducible because the emit RNG is seeded from a frame counter
+    /// rather than from the clock, and the harness pumps a fixed number of
+    /// frames.
+    pub gpu_particle_systems: Vec<viewport_lib::GpuParticleSystemItem>,
     /// Ray-marched volume items.
     pub volumes: Vec<VolumeItem>,
     /// Gaussian splat items.
@@ -80,8 +88,6 @@ pub struct BuiltScene {
     pub image_slices: Vec<ImageSliceItem>,
     /// Mesh-sampled volume slice items.
     pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
-    /// Screen-space image items.
-    pub screen_images: Vec<ScreenImageItem>,
     /// GPU implicit-surface items.
     pub gpu_implicit: Vec<GpuImplicitItem>,
     /// GPU marching-cubes items.
@@ -95,6 +101,10 @@ pub struct BuiltScene {
     /// Scatter pass settings override. Scenes with scatter volumes pin these
     /// so the still image is deterministic (no temporal blend, no jitter).
     pub scatter_settings: Option<ScatterSettings>,
+    /// Post-process settings override, for a scene that exists to exercise a
+    /// post-process configuration (supersampling, say) rather than an item
+    /// type. `None` leaves the frame's defaults alone.
+    pub post_process: Option<viewport_lib::PostProcessSettings>,
     /// Scene-content version stamped onto `SceneFrame::generation`.
     ///
     /// The renderer's instanced-batch cache trusts this: two consecutive
@@ -182,11 +192,11 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     sf.streamtube_items = scene.streamtube_items.clone();
     sf.ribbon_items = scene.ribbon_items.clone();
     sf.sprite_items = scene.sprite_items.clone();
+    sf.gpu_particle_systems = scene.gpu_particle_systems.clone();
     sf.volumes = scene.volumes.clone();
     sf.gaussian_splats = scene.gaussian_splats.clone();
     sf.image_slices = scene.image_slices.clone();
     sf.volume_surface_slices = scene.volume_surface_slices.clone();
-    sf.screen_images = scene.screen_images.clone();
     sf.gpu_implicit = scene.gpu_implicit.clone();
     sf.gpu_mc_items = scene.gpu_mc_items.clone();
     sf.scatter_volumes = scene.scatter_volumes.clone();
@@ -197,15 +207,23 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     if let Some(scatter) = scene.scatter_settings.clone() {
         fd.effects.scatter = scatter;
     }
+    if let Some(post) = scene.post_process.clone() {
+        fd.effects.post_process = post;
+    }
     fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
     fd.viewport.show_axes_indicator = false;
+    // Scenes mark an item selected to put the selection outline in the
+    // reference image; without this the flag is off and the outline pass never
+    // runs, so those marks render nothing.
+    fd.interaction.outline_selected = true;
     fd
 }
 
 // --- small build helpers ---------------------------------------------------
 
 fn upload(ctx: &mut BuildCtx<'_>, mesh: &MeshData) -> MeshId {
-    ctx.res
+    ctx.renderer
+        .resources_mut()
         .upload_mesh_data(ctx.device, mesh)
         .expect("mesh upload")
 }
@@ -406,7 +424,8 @@ fn build_concave_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = textures::checker(512, 8, [230, 230, 230], [40, 40, 50]);
     let tex_id = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_texture(
             ctx.device,
             ctx.queue,
@@ -427,7 +446,8 @@ fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 fn build_textured_normalmap(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let nm = textures::normal_bumps(512, 8);
     let nm_id = ctx
-        .res
+        .renderer
+        .resources_mut()
         .upload_texture(
             ctx.device,
             ctx.queue,
@@ -605,8 +625,24 @@ fn build_point_cloud(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     pc.positions = positions;
     pc.scalars = scalars;
     pc.point_size = 5.0;
+
+    // A second, much coarser cloud off to one side, marked selected so the
+    // reference carries a legible per-point selection outline. Outlining the
+    // 3000-point sphere instead would ring every point and fill the silhouette.
+    let mut selected = PointCloudItem::default();
+    selected.positions = (0..8)
+        .map(|i| {
+            let t = i as f32 / 8.0 * std::f32::consts::TAU;
+            [2.3 + t.cos() * 0.5, 0.0, t.sin() * 0.5]
+        })
+        .collect();
+    selected.point_size = 14.0;
+    selected.default_colour = viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15);
+    selected.settings.pick_id = viewport_lib::PickId(1614);
+    selected.settings.selected = true;
+
     BuiltScene {
-        point_clouds: vec![pc],
+        point_clouds: vec![pc, selected],
         lighting: rigs::from_above(),
         ..Default::default()
     }

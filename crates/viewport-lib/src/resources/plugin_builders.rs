@@ -8,6 +8,7 @@ use crate::plugin_api::{
     target_desc::{OIT_ACCUM_BLEND, OIT_REVEAL_BLEND},
 };
 use crate::resources::DeviceResources;
+use crate::resources::mesh::mesh_store::MeshId;
 
 /// HDR colour format used by the scene buffer. Plugins targeting the HDR
 /// path build pipelines against this format.
@@ -33,6 +34,25 @@ pub const PICK_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureForm
 pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat =
     crate::gpu::TextureFormat::R32Float;
 
+/// Read-only borrows of one cached glyph base mesh, from
+/// [`DeviceResources::glyph_base_mesh`].
+///
+/// Vertices use the lib's full 64-byte `Vertex` layout; `edge_index_buffer`
+/// holds deduplicated line-list pairs for wireframe rendering.
+#[non_exhaustive]
+pub struct GlyphBaseMeshRef<'a> {
+    /// Vertex buffer (64-byte `Vertex` stride).
+    pub vertex_buffer: &'a crate::gpu::Buffer,
+    /// Triangle index buffer (`Uint32`).
+    pub index_buffer: &'a crate::gpu::Buffer,
+    /// Number of triangle indices.
+    pub index_count: u32,
+    /// Edge index buffer for LineList wireframe rendering (`Uint32`).
+    pub edge_index_buffer: &'a crate::gpu::Buffer,
+    /// Number of edge indices.
+    pub edge_index_count: u32,
+}
+
 impl DeviceResources {
     // ------------------------------------------------------------------
     // Target descriptors and SharedBindings accessor
@@ -51,6 +71,23 @@ impl DeviceResources {
     pub fn opaque_target_desc(&self) -> OpaqueTargetDesc {
         OpaqueTargetDesc {
             color_format: HDR_COLOR_FORMAT,
+            depth_format: SCENE_DEPTH_FORMAT,
+            sample_count: self.sample_count,
+        }
+    }
+
+    /// Render-target descriptor for the LDR scene pass
+    /// (`PipelineMode::Direct`): the renderer's configured output format
+    /// instead of the HDR scene format, otherwise identical to
+    /// [`opaque_target_desc`](Self::opaque_target_desc). A plugin that opts
+    /// into LDR painting via
+    /// [`ItemTypePlugin::draws_ldr`](crate::plugin_api::ItemTypePlugin::draws_ldr)
+    /// builds its second `paint` pipeline against this and selects it when
+    /// [`PaintContext::target_format`](crate::plugin_api::PaintContext::target_format)
+    /// matches.
+    pub fn ldr_opaque_target_desc(&self) -> OpaqueTargetDesc {
+        OpaqueTargetDesc {
+            color_format: self.target_format,
             depth_format: SCENE_DEPTH_FORMAT,
             sample_count: self.sample_count,
         }
@@ -147,6 +184,22 @@ impl DeviceResources {
         self.content.textures.get(id).map(|t| &t.sampler)
     }
 
+    /// The 1x1 neutral view the lib binds when a material slot names no
+    /// texture: white for albedo and AO, a flat tangent-space normal, `[0, 1,
+    /// 1]` for metallic-roughness so the scalar factors pass through, and black
+    /// for emissive.
+    ///
+    /// Bind it wherever a pipeline layout requires a texture but the item has
+    /// none, so the same layout is honoured either way and the slot contributes
+    /// nothing of its own. Pair it with
+    /// [`material_sampler`](Self::material_sampler).
+    pub fn fallback_texture_view(
+        &self,
+        slot: crate::scene::material::TextureSlot,
+    ) -> &crate::gpu::TextureView {
+        self.material.slot_view(slot)
+    }
+
     /// Shared linear-repeat sampler used by the lib's material pipelines.
     ///
     /// Use this when building a plugin bind group that samples user
@@ -215,6 +268,125 @@ impl DeviceResources {
     /// IDs from async uploads may sit at the high end.
     pub fn texture_count(&self) -> usize {
         self.content.textures.len()
+    }
+
+    /// `true` when `id` refers to a live texture slot.
+    ///
+    /// Cheaper than [`texture_view`](Self::texture_view) when only the
+    /// liveness answer is needed, for example when deciding whether a cached
+    /// bind group must be rebuilt against the fallback.
+    pub fn has_texture(&self, id: crate::resources::TextureId) -> bool {
+        self.content.textures.get(id).is_some()
+    }
+
+    /// Borrow the GPU LUT view for a colourmap uploaded via
+    /// [`upload_colourmap`](Self::upload_colourmap), or a builtin id from
+    /// [`builtin_colourmap_id`](Self::builtin_colourmap_id).
+    ///
+    /// Returns `None` when `id` is out of range (fall back to
+    /// [`fallback_colourmap_view`](Self::fallback_colourmap_view)). Pair the
+    /// view with [`lut_sampler`](Self::lut_sampler); the same lifetime
+    /// contract as [`texture_view`](Self::texture_view) applies.
+    pub fn colourmap_view(&self, id: crate::ColourmapId) -> Option<&crate::gpu::TextureView> {
+        self.content.colourmap_views.get(id.0)
+    }
+
+    /// The 1x1 white LUT view the lib binds when an item names no colourmap
+    /// (or a stale id). Bind it wherever a pipeline layout requires a LUT
+    /// but the item has none, so plugin behaviour matches the built-in
+    /// item types.
+    pub fn fallback_colourmap_view(&self) -> &crate::gpu::TextureView {
+        &self.content.fallback_lut_view
+    }
+
+    /// Borrow the GPU LUT view for a built-in colourmap preset.
+    ///
+    /// The built-in views exist from construction, so this resolves whenever it
+    /// is called, including from an upload that runs before the first frame.
+    /// The texels are written on the first `prepare`, before anything samples
+    /// them.
+    pub fn builtin_colourmap_view(
+        &self,
+        preset: crate::resources::BuiltinColourmap,
+    ) -> &crate::gpu::TextureView {
+        let ids = self.content.builtin_colourmap_ids;
+        &self.content.colourmap_views[ids[preset as usize].0]
+    }
+
+    /// Index count of a mesh uploaded through
+    /// [`upload_mesh_data`](Self::upload_mesh_data), or `None` when the id was
+    /// never uploaded or has been freed.
+    ///
+    /// Use it during `prepare` to drop an item whose mesh is not resident,
+    /// rather than building per-item state for geometry the draw hooks cannot
+    /// bind.
+    pub fn mesh_index_count(&self, mesh_id: MeshId) -> Option<u32> {
+        self.mesh_store.get(mesh_id).map(|m| m.index_count)
+    }
+
+    /// Borrow the 3D texture view for a scalar field uploaded via
+    /// [`upload_volume`](Self::upload_volume).
+    ///
+    /// `None` when `id` was never uploaded or has been freed. The texture is
+    /// filterable (`R16Float`, or `R32Float` where `FLOAT32_FILTERABLE` is
+    /// available), so a linear sampler reconstructs it trilinearly. The same
+    /// lifetime contract as [`texture_view`](Self::texture_view) applies: bake
+    /// the view into a bind group during `prepare` rather than holding the
+    /// borrow.
+    pub fn volume_view(&self, id: crate::resources::VolumeId) -> Option<&crate::gpu::TextureView> {
+        self.content.volume_textures.get(id).map(|(_, view)| view)
+    }
+
+    /// Grid dimensions `[nx, ny, nz]` of an uploaded scalar field, or `None`
+    /// when `id` was never uploaded or has been freed.
+    pub fn volume_dims(&self, id: crate::resources::VolumeId) -> Option<[u32; 3]> {
+        let (tex, _) = self.content.volume_textures.get(id)?;
+        let size = tex.size();
+        Some([size.width, size.height, size.depth_or_array_layers])
+    }
+
+    /// Read-only borrow of the shared cached base mesh (vertex + index
+    /// buffers) for a glyph shape.
+    ///
+    /// `None` until the mesh has been built; use
+    /// [`ensure_glyph_base_mesh`](Self::ensure_glyph_base_mesh) to build it on
+    /// the spot instead. Vertices use the lib's full 64-byte `Vertex` layout,
+    /// the same one the built-in glyph pipelines consume.
+    pub fn glyph_base_mesh(
+        &self,
+        glyph_type: crate::renderer::GlyphType,
+    ) -> Option<GlyphBaseMeshRef<'_>> {
+        use crate::renderer::GlyphType;
+        let mesh = match glyph_type {
+            GlyphType::Arrow => self.glyph.arrow_mesh.get(),
+            GlyphType::Sphere => self.glyph.sphere_mesh.get(),
+            GlyphType::Cube => self.glyph.cube_mesh.get(),
+        }?;
+        Some(GlyphBaseMeshRef {
+            vertex_buffer: &mesh.vertex_buffer,
+            index_buffer: &mesh.index_buffer,
+            index_count: mesh.index_count,
+            edge_index_buffer: &mesh.edge_index_buffer,
+            edge_index_count: mesh.edge_index_count,
+        })
+    }
+
+    /// Borrow the shared base mesh for a glyph shape, building and caching it
+    /// on the first call. Idempotent and cheap once cached, and callable from
+    /// `prepare`, which holds a shared borrow of the resources.
+    pub fn ensure_glyph_base_mesh(
+        &self,
+        device: &crate::gpu::Device,
+        glyph_type: crate::renderer::GlyphType,
+    ) -> GlyphBaseMeshRef<'_> {
+        let mesh = self.ensure_glyph_mesh(device, glyph_type);
+        GlyphBaseMeshRef {
+            vertex_buffer: &mesh.vertex_buffer,
+            index_buffer: &mesh.index_buffer,
+            index_count: mesh.index_count,
+            edge_index_buffer: &mesh.edge_index_buffer,
+            edge_index_count: mesh.edge_index_count,
+        }
     }
 
     // ------------------------------------------------------------------
@@ -538,12 +710,27 @@ impl DeviceResources {
     /// string to use a depth-only configuration with no fragment stage.
     /// Standard depth state: `LessEqual` test, depth write on, with the
     /// lib's standard depth bias.
+    ///
+    /// Group 0 is the shadow pass's own camera, not the scene bind group the
+    /// other builders use: the lib binds the cascade's light view-projection
+    /// as a single dynamic-offset uniform before calling
+    /// [`cast_shadow_pass`](crate::plugin_api::ItemTypePlugin::cast_shadow_pass).
+    /// Declare it in the shader with
+    /// [`SHARED_SHADOW_BINDINGS_WGSL`](crate::plugin_api::shared_wgsl::SHARED_SHADOW_BINDINGS_WGSL)
+    /// rather than `SHARED_BINDINGS_WGSL`.
     pub fn build_shadow_pipeline(
         &self,
         device: &crate::gpu::Device,
         opts: &PluginPipelineOpts<'_>,
     ) -> crate::gpu::RenderPipeline {
-        let layout = build_layout(device, opts.label, self, opts.extra_bind_group_layouts);
+        // Group 0 in the shadow pass is the cascade-space camera the lib binds
+        // before calling `cast_shadow_pass`: a single dynamic-offset uniform,
+        // not the scene bind group the other passes use.
+        let mut bgls: Vec<&crate::gpu::BindGroupLayout> =
+            Vec::with_capacity(1 + opts.extra_bind_group_layouts.len());
+        bgls.push(&self.shadow.camera_bgl);
+        bgls.extend(opts.extra_bind_group_layouts.iter().copied());
+        let layout = crate::resources::builders::pipeline_layout(device, opts.label, &bgls);
         let desc = self.shadow_target_desc();
         let fragment = if opts.fs_entry.is_empty() {
             None
@@ -568,15 +755,13 @@ impl DeviceResources {
                 depth_stencil: Some(crate::gpu::DepthStencilState {
                     format: desc.depth_format,
                     depth_write_enabled: crate::resources::builders::dwrite(true),
-                    depth_compare: crate::resources::builders::dcompare(
-                        crate::gpu::CompareFunction::LessEqual,
-                    ),
+                    depth_compare: crate::resources::builders::dcompare(opts.depth_compare),
                     stencil: crate::gpu::StencilState::default(),
-                    bias: crate::gpu::DepthBiasState {
+                    bias: opts.depth_bias.unwrap_or(crate::gpu::DepthBiasState {
                         constant: 2,
                         slope_scale: 2.0,
                         clamp: 0.0,
-                    },
+                    }),
                 }),
                 multisample: crate::gpu::MultisampleState {
                     count: desc.sample_count,
@@ -641,9 +826,18 @@ pub struct PluginPipelineOpts<'a> {
     /// Whether the opaque builder writes depth. Ignored by the other
     /// builders. Default `true`.
     pub depth_write: bool,
-    /// Depth-compare function for the opaque builder. Ignored by the other
-    /// builders.
+    /// Depth-compare function for the opaque and shadow builders. Ignored by
+    /// the others.
     pub depth_compare: crate::gpu::CompareFunction,
+    /// Depth bias for the shadow builder. Ignored by the others.
+    ///
+    /// `None` uses a mild default suited to solid, closed geometry. Thin or
+    /// two-sided geometry self-shadows badly under it and wants a much larger
+    /// one: the lib's own casters use `constant: 2, slope_scale: 0.0` for
+    /// single-sided meshes and `constant: 1000, slope_scale: 8.0` where the
+    /// shadow pass does not cull, which is what the curve and isosurface item
+    /// types pass here.
+    pub depth_bias: Option<crate::gpu::DepthBiasState>,
 }
 
 impl<'a> PluginPipelineOpts<'a> {
@@ -673,6 +867,7 @@ impl<'a> PluginPipelineOpts<'a> {
             color_blend: None,
             depth_write: true,
             depth_compare: crate::gpu::CompareFunction::LessEqual,
+            depth_bias: None,
         }
     }
 }
@@ -687,4 +882,131 @@ fn build_layout(
     bgls.push(&res.binds.camera_bgl);
     bgls.extend(extras.iter().copied());
     crate::resources::builders::pipeline_layout(device, label, &bgls)
+}
+
+/// Draw handle for meshes the consumer uploaded through
+/// [`upload_mesh_data`](DeviceResources::upload_mesh_data).
+///
+/// An item type whose geometry is a consumer-supplied [`MeshId`] rather than
+/// buffers of its own cannot bind it from a draw hook: the hook contexts carry
+/// no resources borrow, and the vertex and index data live in a shared arena
+/// whose layout is the lib's business. This hands over the one operation that
+/// needs, and nothing else.
+///
+/// Vertices use the lib's full 64-byte `Vertex` layout, so a pipeline that
+/// consumes them declares that layout (or a prefix of it) as vertex buffer 0.
+#[derive(Clone, Copy)]
+pub struct MeshDraw<'a> {
+    resources: &'a DeviceResources,
+}
+
+impl<'a> MeshDraw<'a> {
+    pub(crate) fn new(resources: &'a DeviceResources) -> Self {
+        Self { resources }
+    }
+
+    /// Bind the mesh's vertex and index buffers at slot 0 and issue the
+    /// indexed draw for its full index range.
+    ///
+    /// Returns `false` without touching the pass when `mesh_id` was never
+    /// uploaded or has been freed, so a plugin holding a stale id draws
+    /// nothing instead of drawing the wrong geometry. The pipeline and any
+    /// bind groups are the caller's to set first.
+    pub fn draw_indexed(&self, pass: &mut crate::gpu::RenderPass<'_>, mesh_id: MeshId) -> bool {
+        self.draw_indexed_instanced(pass, mesh_id, 1)
+    }
+
+    /// The same draw with an instance count, for an item type that draws one
+    /// uploaded mesh many times and composes each instance's transform in its
+    /// own vertex stage rather than from a per-instance vertex buffer.
+    ///
+    /// Returns `false` without touching the pass when `mesh_id` is stale, the
+    /// same as [`draw_indexed`](Self::draw_indexed).
+    pub fn draw_indexed_instanced(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        mesh_id: MeshId,
+        instances: u32,
+    ) -> bool {
+        self.draw_indexed_instance_range(pass, mesh_id, 0..instances)
+    }
+
+    /// The same draw over an instance *range*, for an item type whose
+    /// instances are a window into a larger buffer: `instance_index` in the
+    /// vertex stage starts at the range's start, so several items can render
+    /// disjoint regions of one pool without rebinding anything.
+    ///
+    /// Returns `false` without touching the pass when `mesh_id` is stale, the
+    /// same as [`draw_indexed`](Self::draw_indexed).
+    pub fn draw_indexed_instance_range(
+        &self,
+        pass: &mut crate::gpu::RenderPass<'_>,
+        mesh_id: MeshId,
+        instances: std::ops::Range<u32>,
+    ) -> bool {
+        let Some(mesh) = self.resources.mesh_store.get(mesh_id) else {
+            return false;
+        };
+        pass.set_vertex_buffer(0, self.resources.geometry.vertex_slice(mesh.vertex_span));
+        pass.set_index_buffer(
+            self.resources.geometry.index_slice(mesh.index_span),
+            crate::gpu::IndexFormat::Uint32,
+        );
+        pass.draw_indexed(0..mesh.index_count, 0, instances);
+        true
+    }
+
+    /// Index count of an uploaded mesh, or `None` when the id is stale.
+    pub fn index_count(&self, mesh_id: MeshId) -> Option<u32> {
+        self.resources
+            .mesh_store
+            .get(mesh_id)
+            .map(|m| m.index_count)
+    }
+}
+
+/// Read handle for the CPU-side geometry of meshes the consumer uploaded
+/// through [`upload_mesh_data`](DeviceResources::upload_mesh_data).
+///
+/// The counterpart of [`MeshDraw`] for the picking hooks: an item type whose
+/// geometry is a consumer-supplied [`MeshId`] answers
+/// [`pick`](crate::plugin_api::ItemTypePlugin::pick) and
+/// [`pick_rect`](crate::plugin_api::ItemTypePlugin::pick_rect) against these
+/// arrays rather than keeping a copy of its own.
+///
+/// Both accessors return `None` when the id is stale, and when the mesh was
+/// uploaded without CPU-side geometry retained.
+#[derive(Clone, Copy)]
+pub struct MeshGeometry<'a> {
+    resources: &'a DeviceResources,
+}
+
+impl std::fmt::Debug for MeshGeometry<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MeshGeometry")
+    }
+}
+
+impl<'a> MeshGeometry<'a> {
+    pub(crate) fn new(resources: &'a DeviceResources) -> Self {
+        Self { resources }
+    }
+
+    /// Object-space vertex positions, in the mesh's own vertex order.
+    pub fn positions(&self, mesh_id: MeshId) -> Option<&'a [[f32; 3]]> {
+        self.resources
+            .mesh_store
+            .get(mesh_id)?
+            .cpu_positions
+            .as_deref()
+    }
+
+    /// Triangle indices into [`positions`](Self::positions), three per face.
+    pub fn indices(&self, mesh_id: MeshId) -> Option<&'a [u32]> {
+        self.resources
+            .mesh_store
+            .get(mesh_id)?
+            .cpu_indices
+            .as_deref()
+    }
 }

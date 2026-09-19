@@ -14,12 +14,12 @@ pub struct TextureMemoryStats {
 }
 
 /// Resident GPU bytes for the user-uploaded working set, from
-/// [`DeviceResources::resident_bytes`].
+/// [`DeviceResources::resident_bytes`](crate::resources::DeviceResources::resident_bytes).
 ///
 /// These are the classes a streaming or eviction policy frees and re-uploads:
 /// meshes (`upload_mesh_data` and friends), user textures (`upload_texture` and
-/// friends), Gaussian splats, marching-cubes volumes, and the pre-uploaded
-/// scivis curves. Direct-volume 3D textures (`upload_volume`) are counted too,
+/// friends), Gaussian splats, marching-cubes volumes, the pre-uploaded scivis
+/// curves, and whatever registered item-type plugins report holding. Direct-volume 3D textures (`upload_volume`) are counted too,
 /// though the direct-volume store cannot be freed yet. The query is cheap
 /// enough to poll each frame.
 ///
@@ -39,12 +39,13 @@ pub struct ResidentBytes {
     pub mesh_bytes: u64,
     /// GPU bytes across every resident user-uploaded texture.
     pub texture_bytes: u64,
-    /// GPU buffer bytes across every resident Gaussian splat set (position,
-    /// scale, rotation, opacity, and SH source buffers; per-viewport sort
-    /// scratch is not counted).
+    /// Always zero: the Gaussian splat sets now live with the item type that
+    /// draws them, so their bytes are reported through
+    /// [`plugin_bytes`](Self::plugin_bytes).
     pub gaussian_splat_bytes: u64,
-    /// GPU buffer bytes across every resident marching-cubes volume (all slab
-    /// buffers of every live volume).
+    /// Always zero: the marching-cubes volumes now live with the item type that
+    /// triangulates them, so their bytes are reported through
+    /// [`plugin_bytes`](Self::plugin_bytes).
     pub mc_volume_bytes: u64,
     /// GPU bytes across every resident direct-volume 3D texture
     /// (`upload_volume`, the `R32Float` fields a `VolumeItem` ray-marches).
@@ -58,10 +59,20 @@ pub struct ResidentBytes {
     /// transparent volume meshes a `VolumeMeshItem` renders through
     /// `projected_tet_id`. Dropped on `free_projected_tet`.
     pub projected_tet_bytes: u64,
-    /// GPU buffer bytes across every pre-uploaded scivis curve resource
-    /// (polylines, tubes, streamtubes, ribbons, point clouds, glyph sets,
-    /// tensor glyph sets, and sprite sets).
+    /// Always zero: the pre-uploaded curves, clouds, glyph sets and sprite
+    /// batches now live with the item types that draw them, so their bytes are
+    /// reported through [`plugin_bytes`](Self::plugin_bytes).
     pub scivis_bytes: u64,
+    /// GPU bytes reported by registered item-type plugins that hold content in
+    /// stores of their own, summed from
+    /// [`ItemTypePlugin::resident_bytes`](crate::plugin_api::ItemTypePlugin::resident_bytes).
+    ///
+    /// Only [`ViewportRenderer::resident_bytes`](crate::renderer::ViewportRenderer::resident_bytes)
+    /// can fill this in: the plugins are registered with the renderer, not with
+    /// `DeviceResources`, so
+    /// [`DeviceResources::resident_bytes`](crate::resources::DeviceResources::resident_bytes)
+    /// leaves it zero.
+    pub plugin_bytes: u64,
     /// Host memory bytes across every resident mesh's retained CPU geometry
     /// copies: the positions, normals, and indices kept for CPU picking,
     /// clip-plane cap geometry, and the normal-line visualisation.
@@ -90,6 +101,7 @@ impl ResidentBytes {
             + self.scivis_bytes
             + self.volume_bytes
             + self.projected_tet_bytes
+            + self.plugin_bytes
     }
 
     /// Host memory bytes counted here: currently the retained mesh CPU geometry
@@ -139,23 +151,17 @@ impl crate::resources::DeviceResources {
     /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
     /// [`ResidentBytes`].
     pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
-        let scivis_bytes = self.content.polyline_store.allocated_bytes()
-            + self.content.streamtube_store.allocated_bytes()
-            + self.content.tube_store.allocated_bytes()
-            + self.content.ribbon_store.allocated_bytes()
-            + self.content.point_cloud_store.allocated_bytes()
-            + self.content.glyph_set_store.allocated_bytes()
-            + self.content.tensor_glyph_set_store.allocated_bytes()
-            + self.content.sprite_set_store.allocated_bytes()
-            + self.content.sprite_instance_set_store.allocated_bytes();
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.content.textures.allocated_bytes(),
-            gaussian_splat_bytes: self.content.gaussian_splat_store.allocated_bytes(),
-            mc_volume_bytes: self.mc_volume_resident_bytes(),
-            scivis_bytes,
+            gaussian_splat_bytes: 0,
+            mc_volume_bytes: 0,
+            scivis_bytes: 0,
             volume_bytes: self.volume_resident_bytes(),
             projected_tet_bytes: self.content.projected_tet_store.allocated_bytes(),
+            // Plugins are registered with the renderer, not here; filled in by
+            // `ViewportRenderer::resident_bytes`.
+            plugin_bytes: 0,
             cpu_geometry_bytes: self.mesh_store.cpu_allocated_bytes(),
         }
     }

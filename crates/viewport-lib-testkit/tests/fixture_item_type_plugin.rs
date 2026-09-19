@@ -157,3 +157,46 @@ fn item_type_fixture_is_consulted_by_cpu_pick() {
 // Keep `wgpu` named so the leg the testkit builds against is the one this test
 // resolves, matching the other test binaries in this crate.
 const _: Option<wgpu::TextureFormat> = None;
+
+/// The `vpl.` prefix belongs to the built-in item types, and the
+/// renderer's per-type calls (`upload_sprite_set` and the rest) resolve their
+/// plugin by that name and downcast it. A plugin that took one of those names
+/// would leave those calls looking at a type that is not what they expect, so
+/// the registration is refused where the mistake is made.
+#[test]
+#[should_panic(expected = "is reserved")]
+fn a_plugin_cannot_take_a_built_in_item_type_name() {
+    let Some(mut harness) = Harness::new() else {
+        // Nothing to assert without a device, and the test is `should_panic`,
+        // so panic deliberately rather than reporting a false pass.
+        panic!("skipping: no GPU adapter available (is reserved)");
+    };
+    harness.renderer.with_item_type_plugin(
+        &harness.device,
+        Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.sprite")),
+    );
+}
+
+/// A name of one's own is fine, including one that merely mentions the
+/// library: the check is a prefix, not a search.
+#[test]
+fn a_plugin_may_register_under_any_unreserved_name() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    for name in ["mycrate.sprite", "vpl_sprite", "not.vpl.sprite"] {
+        harness.renderer.with_item_type_plugin(
+            &harness.device,
+            Box::new(LoggingItemTypePlugin::new(CallLog::new(), name)),
+        );
+        assert!(harness.renderer.has_item_type_plugin(name));
+    }
+    let reserved = viewport_lib::renderer::RESERVED_TYPE_NAME_PREFIX;
+    assert!(
+        harness
+            .renderer
+            .has_item_type_plugin(&format!("{reserved}sprite")),
+        "the built-in sprite type is still the one under its own name"
+    );
+}

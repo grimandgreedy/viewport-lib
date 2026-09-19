@@ -178,135 +178,6 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
     assert!(resolved, "async pick never resolved");
 }
 
-#[test]
-fn gpu_pick_hits_voxel_volume() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    // A fully dense 8^3 volume: every voxel is in-threshold, so the raymarch pick
-    // hits on the first sample anywhere the bounding cube covers.
-    let dims = [8u32, 8, 8];
-    let data = vec![1.0f32; (dims[0] * dims[1] * dims[2]) as usize];
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume(&device, &queue, &data, dims);
-
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
-
-    // Centre the bounding cube on the origin so the default camera sees it.
-    let mut vol = VolumeItem::default();
-    vol.volume_id = volume_id;
-    vol.scalar_range = (0.0, 1.0);
-    vol.threshold_min = 0.0;
-    vol.threshold_max = 1.0;
-    vol.bbox_min = [-0.5, -0.5, -0.5];
-    vol.bbox_max = [0.5, 0.5, 0.5];
-    vol.settings.pick_id = PickId(63);
-    frame.scene.volumes = vec![vol];
-
-    // prepare builds the per-volume GPU data (bind group + cube) the pick reuses.
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::all(),
-    );
-    assert_eq!(hit.map(|h| h.id), Some(63));
-}
-
-#[test]
-fn gpu_pick_voxel_volume_resolves_voxel() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    // A fully dense 8^3 volume centred on the origin: the raymarch pick hits a
-    // voxel wherever the bounding cube covers, and the primitive channel carries
-    // that voxel's flat index.
-    let dims = [8u32, 8, 8];
-    let data = vec![1.0f32; (dims[0] * dims[1] * dims[2]) as usize];
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume(&device, &queue, &data, dims);
-
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
-
-    let mut vol = VolumeItem::default();
-    vol.volume_id = volume_id;
-    vol.scalar_range = (0.0, 1.0);
-    vol.threshold_min = 0.0;
-    vol.threshold_max = 1.0;
-    vol.bbox_min = [-0.5, -0.5, -0.5];
-    vol.bbox_max = [0.5, 0.5, 0.5];
-    vol.settings.pick_id = PickId(63);
-    frame.scene.volumes = vec![vol];
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    // A VOXEL-masked query (a subset of POINT_LIKE) resolves the hit voxel's
-    // flat index, in range for the 8^3 = 512-voxel grid.
-    let hit = renderer
-        .pick_object(
-            PickBackend::Gpu,
-            glam::Vec2::new(32.0, 32.0),
-            &frame,
-            &device,
-            &queue,
-            PickMask::VOXEL,
-        )
-        .expect("centre ray should hit the dense volume");
-    assert_eq!(hit.id, 63);
-    match hit.sub_object {
-        Some(viewport_lib::SubObjectRef::Voxel(v)) => {
-            assert!(v < 512, "voxel index {v} out of range for 8^3 grid");
-        }
-        other => panic!("expected a Voxel sub-object, got {other:?}"),
-    }
-
-    // An OBJECT-only query still resolves the volume at object level, no voxel.
-    let obj = renderer
-        .pick_object(
-            PickBackend::Gpu,
-            glam::Vec2::new(32.0, 32.0),
-            &frame,
-            &device,
-            &queue,
-            PickMask::OBJECT,
-        )
-        .expect("centre ray should hit the dense volume");
-    assert_eq!(obj.id, 63);
-    assert_eq!(obj.sub_object, None);
-}
-
 fn scatter_pick_frame() -> FrameData {
     let cam = Camera::default();
     let mut frame = FrameData::default();
@@ -341,6 +212,9 @@ fn gpu_pick_hits_box_scatter_volume() {
     item.settings.pick_id = PickId(41);
     frame.scene.scatter_volumes = vec![item];
 
+    // The volume's pick binding is built during prepare, like every other item
+    // type that answers the id pass with geometry of its own.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(41)));
 }
@@ -365,6 +239,9 @@ fn gpu_pick_hits_sphere_scatter_volume() {
     item.settings.pick_id = PickId(42);
     frame.scene.scatter_volumes = vec![item];
 
+    // The volume's pick binding is built during prepare, like every other item
+    // type that answers the id pass with geometry of its own.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(42)));
 }
@@ -390,12 +267,15 @@ fn gpu_pick_hits_decal_box() {
     frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
 
     // A decal is the unit box [-0.5, 0.5]^3 mapped by `transform`; the default
-    // transform places it at the origin. The GPU pick rasterises that box as a
-    // proxy and reads back its pick_id.
+    // transform places it at the origin. The decal item type rasterises that
+    // box in the pick pass and reads back its pick_id.
     let mut decal = DecalItem::default();
     decal.settings.pick_id = PickId(77);
     frame.scene.decals = vec![decal];
 
+    // The decal's pick binding is built during prepare, like every other item
+    // type that answers the id pass with geometry of its own.
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
     assert_eq!(hit.map(|h| h.object_id), Some(PickId(77)));
 }
@@ -493,176 +373,6 @@ fn gpu_pick_object_honors_type_mask() {
 }
 
 #[test]
-fn gpu_pick_hits_ribbon() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-
-    // A wide ribbon centred on the origin. Ribbons build an owned connected mesh
-    // into ribbon_gpu_data during prepare(), so the pick pass only sees it after
-    // the prepare path has run.
-    let mut ribbon = RibbonItem::default();
-    ribbon.positions = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-    ribbon.strip_lengths = vec![3];
-    ribbon.width = 2.0;
-    ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(4242)));
-}
-
-#[test]
-fn gpu_pick_ribbon_resolves_segment_and_node() {
-    let Some((device, queue)) = headless_device_with_primitive_index() else {
-        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    // Segment and node resolve from the pick shader variants; no CPU pick cache.
-    let mut frame = sub_object_pick_frame();
-
-    // A wide ribbon centred on the origin: 3 control points along X, so two
-    // segments with the middle node under the centre pixel.
-    let mut ribbon = RibbonItem::default();
-    ribbon.positions = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-    ribbon.strip_lengths = vec![3];
-    ribbon.width = 2.0;
-    ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    // SEGMENT: the hit resolves to one of the two segments.
-    let seg = renderer
-        .pick_object(
-            PickBackend::Gpu,
-            glam::Vec2::new(32.0, 32.0),
-            &frame,
-            &device,
-            &queue,
-            PickMask::SEGMENT,
-        )
-        .expect("ribbon should be hit");
-    assert_eq!(seg.id, 4242);
-    match seg.sub_object {
-        Some(viewport_lib::SubObjectRef::Segment(s)) => assert!(s < 2, "segment {s} out of range"),
-        other => panic!("expected a Segment sub-object, got {other:?}"),
-    }
-
-    // POLY_NODE: a centre click resolves to the middle control point (index 1),
-    // the nearer endpoint of whichever segment the ray landed on.
-    let node = renderer
-        .pick_object(
-            PickBackend::Gpu,
-            glam::Vec2::new(32.0, 32.0),
-            &frame,
-            &device,
-            &queue,
-            PickMask::POLY_NODE,
-        )
-        .expect("ribbon should be hit");
-    assert_eq!(node.id, 4242);
-    assert_eq!(node.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
-}
-
-#[test]
-fn gpu_pick_hits_showcase_style_voxel_volume() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    // Replicate showcase 33's volume: a 16^3 sphere-shaped scalar field, a bbox
-    // offset from the origin, an off-origin model, and a 0.15 threshold. This is
-    // the configuration reported as not selecting on the GPU backend, so the
-    // test pins the object-level behaviour with those exact values.
-    let dims = [16u32, 16, 16];
-    let n = (dims[0] * dims[1] * dims[2]) as usize;
-    let mut data = vec![0.0f32; n];
-    let (cx, cy, cz, radius) = (7.5f32, 7.5, 7.5, 7.5);
-    for iz in 0..dims[2] {
-        for iy in 0..dims[1] {
-            for ix in 0..dims[0] {
-                let flat = (ix + iy * dims[0] + iz * dims[0] * dims[1]) as usize;
-                let dx = ix as f32 + 0.5 - cx;
-                let dy = iy as f32 + 0.5 - cy;
-                let dz = iz as f32 + 0.5 - cz;
-                let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-                data[flat] = (1.0 - dist / radius).max(0.0);
-            }
-        }
-    }
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume(&device, &queue, &data, dims);
-
-    // Aim a camera at the volume centre in world space: bbox [0,4]^3 translated
-    // by (-2,-1,-6) spans (-2,-1,-6)..(2,3,-2), centred at (0,1,-4). View it from
-    // an offset that is not along the Z-up axis so the up vector stays valid.
-    let target = glam::vec3(0.0, 1.0, -4.0);
-    let eye = target + glam::vec3(2.0, -8.0, 3.0);
-    let view = glam::Mat4::look_at_rh(eye, target, glam::Vec3::Z);
-    let proj = glam::Mat4::perspective_rh(60_f32.to_radians(), 1.0, 0.1, 100.0);
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::default();
-        rc.view = view;
-        rc.projection = proj;
-        rc.eye_position = eye.to_array();
-        rc.forward = (target - eye).normalize().to_array();
-        rc.orientation = glam::Quat::IDENTITY;
-        rc.near = 0.1;
-        rc.far = 100.0;
-        rc.distance = (eye - target).length();
-        rc.fov = 60_f32.to_radians();
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
-
-    let mut vol = VolumeItem::default();
-    vol.volume_id = volume_id;
-    vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
-    vol.bbox_min = [0.0, 0.0, 0.0];
-    vol.bbox_max = [4.0, 4.0, 4.0];
-    vol.scalar_range = (0.0, 1.0);
-    vol.threshold_min = 0.15;
-    vol.threshold_max = 1.0;
-    vol.settings.pick_id = PickId(20);
-    frame.scene.volumes = vec![vol];
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert_eq!(hit.map(|h| h.id), Some(20));
-}
-
-#[test]
 fn gpu_pick_hits_glyph_set() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -733,60 +443,6 @@ fn gpu_pick_hits_sprite_set() {
 }
 
 #[test]
-fn gpu_pick_hits_polyline() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-
-    // A thick polyline through the origin. Polylines expand to screen-space
-    // ribbons in the render vertex stage, which the pick pipeline reuses, so
-    // prepare must run first to build the segment buffer.
-    let mut polyline = PolylineItem::default();
-    polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-    polyline.strip_lengths = vec![2];
-    polyline.line_width = 20.0;
-    polyline.settings.pick_id = PickId(888);
-    frame.scene.polylines.push(polyline);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(888)));
-}
-
-// ---------------------------------------------------------------------------
-// GPU pick: sub-object identity (G8)
-// ---------------------------------------------------------------------------
-
-/// A 64x64 frame with the default orbit camera and no overlays, so world origin
-/// projects to the screen centre (32, 32).
-fn sub_object_pick_frame() -> FrameData {
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-    frame
-}
-
-#[test]
 fn gpu_pick_glyph_resolves_instance() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -822,81 +478,6 @@ fn gpu_pick_glyph_resolves_instance() {
         hit.sub_object,
         Some(viewport_lib::SubObjectRef::Instance(1))
     );
-}
-
-#[test]
-fn gpu_pick_polyline_resolves_segment() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // Three-node strip: segment 0 spans x in [-2, -1], segment 1 spans [-1, 2].
-    // World origin (screen centre) lies on segment 1. Segment picking reads the
-    // per-segment instance_index channel, so no device feature is needed.
-    let mut polyline = PolylineItem::default();
-    polyline.positions = vec![[-2.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-    polyline.strip_lengths = vec![3];
-    polyline.line_width = 20.0;
-    polyline.settings.pick_id = PickId(888);
-    frame.scene.polylines.push(polyline);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::SEGMENT,
-    );
-    let hit = hit.expect("polyline should be hit at the centre");
-    assert_eq!(hit.id, 888);
-    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Segment(1)));
-}
-
-#[test]
-fn gpu_pick_polyline_resolves_strip_without_cpu_cache() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    // Deliberately leave the CPU pick cache OFF: strip resolution must come from
-    // the persistent PolylineGpuData::strip_lengths, not pick_polyline_items.
-    let mut frame = sub_object_pick_frame();
-
-    // Two strips. Strip 0 is a single off-centre segment (global segment 0).
-    // Strip 1 is three nodes whose middle segment (global segment 2) crosses the
-    // world origin, which the camera centre projects onto.
-    let mut polyline = PolylineItem::default();
-    polyline.positions = vec![
-        [-5.0, 3.0, 0.0],
-        [-4.0, 3.0, 0.0],
-        [-2.0, 0.0, 0.0],
-        [-1.0, 0.0, 0.0],
-        [2.0, 0.0, 0.0],
-    ];
-    polyline.strip_lengths = vec![2, 3];
-    polyline.line_width = 20.0;
-    polyline.settings.pick_id = PickId(889);
-    frame.scene.polylines.push(polyline);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer
-        .pick_object(
-            PickBackend::Gpu,
-            glam::Vec2::new(32.0, 32.0),
-            &frame,
-            &device,
-            &queue,
-            PickMask::STRIP,
-        )
-        .expect("polyline should be hit at the centre");
-    assert_eq!(hit.id, 889);
-    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Strip(1)));
 }
 
 #[test]
@@ -1295,128 +876,9 @@ fn gpu_snap_query_empty_scene_returns_none() {
     assert!(snap.is_none(), "empty scene should not snap to anything");
 }
 
-#[test]
-fn gpu_pick_curve_node_fills_snap_world_pos() {
-    let Some((device, queue)) = headless_device_with_primitive_index() else {
-        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    let mut ribbon = RibbonItem::default();
-    ribbon.positions = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-    ribbon.strip_lengths = vec![3];
-    ribbon.width = 2.0;
-    ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    let hit = renderer
-        .pick_object(
-            PickBackend::Gpu,
-            glam::Vec2::new(32.0, 32.0),
-            &frame,
-            &device,
-            &queue,
-            PickMask::POLY_NODE,
-        )
-        .expect("ribbon should be hit");
-    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
-    // Node 1 sits at the world origin; the snap position must be that node.
-    let snap = hit
-        .sub_object_world_pos
-        .expect("node pick should fill the snap position");
-    assert!(
-        snap.length() < 1e-4,
-        "node 1 should be at the origin, got {snap:?}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // GPU pick: non-rasterized surface types
 // ---------------------------------------------------------------------------
-
-#[test]
-fn gpu_pick_hits_implicit_surface() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // One SDF sphere of radius 1.5 at the origin. The pick pass raymarches the
-    // isosurface on a full-screen quad and writes the item's pick id at the hit.
-    let prim = viewport_lib::ImplicitPrimitive {
-        kind: 1, // sphere
-        blend: 0.0,
-        _pad: [0.0; 2],
-        params: [0.0, 0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0],
-        colour: [1.0, 1.0, 1.0, 1.0].into(),
-    };
-    let mut item = viewport_lib::GpuImplicitItem::default();
-    item.primitives.push(prim);
-    item.settings.pick_id = PickId(909);
-    frame.scene.gpu_implicit.push(item);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(909)));
-}
-
-#[test]
-fn gpu_pick_hits_marching_cubes() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // A radial scalar field centred at the origin: the isosurface at value 1.5 is
-    // a sphere of radius 1.5. Grid spans roughly [-2.3, 2.3]^3.
-    let dims = [24u32, 24, 24];
-    let spacing = [0.2f32; 3];
-    let origin = [-(23.0 * 0.2) / 2.0; 3];
-    let mut data = vec![0.0f32; (dims[0] * dims[1] * dims[2]) as usize];
-    for z in 0..dims[2] {
-        for y in 0..dims[1] {
-            for x in 0..dims[0] {
-                let wx = origin[0] + x as f32 * spacing[0];
-                let wy = origin[1] + y as f32 * spacing[1];
-                let wz = origin[2] + z as f32 * spacing[2];
-                let idx = (x + y * dims[0] + z * dims[0] * dims[1]) as usize;
-                data[idx] = (wx * wx + wy * wy + wz * wz).sqrt();
-            }
-        }
-    }
-    let vol = viewport_lib::VolumeData {
-        data,
-        dims,
-        origin,
-        spacing,
-    };
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume_for_mc(&device, &queue, &vol)
-        .expect("mc volume upload");
-
-    let mut job = viewport_lib::GpuMarchingCubesItem {
-        volume_id,
-        isovalue: 1.5,
-        material: Material::default(),
-        settings: ItemSettings::default(),
-        cpu_data: None,
-    };
-    job.settings.pick_id = PickId(717);
-    frame.scene.gpu_mc_items.push(job);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(717)));
-}
 
 // ---------------------------------------------------------------------------
 // GPU pick: item-type plugin hook (render_pick)
@@ -1601,11 +1063,11 @@ impl ItemTypePlugin for MockPickPlugin {
         Vec::new()
     }
 
-    fn render_pick<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &PickPassContext<'a>,
-        items: &'a dyn PluginItemCollection,
+    fn render_pick(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        items: &dyn PluginItemCollection,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;
@@ -1870,11 +1332,11 @@ impl ItemTypePlugin for SubPickPlugin {
         Vec::new()
     }
 
-    fn render_pick<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        _ctx: &PickPassContext<'a>,
-        items: &'a dyn PluginItemCollection,
+    fn render_pick(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        _ctx: &PickPassContext<'_>,
+        items: &dyn PluginItemCollection,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;
@@ -2066,41 +1528,8 @@ fn gpu_pick_rect_resolves_plugin_faces() {
 }
 
 // ---------------------------------------------------------------------------
-// GPU pick: point clouds and Gaussian splats, image slices and volume
-// surface slices
+// GPU pick: Gaussian splats, image slices and volume surface slices
 // ---------------------------------------------------------------------------
-
-#[test]
-fn gpu_pick_point_cloud_resolves_point() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // Three points spread along X. The centre point (index 1) sits at world
-    // origin, under the cursor. CLOUD_POINT picking reads the forwarded
-    // instance_index, which needs no device feature.
-    let mut cloud = PointCloudItem::default();
-    cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    cloud.point_size = 20.0;
-    cloud.settings.pick_id = PickId(444);
-    frame.scene.point_clouds.push(cloud);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::CLOUD_POINT,
-    );
-    let hit = hit.expect("centre point should be hit");
-    assert_eq!(hit.id, 444);
-    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Point(1)));
-}
 
 #[test]
 fn gpu_pick_splat_resolves_splat() {
@@ -2121,7 +1550,6 @@ fn gpu_pick_splat_resolves_splat() {
     data.sh_coefficients = vec![0.0; 9];
     data.sh_degree = ShDegree::Zero;
     let splat_id = renderer
-        .resources_mut()
         .upload_gaussian_splat(&device, &queue, &data)
         .expect("upload splat set");
 
@@ -2176,43 +1604,6 @@ fn gpu_pick_hits_image_slice() {
         PickMask::OBJECT,
     );
     assert_eq!(hit.map(|h| h.id), Some(222));
-}
-
-#[test]
-fn gpu_pick_hits_volume_surface_slice() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume(&device, &queue, &[0.5; 8], [2, 2, 2]);
-    let mesh_id = renderer
-        .resources_mut()
-        .upload_mesh_data(&device, &box_mesh())
-        .expect("upload box mesh");
-
-    let mut slice = VolumeSurfaceSliceItem::default();
-    slice.volume_id = volume_id;
-    slice.mesh_id = mesh_id;
-    slice.bbox_min = [-1.0, -1.0, -1.0];
-    slice.bbox_max = [1.0, 1.0, 1.0];
-    slice.settings.pick_id = PickId(333);
-    frame.scene.volume_surface_slices.push(slice);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert_eq!(hit.map(|h| h.id), Some(333));
 }
 
 #[test]
@@ -2275,53 +1666,6 @@ fn gpu_pick_rect_returns_unique_object_ids() {
 }
 
 #[test]
-fn gpu_pick_rect_resolves_point_cloud_elements() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // Three fat points spread across the centre of the view.
-    let mut pc = PointCloudItem::default();
-    pc.positions = vec![[-1.2, 0.0, 0.0], [0.0, 0.0, 0.0], [1.2, 0.0, 0.0]];
-    pc.point_size = 24.0;
-    pc.settings.pick_id = PickId(500);
-    frame.scene.point_clouds.push(pc);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    // A CLOUD_POINT rect over the whole frame collects point sub-objects and no
-    // objects (the mask carries no OBJECT bit). Point sub-objects come from the
-    // instance index, so this needs no device feature.
-    let result = renderer.pick_rect_objects(
-        PickBackend::Gpu,
-        glam::Vec2::new(0.0, 0.0),
-        glam::Vec2::new(64.0, 64.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::CLOUD_POINT,
-    );
-    assert!(
-        result.objects.is_empty(),
-        "CLOUD_POINT mask carries no OBJECT bit"
-    );
-    assert!(
-        !result.elements.is_empty(),
-        "rect should collect point sub-objects"
-    );
-    assert!(
-        result
-            .elements
-            .iter()
-            .all(|(id, sub)| *id == 500 && matches!(sub, viewport_lib::SubObjectRef::Point(_))),
-        "every element must be a point of the cloud"
-    );
-}
-
-#[test]
 fn gpu_pick_rect_resolves_surface_vertex() {
     let Some((device, queue)) = headless_device_with_primitive_index() else {
         eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
@@ -2366,242 +1710,6 @@ fn gpu_pick_rect_resolves_surface_vertex() {
         "every element must be a box vertex, got {:?}",
         result.elements
     );
-}
-
-#[test]
-fn gpu_pick_rect_resolves_curve_node() {
-    let Some((device, queue)) = headless_device_with_primitive_index() else {
-        eprintln!("skipping: no adapter with SHADER_PRIMITIVE_INDEX");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    // No CPU pick cache: the POLY_NODE variant writes the nearest node index per
-    // pixel, so a rect reads it straight from the primitive channel.
-    let mut frame = sub_object_pick_frame();
-
-    let mut ribbon = RibbonItem::default();
-    ribbon.positions = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-    ribbon.strip_lengths = vec![3];
-    ribbon.width = 2.0;
-    ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    let result = renderer.pick_rect_objects(
-        PickBackend::Gpu,
-        glam::Vec2::new(0.0, 0.0),
-        glam::Vec2::new(64.0, 64.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::POLY_NODE,
-    );
-    assert!(
-        result.objects.is_empty(),
-        "POLY_NODE mask carries no OBJECT bit"
-    );
-    assert!(
-        !result.elements.is_empty(),
-        "rect should collect node sub-objects"
-    );
-    assert!(
-        result.elements.iter().all(|(id, sub)| *id == 4242
-            && matches!(sub, viewport_lib::SubObjectRef::Point(n) if *n < 3)),
-        "every element must be a ribbon node, got {:?}",
-        result.elements
-    );
-    // The middle node (index 1) sits under the centre of the rect, so it must be
-    // among the collected nodes.
-    assert!(
-        result
-            .elements
-            .iter()
-            .any(|(_, sub)| *sub == viewport_lib::SubObjectRef::Point(1)),
-        "the middle node should be collected, got {:?}",
-        result.elements
-    );
-}
-
-#[test]
-fn gpu_pick_hits_top_right_scaled_screen_image() {
-    // Mirrors showcase 33's overlay: a TopRight-anchored image with scale > 1,
-    // driven through the real pick entry points (point and rect), not the free
-    // functions.
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // 8x8 at scale 2 = 16x16 effective, pinned to the top-right of the 64x64
-    // viewport: screen rect x in [48, 64], y in [0, 16].
-    let mut image = ScreenImageItem::default();
-    image.pixels = vec![[255, 255, 255, 255]; 8 * 8];
-    image.width = 8;
-    image.height = 8;
-    image.scale = 2.0;
-    image.anchor_x = AnchorX::Right;
-    image.anchor_y = AnchorY::Top;
-    image.settings.pick_id = PickId(52);
-    frame.scene.screen_images.push(image);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    // Point: a click inside the top-right rect selects it.
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(56.0, 8.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert_eq!(
-        hit.map(|h| h.id),
-        Some(52),
-        "top-right overlay should be hit"
-    );
-
-    // Point: a click in the opposite corner misses it.
-    let miss = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(4.0, 60.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert!(
-        miss.is_none(),
-        "bottom-left click should not hit the overlay"
-    );
-
-    // Screen overlays are OBJECT-only on both backends: a sub-object-only mask
-    // (no OBJECT bit) returns nothing, and the GPU backend agrees with the CPU
-    // backend. A consumer that wants the overlay under a sub-object query includes
-    // OBJECT in the mask.
-    renderer.set_cpu_pick_cache(true);
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    for backend in [PickBackend::Gpu, PickBackend::Cpu] {
-        let sub = renderer.pick_object(
-            backend,
-            glam::Vec2::new(56.0, 8.0),
-            &frame,
-            &device,
-            &queue,
-            PickMask::POINT_LIKE,
-        );
-        assert!(
-            sub.is_none(),
-            "{backend:?}: overlay is OBJECT-only, POINT_LIKE should not select it"
-        );
-    }
-
-    // Rect: a rubber band over the top-right corner collects the overlay.
-    let result = renderer.pick_rect_objects(
-        PickBackend::Gpu,
-        glam::Vec2::new(50.0, 0.0),
-        glam::Vec2::new(64.0, 14.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert!(
-        result.objects.contains(&52),
-        "rect over the corner should collect the overlay, got {:?}",
-        result.objects
-    );
-}
-
-#[test]
-fn gpu_pick_hits_screen_image() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    let mut image = ScreenImageItem::default();
-    image.pixels = vec![[255, 255, 255, 255]; 16 * 16];
-    image.width = 16;
-    image.height = 16;
-    image.anchor_x = AnchorX::Middle;
-    image.anchor_y = AnchorY::Middle;
-    image.settings.pick_id = PickId(444);
-    frame.scene.screen_images.push(image);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    // Centre of the 64x64 viewport lands inside the 16x16 centred image.
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert_eq!(hit.map(|h| h.id), Some(444));
-
-    // Corner of the viewport falls outside the centred image.
-    let miss = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(1.0, 1.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert!(miss.is_none());
-}
-
-#[test]
-fn gpu_pick_rect_hits_screen_image() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    let mut image = ScreenImageItem::default();
-    image.pixels = vec![[255, 255, 255, 255]; 16 * 16];
-    image.width = 16;
-    image.height = 16;
-    image.anchor_x = AnchorX::Middle;
-    image.anchor_y = AnchorY::Middle;
-    image.settings.pick_id = PickId(555);
-    frame.scene.screen_images.push(image);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-
-    // A rect spanning the whole viewport touches the centred image.
-    let result = renderer.pick_rect_objects(
-        PickBackend::Gpu,
-        glam::Vec2::new(0.0, 0.0),
-        glam::Vec2::new(64.0, 64.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert_eq!(result.objects, vec![555]);
-
-    // A rect confined to a corner, away from the centred image, misses it.
-    let miss = renderer.pick_rect_objects(
-        PickBackend::Gpu,
-        glam::Vec2::new(0.0, 0.0),
-        glam::Vec2::new(4.0, 4.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert!(miss.objects.is_empty());
 }
 
 // ---------------------------------------------------------------------------

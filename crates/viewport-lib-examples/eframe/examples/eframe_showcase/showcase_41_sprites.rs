@@ -318,7 +318,11 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .collect();
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(w, h, pixels.to_vec()),
+            )
             .expect("sprite tex")
     };
 
@@ -356,7 +360,11 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         }
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(w, h, pixels.to_vec()),
+            )
             .expect("flame tex")
     };
 
@@ -390,7 +398,11 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         }
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(w, h, pixels.to_vec()),
+            )
             .expect("shockwave tex")
     };
 
@@ -422,7 +434,11 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .collect();
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(w, h, pixels.to_vec()),
+            )
             .expect("streak tex")
     };
 
@@ -444,7 +460,11 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
             .collect();
         renderer
             .resources_mut()
-            .upload_texture(&app.device, &app.queue, vpl::TextureData::srgb(w, h, pixels.to_vec()))
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(w, h, pixels.to_vec()),
+            )
             .expect("glow tex")
     };
 
@@ -577,10 +597,7 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         lit_params: SpriteLitParams::default(),
         normal_texture_id: None,
     };
-    let particle_sys =
-        renderer
-            .resources_mut()
-            .create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
+    let particle_sys = renderer.create_gpu_particle_system(&app.device, &app.queue, &particle_cfg);
     app.sprite_state.gpu_particle_system = Some(particle_sys);
 
     // Second GPU particle system, using the mesh render route. Each live
@@ -594,11 +611,8 @@ pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer)
         blend: SpriteBlend::AlphaBlend,
         align: ParticleMeshAlign::Random,
     };
-    let mesh_particle_sys = renderer.resources_mut().create_gpu_particle_system(
-        &app.device,
-        &app.queue,
-        &mesh_particle_cfg,
-    );
+    let mesh_particle_sys =
+        renderer.create_gpu_particle_system(&app.device, &app.queue, &mesh_particle_cfg);
     app.sprite_state.gpu_mesh_particle_system = Some(mesh_particle_sys);
 
     app.sprite_state.streak_tex = streak_tex;
@@ -2056,8 +2070,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 10.0,
-        orientation: glam::Quat::from_rotation_z(0.5)
-            * glam::Quat::from_rotation_x(1.0),
+        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()
     };
 }
@@ -2075,13 +2088,7 @@ pub(crate) fn scene(
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
         let items = sprite_scene_items(app);
-        (
-            items,
-            None,
-            sprite_lighting(app),
-            0,
-            0,
-        )
+        (items, None, sprite_lighting(app), 0, 0)
     };
     crate::SceneContents {
         items,
@@ -2099,11 +2106,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
     // Sprite items and ring polylines (Showcase 41) : submitted every frame when built.
     submit_sprite_items(app, &mut *fd, ctx.dt);
 }
@@ -2114,7 +2117,6 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -2131,21 +2133,15 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -2186,7 +2182,12 @@ impl crate::Showcase for ScSprites {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -2195,7 +2196,12 @@ impl crate::Showcase for ScSprites {
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         tick(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -2204,7 +2210,12 @@ impl crate::Showcase for ScSprites {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_sprites(app, ui)
     }
 }

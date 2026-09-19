@@ -326,22 +326,20 @@ impl ViewportRenderer {
 
         // Drop material bind groups that no longer match what they sample, so no
         // bind group keeps freed GPU memory alive or draws a texture that has
-        // been swapped underneath it.
-        //
-        // A replace changes the view behind a live id, which no per-entry check
-        // can see, so it clears the map. A free removes the id, so the entries
-        // naming it can be dropped on their own and every other entry kept: under
-        // a streaming eviction budget almost nothing in this map references what
-        // a given frame freed, and rebuilding all of it was the dominant cost.
-        if mesh_uniforms.view_epoch != resources.resource_view_epoch {
-            mesh_uniforms.view_epoch = resources.resource_view_epoch;
-            mesh_uniforms.free_epoch = resources.resource_free_epoch;
-            mesh_uniforms.material_bind_groups.clear();
-        } else if mesh_uniforms.free_epoch != resources.resource_free_epoch {
-            mesh_uniforms.free_epoch = resources.resource_free_epoch;
-            mesh_uniforms
-                .material_bind_groups
-                .retain(|_, bg| bg.resources_resolve(resources));
+        // been swapped underneath it. A free keeps every entry whose deps still
+        // resolve: under a streaming eviction budget almost nothing in this map
+        // references what a given frame freed, and rebuilding all of it was the
+        // dominant cost.
+        match mesh_uniforms.deps_gate.poll(resources) {
+            crate::resources::resource_deps::Revalidate::RebuildAll => {
+                mesh_uniforms.material_bind_groups.clear();
+            }
+            crate::resources::resource_deps::Revalidate::CheckEach => {
+                mesh_uniforms
+                    .material_bind_groups
+                    .retain(|_, bg| bg.resources_resolve(resources));
+            }
+            crate::resources::resource_deps::Revalidate::Valid => {}
         }
 
         // Reset this frame's per-item slot maps. Slots for items on the
@@ -668,14 +666,16 @@ impl ViewportRenderer {
                                     bind_group: bg,
                                     data_gen,
                                     last_frame: frame_index,
-                                    mesh_id: item.mesh_id,
-                                    textures: [
-                                        mat.texture_id,
-                                        mat.normal_map_id,
-                                        mat.ao_map_id,
-                                        mat.metallic_roughness_texture_id,
-                                        mat.emissive_texture_id,
-                                    ],
+                                    deps: crate::resources::resource_deps::ResourceDeps {
+                                        mesh_id: Some(item.mesh_id),
+                                        texture_ids: [
+                                            mat.texture_id,
+                                            mat.normal_map_id,
+                                            mat.ao_map_id,
+                                            mat.metallic_roughness_texture_id,
+                                            mat.emissive_texture_id,
+                                        ],
+                                    },
                                 },
                             );
                         }

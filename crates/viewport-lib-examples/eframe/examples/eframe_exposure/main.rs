@@ -20,16 +20,16 @@
 //! is the sRGB variant of egui's format so the tone map's linear output gets the
 //! hardware linear->sRGB encode on write; egui runs on a non-sRGB surface, and
 //! painting straight into its pass would skip that encode and read ~2.4x too
-//! dark. See docs/issues/eframe-offscreen-target-skips-srgb-encode.
+//! dark.
 //!
 //! The viewport is repainted every frame (`ctx.request_repaint()`) so exposure
 //! changes take effect live and auto-exposure smoothing runs - viewport-lib only
 //! re-renders on demand, and exposure lives outside the scene, so without a
 //! repaint request a control change would otherwise be dropped.
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
     AutoExposure, ExposureMode, ExposureSettings, LightKind, LightSource, LightingSettings, Lumen,
