@@ -80,6 +80,15 @@ fn emit_glyph_run(
     let run_x = run.position[0] + run.align_x.align_shift(max_x - min_x);
     let run_y = run.position[1] + run.align_y.align_shift(max_y - min_y);
     let opacity = run.opacity.clamp(0.0, 1.0);
+    let rot_start = verts.len();
+    let rot = overlay_geometry::OverlayRotation::new(
+        run.rotation,
+        overlay_geometry::OverlayRotation::pivot_point(
+            [run_x + min_x, run_y + min_y],
+            [max_x - min_x, max_y - min_y],
+            run.rotation_pivot,
+        ),
+    );
     let quads = atlas.layout_glyph_run(
         run.glyphs.iter().enumerate().map(|(i, g)| {
             let colour = run
@@ -130,6 +139,7 @@ fn emit_glyph_run(
         );
     }
     overlay_geometry::emit_glyph_quads_colored(verts, &quads, run_x, run_y, 0.0, 0.0);
+    overlay_geometry::rotate_vertices_from(verts, rot_start, rot);
 }
 
 /// Emit one label's text-stream geometry (background box, leader line, glyph
@@ -197,6 +207,16 @@ fn emit_label(
     let text_x = align_offset + label.position[0];
     let text_y = align_offset_y + label.position[1];
 
+    let rot = overlay_geometry::OverlayRotation::new(
+        label.rotation,
+        overlay_geometry::OverlayRotation::pivot_point(
+            [text_x, text_y],
+            [layout.total_width, layout.height],
+            label.rotation_pivot,
+        ),
+    );
+    let bg_start = verts.len();
+
     if label.background {
         let pad = label.padding;
         let (bx0, by0) = (text_x - pad, text_y - pad);
@@ -222,6 +242,8 @@ fn emit_label(
         }
     }
 
+    overlay_geometry::rotate_vertices_from(verts, bg_start, rot);
+
     if emit_leader && label.leader_line && matches!(label.anchor, OverlayAnchor::World(_)) {
         overlay_geometry::emit_line_quad(
             verts,
@@ -235,6 +257,8 @@ fn emit_label(
             0.0,
         );
     }
+
+    let text_start = verts.len();
 
     for layer in label
         .shadows
@@ -280,6 +304,7 @@ fn emit_label(
         0.0,
         0.0,
     );
+    overlay_geometry::rotate_vertices_from(verts, text_start, rot);
 }
 
 /// Emit a whole group (polylines, vector shapes, glyph runs, labels) into a fresh

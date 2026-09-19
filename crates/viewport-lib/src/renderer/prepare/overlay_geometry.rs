@@ -1196,3 +1196,84 @@ pub(super) fn emit_flat_mesh(
         ]);
     }
 }
+
+/// A screen-space rotation applied to already-emitted overlay vertices.
+///
+/// Text has no signed distance field to turn in a shader the way an analytic
+/// shape does, so a rotated run is rotated here. Vertex positions are logical
+/// screen pixels at this point, so rotating them in place is the whole job, and
+/// it turns a label's background plate and its shadows along with the glyphs
+/// rather than only the letterforms.
+///
+/// The glyph cells stay axis-aligned in the atlas and are sampled through the
+/// clamp/linear sampler, so a rotated run is very slightly softer than an
+/// upright one.
+#[derive(Clone, Copy)]
+pub(super) struct OverlayRotation {
+    sin: f32,
+    cos: f32,
+    /// Absolute screen-pixel point the vertices turn about.
+    centre: [f32; 2],
+}
+
+impl OverlayRotation {
+    /// A rotation about `centre`, or `None` when the angle is zero and nothing
+    /// would move.
+    pub(super) fn new(radians: f32, centre: [f32; 2]) -> Option<Self> {
+        if radians == 0.0 {
+            return None;
+        }
+        Some(Self {
+            sin: radians.sin(),
+            cos: radians.cos(),
+            centre,
+        })
+    }
+
+    /// The centre of a box, offset by a pivot measured from that centre. This is
+    /// the `OverlayShapeItem::rotation_pivot` contract: `[0, 0]` is the centre.
+    pub(super) fn pivot_point(box_min: [f32; 2], box_size: [f32; 2], pivot: [f32; 2]) -> [f32; 2] {
+        [
+            box_min[0] + box_size[0] * 0.5 + pivot[0],
+            box_min[1] + box_size[1] * 0.5 + pivot[1],
+        ]
+    }
+
+    fn apply(&self, p: [f32; 2]) -> [f32; 2] {
+        let dx = p[0] - self.centre[0];
+        let dy = p[1] - self.centre[1];
+        [
+            self.centre[0] + self.cos * dx - self.sin * dy,
+            self.centre[1] + self.sin * dx + self.cos * dy,
+        ]
+    }
+}
+
+/// Rotate the positions of `verts[from..]` in place. A `None` rotation is a
+/// no-op, so callers can pass one through unconditionally.
+pub(super) fn rotate_vertices_from(
+    verts: &mut [crate::resources::OverlayTextVertex],
+    from: usize,
+    rot: Option<OverlayRotation>,
+) {
+    let Some(r) = rot else {
+        return;
+    };
+    for v in &mut verts[from..] {
+        v.position = r.apply(v.position);
+    }
+}
+
+/// Rotate the positions of `verts[range]` in place.
+pub(super) fn rotate_vertices_range(
+    verts: &mut [crate::resources::OverlayTextVertex],
+    range: std::ops::Range<usize>,
+    rot: Option<OverlayRotation>,
+) {
+    let Some(r) = rot else {
+        return;
+    };
+    for v in &mut verts[range] {
+        v.position = r.apply(v.position);
+    }
+}

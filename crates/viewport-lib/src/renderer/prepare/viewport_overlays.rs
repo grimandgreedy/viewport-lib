@@ -706,6 +706,20 @@ impl ViewportRenderer {
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
+                    // A turned label turns its plate and its shadows with its
+                    // glyphs, but not its leader line: that runs to the projected
+                    // world anchor and must keep pointing at it. So the plate and
+                    // the text are rotated as two ranges with the leader between.
+                    let rot = OverlayRotation::new(
+                        label.rotation,
+                        OverlayRotation::pivot_point(
+                            [text_x, text_y],
+                            [layout.total_width, layout.height],
+                            label.rotation_pivot,
+                        ),
+                    );
+                    let bg_start = batch.len();
+
                     if label.background {
                         let pad = label.padding;
                         let bx0 = text_x - pad;
@@ -731,6 +745,8 @@ impl ViewportRenderer {
                         }
                     }
 
+                    rotate_vertices_from(&mut batch, bg_start, rot);
+
                     if label.leader_line {
                         if let crate::renderer::types::OverlayAnchor::World(wa) = label.anchor {
                             let world_px = project_to_screen(wa, view, proj, vp_w, vp_h);
@@ -749,6 +765,8 @@ impl ViewportRenderer {
                             }
                         }
                     }
+
+                    let text_start = batch.len();
 
                     // Shadow layers, back to front, behind the glyphs. Each is a
                     // re-layout against a styled atlas cell, so the dilation and
@@ -811,6 +829,8 @@ impl ViewportRenderer {
                         vp_h,
                     );
 
+                    rotate_vertices_from(&mut batch, text_start, rot);
+
                     stamp_clip(&mut batch, label.clip_id);
                     batches.push((label.z_order, batch));
                 }
@@ -870,6 +890,15 @@ impl ViewportRenderer {
                     }
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
+                    // The run turns about its glyph-extent box, shadows included.
+                    let rot = OverlayRotation::new(
+                        run.rotation,
+                        OverlayRotation::pivot_point(
+                            [run_x + min_x, run_y + min_y],
+                            [max_x - min_x, max_y - min_y],
+                            run.rotation_pivot,
+                        ),
+                    );
 
                     // Shadow layers, back to front, behind the run. Per-glyph
                     // colours do not carry into a shadow: the whole layer draws
@@ -909,6 +938,7 @@ impl ViewportRenderer {
                     // resolved origin is the only offset added; no ascent, unlike
                     // labels.
                     emit_glyph_quads_colored(&mut batch, &quads, run_x, run_y, vp_w, vp_h);
+                    rotate_vertices_from(&mut batch, 0, rot);
 
                     stamp_clip(&mut batch, run.clip_id);
                     batches.push((run.z_order, batch));

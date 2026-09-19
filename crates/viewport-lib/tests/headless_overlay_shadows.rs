@@ -327,3 +327,136 @@ fn falloff_changes_output_on_every_backend() {
         "falloff must change the atlas-baked label shadow"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Rotation
+// ---------------------------------------------------------------------------
+
+/// A rotated label moves pixels, and a zero rotation is byte-identical to not
+/// setting one, which is what keeps the field free for consumers ignoring it.
+#[test]
+fn label_rotation_turns_the_text_and_zero_is_inert() {
+    use viewport_lib::LabelItem;
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let label = || {
+        LabelItem::new("Hg")
+            .with_position([20.0, 30.0])
+            .with_font_size(32.0)
+            .with_colour([0.0, 0.0, 0.0, 1.0])
+    };
+    let render = |l: LabelItem, r: &mut ViewportRenderer| {
+        let mut frame = base_frame();
+        frame.overlays.labels = vec![l];
+        r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
+    };
+
+    let plain = render(label(), &mut renderer);
+    let zero = render(label().with_rotation(0.0), &mut renderer);
+    assert_eq!(plain, zero, "a zero rotation must change nothing");
+
+    let turned = render(label().with_rotation(0.6), &mut renderer);
+    assert_ne!(plain, turned, "a rotated label must move pixels");
+}
+
+/// The pivot follows the `OverlayShapeItem` contract: `[0, 0]` is the text-box
+/// centre, and a non-zero pivot rotates about a different point, so the same
+/// angle lands the text somewhere else.
+#[test]
+fn label_rotation_pivot_moves_the_centre_of_rotation() {
+    use viewport_lib::LabelItem;
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let render = |pivot: [f32; 2], r: &mut ViewportRenderer| {
+        let mut frame = base_frame();
+        frame.overlays.labels = vec![
+            LabelItem::new("Hg")
+                .with_position([20.0, 30.0])
+                .with_font_size(32.0)
+                .with_colour([0.0, 0.0, 0.0, 1.0])
+                .with_rotation(0.6)
+                .with_rotation_pivot(pivot),
+        ];
+        r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
+    };
+
+    assert_ne!(
+        render([0.0, 0.0], &mut renderer),
+        render([12.0, 0.0], &mut renderer),
+        "a pivot offset must change where the text lands"
+    );
+}
+
+/// A rotated label turns its background plate with its glyphs. Turning only the
+/// text inside a level plate is the bug this feature exists to avoid, so the
+/// plate's own pixels have to move.
+#[test]
+fn label_rotation_turns_the_background_plate() {
+    use viewport_lib::LabelItem;
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // Plate only: transparent text, so every differing pixel belongs to the plate.
+    let render = |rotation: f32, r: &mut ViewportRenderer| {
+        let mut frame = base_frame();
+        frame.overlays.labels = vec![
+            LabelItem::new("Hg")
+                .with_position([20.0, 30.0])
+                .with_font_size(32.0)
+                .with_colour([0.0, 0.0, 0.0, 0.0])
+                .with_background(true)
+                .with_background_colour([0.0, 0.0, 0.0, 1.0])
+                .with_rotation(rotation),
+        ];
+        r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
+    };
+
+    assert_ne!(
+        render(0.0, &mut renderer),
+        render(0.6, &mut renderer),
+        "the background plate must turn with the label"
+    );
+}
+
+/// The glyph-run path takes its own emit route, so it is checked separately.
+#[test]
+fn glyph_run_rotation_turns_the_run() {
+    use viewport_lib::{GlyphRunItem, PositionedGlyph};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let glyphs: Vec<PositionedGlyph> = (0..5)
+        .map(|i| PositionedGlyph::new(40 + i as u16, 10.0 + i as f32 * 14.0, 50.0))
+        .collect();
+    let render = |rotation: f32, r: &mut ViewportRenderer| {
+        let mut frame = base_frame();
+        frame.overlays.glyph_runs = vec![
+            GlyphRunItem::new(glyphs.clone())
+                .with_font_size(28.0)
+                .with_colour([0.0, 0.0, 0.0, 1.0])
+                .with_rotation(rotation),
+        ];
+        r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
+    };
+
+    let plain = render(0.0, &mut renderer);
+    assert_ne!(plain, render(0.7, &mut renderer), "a rotated run must move");
+}

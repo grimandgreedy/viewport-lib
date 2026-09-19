@@ -118,6 +118,26 @@ pub struct LabelItem {
     /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
     /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
     pub shadows: Vec<crate::overlay::ShadowLayer>,
+    /// Rotation around the text-box centre in radians. Positive rotates
+    /// counter-clockwise in math coordinates, which reads as clockwise on
+    /// screen because the Y axis points down. `0.0` keeps the default
+    /// orientation.
+    ///
+    /// The extent box stays axis-aligned: `align_x` / `align_y` place the
+    /// unrotated box on the anchor and the text turns inside it, matching
+    /// [`OverlayShapeItem::rotation`].
+    ///
+    /// [`OverlayShapeItem::rotation`]: crate::overlay::OverlayShapeItem::rotation
+    pub rotation: f32,
+
+    /// Point to rotate around, in logical pixels measured from the text-box
+    /// centre. `[0.0, 0.0]` (default) rotates around the centre. Positive X is
+    /// right, positive Y is down, matching the screen-space axes.
+    ///
+    /// The box is the laid-out text, so it moves when the text, font, or wrap
+    /// width changes. To turn about a fixed corner instead, measure the text
+    /// and offset the pivot by half its extent.
+    pub rotation_pivot: [f32; 2],
 }
 
 impl Default for LabelItem {
@@ -144,6 +164,8 @@ impl Default for LabelItem {
             occlude: false,
             clip_id: None,
             shadows: Vec::new(),
+            rotation: 0.0,
+            rotation_pivot: [0.0, 0.0],
         }
     }
 }
@@ -316,6 +338,18 @@ impl LabelItem {
     pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
         self.shadows
             .push(crate::overlay::ShadowLayer::outline(colour, width));
+        self
+    }
+
+    /// Set the rotation in radians about the text-box centre.
+    pub fn with_rotation(mut self, radians: f32) -> Self {
+        self.rotation = radians;
+        self
+    }
+
+    /// Set the point to rotate about, in logical pixels from the text-box centre.
+    pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
+        self.rotation_pivot = pivot;
         self
     }
 }
