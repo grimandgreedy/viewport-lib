@@ -58,7 +58,7 @@ fn cubemap_cache_reuses_and_invalidates() {
         lighting.lights = vec![l];
         fd.effects.lighting = lighting;
         fd.viewport.show_axes_indicator = false;
-        fd.viewport.background_colour = Some([0.05, 0.05, 0.05, 1.0]);
+        fd.viewport.background_colour = Some([0.05, 0.05, 0.05, 1.0].into());
         fd
     };
 
