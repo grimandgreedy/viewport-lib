@@ -1,27 +1,18 @@
+## Cargo
+Cargo.lock
+crates/viewport-lib-examples/*/Cargo.lock
 /target
 **/target
+
+## mdbook notes
+
 book/build/
 book/
 
-/Cargo.lock
-
-# Local editor and OS noise.
+# IDE/OS noise
 .DS_Store
-.idea/
 .vscode/
 .direnv/
 *.log
 *.swp
 *.swo
-*.user
-
-
-docs/
-settings.local.json
-CLAUDE.md
-.claude/
-i73080/
-# The excluded example crates resolve their own lockfiles (they are their own
-# workspace roots). They are publish = false example hosts, so the locks are
-# build artefacts like the root one.
-crates/viewport-lib-examples/*/Cargo.lock
