@@ -145,7 +145,7 @@ pub(crate) struct ViewportHdrState {
     /// Equals output_size when render_scale = 1.0.
     pub scene_size: [u32; 2],
 
-    // --- Decal pass depth binding (D1) ---
+    // --- Decal pass depth binding ---
     /// Bind group for group 1 of the decal pass: reads hdr_depth_only_view as a depth texture.
     /// Rebuilt on viewport resize alongside the other viewport-sized bind groups.
     pub decal_depth_bg: crate::gpu::BindGroup,
@@ -447,6 +447,12 @@ pub struct ContentResources {
     #[allow(dead_code)]
     pub(crate) material_bind_groups:
         std::collections::HashMap<(u64, u64, u64), crate::gpu::BindGroup>,
+    /// Textures found bound into a slot that needs the other colour space,
+    /// recorded as (raw texture id, slot) where the binding is built and drained
+    /// by `prepare` into a `TextureColourSpaceMismatch`. One entry per pair, so a
+    /// scene that keeps redrawing does not grow it.
+    pub(crate) texture_slot_mismatches:
+        Vec<(u64, crate::resources::material::textures::TextureSlot)>,
     /// User-uploaded textures, keyed by the `texture_id` in Material. Slotted
     /// with generational ids so a freed slot cannot alias a later upload.
     pub(crate) textures: crate::resources::material::texture_store::TextureStore,
@@ -566,10 +572,15 @@ pub struct DeviceResources {
     /// MSAA sample count used by all render pipelines.
     pub(crate) sample_count: u32,
     /// True while the lit pipelines are compiled with the pixel-inspector
-    /// debug block. Off by default: the block's storage write disables early
-    /// depth rejection (see `builders::strip_debug_vis`). Toggled per frame
-    /// from the `DebugVis` state, which rebuilds the lit pipelines.
+    /// debug block. Off by default, so the lit shaders do not carry the block's
+    /// register cost on every draw (see `builders::strip_debug_vis`). Toggled
+    /// per frame from the `DebugVis` state, which rebuilds the lit pipelines.
     pub(crate) debug_vis_shaders: bool,
+    /// Diagnostic: keep the debug block compiled in even with `DebugVis` off,
+    /// so a benchmark can measure what stripping it is worth. Shading is
+    /// unchanged, because the block sits under a uniform branch that only
+    /// `DebugVis` takes. Set through `ViewportRenderer::set_force_debug_vis_shaders`.
+    pub(crate) force_debug_vis_shaders: bool,
     /// Set by `register_deformer` / `register_internal_deformer` instead of
     /// rebuilding the mesh-family pipelines inline, so a burst of
     /// registrations costs one recompose instead of one per call. Cleared by
@@ -824,8 +835,18 @@ pub struct DeviceResources {
     /// this changes, the cache purges its stale entries so a freed resource's
     /// memory is actually reclaimed instead of pinned by an unused bind group.
     pub(crate) resource_free_epoch: u64,
+    /// Bumped by `replace_texture` and `replace_external_texture`, which swap the
+    /// view behind a texture id that stays live. A cache holding views must
+    /// rebuild when this moves; a cache holding only ids need not, because the
+    /// ids did not change. `resource_free_epoch` moves for these too, so a
+    /// consumer that checks only the free epoch keeps its old behaviour.
+    pub(crate) resource_view_epoch: u64,
+    /// Whether a mesh upload keeps a CPU-side copy of its positions, normals,
+    /// and indices. Default `true`. See
+    /// `DeviceResources::set_retain_mesh_cpu_geometry`.
+    pub(crate) retain_mesh_cpu_geometry: bool,
 
-    // --- Screen-space decal pipelines (D1 + D5, lazily created) ---
+    // --- Screen-space decal pipelines (lazily created) ---
     /// Decal render/exclude pipelines and their bind group layouts.
     pub(crate) decal: crate::resources::decal::DecalResources,
 
@@ -903,6 +924,10 @@ pub(crate) struct ViewportCullState {
     /// keyed by that texture's id now samples the old view (the id is unchanged)
     /// and must be rebuilt. Keying alone cannot catch this, so it is tracked here.
     pub(crate) built_free_epoch: u64,
+    /// `DeviceResources::resource_view_epoch` these bind groups were built at.
+    /// A replace swaps the view behind a live id, which no liveness check can
+    /// see, so this always forces a rebuild where the free epoch no longer does.
+    pub(crate) built_view_epoch: u64,
     /// Hierarchical-Z max-depth pyramid for this viewport's occlusion test.
     /// Lazily created the first frame occlusion culling stores depth here, and
     /// rebuilt when the depth target changes size. Per-viewport so two viewports
@@ -926,6 +951,7 @@ impl ViewportCullState {
             compact_capacity: 0,
             built_gen: u64::MAX,
             built_free_epoch: u64::MAX,
+            built_view_epoch: u64::MAX,
             hiz: None,
         }
     }
@@ -1033,6 +1059,10 @@ pub(crate) struct ShadowCullState {
     /// under a stable id. Mirrors `ViewportCullState::built_free_epoch`: when it falls
     /// behind, the cutout bind groups (and any bundle that baked them) are stale.
     pub(crate) built_free_epoch: u64,
+    /// `DeviceResources::resource_view_epoch` these bind groups were built at.
+    /// A replace swaps the view behind a live id, which no liveness check can
+    /// see, so this always forces a rebuild where the free epoch no longer does.
+    pub(crate) built_view_epoch: u64,
     /// Per-cascade render bundles replaying the indirect shadow draw sequence.
     /// The batch loop encodes hundreds of set/draw calls per cascade; for a
     /// stable batch list that sequence is identical every frame (per-frame
@@ -1068,6 +1098,7 @@ impl ShadowCullState {
             batch_output_capacity: 0,
             built_gen: u64::MAX,
             built_free_epoch: u64::MAX,
+            built_view_epoch: u64::MAX,
             shadow_bundles: [None, None, None, None],
             bundle_key: None,
             bundle_draws: 0,
@@ -1219,7 +1250,6 @@ impl DeviceResources {
         clip_planes_buf: &crate::gpu::Buffer,
         shadow_info_buf: &crate::gpu::Buffer,
         clip_volume_buf: &crate::gpu::Buffer,
-        debug_frag_buf: &crate::gpu::Buffer,
         label: &str,
     ) -> crate::gpu::BindGroup {
         let irr = self
@@ -1294,10 +1324,6 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 11,
                     resource: crate::gpu::BindingResource::TextureView(skybox),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 12,
-                    resource: debug_frag_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 13,

@@ -206,11 +206,10 @@ pub(crate) struct ViewportSlot {
     /// batch counters, and their bind groups). The cull dispatch for this
     /// viewport's camera writes here; the draw path reads from here.
     pub cull: crate::resources::ViewportCullState,
-    /// Per-fragment debug storage buffer (group 0 binding 12). Allocated at
-    /// `width * height * 16` bytes when debug_vis is active; None otherwise.
-    pub debug_frag_buf: Option<crate::gpu::Buffer>,
-    /// Viewport dimensions for which `debug_frag_buf` was allocated.
-    pub debug_frag_dims: (u32, u32),
+    /// Viewport dimensions when the last prepared frame left a readable debug
+    /// quantity in the HDR texture (debug vis active, HDR path, `Replace`
+    /// mode); `None` when it did not. Read by `read_debug_pixel`.
+    pub debug_readback_dims: Option<(u32, u32)>,
 
     // --- Per-viewport interaction state ---
     /// Per-frame selection-outline state, one entry per scene-item kind, rebuilt in prepare().
@@ -305,9 +304,24 @@ pub(crate) const GPU_TS_SSAO: u32 = 7;
 pub(crate) const GPU_TS_BLOOM: u32 = 8;
 /// FXAA fullscreen pass.
 pub(crate) const GPU_TS_FXAA: u32 = 9;
+/// The dedicated screen-space overlay pass (shapes, labels, glyph runs,
+/// polylines, retained groups). Written only when the overlay runs as its own
+/// pass: the HDR path always does, the LDR path only when a backdrop-blur shape
+/// forces a second pass, otherwise its draws are inline at the end of the scene
+/// pass and counted there.
+pub(crate) const GPU_TS_OVERLAY: u32 = 10;
+/// The compaction's three dispatches inside the main-camera cull, split out so
+/// the cost of packing the visible list in instance order can be attributed to
+/// a specific dispatch rather than inferred. These are timestamps taken inside
+/// a compute pass, so they need `TIMESTAMP_QUERY_INSIDE_PASSES` on top of
+/// `TIMESTAMP_QUERY` and read `0.0` without it. Only the main-camera cull is
+/// split; shadow-cascade culls run the same three dispatches untimed.
+pub(crate) const GPU_TS_CULL_PLAN: u32 = 11;
+pub(crate) const GPU_TS_CULL_COUNT: u32 = 12;
+pub(crate) const GPU_TS_CULL_SCATTER: u32 = 13;
 /// Number of measured GPU passes; the query set holds `2 * GPU_TS_SLOTS` entries
 /// (a begin/end pair per slot).
-pub(crate) const GPU_TS_SLOTS: u32 = 10;
+pub(crate) const GPU_TS_SLOTS: u32 = 14;
 
 /// Whether a `render()` presents the frame the user sees, or is an auxiliary
 /// read.
@@ -751,6 +765,25 @@ pub struct ViewportRenderer {
     pub(crate) last_cluster_stats: Option<crate::resources::gpu::clustered::ClusterStats>,
 }
 
+/// Warn once when a cull submission needs more compaction scratch than the
+/// device will bind as one storage buffer, so the drop to arrival-order
+/// submission is visible rather than silent.
+///
+/// The scratch sizes to the submission, so this needs a scene far past what any
+/// device can draw: it takes tens of millions of instances to reach the default
+/// 128 MiB binding limit.
+pub(crate) fn warn_once_cull_plan_capacity(batches: u32, instances: u32) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            batches,
+            instances,
+            "cull submission needs more compaction scratch than max_storage_buffer_binding_size; \
+             draws submit in cull-arrival order, so frames are not bit-reproducible"
+        );
+    });
+}
+
 impl ViewportRenderer {
     /// The optional device features the renderer can take advantage of,
     /// filtered to what `adapter` supports. Pass the result as
@@ -764,7 +797,10 @@ impl ViewportRenderer {
     ///   and geometry chunk into one multi-draw (present on Vulkan/DX12; absent
     ///   on Metal, which keeps the per-batch loop).
     /// - `TIMESTAMP_QUERY` enables `FrameStats::gpu_frame_ms` and the
-    ///   per-pass GPU breakdown.
+    ///   per-pass GPU breakdown. `TIMESTAMP_QUERY_INSIDE_PASSES` additionally
+    ///   splits the cull's compaction into its three dispatches
+    ///   (`GpuBreakdown::cull_plan_ms` and friends); without it those read
+    ///   `0.0` and the rest of the breakdown is unaffected.
     /// - `PIPELINE_CACHE` enables
     ///   [`pipeline_cache_data`](Self::pipeline_cache_data) /
     ///   [`new_with_pipeline_cache`](Self::new_with_pipeline_cache), so
@@ -796,6 +832,7 @@ impl ViewportRenderer {
             crate::gpu::Features::INDIRECT_FIRST_INSTANCE,
             crate::gpu::Features::MULTI_DRAW_INDIRECT_COUNT,
             crate::gpu::Features::TIMESTAMP_QUERY,
+            crate::gpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
             crate::gpu::Features::PIPELINE_CACHE,
             crate::gpu::PRIMITIVE_INDEX_FEATURE,
             crate::gpu::Features::FLOAT32_FILTERABLE,
@@ -1288,6 +1325,23 @@ impl ViewportRenderer {
         self.resources.set_force_po_discard(force);
     }
 
+    /// Keep the debug-visualisation block compiled into the lit pipelines even
+    /// while [`DebugVis`] is off.
+    ///
+    /// The block sits under a uniform branch that only `DebugVis` takes, so
+    /// pixels are identical either way. What changes is what an ordinary draw
+    /// pays to carry it: the block declares a 24-element array, and a lit shader
+    /// holding that allocation spends registers on it on every draw. The lit
+    /// pipelines therefore compile without it by default.
+    ///
+    /// This exists so a benchmark can measure that cost by rendering one scene
+    /// both ways in a single process, which is the only way to compare them
+    /// without run-to-run variance swamping the difference. Off by default; not
+    /// a rendering mode.
+    pub fn set_force_debug_vis_shaders(&mut self, force: bool) {
+        self.resources.force_debug_vis_shaders = force;
+    }
+
     /// Force the indirect draw paths to collapse batch runs into
     /// `multi_draw_indexed_indirect` even where the backend emulates it as a
     /// per-entry loop (Metal). The emulated result is identical, so this exists
@@ -1462,6 +1516,49 @@ impl ViewportRenderer {
     /// shader is mesh_instanced.wgsl. Check this before testing shader changes.
     pub fn is_using_instanced_path(&self) -> bool {
         self.instancing.use_instancing
+    }
+
+    /// Which material-texture path this renderer took: `"bindless"` or
+    /// `"per-batch"`.
+    ///
+    /// Chosen once at construction from the device's enabled features, and it is
+    /// not inferable from the backend: an Apple silicon device reports the
+    /// bindless feature set through Metal argument buffers and takes that path.
+    /// Requesting [`recommended_device_features`](Self::recommended_device_features)
+    /// is what enables it when the adapter has it.
+    ///
+    /// The two paths bind textures differently, so they do not share a bug
+    /// surface. Worth logging, and worth putting in a bug report.
+    pub fn material_texture_binding(&self) -> &'static str {
+        use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+        match self.resources.instancing.material_texture_binding {
+            MaterialTextureBinding::Bindless => "bindless",
+            MaterialTextureBinding::PerBatch => "per-batch",
+        }
+    }
+
+    /// Take the per-batch material-texture binding, whatever the device supports.
+    ///
+    /// The write side of [`material_texture_binding`](Self::material_texture_binding).
+    /// The renderer picks bindless whenever the device offers it, and the two
+    /// paths bind textures differently, so when output differs between machines
+    /// this is how to hold one of them still. Turning bindless off without it
+    /// means building the device with fewer features than the renderer asks for,
+    /// which changes more than this one choice.
+    ///
+    /// Call once, immediately after construction and before the first
+    /// [`prepare`](Self::prepare). There is no way back to bindless on the same
+    /// renderer: build another one.
+    ///
+    /// Expect fewer, larger instanced batches on the bindless path and more,
+    /// smaller ones here, since a per-batch bind group cannot span materials that
+    /// use different textures.
+    pub fn use_per_batch_material_textures(&mut self) {
+        use crate::resources::mesh::instanced_bindless::MaterialTextureBinding;
+        self.resources.instancing.material_texture_binding = MaterialTextureBinding::PerBatch;
+        // The interner keys blocks on their bytes, and the texture indices are
+        // part of those bytes only on the bindless path, so it has to be told.
+        self.resources.material_gpu_builder.set_bindless(false);
     }
 
     /// Returns the number of instanced batches prepared for the current frame.
@@ -2277,11 +2374,30 @@ impl ViewportRenderer {
         }
     }
 
-    /// Read the debug values at a specific pixel from the per-fragment storage buffer.
+    /// Read the debug quantity at a specific pixel, as the visible surface there
+    /// resolved it.
     ///
-    /// Returns `None` when debug_vis is inactive (no buffer allocated) or when `(x, y)`
-    /// is outside the viewport. The four channels correspond to the current R/G/B channel
-    /// selectors plus 1.0 for alpha.
+    /// The value comes out of the HDR target after the depth test, so it belongs
+    /// to the surface you can see rather than to whichever fragment happened to
+    /// shade last. The three colour channels hold the current R/G/B channel
+    /// selectors; alpha comes from the target and carries nothing useful.
+    ///
+    /// Returns `None` unless the last prepared frame could leave the quantity
+    /// there, which needs all of:
+    ///
+    /// - [`DebugVis::active`](crate::DebugVis) set,
+    /// - [`PipelineMode::Hdr`](crate::PipelineMode) : the LDR path renders
+    ///   straight into your target, which the renderer does not own,
+    /// - [`DebugOutputMode::Replace`](crate::DebugOutputMode) : the other modes
+    ///   mix the quantity with the shaded colour, so what lands in the target is
+    ///   not the quantity,
+    ///
+    /// and `(x, y)` inside the viewport. `None` means the configuration cannot
+    /// be answered, never that the pixel had no value.
+    ///
+    /// Values are half-float, so expect about three decimal digits. With
+    /// supersampling on, the texel has been resolved from several samples and is
+    /// a filtered average rather than one surface's value.
     ///
     /// This submits a GPU-to-CPU copy and waits synchronously. Only call from outside
     /// a render pass (e.g., in the next frame's prepare step), not inside paint callbacks.
@@ -2296,22 +2412,46 @@ impl ViewportRenderer {
     ) -> Option<[f32; 4]> {
         // Use the primary viewport slot (index 0).
         let slot = self.viewport_slots.first()?;
-        let buf = slot.debug_frag_buf.as_ref()?;
-        let (vw, vh) = slot.debug_frag_dims;
+        let (vw, vh) = slot.debug_readback_dims?;
         if x >= vw || y >= vh {
             return None;
         }
-        let byte_offset = ((y as u64) * (vw as u64) + (x as u64)) * 16;
+        let texture = &slot.hdr.as_ref()?.hdr_texture;
+
+        // One texel out of the HDR target. A buffer copy needs its rows aligned
+        // even for a single row, so the staging buffer is a whole aligned row
+        // and only its first texel is read.
         let staging = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: None,
-            size: 16,
+            label: Some("debug_pixel_staging"),
+            size: u64::from(crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT),
             usage: crate::gpu::BufferUsages::MAP_READ | crate::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let mut encoder =
             device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_buffer_to_buffer(buf, byte_offset, &staging, 0, 16);
+        encoder.copy_texture_to_buffer(
+            crate::gpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d { x, y, z: 0 },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            crate::gpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: crate::gpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(crate::gpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                    rows_per_image: Some(1),
+                },
+            },
+            crate::gpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
         queue.submit(Some(encoder.finish()));
+
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel::<Result<(), crate::gpu::BufferAsyncError>>();
         slice.map_async(crate::gpu::MapMode::Read, move |r| {
@@ -2323,7 +2463,11 @@ impl ViewportRenderer {
         });
         rx.recv().ok()?.ok()?;
         let data = crate::gpu::mapped_range(slice);
-        Some(bytemuck::pod_read_unaligned::<[f32; 4]>(&data))
+        // Rgba16Float: four halves.
+        Some(std::array::from_fn(|c| {
+            let bits = u16::from_le_bytes([data[c * 2], data[c * 2 + 1]]);
+            half::f16::from_bits(bits).to_f32()
+        }))
     }
 
     /// Upload a Gaussian splat set to the GPU.
@@ -2727,22 +2871,22 @@ impl ViewportRenderer {
         self.resources.on_upload_complete(id, cb);
     }
 
-    /// Start an asynchronous albedo texture upload. See
+    /// Start an asynchronous texture upload. See
     /// [`DeviceResources::begin_upload_texture`] for the semantics.
     pub fn begin_upload_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
+        data: crate::resources::TextureData,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_texture(device, queue, width, height, rgba)
+        self.resources.begin_upload_texture(device, queue, data)
     }
 
-    /// Start an asynchronous normal-map upload. See
-    /// [`DeviceResources::begin_upload_normal_map`] for the semantics.
+    /// Start an asynchronous normal-map upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::normal_map(w, h, rgba))"
+    )]
     pub fn begin_upload_normal_map(
         &mut self,
         device: &crate::gpu::Device,
@@ -2751,8 +2895,11 @@ impl ViewportRenderer {
         height: u32,
         rgba: Vec<u8>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        self.resources
-            .begin_upload_normal_map(device, queue, width, height, rgba)
+        self.begin_upload_texture(
+            device,
+            queue,
+            crate::resources::TextureData::normal_map(width, height, rgba),
+        )
     }
 
     /// Take the texture id from a completed async texture upload. See
@@ -2846,22 +2993,16 @@ impl ViewportRenderer {
             &self.resources.binds.clip_planes_buf,
             &self.resources.shadow.info_buf,
             &self.resources.binds.clip_volume_buf,
-            &self.resources.binds.debug_frag_sentinel_buf,
             "camera_bind_group",
         );
 
         for slot in &mut self.viewport_slots {
-            let dbg_buf = slot
-                .debug_frag_buf
-                .as_ref()
-                .unwrap_or(&self.resources.binds.debug_frag_sentinel_buf);
             slot.camera_bind_group = self.resources.create_camera_bind_group(
                 device,
                 &slot.camera_buf,
                 &slot.clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.clip_volume_buf,
-                dbg_buf,
                 "per_viewport_camera_bg",
             );
             slot.foreground_camera_bind_group = self.resources.create_camera_bind_group(
@@ -2870,7 +3011,6 @@ impl ViewportRenderer {
                 &slot.foreground_clip_planes_buf,
                 &slot.shadow_info_buf,
                 &slot.foreground_clip_volume_buf,
-                dbg_buf,
                 "per_viewport_foreground_camera_bg",
             );
         }
@@ -2931,7 +3071,6 @@ impl ViewportRenderer {
                 &clip_planes_buf,
                 &shadow_info_buf,
                 &clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_camera_bg",
             );
 
@@ -2961,7 +3100,6 @@ impl ViewportRenderer {
                 &foreground_clip_planes_buf,
                 &shadow_info_buf,
                 &foreground_clip_volume_buf,
-                &self.resources.binds.debug_frag_sentinel_buf,
                 "per_viewport_foreground_camera_bg",
             );
 
@@ -2992,8 +3130,7 @@ impl ViewportRenderer {
                 grid_bind_group,
                 hdr: None,
                 cull: crate::resources::ViewportCullState::new(),
-                debug_frag_buf: None,
-                debug_frag_dims: (0, 0),
+                debug_readback_dims: None,
                 selection_outlines: SelectionOutlines::default(),
                 xray_object_buffers: Vec::new(),
                 constraint_line_buffers: Vec::new(),

@@ -191,7 +191,11 @@ fn shade_ambient(surf: ShadingSurface) -> vec3<f32> {
     let red = vec![[255u8, 0, 0, 255]; 16].concat();
     let red_tex = renderer
         .resources_mut()
-        .upload_texture(&device, &queue, 4, 4, &red)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(4, 4, red.to_vec()),
+        )
         .expect("upload texture");
     let red_variant = renderer
         .resources_mut()
@@ -417,13 +421,15 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
     );
 }
 
-// The reference plugins shipped under examples/plugins/ must stay
-// registrable: their WGSL runs through the full composer + wgpu validation
-// at registration, so this catches contract or prefixer regressions (e.g.
-// a body local named like a ShadingSurface field).
-#[path = "../examples/plugins/surface_detail_plugin.rs"]
+// The reference plugins the examples ship must stay registrable: their WGSL runs
+// through the full composer + wgpu validation at registration, so this catches
+// contract or prefixer regressions (e.g. a body local named like a
+// ShadingSurface field). The sources live with the examples that demonstrate
+// them, so this test reaches across to them rather than keeping a second copy
+// that could drift.
+#[path = "../../viewport-lib-examples/eframe/examples/plugins/surface_detail_plugin.rs"]
 mod surface_detail_plugin;
-#[path = "../examples/plugins/toon_plugin.rs"]
+#[path = "../../viewport-lib-examples/eframe/examples/plugins/toon_plugin.rs"]
 mod toon_plugin;
 
 #[test]

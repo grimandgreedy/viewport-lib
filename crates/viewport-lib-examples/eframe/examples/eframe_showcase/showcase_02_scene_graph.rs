@@ -1,0 +1,404 @@
+//! Showcase 2: Scene Graph + Materials.
+
+use crate::eframe;
+use crate::App;
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{Material, ViewportRenderer, scene::Scene, selection::Selection};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct SgState {
+    pub scene: Scene,
+    pub selection: Selection,
+    pub material_cycle: usize,
+    pub bg_cycle: usize,
+    pub outline_width: f32,
+    pub layer_b: Option<vpl::scene::LayerId>,
+    pub layer_b_visible: bool,
+    pub built: bool,
+}
+
+impl Default for SgState {
+    fn default() -> Self {
+        Self {
+            scene: Scene::new(),
+            selection: Selection::new(),
+            material_cycle: 0,
+            bg_cycle: 0,
+            outline_width: 4.0,
+            layer_b: None,
+            layer_b_visible: true,
+            built: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+impl App {
+    pub(crate) fn build_scene_graph(&mut self, renderer: &mut ViewportRenderer) {
+        self.sg_state.scene = Scene::new();
+        self.sg_state.layer_b = Some(self.sg_state.scene.add_layer("Layer B"));
+        self.sg_state.layer_b_visible = true;
+        self.sg_state.selection.clear();
+
+        let positions = [
+            [-1.5, -1.5, 0.0],
+            [1.5, -1.5, 0.0],
+            [-1.5, 1.5, 0.0],
+            [1.5, 1.5, 0.0],
+        ];
+        let colours = [
+            [0.68, 0.08, 0.08],
+            [0.10, 0.55, 0.13],
+            [0.10, 0.12, 0.62],
+            [0.60, 0.50, 0.05],
+        ];
+        for (i, (pos, colour)) in positions.iter().zip(&colours).enumerate() {
+            let mesh = self.upload_box(renderer);
+            let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
+            let mat = Material::from_colour(*colour);
+            let name = format!("Box {}", i + 1);
+            let id = self
+                .sg_state
+                .scene
+                .add_named(&name, Some(mesh), transform, mat);
+            if i >= 2 {
+                self.sg_state
+                    .scene
+                    .set_layer(id, self.sg_state.layer_b.unwrap());
+            }
+        }
+
+        self.sg_state.built = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_scene_graph(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Frame) {
+    let sel = app.sg_state.selection.len();
+    let nodes = app.sg_state.scene.node_count();
+    ui.label(format!("Nodes: {nodes}  Selected: {sel}"));
+    ui.separator();
+
+    if ui.button("Cycle Material").clicked() {
+        app.sg_state.material_cycle += 1;
+        let (mat, app_s) = material_preset(app.sg_state.material_cycle);
+        for &id in app.sg_state.selection.iter() {
+            app.sg_state.scene.set_material(id, mat);
+            app.sg_state.scene.set_appearance(id, app_s);
+        }
+    }
+
+    if ui.button("Toggle Transparency").clicked() {
+        for &id in app.sg_state.selection.iter() {
+            if let Some(node) = app.sg_state.scene.node(id) {
+                let mut app_s = *node.appearance();
+                app_s.opacity = if app_s.opacity < 1.0 { 1.0 } else { 0.4 };
+                app.sg_state.scene.set_appearance(id, app_s);
+            }
+        }
+    }
+
+    if ui.button("Toggle Normal Vis").clicked() {
+        for &id in app.sg_state.selection.iter() {
+            if let Some(node) = app.sg_state.scene.node(id) {
+                let show = !node.show_normals();
+                app.sg_state.scene.set_show_normals(id, show);
+            }
+        }
+    }
+
+    ui.separator();
+
+    ui.label("Outline width (px):");
+    ui.add(egui::Slider::new(&mut app.sg_state.outline_width, 1.0..=8.0).step_by(0.5));
+
+    ui.separator();
+
+    if ui.button("Cycle Background").clicked() {
+        app.sg_state.bg_cycle += 1;
+    }
+
+    ui.separator();
+
+    if ui.button("Add Child to Selected").clicked() {
+        if let Some(parent_id) = app.sg_state.selection.primary() {
+            let rs = frame.wgpu_render_state().unwrap();
+            let mut guard = rs.renderer.write();
+            let renderer = guard
+                .callback_resources
+                .get_mut::<vpl::ViewportRenderer>()
+                .unwrap();
+            let mesh = app.upload_box(renderer);
+            let local = glam::Mat4::from_scale_rotation_translation(
+                glam::Vec3::splat(0.5),
+                glam::Quat::IDENTITY,
+                glam::Vec3::new(1.5, 0.0, 1.5),
+            );
+            let child_id = app.sg_state.scene.add_named(
+                "Child",
+                Some(mesh),
+                local,
+                Material::from_colour([0.75, 0.28, 0.05]),
+            );
+            app.sg_state.scene.set_parent(child_id, Some(parent_id));
+            app.sg_state.selection.select_one(child_id);
+        }
+    }
+
+    if ui.button("Remove Selected").clicked() {
+        if let Some(id) = app.sg_state.selection.primary() {
+            let removed = app.sg_state.scene.remove(id);
+            for rid in &removed {
+                app.sg_state.selection.remove(*rid);
+            }
+        }
+    }
+
+    ui.separator();
+
+    if ui
+        .checkbox(&mut app.sg_state.layer_b_visible, "Layer B Visible")
+        .changed()
+    {
+        app.sg_state
+            .scene
+            .set_layer_visible(app.sg_state.layer_b.unwrap(), app.sg_state.layer_b_visible);
+    }
+
+    ui.separator();
+
+    if ui.button("Cycle Selection (Tab)").clicked() {
+        let walk = app.sg_state.scene.walk_depth_first();
+        if !walk.is_empty() {
+            let current = app.sg_state.selection.primary();
+            let next_idx = match current {
+                Some(id) => {
+                    let pos = walk.iter().position(|(nid, _)| *nid == id);
+                    pos.map(|i| (i + 1) % walk.len()).unwrap_or(0)
+                }
+                None => 0,
+            };
+            app.sg_state.selection.select_one(walk[next_idx].0);
+        }
+    }
+
+    if ui.button("Clear Selection").clicked() {
+        app.sg_state.selection.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Material and background presets
+// ---------------------------------------------------------------------------
+
+pub(crate) fn material_preset(index: usize) -> (Material, vpl::ItemSettings) {
+    let default_app = vpl::ItemSettings::default();
+    match index % 4 {
+        0 => (Material::default(), default_app),
+        1 => {
+            let mut m = Material::from_colour([0.8, 0.2, 0.2]);
+            m.specular = 0.8;
+            m.shininess = 64.0;
+            m.ambient = 0.1;
+            (m, default_app)
+        }
+        2 => {
+            let mut m = Material::from_colour([0.2, 0.4, 0.9]);
+            m.specular = 0.9;
+            m.shininess = 128.0;
+            let mut a = default_app;
+            a.opacity = 0.5;
+            (m, a)
+        }
+        3 => {
+            let mut m = Material::from_colour([0.3, 0.7, 0.3]);
+            m.specular = 0.1;
+            m.shininess = 8.0;
+            m.diffuse = 0.9;
+            (m, default_app)
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Background colour for the cycle position. `None` is the first entry: it
+/// leaves the viewport background unset so the renderer default applies; the
+/// other two entries override with a custom colour to demonstrate cycling.
+pub(crate) fn background_colour(index: usize) -> Option<[f32; 4]> {
+    match index % 3 {
+        0 => None,
+        1 => Some([0.05, 0.08, 0.15, 1.0]),
+        2 => Some([0.18, 0.16, 0.14, 1.0]),
+        _ => unreachable!(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.sg_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_scene_graph(renderer);
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app
+            .sg_state
+            .scene
+            .collect_render_items(&app.sg_state.selection);
+        let bg: Option<[f32; 4]> =
+            background_colour(app.sg_state.bg_cycle);
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0].into();
+            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t
+        };
+        out.scene_graph_outline = !app.sg_state.selection.is_empty();
+        out.scene_graph_outline_width = app.sg_state.outline_width;
+        let sg = app.sg_state.scene.version();
+        let ss = app.sg_state.selection.version();
+        (items, bg, lighting, sg, ss)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
+    // Object-level selection: defer the pick to the render site, where the
+    // renderer and the on-screen `FrameData` are in scope, and resolve it with
+    // the unified GPU picker. See `apply_pending_pick`.
+    app.pending_pick = Some(cx.pos);
+}
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScSceneGraph;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScSceneGraph = ScSceneGraph;
+
+impl crate::Showcase for ScSceneGraph {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn on_click(&self, app: &mut crate::App, cx: &crate::ClickCtx) {
+        on_click(app, cx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, frame: &crate::eframe::Frame) {
+        controls_scene_graph(app, ui, frame)
+    }
+}

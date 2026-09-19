@@ -1507,7 +1507,7 @@ impl DeviceResources {
             self.post.foreground_stamp_pipeline = Some(pipeline);
         }
 
-        // --- Decal shared resources (D1) ---
+        // --- Decal shared resources ---
         self.ensure_decal_shared(device);
     }
 

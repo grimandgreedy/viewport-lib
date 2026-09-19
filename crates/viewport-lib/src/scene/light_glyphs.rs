@@ -58,7 +58,7 @@ pub fn build_light_glyphs(
         let translation = world.col(3).truncate();
         let is_selected = selection.contains(id);
 
-        let colour_rgba = [src.colour[0], src.colour[1], src.colour[2], 1.0];
+        let colour_rgba = src.colour.with_alpha(1.0).to_linear_rgba();
         let mut settings = ItemSettings::default();
         settings.pick_id = PickId(id);
         settings.selected = is_selected;

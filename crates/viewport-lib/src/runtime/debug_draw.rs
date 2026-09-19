@@ -66,7 +66,7 @@
 //! If this conversion step is omitted, nothing will appear on screen even if
 //! plugins submitted primitives during `step`.
 //!
-//! See `examples/eframe_showcase/showcase_46_debug_draw.rs` for a complete
+//! See the `eframe-showcase` example (showcase 46) for a complete
 //! end-to-end example.
 
 use std::collections::HashMap;

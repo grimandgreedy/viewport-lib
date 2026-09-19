@@ -1,0 +1,12 @@
+# Shorthands for the two example crates that sit outside the workspace. Slint and
+# Bevy pin wgpu 29, and cargo unifies features across a workspace build, so those
+# crates cannot be members alongside the ones on the default wgpu 27 leg: they are
+# named by manifest path instead of `-p`. These aliases hide the path. When both
+# frameworks move to the default leg the crates become members and the aliases can
+# go.
+[alias]
+slint-example = "run --release --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --example slint-minimal"
+bevy-example = "run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml --example bevy-swarm"
+# The build-check halves of the same two, for the post-API-change sweep.
+check-slint-example = "check --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --all-targets"
+check-bevy-example = "check --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml --all-targets"

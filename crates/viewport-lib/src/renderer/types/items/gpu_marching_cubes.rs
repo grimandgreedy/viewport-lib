@@ -6,6 +6,7 @@ use crate::scene::material::{ItemSettings, Material};
 /// The volume referenced by `volume_id` is triangulated on the GPU at `isovalue`
 /// and drawn with `material`. No CPU readback occurs; the vertex count is
 /// determined by an indirect draw call.
+#[derive(Clone)]
 pub struct GpuMarchingCubesItem {
     /// Volume to triangulate (must remain alive).
     pub volume_id: McVolumeId,

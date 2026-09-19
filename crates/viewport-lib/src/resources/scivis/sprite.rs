@@ -656,6 +656,10 @@ impl DeviceResources {
         queue: &crate::gpu::Queue,
         item: &crate::renderer::SpriteItem,
     ) -> SpriteGpuData {
+        use crate::resources::TextureSlot;
+        self.check_texture_slot(item.texture_id, TextureSlot::SpriteAlbedo);
+        self.check_texture_slot(item.normal_texture_id, TextureSlot::SpriteNormalMap);
+
         let count = item.positions.len() as u32;
 
         // Position vertex buffer (one vec3 per sprite, instance-stepped).

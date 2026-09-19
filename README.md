@@ -33,22 +33,30 @@
 
 ## Examples
 
-The `examples/` directory contains working integrations for several GUI frameworks.
+`crates/viewport-lib-examples/` holds working integrations for several GUI frameworks, one crate per framework, so running an eframe example does not build bevy or slint.
 
 - **eframe-showcase**: run this first and cycle through the feature showcases: this demonstrates many of the viewport's built-in capabilities but is non-exhaustive.
 - **eframe-minimal**: the simplest integration: start here if you want to understand the minimal setup.
 - **eframe-primitives**: demonstrates the built-in geometry primitives.
-- **eframe-viewport**: a mid-complexity example with scene graph, picking, and gizmos.
+- **eframe-multi-viewport**: a mid-complexity example with several viewports in one window.
 - **eframe-input-controllers**: shows custom input bindings and controller configuration.
 
 ```
-cargo run --release --example eframe-minimal --features="wgpu27 example-egui egui-adapter" 
-cargo run --release --example eframe-showcase --features example-egui,example-io
-cargo run --release --example winit-minimal --features="wgpu27 app"
-cargo run --release --example iced-viewport --features="wgpu27 example-iced"
-cargo run --release --example slint-minimal --no-default-features --features="wgpu29,example-slint"
-cargo run --release --example bevy-swarm --no-default-features --features wgpu29,example-bevy
+cargo run --release -p viewport-lib-examples-eframe --example eframe-showcase
+cargo run --release -p viewport-lib-examples-eframe --example eframe-minimal
+cargo run --release -p viewport-lib-examples-winit  --example winit-minimal
+cargo run --release -p viewport-lib-examples-iced   --example iced-viewport
+cargo run --release --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --example slint-minimal
+cargo run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml  --example bevy-swarm
 ```
+
+The slint and bevy crates are built by manifest path because their frameworks pin wgpu 29, so they cannot be workspace members alongside crates on the default wgpu 27 leg. Each example crate carries `wgpu27` / `wgpu29` / `wgpu30` features that select viewport-lib's leg:
+
+```
+cargo run --release -p viewport-lib-examples-winit --no-default-features --features wgpu30 --example winit-minimal
+```
+
+`cargo slint-example` and `cargo bevy-example` are aliases for the two manifest-path commands above.
 
 ## Quick start
 
@@ -56,7 +64,7 @@ A viewport is created and managed via a runner. There are two primary runners th
 
 - **`ViewportApp`**: owns the window and the run loop -- this is a full app runner. The simplest and easiest way to get started, for a standalone viewport with no surrounding GUI.
 - **`ViewportInstance`**: the runner you drive yourself. You own the loop and the input, redraw when you want, and route each event to either the viewport's input controller or your GUI. This is the right fit when you are embedding a viewport into an existing application which already owns the run-loop. 
-- **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement their own runner. Look at, e.g., the `eframe_multi_viewport` or `wgpu_leg_agnostic` examples.
+- **Custom runner**: For fine-grained control of wgpu device features or split viewports, or performance optimisation, you can create your own runner to drive the `ViewportRenderer` directly with your own camera and controllers, which is what the two runners do internally. Most of the older examples still implement their own runner. Look at, e.g., `eframe-multi-viewport` in the eframe example crate, or `wgpu-leg-agnostic` in the headless one.
 
 Native events reach either runner as a `ViewportEvent`, translated by an adapter (`from_winit`, `from_egui`).
 
@@ -113,8 +121,11 @@ exclusive cargo features, one per supported wgpu version. Select one with
 
 | Feature | wgpu | GUI frameworks on this version |
 | --- | --- | --- |
-| `wgpu27` (default) | 27 | iced 0.14 |
-| `wgpu29` | 29 | egui/eframe 0.35, Slint, Bevy |
+| `wgpu27` (default) | 27 | egui/eframe 0.33, iced 0.14 |
+| `wgpu29` | 29 | egui/eframe 0.35, Slint 1.17, Bevy 0.19 |
+| `wgpu30` | 30 | egui/eframe 0.36 |
+
+The leg and the GUI framework are independent choices: what has to match is the framework *version*, because a framework that embeds wgpu must agree with viewport-lib on it. winit embeds none, so any leg works there. One exception worth knowing: the `egui-adapter` feature (the `from_egui` event translation) is built against egui 0.33, so on the 29 and 30 legs an egui host translates events itself.
 
 ## License
 

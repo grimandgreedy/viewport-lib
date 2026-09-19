@@ -18,6 +18,7 @@ maps), rather than the all-convex, lit-from-above scenes the examples use.
 | `textures` | CPU-side texture corpus: checker, gradient, value noise, tangent-space normal map. |
 | `scenes` | The `catalogue()` of `NamedScene`s, each a `build` fn plus named cameras. |
 | `harness` | Headless `wgpu` device + `ViewportRenderer`; build, render offscreen, read `FrameStats`. |
+| `fixtures` | Minimal plugin implementations, one folder per plugin seam, with the call log and probe frame their smoke tests use. |
 | `real_models` | (feature `real_models`) load real meshes through `viewport-lib-io`. |
 
 ## Viewing the scenes
@@ -45,6 +46,63 @@ for scene in catalogue() {
 
 `Harness::new()` returns `None` when no GPU adapter is present, so callers can
 skip cleanly.
+
+## Plugin fixtures
+
+`fixtures` holds the smallest thing that can sit in each of `viewport-lib`'s
+plugin seams: it records which callbacks fired, in what order, with which
+context values, and (where the seam shows up in the image) makes one deliberate
+change a pixel assertion can see. The `tests/fixture_*.rs` binaries drive them
+through the real renderer and runtime.
+
+They live in this crate, rather than in `viewport-lib`'s own tests, because that
+is what makes them worth having: a fixture can only reach `viewport_lib`'s
+public paths, so one that compiles proves the seam is usable from outside the
+library.
+
+| Folder | Seam | Fixtures |
+|---|---|---|
+| `runtime_plugin` | `RuntimePlugin` | `LoggingRuntimePlugin` |
+| `gpu_plugin` | `GpuPlugin` | `LoggingGpuPlugin` |
+| `item_type_plugin` | `ItemTypePlugin` | `LoggingItemTypePlugin` (dispatch only), `TriangleItemTypePlugin` (draws, through the plugin pipeline builders), `CountedItemCollection` |
+| `post_effect_producer` | `PostEffectProducer` | `LoggingPostEffectProducer` |
+| `post_effect_stage` | `PostEffectStage` | `PassthroughPostEffectStage` |
+| `deformer` | `DeformerDesc` | `constant_offset_deformer` (params only), `per_vertex_offset_deformer` (reads per-vertex slot data) |
+| `material_plugin` | `MaterialPlugin` | `FlatColourMaterialPlugin` (lighting hooks), `TexturedMaterialPlugin` (`shade_surface` with a texture) |
+| `installer` | `PluginInstaller` | `DeformAndStepInstaller` |
+
+The `Logging*` fixtures are cheap contract checks: they assert the renderer and
+runtime still call a plugin, in the right order, with the right context. The
+others put pixels on screen, so they also assert the seam still *works*: that a
+plugin outside the library can build pipelines from `SharedBindings` and the
+published target descriptors, that a deformer body can address its own
+per-vertex data, and that a shading hook can sample its own textures.
+
+Fixtures are named `<Variety><Trait>`: the trait name says which seam it sits
+in, and the prefix says what that one does. A second variety of the same seam is
+a new file in the same folder, not a rename. Everything is re-exported from
+`fixtures`, so the import path is `viewport_lib_testkit::fixtures::LoggingRuntimePlugin`
+and the folders are for navigation.
+
+Two things to know when editing them:
+
+- A change that has to edit a fixture to keep it compiling has changed the
+  plugin API, and owes a CHANGELOG entry (and a migration note when the change
+  is breaking). The fixtures cannot fail the build on their own account, so this
+  is how they earn their keep.
+- Keep them minimal. Realistic implementations belong in the plugins that ship
+  for real use; a fixture that grows features has stopped being one.
+
+The deformer and material-plugin seams need the renderer's recommended device
+limits (three and four bind groups respectively, plus the storage-buffer
+headroom), which the default harness profile does not request, so their tests
+build the harness with `Harness::with_profile(&DeviceProfile::low_power(..))`
+and skip cleanly when no adapter offers them.
+
+```bash
+cargo test                       # the whole sweep, fixtures included
+cargo test fixture               # just the fixture smoke tests
+```
 
 ## Benchmarks
 

@@ -1221,10 +1221,10 @@ mod tests {
         );
     }
 
-    // Phase 8 of the HiZ plan: the GPU cull kernel honours the per-camera layer
-    // mask. The shared scene prepare runs with `cull_mask = !0` (so the CPU
-    // collect cull keeps every instance), then each viewport's GPU cull applies
-    // its own `cull_mask`. A viewport whose mask is disjoint from the instances'
+    // The GPU cull kernel honours the per-camera layer mask. The shared scene
+    // prepare runs with `cull_mask = !0` (so the CPU collect cull keeps every
+    // instance), then each viewport's GPU cull applies its own `cull_mask`.
+    // A viewport whose mask is disjoint from the instances'
     // `visibility_mask` must draw none of them; a matching viewport draws all.
     // Asserted through the cull breakdown (`gpu_visible_instances`), so it reads
     // the kernel's decision directly rather than inferring it from pixels.

@@ -1,0 +1,468 @@
+//! Showcase 56: Submesh Materials
+//!
+//! One mesh, several materials. A small rocket is assembled into a single
+//! vertex/index buffer from five primitive parts, each triangle tagged with a
+//! material id, and `MeshData::sort_triangles_into_submeshes` groups the
+//! triangles into contiguous ranges. At draw time the item carries one
+//! material per range via `SceneRenderItem::submesh_materials`, so the whole
+//! rocket is one upload and one scene item:
+//!
+//!   - body: brushed metal (PBR metallic, live slider)
+//!   - nose + tail: red plastic
+//!   - three fins: checkerboard albedo texture (three parts, one material id,
+//!     merged into a single range by the sort)
+//!   - canopy: tinted glass (alpha-blend albedo, drawn through the
+//!     transparent pass while the other ranges stay opaque)
+//!
+//! Toggling "Per-range materials" off clears `submesh_materials` and the same
+//! mesh falls back to the item's single material, which is exactly what a
+//! consumer that never sets the field gets.
+
+use crate::App;
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{
+    AlphaMode, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId,
+    SceneRenderItem, TextureId, ViewportRenderer, primitives,
+};
+
+// Material ids used when tagging triangles. Sparse on purpose (no id 2) to
+// show that `sort_triangles_into_submeshes` returns the id order for lining
+// up `submesh_materials`.
+const MAT_METAL: u32 = 0;
+const MAT_PLASTIC: u32 = 1;
+const MAT_CHECKER: u32 = 3;
+const MAT_GLASS: u32 = 4;
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct SubmeshState {
+    pub built: bool,
+    pub mesh_id: MeshId,
+    /// Distinct material ids in range order, as returned by
+    /// `sort_triangles_into_submeshes`.
+    pub range_ids: Vec<u32>,
+    pub checker_tex: Option<TextureId>,
+    pub glass_tex: Option<TextureId>,
+
+    // Controls.
+    pub per_range: bool,
+    pub metallic: f32,
+    pub spin: bool,
+    pub angle: f32,
+}
+
+impl Default for SubmeshState {
+    fn default() -> Self {
+        Self {
+            built: false,
+            mesh_id: MeshId::INVALID,
+            range_ids: Vec::new(),
+            checker_tex: None,
+            glass_tex: None,
+            per_range: true,
+            metallic: 0.9,
+            spin: true,
+            angle: 0.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+/// Append `part` into `merged`, offsetting indices and tagging every added
+/// triangle with `mat_id`. `transform` is applied to positions; its rotation
+/// part is applied to normals (parts only use rotation + translation here).
+fn merge_part(
+    merged: &mut MeshData,
+    tri_ids: &mut Vec<u32>,
+    part: &MeshData,
+    transform: glam::Affine3A,
+    mat_id: u32,
+) {
+    let base = merged.positions.len() as u32;
+    for p in &part.positions {
+        merged
+            .positions
+            .push(transform.transform_point3((*p).into()).into());
+    }
+    for n in &part.normals {
+        merged
+            .normals
+            .push(transform.transform_vector3((*n).into()).normalize().into());
+    }
+    let uvs = merged.uvs.get_or_insert_with(Vec::new);
+    for i in 0..part.positions.len() {
+        uvs.push(
+            part.uvs
+                .as_ref()
+                .and_then(|u| u.get(i))
+                .copied()
+                .unwrap_or([0.0, 0.0]),
+        );
+    }
+    for idx in &part.indices {
+        merged.indices.push(base + idx);
+    }
+    tri_ids.extend(std::iter::repeat(mat_id).take(part.indices.len() / 3));
+}
+
+pub(crate) fn build_submesh_scene(app: &mut App, renderer: &mut ViewportRenderer) {
+    let mut rocket = MeshData::default();
+    let mut tri_ids: Vec<u32> = Vec::new();
+
+    let at = |x: f32, y: f32, z: f32| glam::Affine3A::from_translation(glam::Vec3::new(x, y, z));
+
+    // Body: a cylinder along +Z.
+    merge_part(
+        &mut rocket,
+        &mut tri_ids,
+        &primitives::cylinder(1.2, 4.0, 48),
+        at(0.0, 0.0, 0.0),
+        MAT_METAL,
+    );
+    // Nose cone on top, tail ring below: both plastic.
+    merge_part(
+        &mut rocket,
+        &mut tri_ids,
+        &primitives::cone(1.2, 1.8, 48),
+        at(0.0, 0.0, 2.9),
+        MAT_PLASTIC,
+    );
+    merge_part(
+        &mut rocket,
+        &mut tri_ids,
+        &primitives::cylinder(1.35, 0.5, 48),
+        at(0.0, 0.0, -2.1),
+        MAT_PLASTIC,
+    );
+    // Three fins around the tail. Three separate parts sharing one material
+    // id: the sort merges them into a single range.
+    for k in 0..3 {
+        let angle = k as f32 * std::f32::consts::TAU / 3.0;
+        let transform = glam::Affine3A::from_rotation_z(angle)
+            * glam::Affine3A::from_translation(glam::Vec3::new(1.6, 0.0, -1.7));
+        merge_part(
+            &mut rocket,
+            &mut tri_ids,
+            &primitives::cuboid_unwrapped(1.4, 0.15, 1.6),
+            transform,
+            MAT_CHECKER,
+        );
+    }
+    // Canopy: a glass sphere half-sunk into the body.
+    merge_part(
+        &mut rocket,
+        &mut tri_ids,
+        &primitives::sphere(0.7, 32, 16),
+        at(0.0, -1.1, 0.9),
+        MAT_GLASS,
+    );
+
+    let range_ids = rocket
+        .sort_triangles_into_submeshes(&tri_ids)
+        .expect("one material id per triangle");
+
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &rocket)
+        .expect("rocket mesh");
+
+    // Checkerboard albedo for the fins.
+    let checker_tex = {
+        let n = 64usize;
+        let mut rgba = Vec::with_capacity(n * n * 4);
+        for y in 0..n {
+            for x in 0..n {
+                let on = ((x / 8) + (y / 8)) % 2 == 0;
+                let v = if on { 235u8 } else { 40u8 };
+                rgba.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        renderer
+            .resources_mut()
+            .upload_texture(
+                &app.device,
+                &app.queue,
+                vpl::TextureData::srgb(n as u32, n as u32, rgba.to_vec()),
+            )
+            .ok()
+    };
+    // 1x1 translucent cyan albedo: alpha-blend materials read their alpha
+    // from the sampled base colour, so this is what makes the canopy glass.
+    let glass_tex = renderer
+        .resources_mut()
+        .upload_texture(
+            &app.device,
+            &app.queue,
+            vpl::TextureData::srgb(1, 1, [170, 230, 255, 90].to_vec()),
+        )
+        .ok();
+
+    app.submesh_state = SubmeshState {
+        built: true,
+        mesh_id,
+        range_ids,
+        checker_tex,
+        glass_tex,
+        ..SubmeshState::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Frame data
+// ---------------------------------------------------------------------------
+
+fn material_for(state: &SubmeshState, id: u32) -> Material {
+    let mut m = Material::default();
+    match id {
+        MAT_METAL => {
+            m.base_colour = [0.75, 0.77, 0.8].into();
+            m.metallic = state.metallic;
+            m.roughness = 0.35;
+        }
+        MAT_PLASTIC => {
+            m.base_colour = [0.82, 0.15, 0.12].into();
+            m.metallic = 0.0;
+            m.roughness = 0.5;
+        }
+        MAT_CHECKER => {
+            m.base_colour = [1.0, 1.0, 1.0].into();
+            m.texture_id = state.checker_tex;
+            m.roughness = 0.7;
+        }
+        MAT_GLASS => {
+            m.base_colour = [1.0, 1.0, 1.0].into();
+            m.texture_id = state.glass_tex;
+            m.alpha_mode = AlphaMode::Blend;
+            m.roughness = 0.1;
+            m.specular = 0.9;
+        }
+        _ => {}
+    }
+    m
+}
+
+pub(crate) fn submesh_scene_items(app: &App) -> Vec<SceneRenderItem> {
+    let s = &app.submesh_state;
+    if !s.built {
+        return vec![];
+    }
+    let mut item = SceneRenderItem::default();
+    item.mesh_id = s.mesh_id;
+    item.model = glam::Mat4::from_rotation_z(s.angle).to_cols_array_2d();
+    // The single-material fallback look, and the whole look when per-range
+    // materials are toggled off.
+    item.material.base_colour = [0.4, 0.4, 0.45].into();
+    item.material.roughness = 0.5;
+    if s.per_range {
+        item.submesh_materials = Some(s.range_ids.iter().map(|&id| material_for(s, id)).collect());
+    }
+    vec![item]
+}
+
+pub(crate) fn submesh_lighting() -> LightingSettings {
+    let mut t = LightingSettings::default();
+    t.lights = vec![
+        {
+            let mut l = LightSource::default();
+            l.kind = LightKind::Directional {
+                direction: [0.45, 0.35, -0.8],
+            };
+            l.intensity = 1.0;
+            l
+        },
+        {
+            let mut l = LightSource::default();
+            l.kind = LightKind::Directional {
+                direction: [-0.5, -0.4, -0.3],
+            };
+            l.colour = [0.85, 0.9, 1.0].into();
+            l.intensity = 0.35;
+            l
+        },
+    ];
+    t.shadows.enabled = false;
+    t.hemisphere_intensity = 0.35;
+    t
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_submesh(app: &mut App, ui: &mut egui::Ui) {
+    let s = &mut app.submesh_state;
+    ui.checkbox(&mut s.per_range, "Per-range materials");
+    ui.add(egui::Slider::new(&mut s.metallic, 0.0..=1.0).text("body metallic"));
+    ui.checkbox(&mut s.spin, "Spin");
+    ui.separator();
+    ui.label("One mesh, one item, four material ranges:");
+    ui.label("metal body, plastic nose and tail, three checker fins");
+    ui.label("(one shared range), and an alpha-blend glass canopy.");
+    ui.label("Triangles were tagged per part and grouped with");
+    ui.label("MeshData::sort_triangles_into_submeshes.");
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.submesh_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    build_submesh_scene(app, renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 14.0,
+        orientation: glam::Quat::from_rotation_z(0.5)
+            * glam::Quat::from_rotation_x(1.2),
+        ..vpl::Camera::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = submesh_scene_items(app);
+        (
+            items,
+            None,
+            submesh_lighting(),
+            0,
+            0,
+        )
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Submesh rocket spin (Showcase 56) -----
+    if app.submesh_state.spin {
+        let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
+        app.submesh_state.angle += dt * 0.5;
+        cx.egui.request_repaint();
+    }
+}
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScSubmeshMaterials;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScSubmeshMaterials = ScSubmeshMaterials;
+
+impl crate::Showcase for ScSubmeshMaterials {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn advance(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        advance(app, cx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_submesh(app, ui)
+    }
+}

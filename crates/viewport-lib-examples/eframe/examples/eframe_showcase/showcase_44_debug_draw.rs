@@ -1,0 +1,507 @@
+//! Showcase 44: Debug Draw
+//!
+//! Demonstrates the debug draw runtime visualization system. A post-simulation
+//! plugin reads contact events and scene node positions each frame, then submits
+//! primitives to a shared DebugDraw resource:
+//!
+//! - AABB wireframes (green) around each physics body.
+//! - Contact normal line segments (red) and contact point markers.
+//! - Per-body index labels.
+//! - Persistent overlay AABB (yellow) showing the bounding region.
+//!
+//! Controls:
+//! - Dev mode toggle: hides/shows dev-layer visuals (AABBs, normals, labels).
+//! - Pause/Resume: freeze the simulation.
+
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{
+    Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, RuntimeFrameContext,
+    RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,
+    plugins::physics_lite::{PhysicsBody, PhysicsLitePlugin},
+    runtime::plugin::phase,
+    scene::Scene,
+    selection::Selection,
+};
+
+use crate::App;
+
+// ---------------------------------------------------------------------------
+// ID for the persistent overlay AABB
+// ---------------------------------------------------------------------------
+
+const BOUNDS_AABB_ID: u64 = 1;
+
+// ---------------------------------------------------------------------------
+// Debug draw plugin
+// ---------------------------------------------------------------------------
+
+/// Reads scene positions and contact events after physics runs, then writes
+/// debug primitives to the shared [`DebugDraw`] resource.
+struct DebugOverlayPlugin {
+    body_ids: Vec<u64>,
+    body_radius: f32,
+    bounds: Aabb,
+}
+
+impl DebugOverlayPlugin {
+    fn new(body_ids: Vec<u64>, body_radius: f32, bounds: Aabb) -> Self {
+        Self {
+            body_ids,
+            body_radius,
+            bounds,
+        }
+    }
+}
+
+impl RuntimePlugin for DebugOverlayPlugin {
+    fn priority(&self) -> i32 {
+        // Run after physics (POST_SIM) so contact events are already in output.
+        phase::POST_SIM + 5
+    }
+
+    fn step(&mut self, ctx: &mut RuntimeStepContext) {
+        let Some(dd) = ctx.resources.get_mut::<DebugDraw>() else {
+            return;
+        };
+
+        // AABB wireframe and index label around each body (dev layer).
+        for (i, &id) in self.body_ids.iter().enumerate() {
+            let Some(node) = ctx.scene.node(id) else {
+                continue;
+            };
+            let center = node.world_transform().col(3).truncate();
+            let half = glam::Vec3::splat(self.body_radius);
+            dd.aabb(center - half, center + half, [0.3, 0.9, 0.4, 1.0]);
+            dd.label(
+                center + glam::Vec3::Z * (self.body_radius + 0.12),
+                format!("body {}", i),
+                [1.0, 1.0, 1.0, 0.85],
+            );
+        }
+
+        // Contact normals and markers (dev layer).
+        for contact in ctx
+            .output
+            .events
+            .read::<vpl::plugins::physics_lite::ContactEvent>()
+        {
+            let cp = contact.contact_point;
+            let normal_tip = cp + contact.world_normal * 0.5;
+            // Normal direction line.
+            dd.line(cp, normal_tip, [1.0, 0.25, 0.25, 1.0]);
+            // Contact point marker.
+            dd.point(cp, 6.0, [1.0, 0.2, 0.2, 1.0]);
+        }
+
+        // Persistent bounding region AABB (overlay layer, always visible).
+        if !dd.has_persistent(BOUNDS_AABB_ID) {
+            dd.add_persistent(
+                BOUNDS_AABB_ID,
+                DebugPrim::Aabb {
+                    min: self.bounds.min,
+                    max: self.bounds.max,
+                    colour: [0.9, 0.75, 0.2, 0.6].into(),
+                    layer: DebugLayer::Overlay,
+                },
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct DbgDrawState {
+    pub built: bool,
+    pub scene: Scene,
+    pub selection: Selection,
+    pub runtime: ViewportRuntime,
+    pub sphere_mesh: Option<MeshId>,
+    pub paused: bool,
+    pub dev_enabled: bool,
+    pub contact_count: usize,
+}
+
+impl Default for DbgDrawState {
+    fn default() -> Self {
+        Self {
+            built: false,
+            scene: Scene::new(),
+            selection: Selection::new(),
+            runtime: ViewportRuntime::new().with_fixed_timestep(FixedTimestep::new(60.0)),
+            sphere_mesh: None,
+            paused: false,
+            dev_enabled: true,
+            contact_count: 0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scene construction
+// ---------------------------------------------------------------------------
+
+pub(crate) fn build_dbg_draw_scene(app: &mut App, renderer: &mut vpl::ViewportRenderer) {
+    let sphere_r = 0.35_f32;
+    let sphere = vpl::primitives::sphere(sphere_r, 16, 12);
+    let mesh_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &sphere)
+        .expect("dbg draw sphere upload");
+    app.dbg_draw_state.sphere_mesh = Some(mesh_id);
+
+    let scene = &mut app.dbg_draw_state.scene;
+
+    let bounds = Aabb {
+        min: glam::Vec3::new(-4.0, -4.0, 0.0),
+        max: glam::Vec3::new(4.0, 4.0, 8.0),
+    };
+
+    let body_starts: [(f32, f32, f32); 4] = [
+        (0.0, 0.0, 5.0),
+        (2.0, -1.0, 6.0),
+        (-1.5, 1.5, 3.5),
+        (1.0, 2.0, 5.5),
+    ];
+    let body_velocities: [(f32, f32, f32); 4] = [
+        (1.2, 0.6, 2.0),
+        (-1.0, 1.4, 1.0),
+        (1.8, -0.5, 0.5),
+        (-0.8, -1.2, 1.5),
+    ];
+    let colours: [[f32; 3]; 4] = [
+        [0.65, 0.09, 0.07],
+        [0.05, 0.35, 0.65],
+        [0.15, 0.55, 0.12],
+        [0.72, 0.42, 0.04],
+    ];
+
+    let mut physics = PhysicsLitePlugin::new().with_gravity(glam::Vec3::new(0.0, 0.0, -9.81));
+
+    let mut node_ids = Vec::new();
+    for (i, colour) in colours.iter().enumerate() {
+        let (x, y, z) = body_starts[i];
+        let transform = glam::Mat4::from_translation(glam::Vec3::new(x, y, z));
+        let mat = Material::from_colour(*colour);
+        let id = scene.add(Some(mesh_id), transform, mat);
+        node_ids.push(id);
+
+        let (vx, vy, vz) = body_velocities[i];
+        physics.add_body(
+            PhysicsBody::new(id)
+                .with_velocity(glam::Vec3::new(vx, vy, vz))
+                .with_restitution(0.7)
+                .with_bounds(bounds),
+        );
+    }
+
+    let debug_plugin = DebugOverlayPlugin::new(node_ids, sphere_r, bounds);
+
+    app.dbg_draw_state.runtime = ViewportRuntime::new()
+        .with_fixed_timestep(FixedTimestep::new(60.0))
+        .with_plugin(physics)
+        .with_plugin(debug_plugin);
+
+    // Pre-insert the DebugDraw resource so plugins can access it on the first step.
+    app.dbg_draw_state
+        .runtime
+        .resources_mut()
+        .insert(DebugDraw::new());
+
+    app.dbg_draw_state.built = true;
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame update
+// ---------------------------------------------------------------------------
+
+pub(crate) fn update_dbg_draw(app: &mut App, dt: f32) {
+    let effective_dt = if app.dbg_draw_state.paused { 0.0 } else { dt };
+
+    // Sync dev_enabled and clear transient draws before the step.
+    if let Some(dd) = app
+        .dbg_draw_state
+        .runtime
+        .resources_mut()
+        .get_mut::<DebugDraw>()
+    {
+        dd.dev_enabled = app.dbg_draw_state.dev_enabled;
+        dd.begin_frame();
+    }
+
+    let camera = app.camera.clone();
+    let mut frame_ctx = RuntimeFrameContext::default();
+    frame_ctx.dt = effective_dt;
+    frame_ctx.camera = camera.clone();
+    frame_ctx.viewport_size = glam::Vec2::new(800.0, 600.0);
+
+    let output = app.dbg_draw_state.runtime.step(
+        &mut app.dbg_draw_state.scene,
+        &mut app.dbg_draw_state.selection,
+        &frame_ctx,
+    );
+
+    app.dbg_draw_state.contact_count = output
+        .events
+        .read::<vpl::plugins::physics_lite::ContactEvent>()
+        .count();
+}
+
+// ---------------------------------------------------------------------------
+// Scene items
+// ---------------------------------------------------------------------------
+
+pub(crate) fn dbg_draw_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
+    app.dbg_draw_state
+        .scene
+        .collect_render_items(&app.dbg_draw_state.selection)
+}
+
+// ---------------------------------------------------------------------------
+// Render extras
+// ---------------------------------------------------------------------------
+
+/// Push debug draw polylines, point cloud, and labels into the frame data.
+pub(crate) fn submit_dbg_draw_items(app: &App, fd: &mut vpl::FrameData) {
+    let Some(dd) = app.dbg_draw_state.runtime.resources().get::<DebugDraw>() else {
+        return;
+    };
+    fd.scene.polylines.extend(dd.to_polylines());
+    if let Some(pc) = dd.to_point_cloud() {
+        fd.scene.point_clouds.push(pc);
+    }
+    fd.overlays.labels.extend(dd.to_labels());
+}
+
+// ---------------------------------------------------------------------------
+// Controls panel
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_dbg_draw(app: &mut App, ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.label("Four physics spheres with runtime debug visualization.");
+        ui.add_space(6.0);
+
+        ui.separator();
+
+        let pause_label = if app.dbg_draw_state.paused {
+            "Resume"
+        } else {
+            "Pause"
+        };
+        if ui.button(pause_label).clicked() {
+            app.dbg_draw_state.paused = !app.dbg_draw_state.paused;
+        }
+        ui.add_space(6.0);
+
+        ui.separator();
+        ui.label("Visualization layers:");
+
+        let mut dev = app.dbg_draw_state.dev_enabled;
+        if ui.checkbox(&mut dev, "Dev layer visuals").changed() {
+            app.dbg_draw_state.dev_enabled = dev;
+        }
+        ui.label("Dev layer: AABB wireframes, contact normals, point markers, body labels.");
+        ui.label("The yellow bounding region is overlay-layer and always shown.");
+        ui.add_space(6.0);
+
+        ui.separator();
+        ui.label("Frame stats:");
+        ui.label(format!(
+            "Contacts this step: {}",
+            app.dbg_draw_state.contact_count
+        ));
+        if let Some(dd) = app.dbg_draw_state.runtime.resources().get::<DebugDraw>() {
+            ui.label(format!("Transient prims : {}", dd.transient_count()));
+            ui.label(format!("Persistent prims: {}", dd.persistent_count()));
+        }
+        ui.add_space(6.0);
+
+        ui.separator();
+        ui.label("What this shows:");
+        ui.label("- DebugDraw stored in RuntimeResources, accessed by plugins via ctx.resources.");
+        ui.label("- begin_frame() clears transient draws; persistent draws survive across frames.");
+        ui.label("- Dev layer suppressed when dev_enabled = false (ship mode).");
+        ui.label("- Overlay layer always shown regardless of dev_enabled.");
+        ui.label("- to_polylines(), to_point_cloud(), to_labels() convert to render items.");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.dbg_draw_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    build_dbg_draw_scene(app, renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::new(0.0, 0.0, 4.0),
+        distance: 18.0,
+        orientation: glam::Quat::from_rotation_z(0.5)
+            * glam::Quat::from_rotation_x(1.0),
+        ..vpl::Camera::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = if app.dbg_draw_state.built {
+            dbg_draw_scene_items(app)
+        } else {
+            Vec::new()
+        };
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0].into();
+            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t
+        };
+        let sg = app.dbg_draw_state.scene.version();
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Debug Draw (Showcase 44): polylines, points, and labels from DebugDraw resource.
+    if app.dbg_draw_state.built {
+        submit_dbg_draw_items(app, &mut *fd);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Debug draw: step simulation -----
+    if app.dbg_draw_state.built {
+        let dt = cx.egui.input(|i| i.stable_dt.min(0.25));
+        update_dbg_draw(app, dt);
+        cx.egui.request_repaint();
+    }
+}
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScDebugDraw;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScDebugDraw = ScDebugDraw;
+
+impl crate::Showcase for ScDebugDraw {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+        frame(app, fd, ctx)
+    }
+    fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        tick(app, cx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_dbg_draw(app, ui)
+    }
+}

@@ -1,0 +1,379 @@
+//! Showcase 59: vector art (SVG) as filled overlay shapes.
+//!
+//! Loads two SVGs through viewport-lib-io's `vector_from_path`, maps the neutral
+//! paths onto `OverlayShape::Vector`, and draws them side by side. This is the
+//! whole authoring path end to end: an SVG file becomes neutral vector data,
+//! which becomes a tessellated overlay fill.
+//!
+//! The neutral io types (`viewport_lib_io::SubPath` and friends) mirror the
+//! renderer types field for field, so the bridge is the small `map_subpaths` /
+//! `map_rule` match below, not a dependency between the two crates.
+
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{FillRule, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
+
+use crate::App;
+
+/// Bundled sample art (both public domain). Anchored to the crate directory at
+/// compile time so the files resolve no matter the working directory the example
+/// is launched from.
+const TIGER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/eframe_showcase/assets/tiger.svg"
+);
+const YIN_YANG: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/eframe_showcase/assets/yin_yang.svg"
+);
+
+pub(crate) struct VectorArtState {
+    /// User scale, percent of the fit-to-region size.
+    pub scale_pct: f32,
+    /// Draw a thin outline on every contour (on top of the fill).
+    pub show_outline: bool,
+    /// Parsed source art, kept so scaling does not re-parse. `(tiger, yin_yang)`.
+    arts: Option<(viewport_lib_io::VectorArt, viewport_lib_io::VectorArt)>,
+    /// Built overlay items plus the signature they were built for.
+    cache: Option<(u64, Vec<OverlayShapeItem>)>,
+    /// One-line summary of the loaded art, for the controls panel.
+    pub info: String,
+    /// Load or parse error, if any.
+    pub error: Option<String>,
+}
+
+impl Default for VectorArtState {
+    fn default() -> Self {
+        Self {
+            scale_pct: 100.0,
+            show_outline: false,
+            arts: None,
+            cache: None,
+            info: String::new(),
+            error: None,
+        }
+    }
+}
+
+fn map_rule(rule: viewport_lib_io::FillRule) -> FillRule {
+    match rule {
+        viewport_lib_io::FillRule::EvenOdd => FillRule::EvenOdd,
+        viewport_lib_io::FillRule::NonZero => FillRule::NonZero,
+    }
+}
+
+/// Map io subpaths onto renderer subpaths, scaling every coordinate by `s`.
+fn map_subpaths(src: &[viewport_lib_io::SubPath], s: f32) -> Vec<SubPath> {
+    let sp = |p: [f32; 2]| [p[0] * s, p[1] * s];
+    src.iter()
+        .map(|c| SubPath {
+            start: sp(c.start),
+            segments: c
+                .segments
+                .iter()
+                .map(|seg| match *seg {
+                    viewport_lib_io::PathSegment::Line { to } => PathSegment::Line { to: sp(to) },
+                    viewport_lib_io::PathSegment::Quad { ctrl, to } => PathSegment::Quad {
+                        ctrl: sp(ctrl),
+                        to: sp(to),
+                    },
+                    viewport_lib_io::PathSegment::Cubic { ctrl1, ctrl2, to } => {
+                        PathSegment::Cubic {
+                            ctrl1: sp(ctrl1),
+                            ctrl2: sp(ctrl2),
+                            to: sp(to),
+                        }
+                    }
+                })
+                .collect(),
+            closed: c.closed,
+        })
+        .collect()
+}
+
+fn load(path: &str) -> Result<viewport_lib_io::VectorArt, String> {
+    viewport_lib_io::loaders::svg::vector_from_path(std::path::Path::new(path))
+        .map_err(|e| e.to_string())
+}
+
+/// Parse the SVGs into `state.arts` if not already loaded.
+fn ensure_loaded(state: &mut VectorArtState) {
+    if state.arts.is_some() {
+        return;
+    }
+    match (load(TIGER), load(YIN_YANG)) {
+        (Ok(tiger), Ok(yin)) => {
+            state.info = format!(
+                "tiger: {} shapes; yin-yang: {} shapes",
+                tiger.shapes.len(),
+                yin.shapes.len()
+            );
+            state.error = None;
+            state.arts = Some((tiger, yin));
+            state.cache = None;
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            state.error = Some(e);
+            state.arts = None;
+            state.cache = None;
+        }
+    }
+}
+
+/// Fit one art into the rect `(rx, ry, rw, rh)`, centred, and append its items.
+fn place_art(
+    art: &viewport_lib_io::VectorArt,
+    rect: [f32; 4],
+    scale_mul: f32,
+    outline: bool,
+    out: &mut Vec<OverlayShapeItem>,
+) {
+    let (aw, ah) = (art.size[0].max(1.0), art.size[1].max(1.0));
+    let [rx, ry, rw, rh] = rect;
+    let base = 0.85 * rw.min(rh) / aw.max(ah);
+    let s = base * scale_mul;
+    let (dw, dh) = (aw * s, ah * s);
+    let origin = [rx + (rw - dw) * 0.5, ry + (rh - dh) * 0.5];
+    let size = [dw, dh];
+
+    for shape in &art.shapes {
+        let subpaths = map_subpaths(&shape.subpaths, s);
+        let mut item = OverlayShapeItem::vector(subpaths, map_rule(shape.fill_rule), origin, size)
+            .with_z_order(10);
+        item = match shape.fill {
+            Some(rgba) => item.with_fill(OverlayFill::Solid(rgba.into())),
+            // Stroke-only paths (fill "none", or gradients we do not resolve)
+            // carry no fill; the outline below makes them visible.
+            None => item.with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into())),
+        };
+        if outline || shape.fill.is_none() {
+            item = item.with_border([0.08, 0.08, 0.08, 0.9], 1.0);
+        }
+        out.push(item);
+    }
+}
+
+/// Build the overlay shapes: tiger on the left, yin-yang on the right. Results
+/// are cached; only a change of scale, outline, or viewport size rebuilds them.
+pub(crate) fn build_overlay_shapes(app: &mut App, vp_w: f32, vp_h: f32) -> Vec<OverlayShapeItem> {
+    let state = &mut app.va_state;
+    ensure_loaded(state);
+    let Some((tiger, yin)) = &state.arts else {
+        return Vec::new();
+    };
+    if vp_w <= 0.0 || vp_h <= 0.0 {
+        return Vec::new();
+    }
+
+    // Cache signature: rebuild only when something affecting geometry changes.
+    let sig = {
+        let mut h: u64 = state.scale_pct as u64;
+        h = h.wrapping_mul(31).wrapping_add(state.show_outline as u64);
+        h = h.wrapping_mul(31).wrapping_add(vp_w as u64);
+        h = h.wrapping_mul(31).wrapping_add(vp_h as u64);
+        h
+    };
+    if let Some((cached_sig, items)) = &state.cache {
+        if *cached_sig == sig {
+            return items.clone();
+        }
+    }
+
+    let scale_mul = (state.scale_pct / 100.0).max(0.01);
+    // Left ~62% for the busy tiger, the rest for the yin-yang.
+    let split = vp_w * 0.62;
+    let mut items = Vec::new();
+    place_art(
+        tiger,
+        [0.0, 0.0, split, vp_h],
+        scale_mul,
+        state.show_outline,
+        &mut items,
+    );
+    place_art(
+        yin,
+        [split, 0.0, vp_w - split, vp_h],
+        scale_mul,
+        state.show_outline,
+        &mut items,
+    );
+
+    state.cache = Some((sig, items.clone()));
+    items
+}
+
+pub(crate) fn controls_vector_art(app: &mut App, ui: &mut egui::Ui) {
+    ui.heading("Vector Art (SVG)");
+    ui.label("SVG loaded as neutral paths, drawn as OverlayShape::Vector fills.");
+    ui.separator();
+
+    let mut changed = false;
+    if ui
+        .add(egui::Slider::new(&mut app.va_state.scale_pct, 20.0..=200.0).text("scale %"))
+        .changed()
+    {
+        changed = true;
+    }
+    if ui
+        .checkbox(&mut app.va_state.show_outline, "outline every contour")
+        .changed()
+    {
+        changed = true;
+    }
+    if changed {
+        app.va_state.cache = None;
+    }
+
+    ui.separator();
+    if let Some(err) = &app.va_state.error {
+        ui.colored_label(egui::Color32::LIGHT_RED, format!("load error: {err}"));
+    } else if !app.va_state.info.is_empty() {
+        ui.label(&app.va_state.info);
+    }
+    ui.label(
+        "Loader: viewport_lib_io::loaders::svg::vector_from_path. Solid fills \
+         resolve to colour; gradients and patterns are left unfilled and shown \
+         as outlines.",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(_app: &crate::App) -> bool {
+    false
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    _app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        (Vec::new(), None, vpl::LightingSettings::default(), 0, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    let vw = fd.camera.viewport_size[0];
+    let vh = fd.camera.viewport_size[1];
+    fd.overlays.shapes = build_overlay_shapes(app, vw, vh);
+}
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScVectorArt;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScVectorArt = ScVectorArt;
+
+impl crate::Showcase for ScVectorArt {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+        frame(app, fd, ctx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_vector_art(app, ui)
+    }
+}

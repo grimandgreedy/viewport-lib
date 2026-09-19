@@ -1335,7 +1335,7 @@ fn gpu_pick_curve_node_fills_snap_world_pos() {
 }
 
 // ---------------------------------------------------------------------------
-// GPU pick: non-rasterized surface types (G7c/G7d)
+// GPU pick: non-rasterized surface types
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -2066,8 +2066,8 @@ fn gpu_pick_rect_resolves_plugin_faces() {
 }
 
 // ---------------------------------------------------------------------------
-// GPU pick: point clouds and Gaussian splats (G3d), image slices and volume
-// surface slices (G3e)
+// GPU pick: point clouds and Gaussian splats, image slices and volume
+// surface slices
 // ---------------------------------------------------------------------------
 
 #[test]

@@ -2,6 +2,28 @@
 
 use super::*;
 
+/// Whether the shadow cull bind groups no longer match the resources they were
+/// built against.
+///
+/// The same split the main-pass cull uses: a replace swaps a view behind a live
+/// id and cannot be detected by checking ids, so it always invalidates; a free
+/// removes the id, which checking the batches' resources detects. Under a
+/// streaming eviction budget the common case is a free of something these
+/// batches never named, and that leaves the bind groups correct.
+fn shadow_cull_bind_groups_stale(
+    resources: &DeviceResources,
+    instancing: &crate::renderer::instancing_state::InstancingState,
+) -> bool {
+    if instancing.shadow_cull.built_view_epoch != resources.resource_view_epoch {
+        return true;
+    }
+    instancing.shadow_cull.built_free_epoch != resources.resource_free_epoch
+        && !crate::renderer::prepare::instanced::cached_batches_resolve(
+            resources,
+            &instancing.batches,
+        )
+}
+
 impl ViewportRenderer {
     /// Render the shadow depth pass: directional CSM cascades into the atlas
     /// tiles and point-light cube-map faces, including per-cascade plugin draws.
@@ -116,20 +138,22 @@ impl ViewportRenderer {
                     .ensure_outputs(device, instance_count, batch_count);
                 // Drop shadow cull bind groups whose binding-0 instance storage
                 // buffer was rebuilt this frame; ensure_outputs already handles a
-                // resized shadow-vis buffer. Also drop the cutout bind groups when the
-                // free epoch moved: they sample a caster's albedo view, which
-                // replace_texture swaps under a stable id.
-                let free_epoch_moved =
-                    instancing.shadow_cull.built_free_epoch != resources.resource_free_epoch;
-                if instancing.shadow_cull.built_gen != instancing.instance_gen || free_epoch_moved {
+                // resized shadow-vis buffer. The cutout bind groups sample a caster's
+                // albedo view, so they must also drop when that view is no longer the
+                // one they were built against: unconditionally on a replace (which
+                // swaps the view under a live id), and on a free only when a resource
+                // the batches name has actually gone.
+                let bgs_stale = shadow_cull_bind_groups_stale(resources, instancing);
+                if instancing.shadow_cull.built_gen != instancing.instance_gen || bgs_stale {
                     instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
                     instancing.shadow_cull.shadow_cutout_cull_bgs.clear();
                     instancing.shadow_cull.built_gen = instancing.instance_gen;
                     instancing.shadow_cull.built_free_epoch = resources.resource_free_epoch;
+                    instancing.shadow_cull.built_view_epoch = resources.resource_view_epoch;
                     // The cached bundles baked the old cutout bind group, so force a
                     // re-record when a cutout caster exists; non-cutout shadow scenes
                     // keep replaying the bundle unchanged.
-                    if free_epoch_moved && instancing.batches.iter().any(|b| b.is_cutout) {
+                    if bgs_stale && instancing.batches.iter().any(|b| b.is_cutout) {
                         instancing.shadow_cull.bundle_key = None;
                     }
                 }
@@ -199,18 +223,15 @@ impl ViewportRenderer {
                     instancing
                         .shadow_cull
                         .ensure_outputs(device, instance_count, batch_count);
-                    // As above: also drop the cutout bind groups when the free epoch
-                    // moved, since they sample a caster's albedo view.
-                    let free_epoch_moved =
-                        instancing.shadow_cull.built_free_epoch != resources.resource_free_epoch;
-                    if instancing.shadow_cull.built_gen != instancing.instance_gen
-                        || free_epoch_moved
-                    {
+                    // As above: the cutout bind groups sample a caster's albedo view.
+                    let bgs_stale = shadow_cull_bind_groups_stale(resources, instancing);
+                    if instancing.shadow_cull.built_gen != instancing.instance_gen || bgs_stale {
                         instancing.shadow_cull.shadow_cull_instance_bgs = [None, None, None, None];
                         instancing.shadow_cull.shadow_cutout_cull_bgs.clear();
                         instancing.shadow_cull.built_gen = instancing.instance_gen;
                         instancing.shadow_cull.built_free_epoch = resources.resource_free_epoch;
-                        if free_epoch_moved && instancing.batches.iter().any(|b| b.is_cutout) {
+                        instancing.shadow_cull.built_view_epoch = resources.resource_view_epoch;
+                        if bgs_stale && instancing.batches.iter().any(|b| b.is_cutout) {
                             instancing.shadow_cull.bundle_key = None;
                         }
                     }

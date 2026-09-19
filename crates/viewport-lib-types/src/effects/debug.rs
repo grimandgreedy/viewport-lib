@@ -112,10 +112,14 @@ pub enum DebugOutputMode {
 ///
 /// Attach to [`EffectsDebug::debug_vis`] to activate per-fragment channel output.
 /// When `active` is false the overhead is zero: the lit pipelines compile
-/// without the debug code entirely (its per-fragment storage write would
-/// disable hardware early depth rejection and slow dense scenes by an order
-/// of magnitude). Turning debug vis on or off rebuilds those pipelines, so
-/// expect a one-off hitch on the frame the flag flips.
+/// without the debug code entirely, so they do not carry its registers on every
+/// draw. Turning debug vis on or off rebuilds those pipelines, so expect a
+/// one-off hitch on the frame the flag flips.
+///
+/// The rebuilt pipelines keep the same depth behaviour as the ordinary ones, so
+/// the same fragments run and quantities fed by `dpdx`/`dpdy` read the same
+/// neighbours they would otherwise. What you see here is what the ordinary
+/// render computes.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

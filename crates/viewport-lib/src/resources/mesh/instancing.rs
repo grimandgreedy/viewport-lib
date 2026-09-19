@@ -1,14 +1,16 @@
 use crate::resources::VertexBufferLayoutExt;
 use crate::resources::*;
+use crate::scene::material::TextureSlot as MaterialSlot;
 
 /// Instanced-draw pipelines, the shared per-instance storage buffer, and the
 /// per-material bind group cache. Created lazily by `ensure_instanced_pipelines`
 /// and `ensure_hdr_instanced_pipelines`.
 #[derive(Default)]
 pub(crate) struct InstancingResources {
-    /// How the colour pipelines bind material textures. `Bindless` (Vulkan/DX12)
-    /// swaps the per-batch group-1 textures for one texture array indexed per
-    /// material; `PerBatch` (the default, Metal/WebGPU) keeps the per-batch binds.
+    /// How the colour pipelines bind material textures. `Bindless` swaps the
+    /// per-batch group-1 textures for one texture array indexed per material;
+    /// `PerBatch` (the default) keeps the per-batch binds. Which one a device
+    /// gets depends on its enabled features, not on its backend.
     /// Fixed at renderer construction from the device's enabled features.
     pub(crate) material_texture_binding:
         crate::resources::mesh::instanced_bindless::MaterialTextureBinding,
@@ -1243,24 +1245,21 @@ impl DeviceResources {
             let inst_buf = self.instancing.storage_buf.as_ref()?;
             let vis_buf = shadow_cull.shadow_vis_bufs[cascade_idx].as_ref()?;
 
-            let albedo_view = match albedo_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.texture.view,
-            };
-            let normal_view = match normal_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.normal_map_view,
-            };
-            let ao_view = match ao_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.ao_map_view,
-            };
+            let albedo_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+                .view;
+            let normal_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+                .view;
+            let ao_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+                .view;
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("shadow_cutout_cull_bg"),
@@ -1366,36 +1365,31 @@ impl DeviceResources {
             let vis_buf = cull_state.visibility_index_buf.as_ref()?;
             let uv1_buf = self.uv1_chunk_or_fallback(uv1_chunk);
 
-            let albedo_view = match albedo_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.texture.view,
-            };
-            let normal_view = match normal_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.normal_map_view,
-            };
-            let ao_view = match ao_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.ao_map_view,
-            };
-            let mr_view = match mr_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.metallic_roughness_view,
-            };
-            let emissive_view = match emissive_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.emissive_view,
-            };
+            let albedo_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+                .view;
+            let normal_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+                .view;
+            let ao_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+                .view;
+            let mr_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::MetallicRoughness, mr_id)
+                .view;
+            let emissive_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Emissive, emissive_id)
+                .view;
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("instance_cull_tex_bg"),
@@ -1461,6 +1455,13 @@ impl DeviceResources {
         emissive_id: Option<crate::resources::TextureId>,
         uv1_chunk: u32,
     ) -> Option<&crate::gpu::BindGroup> {
+        use crate::resources::TextureSlot;
+        self.check_texture_slot(albedo_id, TextureSlot::MaterialAlbedo);
+        self.check_texture_slot(normal_map_id, TextureSlot::MaterialNormalMap);
+        self.check_texture_slot(ao_map_id, TextureSlot::MaterialAoMap);
+        self.check_texture_slot(mr_id, TextureSlot::MaterialMetallicRoughness);
+        self.check_texture_slot(emissive_id, TextureSlot::MaterialEmissive);
+
         let uv1_key = self.uv1_chunk_key(uv1_chunk);
         let key = (
             albedo_id.map(|t| t.raw()).unwrap_or(u64::MAX),
@@ -1479,36 +1480,31 @@ impl DeviceResources {
                 .uv1_chunk_buffer(uv1_chunk)
                 .unwrap_or(&self.content.fallback_uv1_buf);
 
-            let albedo_view = match albedo_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.texture.view,
-            };
-            let normal_view = match normal_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.normal_map_view,
-            };
-            let ao_view = match ao_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.ao_map_view,
-            };
-            let mr_view = match mr_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.metallic_roughness_view,
-            };
-            let emissive_view = match emissive_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.emissive_view,
-            };
+            let albedo_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+                .view;
+            let normal_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+                .view;
+            let ao_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+                .view;
+            let mr_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::MetallicRoughness, mr_id)
+                .view;
+            let emissive_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Emissive, emissive_id)
+                .view;
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("instance_tex_bg"),

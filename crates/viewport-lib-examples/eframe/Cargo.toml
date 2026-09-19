@@ -1,0 +1,113 @@
+[package]
+name = "viewport-lib-examples-eframe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+description = "eframe/egui-hosted viewport-lib examples, including the feature showcases"
+publish = false
+
+# The lib is the eframe version shim: see src/lib.rs.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+viewport-lib = { path = "../../viewport-lib", default-features = false }
+glam = { workspace = true }
+# eframe embeds wgpu, so its version pairs with viewport-lib's leg: 0.33 with
+# wgpu 27, 0.35 with 29, 0.36 with 30. All three are aliased and optional,
+# selected by the leg features below and re-exported from src/lib.rs under one
+# name. This is the one place optional deps survive the examples-crate split,
+# and they serve the leg axis rather than framework isolation.
+eframe033 = { package = "eframe", version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
+eframe035 = { package = "eframe", version = "0.35", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
+eframe036 = { package = "eframe", version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"], optional = true }
+# Model/scene import for eframe-showcase.
+viewport-lib-io = { version = "0.7.0" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Used directly by a handful of showcases: vertex-buffer casts in the GPU-plugin
+# demos, and a glyph-id lookup in the overlay text showcase.
+bytemuck = { version = "1.25", features = ["derive"] }
+ttf-parser = "0.25"
+
+# The lightmap-bake showcase runs the full offline lightmapper: this crate's
+# unwrap (xatlas) feeding viewport-lib's texel G-buffer + GI bake. Desktop-only:
+# xatlas is C++ and does not cross-compile to wasm.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+viewport-lib-lightbake = { version = "0.1.0" }
+
+[features]
+# Each leg pairs viewport-lib's wgpu leg with the eframe version that embeds the
+# same wgpu, and with the matching egui version of viewport-lib's `from_egui`
+# adapter.
+# `showcase` is on by default so the path-tracer and lightmap-bake showcase
+# builds in a plain `cargo build --all-targets` instead of being silently
+# skipped.
+default = ["wgpu27", "showcase"]
+wgpu27 = ["viewport-lib/wgpu27", "viewport-lib/egui-adapter", "dep:eframe033"]
+wgpu29 = ["viewport-lib/wgpu29", "viewport-lib/egui-adapter-035", "dep:eframe035"]
+wgpu30 = ["viewport-lib/wgpu30", "viewport-lib/egui-adapter-036", "dep:eframe036"]
+# The full showcase drives the path tracer and the lightmap baker.
+showcase = ["viewport-lib/raytrace", "viewport-lib/bake"]
+
+[[example]]
+name = "eframe-minimal"
+path = "examples/eframe_minimal/main.rs"
+
+# The leg-portable minimal example: it translates egui events itself instead of
+# using viewport-lib's `from_egui` (whose egui is pinned to 0.33), so one source
+# builds on all three legs. Replaces the old eframe-minimal-wgpu29 / -wgpu30 pair.
+[[example]]
+name = "eframe-minimal-callback"
+path = "examples/eframe_minimal_callback/main.rs"
+
+[[example]]
+name = "eframe-retained-overlay"
+path = "examples/eframe_retained_overlay/main.rs"
+
+[[example]]
+name = "eframe-exposure"
+path = "examples/eframe_exposure/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "eframe-lighting-shadows"
+path = "examples/eframe_lighting_shadows/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "eframe-input-controllers"
+path = "examples/eframe_input_controllers/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "eframe-primitives"
+path = "examples/eframe_primitives/main.rs"
+
+[[example]]
+name = "eframe-render-paths"
+path = "examples/eframe_render_paths/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "eframe-testing"
+path = "examples/eframe_testing/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "eframe-multi-viewport"
+path = "examples/eframe_multi_viewport/main.rs"
+
+[[example]]
+name = "eframe-showcase"
+path = "examples/eframe_showcase/main.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "showcase"
+path = "examples/showcase/main.rs"
+required-features = ["wgpu27", "showcase"]
+
+[[example]]
+name = "debug-light"
+path = "examples/debug_light/main.rs"

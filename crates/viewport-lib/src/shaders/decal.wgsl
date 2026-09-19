@@ -1,4 +1,4 @@
-// Screen-space decal projection shader (D1 + D2 + D3 + D4 + D6 + D7 + D8).
+// Screen-space decal projection shader.
 //
 // Group 0: camera_bgl (CameraUniform)
 // Group 1: per-viewport scene depth texture (depth-only aspect view)
@@ -6,8 +6,8 @@
 //
 // Vertex: full-screen quad (6 vertices, no vertex buffer)
 // Fragment: load scene depth, reconstruct world position, project into decal local
-//           space, sample texture, optionally perturb shading via a normal map,
-//           and apply roughness/metallic specular approximation.
+//           space, sample texture, optionally perturb the normal with a normal
+//           map, and light the result with the scene's lights and shadows.
 
 struct Camera {
     view_proj:     mat4x4<f32>,
@@ -21,11 +21,27 @@ struct Camera {
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 
-// Scene lights, shared with the opaque pass (same group 0 layout). Used so the
-// decal is lit by the real scene light direction rather than the camera view
-// direction, which made decals brighten and darken as the camera moved.
+// Scene lights, shared with the opaque pass (same group 0 layout). The decal
+// runs the same lighting model the opaque pass runs, so a decal sits in the
+// scene's light instead of reading as a sticker pasted over it.
 // #include "helpers/scene_lighting.wgsl"
 @group(0) @binding(3) var<uniform> lights_uniform: Lights;
+
+// Cascaded shadow map for the primary directional light, same bindings the
+// mesh shaders use.
+@group(0) @binding(1) var shadow_map:     texture_depth_2d;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
+
+struct ShadowAtlas {
+    cascade_vp: array<mat4x4<f32>, 4>,
+    cascade_splits: vec4<f32>,
+    cascade_count: u32,
+    atlas_size: f32,
+    shadow_filter: u32,
+    pcss_light_radius: f32,
+    atlas_rects: array<vec4<f32>, 8>,
+};
+@group(0) @binding(5) var<uniform> shadow_atlas: ShadowAtlas;
 
 // Scene depth written by the opaque pass (depth-only aspect, Depth24PlusStencil8).
 @group(1) @binding(0) var scene_depth:   texture_depth_2d;
@@ -38,23 +54,23 @@ struct DecalUniform {
     inv_transform:         mat4x4<f32>,
     blend_mode:            u32,   // 0 = Replace, 1 = Multiply
     alpha:                 f32,
-    normal_blend_strength: f32,   // D2: [0, 1], 0 = no effect
-    has_normal:            u32,   // D2: 1 when a normal map is bound
-    // D3
+    normal_blend_strength: f32,   // [0, 1], 0 = no effect
+    has_normal:            u32,   // 1 when a normal map is bound
+    // Surface response.
     roughness:             f32,   // [0, 1]: 0 = mirror-smooth, 1 = fully matte
     metallic:              f32,   // [0, 1]: 0 = dielectric, 1 = metal
     has_roughness_tex:     u32,   // 1 when roughness_tex is bound
     has_metallic_tex:      u32,   // 1 when metallic_tex is bound
-    // D4
+    // UV transform.
     uv_offset:             vec2<f32>,  // added to final UV before sampling
     uv_scale:              vec2<f32>,  // scales final UV before offset (sprite sheet / scroll)
-    // D6
+    // Emission.
     emissive:              f32,   // emissive intensity multiplier
     has_emissive_tex:      u32,   // 1 when emissive_tex is bound
-    // D7
+    // Edge fade and the ambient floor.
     edge_fade:             f32,   // [0, 0.5]: fraction of half-extent over which alpha fades
-    _pad:                  u32,
-    // D8
+    ambient:               f32,   // constant ambient coefficient, matching Material::ambient
+    // Projection mode.
     projection:            u32,   // 0 = Planar, 1 = TriPlanar
     tri_blend_sharpness:   f32,
     _pad2:                 u32,
@@ -64,10 +80,10 @@ struct DecalUniform {
 @group(2) @binding(0) var<uniform> u:             DecalUniform;
 @group(2) @binding(1) var          decal_tex:     texture_2d<f32>;
 @group(2) @binding(2) var          decal_samp:    sampler;
-@group(2) @binding(3) var          decal_normal:  texture_2d<f32>;  // D2
-@group(2) @binding(4) var          roughness_tex: texture_2d<f32>;  // D3
-@group(2) @binding(5) var          metallic_tex:  texture_2d<f32>;  // D3
-@group(2) @binding(6) var          emissive_tex:  texture_2d<f32>;  // D6
+@group(2) @binding(3) var          decal_normal:  texture_2d<f32>;
+@group(2) @binding(4) var          roughness_tex: texture_2d<f32>;
+@group(2) @binding(5) var          metallic_tex:  texture_2d<f32>;
+@group(2) @binding(6) var          emissive_tex:  texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) clip_pos: vec4<f32>,
@@ -92,20 +108,11 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-// Direction from `world` toward the primary scene light (index 0). Directional
-// lights use their fixed direction; point / spot lights point at the fragment.
-// Falls back to world up when no lights are present so the relief shading stays
-// stable and view-independent.
-fn primary_light_dir(world: vec3<f32>) -> vec3<f32> {
-    if lights_uniform.count == 0u {
-        return vec3<f32>(0.0, 0.0, 1.0);
-    }
-    let l = lights_storage[0];
-    if l.light_type == 0u {
-        return normalize(l.pos_or_dir);
-    }
-    return normalize(l.pos_or_dir - world);
-}
+// Cascade selection and filtering for the primary light's shadow, and the
+// Cook-Torrance BRDF. Both are the copies the mesh shaders use, so a decal and
+// the surface it lands on are lit and shadowed by the same code.
+// #include "helpers/csm.wgsl"
+// #include "helpers/brdf.wgsl"
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -113,7 +120,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pix   = vec2<i32>(i32(in.clip_pos.x), i32(in.clip_pos.y));
     let depth = textureLoad(scene_depth, pix, 0);
 
-    // D5: stencil 0 means this surface is marked non-receiver -- skip it.
+    // Stencil 0 means this surface is marked non-receiver -- skip it.
     let stencil = textureLoad(scene_stencil, pix, 0).r;
     if stencil == 0u { discard; }
 
@@ -143,7 +150,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // D7: compute edge fade from local-space coordinates.
+    // Compute edge fade from local-space coordinates.
     // Cylindrical: fade by radial distance and Z.
     // Planar / TriPlanar: fade by each box face.
     var edge_alpha = 1.0;
@@ -162,12 +169,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Estimate the receiver surface normal from world-position screen derivatives.
-    // Used for D2 normal-map shading and D3 specular -- not for the facing check.
+    // Used for normal-map shading and specular -- not for the facing check.
     let ddx_w    = dpdx(world);
     let ddy_w    = dpdy(world);
     let n_raw    = normalize(cross(ddx_w, ddy_w));
     let view_dir = normalize(camera.eye_pos - world);
     let N_recv   = select(-n_raw, n_raw, dot(n_raw, view_dir) > 0.0);
+
+    // Specular anti-aliasing kernel, taken in uniform control flow before any
+    // of the shading branches. The receiver normal here comes from depth
+    // derivatives, which step in bands as depth precision runs out; a tight
+    // highlight lands on those steps and reads as striping. Widening the lobe
+    // where the normal changes fast across the pixel absorbs it.
+    let n_du = dpdx(N_recv);
+    let n_dv = dpdy(N_recv);
+    let saa_kernel = min(0.5 * (dot(n_du, n_du) + dot(n_dv, n_dv)), 0.18);
 
     // Decal projection axis (column 2 of model matrix = world-space local Z,
     // extracted from rows of inv_transform via inverse-transpose).
@@ -176,13 +192,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Planar-only: reject fragments where the surface or camera doesn't face
     // the decal projection axis.  Skipped for tri-planar (all axes are used).
     //
-    // The surface-normal check (N_recv . decal_Z) prevents two problems that
-    // occur when a projection box overlaps geometry that is perpendicular to
-    // the projection direction:
-    //   - The D2 normal-map scaling ratio (new_nv / old_nv) becomes near-zero
-    //     on perpendicular surfaces, darkening the decal to black.
-    //   - The UV collapses to a constant coordinate, producing a uniform stripe
-    //     instead of the correct texture.
+    // The surface-normal check (N_recv . decal_Z) keeps the projection off
+    // geometry that is perpendicular to the projection direction, where the UV
+    // collapses to a constant coordinate and the decal smears into a uniform
+    // stripe instead of showing its texture.
     // A threshold of 0.1 rejects surfaces more than ~84 degrees off-axis while
     // allowing slightly curved or low-angle receivers.
     if u.projection == 0u {
@@ -190,7 +203,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if dot(view_dir, decal_Z) < 0.05 { discard; }
     }
 
-    // D9: Cylindrical facing check.
+    // Cylindrical facing check.
     // Transform receiver normal into decal local space and test its XY radial
     // component against the surface position to verify the surface faces the
     // correct side of the cylinder.
@@ -210,7 +223,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // D8/D9: sample texture.
+    // Sample the texture, by projection mode.
     // Planar: standard XY projection.
     // TriPlanar: blend three orthogonal projections weighted by the surface normal.
     // Cylindrical: angle around Z axis -> UV.x; position along Z -> UV.y.
@@ -218,12 +231,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var tex_col: vec4<f32>;
 
     if u.projection == 0u {
-        // D4: apply UV scale + offset. Base UV maps local XY from [-0.5, 0.5] to [0, 1].
+        // Apply UV scale + offset. Base UV maps local XY from [-0.5, 0.5] to [0, 1].
         let base_uv = local.xy + vec2<f32>(0.5);
         uv      = u.uv_offset + u.uv_scale * base_uv;
         tex_col = textureSample(decal_tex, decal_samp, uv);
     } else if u.projection == 2u || u.projection == 3u {
-        // D9: cylindrical -- angle around local Z axis, length along local Z.
+        // Cylindrical: angle around local Z axis, length along local Z.
         let angle   = atan2(local.y, local.x);
         let base_uv = vec2<f32>(angle / (2.0 * 3.14159265) + 0.5, local.z + 0.5);
         uv      = u.uv_offset + u.uv_scale * base_uv;
@@ -282,24 +295,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         N_final = normalize(mix(N_recv, N_decal, u.normal_blend_strength));
     }
 
-    // D2: Normal map shading perturbation.
-    // Modulate the decal colour by the change in diffuse response the normal map
-    // produces under the primary scene light: the ratio of new-to-old N.L. This
-    // reads as a lit indent/emboss instead of a flat sticker. Driven by the real
-    // light direction (not the camera), so it does not change as the camera
-    // moves. Clamped to a modest range so strong normal maps cannot drive the
-    // decal to black or blow it out.
-    if u.has_normal != 0u {
-        let L = primary_light_dir(world);
-        let old_nl = max(dot(N_recv,  L), 0.1);
-        let new_nl = max(dot(N_final, L), 0.1);
-        out_rgb = out_rgb * clamp(new_nl / old_nl, 0.5, 1.6);
-    }
-
-    // D3: Roughness and metallic specular highlight.
-    // Blinn-Phong against the primary scene light: the highlight sits where the
-    // half-vector aligns with the surface, gated by N.L so it never appears on
-    // the unlit side. Skipped for matte decals (gloss ~ 0).
     let roughness_val = select(u.roughness,
                                textureSample(roughness_tex, decal_samp, uv).r,
                                u.has_roughness_tex != 0u);
@@ -307,21 +302,66 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                                textureSample(metallic_tex,  decal_samp, uv).r,
                                u.has_metallic_tex  != 0u);
 
-    let gloss = 1.0 - roughness_val;
-    if gloss > 0.01 {
-        let L   = primary_light_dir(world);
-        let H   = normalize(L + view_dir);
-        let NoH = max(dot(N_final, H), 0.0);
-        let NoL = max(dot(N_final, L), 0.0);
-        // Phong exponent: increases quadratically with gloss for tight highlights.
-        let spec_exp       = max(gloss * gloss * 128.0, 1.0);
-        let spec_intensity = pow(NoH, spec_exp) * gloss * NoL;
-        // Dielectric: white highlight. Metal: highlight tinted by albedo colour.
-        let spec_color = mix(vec3<f32>(0.95), out_rgb, metallic_val);
-        out_rgb = out_rgb + spec_color * spec_intensity;
+    // Light the decal.
+    //
+    // The decal texture holds albedo, and it composites over a receiver that the
+    // opaque pass has already lit. Writing the albedo straight out puts the two
+    // on different scales: the decal ignores how bright the surface under it is,
+    // so it neither darkens in shadow nor follows the key light, and a decal
+    // authored against one rig reads wrong under any other. Running it through
+    // the same Cook-Torrance loop the opaque pass runs puts the decal's own
+    // colour in radiance units before the blend.
+    //
+    // Only `Replace` is lit. `Multiply` and `Additive` do not carry an albedo:
+    // multiply scales a receiver colour that already has the lighting in it, and
+    // additive adds emitted light. Lighting either would apply the scene's light
+    // twice.
+    if u.blend_mode == 0u {
+        let albedo   = tex_col.rgb;
+        let rough    = specular_aa_roughness_kernel(clamp(roughness_val, 0.04, 1.0), saa_kernel);
+        let metallic = clamp(metallic_val, 0.0, 1.0);
+        let F0       = mix(vec3<f32>(0.04), albedo, metallic);
+
+        var lo = vec3<f32>(0.0);
+        let range = cluster_light_range(world, lights_uniform.count);
+        for (var j = 0u; j < range.count; j = j + 1u) {
+            let idx = cluster_light_global(range, j);
+            let light = lights_storage[idx];
+            let ev = eval_light(light, world);
+            if !ev.in_range { continue; }
+            // pbr_light_contrib returns zero on the back hemisphere; skipping
+            // early also skips the shadow taps.
+            if dot(N_final, ev.l) <= 0.0 { continue; }
+            var radiance = ev.radiance;
+            // Shadowing follows the primary directional light only. Point-light
+            // shadow cubes are not sampled here, so a decal inside a point
+            // light's shadow still takes that light.
+            if lights_uniform.shadows_enabled != 0u && idx == 0u && light.light_type != 1u {
+                // Bias against the geometric receiver normal, not the
+                // normal-mapped one: the depth buffer the decal reads was
+                // written by the geometry.
+                let s = sample_shadow_csm(world, camera.eye_pos, N_recv, ev.l, 0u);
+                radiance = radiance * s.factor;
+            }
+            lo = lo + pbr_light_contrib(
+                N_final, view_dir, ev.l, radiance, albedo, metallic, rough, F0,
+            );
+        }
+
+        // Hemisphere ambient, matching the opaque pass's non-IBL branch. Image
+        // based lighting is not sampled here, so in an IBL-lit scene a decal
+        // takes the hemisphere fill where the surface under it takes the
+        // environment.
+        let hemi_t = clamp(N_final.z * 0.5 + 0.5, 0.0, 1.0);
+        let hemi   = mix(lights_uniform.ground_colour, lights_uniform.sky_colour, hemi_t)
+                     * lights_uniform.hemisphere_intensity;
+        let ambient = (vec3<f32>(u.ambient) + hemi)
+                      * (albedo * (1.0 - metallic) + F0 * metallic);
+
+        out_rgb = lo + ambient;
     }
 
-    // D6: emissive contribution -- always additive on top of the blend result.
+    // Emissive contribution: always additive on top of the blend result.
     if u.emissive > 0.0 {
         let emissive_col = select(out_rgb,
                                   textureSample(emissive_tex, decal_samp, uv).rgb,

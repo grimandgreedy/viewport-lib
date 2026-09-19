@@ -4,7 +4,10 @@
 //! isolated change must still re-record immediately, and a set that
 //! stabilises again must get the bundle back.
 
-use viewport_lib::{CameraFrame, FrameData, Material, PickId, SceneFrame, SceneRenderItem};
+use viewport_lib::{
+    CameraFrame, FrameData, Material, PickId, SamplerKey, SceneFrame, SceneRenderItem, TextureSlot,
+    WrapMode,
+};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 fn items(mesh_id: viewport_lib::MeshId, count: u32, id_base: u64) -> Vec<SceneRenderItem> {
@@ -12,14 +15,22 @@ fn items(mesh_id: viewport_lib::MeshId, count: u32, id_base: u64) -> Vec<SceneRe
         .map(|i| {
             let mut item = SceneRenderItem::default();
             item.mesh_id = mesh_id;
-            item.material = Material::from_colour([0.6, 0.65, 0.7]);
+            // A per-material sampler forces the per-object path: the instanced
+            // and bindless paths share one sampler per batch, so a material
+            // picking its own wrap mode draws per object.
+            item.material = Material::from_colour([0.6, 0.65, 0.7]).with_sampler(
+                TextureSlot::Albedo,
+                SamplerKey {
+                    wrap_u: WrapMode::ClampToEdge,
+                    wrap_v: WrapMode::ClampToEdge,
+                    ..Default::default()
+                },
+            );
             let x = (i % 16) as f32 * 2.0;
             let y = (i / 16) as f32 * 2.0;
             item.model =
                 glam::Mat4::from_translation(glam::Vec3::new(x, y, 0.0)).to_cols_array_2d();
             item.settings.pick_id = PickId(id_base + u64::from(i));
-            // Styled backface policy forces the per-object path.
-            item.material.backface_policy = viewport_lib::BackfacePolicy::Tint(0.5);
             item
         })
         .collect()

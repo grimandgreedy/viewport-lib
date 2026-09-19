@@ -193,7 +193,14 @@ pub fn clear_environment_zones(resources: &mut crate::resources::DeviceResources
 /// Upload an equirectangular HDR environment map as the scene default and
 /// precompute its IBL textures (array layer 0).
 ///
-/// `pixels` is row-major RGBA f32 (4 floats per pixel), `width`x`height`.
+/// `pixels` is **linear** row-major RGBA f32 (4 floats per pixel),
+/// `width`x`height`. Linear because these are radiance values, not display
+/// colour: an `.hdr` or `.exr` panorama is already linear and can be passed
+/// through, but an 8-bit image is sRGB-encoded and must be decoded before it
+/// gets here. Dividing 8-bit channels by 255 and passing the result feeds sRGB
+/// numbers in as radiance, which washes out every surface the environment
+/// lights, not just the background.
+///
 /// After this call, the camera bind groups must be rebuilt so shaders see
 /// the new textures: call `rebuild_camera_bind_groups` on the renderer.
 ///
@@ -219,6 +226,8 @@ pub fn upload_environment_map(
 /// the skybox: the environment lives at its own layer, ready to be selected per
 /// fragment once zone selection lands. Blocks until the upload finishes. Errors
 /// with `TooManyEnvironments` once the fixed [`IBL_ENV_CAPACITY`] is reached.
+///
+/// `pixels` is linear RGBA f32, as for [`upload_environment_map`].
 pub fn upload_environment(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,
@@ -270,7 +279,8 @@ fn drain_until_ready(
 /// the returned id reports `Ready`, the IBL textures are live and the
 /// caller's next call to `rebuild_camera_bind_groups` will pick them up.
 ///
-/// Ownership of `pixels` transfers into the background worker.
+/// `pixels` is linear RGBA f32, as for [`upload_environment_map`]. Ownership of
+/// `pixels` transfers into the background worker.
 pub fn begin_upload_environment_map(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,
@@ -292,6 +302,7 @@ pub fn begin_upload_environment_map(
 
 /// Start an asynchronous extra-environment upload into a freshly allocated
 /// layer. See [`upload_environment`]; returns the `JobId` and the new handle.
+/// `pixels` is linear RGBA f32.
 pub fn begin_upload_environment(
     resources: &mut crate::resources::DeviceResources,
     device: &crate::gpu::Device,

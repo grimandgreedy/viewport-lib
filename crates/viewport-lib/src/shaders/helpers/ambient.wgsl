@@ -12,9 +12,8 @@
 //   computed in uniform control flow. The instanced shaders must use these:
 //   their shading branches on per-instance values (non-uniform control flow),
 //   where dpdx/dpdy are not allowed.
-// - The underived names (`sample_ibl_prefiltered`, `ibl_ambient`,
-//   `specular_aa_roughness`) take the derivatives themselves and are valid
-//   only in uniform control flow. `sample_ibl_irradiance`,
+// - The underived names (`sample_ibl_prefiltered`, `ibl_ambient`) take the
+//   derivatives themselves and are valid only in uniform control flow. `sample_ibl_irradiance`,
 //   `sample_ibl_prefiltered`, `sample_brdf_lut`, and `ibl_ambient` are part
 //   of the frozen material-plugin shading contract
 //   (docs/issues/lighting-shader-injection-seam.md): their signatures must
@@ -187,24 +186,6 @@ fn sample_ibl_prefiltered(R: vec3<f32>, roughness: f32, rotation: f32) -> vec3<f
 /// roughness by the screen-space variance of the shading normal so a detailed
 /// normal map does not alias into per-pixel glints on a single-sampled
 /// target. Neutral on smooth normals; applies to direct and IBL specular.
-/// `kernel` is the caller-supplied normal-variance kernel
-/// (`min(0.5 * (dot(dpdx(N), dpdx(N)) + dot(dpdy(N), dpdy(N))), 0.18)`),
-/// computed in uniform control flow.
-fn specular_aa_roughness_kernel(roughness: f32, kernel: f32) -> f32 {
-    let alpha = roughness * roughness;
-    return sqrt(sqrt(clamp(alpha * alpha + kernel, 0.0, 1.0)));
-}
-
-/// `specular_aa_roughness_kernel` with the variance kernel taken in place.
-/// Uniform control flow only.
-fn specular_aa_roughness(N: vec3<f32>, roughness: f32) -> f32 {
-    let du = dpdx(N);
-    let dv = dpdy(N);
-    let variance = 0.25 * (dot(du, du) + dot(dv, dv));
-    let kernel = min(2.0 * variance, 0.18);
-    return specular_aa_roughness_kernel(roughness, kernel);
-}
-
 /// Look up the BRDF integration LUT (x=NdotV, y=roughness).
 fn sample_brdf_lut(NdotV: f32, roughness: f32) -> vec2<f32> {
     return textureSampleLevel(ibl_brdf_lut, ibl_sampler, vec2<f32>(NdotV, roughness), 0.0).rg;
@@ -271,7 +252,7 @@ fn ibl_ambient(
 }
 
 // ---------------------------------------------------------------------------
-// Per-layer variants for environment selection (F2). These sample a chosen
+// Per-layer variants for environment selection. These sample a chosen
 // array layer instead of the default layer 0, and are built on the explicit-LOD
 // (`_grad`) path so they are valid inside the per-fragment zone loop, where a
 // data-dependent weight test makes control flow non-uniform and `dpdx`/`dpdy`

@@ -1,0 +1,344 @@
+//! Showcase 40: GPU Vertex Warp
+//!
+//! Demonstrates `warp_attribute` and `warp_scale` on `SceneRenderItem`.
+//!
+//! A per-vertex displacement field is uploaded once alongside each mesh as an
+//! `AttributeData::VertexVector` attribute. The vertex shader reads the field
+//! from a storage buffer and adds `warp_scale * displacement` to each vertex
+//! position in local space. No CPU re-upload is needed to animate the effect.
+//!
+//! Three meshes are shown side by side with different displacement patterns:
+//!   - Left: a subdivided plane with a sinusoidal height field (standing waves).
+//!   - Centre: a sphere with a 4-lobe azimuthal displacement (flower mode).
+//!   - Right: a sphere with a Y2,0 spherical harmonic displacement (elongation mode).
+//!
+//! The warp_scale slider drives all three simultaneously.
+
+use crate::App;
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{
+    AttributeData, BackfacePolicy, LightKind, LightSource, LightingSettings, MeshId,
+    SceneRenderItem, ViewportRenderer, primitives,
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct VertexWarpState {
+    pub built: bool,
+    pub mesh_ids: [MeshId; 3],
+    pub scale: f32,
+}
+
+impl Default for VertexWarpState {
+    fn default() -> Self {
+        Self {
+            built: false,
+            mesh_ids: [MeshId::INVALID; 3],
+            scale: 0.5,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+pub(crate) fn build_warp_scene(app: &mut App, renderer: &mut ViewportRenderer) {
+    // Left: wavy plane.
+    let plane_id = {
+        let mut mesh = primitives::grid_plane(5.0, 5.0, 48, 48);
+        let disp: Vec<[f32; 3]> = mesh
+            .positions
+            .iter()
+            .map(|&[x, _, z]| {
+                let freq = std::f32::consts::TAU / 5.0;
+                let h = (freq * x).sin() * (freq * z).cos();
+                [0.0, h, 0.0]
+            })
+            .collect();
+        mesh.attributes
+            .insert("warp".to_string(), AttributeData::VertexVector(disp));
+        renderer
+            .resources_mut()
+            .upload_mesh_data(&app.device, &mesh)
+            .expect("warp plane")
+    };
+
+    // Centre: sphere with 4 azimuthal lobes.
+    let sphere_4lobe_id = {
+        let mut mesh = primitives::sphere(1.5, 64, 32);
+        let disp: Vec<[f32; 3]> = mesh
+            .positions
+            .iter()
+            .zip(mesh.normals.iter())
+            .map(|(&[x, y, _z], &nrm)| {
+                let phi = y.atan2(x); // azimuth around Z axis
+                let amp = (4.0 * phi).sin();
+                [nrm[0] * amp, nrm[1] * amp, nrm[2] * amp]
+            })
+            .collect();
+        mesh.attributes
+            .insert("warp".to_string(), AttributeData::VertexVector(disp));
+        renderer
+            .resources_mut()
+            .upload_mesh_data(&app.device, &mesh)
+            .expect("warp sphere 4lobe")
+    };
+
+    // Right: sphere with Y2,0 elongation mode.
+    let sphere_y20_id = {
+        let mut mesh = primitives::sphere(1.5, 64, 32);
+        let disp: Vec<[f32; 3]> = mesh
+            .positions
+            .iter()
+            .zip(mesh.normals.iter())
+            .map(|(&[x, y, z], &nrm)| {
+                let r2 = x * x + y * y + z * z;
+                // Y2,0 harmonic: (3z^2 - r^2) / r^2, normalised so peak is 1.
+                let amp = (3.0 * z * z - r2) / r2;
+                [nrm[0] * amp, nrm[1] * amp, nrm[2] * amp]
+            })
+            .collect();
+        mesh.attributes
+            .insert("warp".to_string(), AttributeData::VertexVector(disp));
+        renderer
+            .resources_mut()
+            .upload_mesh_data(&app.device, &mesh)
+            .expect("warp sphere y20")
+    };
+
+    app.warp_state.mesh_ids = [plane_id, sphere_4lobe_id, sphere_y20_id];
+    app.warp_state.built = true;
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_warp(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Warp scale:");
+    ui.add(egui::Slider::new(&mut app.warp_state.scale, -1.5..=1.5).step_by(0.01));
+
+    ui.separator();
+
+    ui.label("Left: wavy plane (sinusoidal height field)");
+    ui.label("Centre: sphere, 4-lobe azimuthal mode");
+    ui.label("Right: sphere, Y2,0 elongation mode");
+    ui.separator();
+    ui.label(
+        "Displacement vectors are baked into each mesh once at load time.\n\
+              The vertex shader scales them by warp_scale each frame with no CPU re-upload.",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Frame data
+// ---------------------------------------------------------------------------
+
+pub(crate) fn warp_scene_items(app: &App) -> Vec<SceneRenderItem> {
+    if !app.warp_state.built {
+        return vec![];
+    }
+
+    let [plane_id, lobe_id, y20_id] = app.warp_state.mesh_ids;
+
+    // Colours: coral, steel blue, sage green.
+    let colours: [[f32; 3]; 3] = [[0.75, 0.28, 0.05], [0.10, 0.26, 0.68], [0.10, 0.52, 0.18]];
+    let offsets: [f32; 3] = [-4.5, 0.0, 4.5];
+    let ids = [plane_id, lobe_id, y20_id];
+
+    ids.iter()
+        .zip(colours.iter())
+        .zip(offsets.iter())
+        .map(|((&mesh_id, &colour), &tx)| {
+            let mut item = SceneRenderItem::default();
+            item.mesh_id = mesh_id;
+            item.model =
+                glam::Mat4::from_translation(glam::Vec3::new(tx, 0.0, 0.0)).to_cols_array_2d();
+            item.material.backface_policy = BackfacePolicy::Identical;
+            item.material.base_colour = colour.into();
+            item.material.specular = 0.15;
+            item.warp_attribute = Some("warp".to_string());
+            item.warp_scale = app.warp_state.scale;
+            item
+        })
+        .collect()
+}
+
+pub(crate) fn warp_lighting() -> LightingSettings {
+    // Two opposing soft lights so all sides of the mesh are visible regardless
+    // of deformation direction, with a neutral hemisphere fill.
+    {
+        let mut _t = LightingSettings::default();
+        _t.lights = vec![
+            {
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Directional {
+                    direction: [0.3, 0.8, 0.5],
+                };
+                _t.colour = [1.0, 1.0, 1.0].into();
+                _t.intensity = 0.7;
+                _t
+            },
+            {
+                let mut _t = LightSource::default();
+                _t.kind = LightKind::Directional {
+                    direction: [-0.3, -0.5, -0.5],
+                };
+                _t.colour = [0.8, 0.85, 1.0].into();
+                _t.intensity = 0.3;
+                _t
+            },
+        ];
+        _t.shadows.enabled = false;
+        _t.hemisphere_intensity = 0.35;
+        _t.sky_colour = [0.9, 0.92, 1.0].into();
+        _t.ground_colour = [0.5, 0.5, 0.55].into();
+        _t
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.warp_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    build_warp_scene(app, renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::new(0.0, 0.0, 0.0),
+        distance: 10.0,
+        orientation: glam::Quat::from_rotation_x(0.6),
+        ..vpl::Camera::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = warp_scene_items(app);
+        (items, None, warp_lighting(), 0, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScVertexWarp;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScVertexWarp = ScVertexWarp;
+
+impl crate::Showcase for ScVertexWarp {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_warp(app, ui)
+    }
+}

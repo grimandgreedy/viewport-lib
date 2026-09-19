@@ -20,3 +20,8 @@ docs/
 settings.local.json
 CLAUDE.md
 .claude/
+i73080/
+# The excluded example crates resolve their own lockfiles (they are their own
+# workspace roots). They are publish = false example hosts, so the locks are
+# build artefacts like the root one.
+crates/viewport-lib-examples/*/Cargo.lock

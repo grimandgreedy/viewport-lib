@@ -18,6 +18,8 @@ pub mod action_frame;
 pub mod binding;
 /// Per-frame viewport context.
 pub mod context;
+/// The shape the pointer takes over a window.
+pub mod cursor;
 /// Default key/mouse bindings for the viewport.
 pub mod defaults;
 /// Viewport events, translated from native windowing/GUI events.
@@ -33,6 +35,7 @@ pub use action::Action;
 pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 pub use binding::{ActivationMode, Binding, KeyCode, Modifiers, MouseButton, Trigger, TriggerKind};
 pub use context::ViewportContext;
+pub use cursor::CursorShape;
 pub use defaults::default_bindings;
 pub use event::{ButtonState, ScrollUnits, Theme, ViewportEvent};
 pub use mode::{InputMode, NavigationMode};

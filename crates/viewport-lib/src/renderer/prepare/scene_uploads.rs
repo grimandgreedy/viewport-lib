@@ -51,6 +51,10 @@ impl ViewportRenderer {
             if item.settings.hidden || item.transforms.is_empty() {
                 continue;
             }
+            resources.check_texture_slot(
+                item.texture_id,
+                crate::resources::TextureSlot::MeshInstanceAlbedo,
+            );
 
             // The full-detail AABB sizes every instance; fetching it also tells
             // us whether the group is usable. No group, missing group, or a
@@ -555,7 +559,10 @@ impl ViewportRenderer {
                 // Apply appearance.opacity on top of the item's own alpha.
                 let mut effective = item.clone();
                 effective.alpha *= item.settings.opacity;
-                let key = crate::resources::decal::hash_decal_item(&effective);
+                let key = crate::resources::decal::hash_decal_item(
+                    &effective,
+                    &resources.content.textures,
+                );
                 match decal_cache.entry(key) {
                     std::collections::hash_map::Entry::Occupied(e) => {
                         // `selected` is not part of the cache key, so refresh it
@@ -566,6 +573,27 @@ impl ViewportRenderer {
                         decal_stats.reused += 1;
                     }
                     std::collections::hash_map::Entry::Vacant(e) => {
+                        use crate::resources::TextureSlot;
+                        resources.check_texture_slot(
+                            Some(effective.texture_id),
+                            TextureSlot::DecalAlbedo,
+                        );
+                        resources.check_texture_slot(
+                            effective.normal_texture_id,
+                            TextureSlot::DecalNormalMap,
+                        );
+                        resources.check_texture_slot(
+                            effective.roughness_texture_id,
+                            TextureSlot::DecalRoughness,
+                        );
+                        resources.check_texture_slot(
+                            effective.metallic_texture_id,
+                            TextureSlot::DecalMetallic,
+                        );
+                        resources.check_texture_slot(
+                            effective.emissive_texture_id,
+                            TextureSlot::DecalEmissive,
+                        );
                         let gpu = resources.upload_decal_item(device, &effective);
                         decal_gpu_data.push(gpu.clone());
                         e.insert(gpu);

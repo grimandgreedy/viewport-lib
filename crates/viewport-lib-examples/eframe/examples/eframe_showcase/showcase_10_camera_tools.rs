@@ -1,0 +1,313 @@
+//! Showcase 10: Camera Tools : build and controls.
+//!
+//! Six coloured boxes arranged along the cardinal axes so that every named
+//! view preset shows a clearly different face of the layout:
+//!   Front (+Y): red/green split visible
+//!   Right (+X): green/blue split visible
+//!   Top  (+Z): full cross visible from above
+
+use crate::App;
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{Easing, Material, Projection, ViewPreset, ViewportRenderer, scene::Scene};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct CameraToolsState {
+    pub built: bool,
+    pub scene: Scene,
+}
+
+impl Default for CameraToolsState {
+    fn default() -> Self {
+        Self {
+            built: false,
+            scene: Scene::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+impl App {
+    /// Build the scene for Showcase 10 (Camera Tools demo).
+    pub(crate) fn build_camera_tools_scene(&mut self, renderer: &mut ViewportRenderer) {
+        self.ct_state.scene = Scene::new();
+
+        let objects: &[(&str, glam::Vec3, [f32; 3])] = &[
+            ("Origin", glam::Vec3::ZERO, [0.40, 0.40, 0.40]),
+            (
+                "+X Right",
+                glam::Vec3::new(4.0, 0.0, 0.0),
+                [0.65, 0.09, 0.07],
+            ),
+            (
+                "-X Left",
+                glam::Vec3::new(-4.0, 0.0, 0.0),
+                [0.50, 0.10, 0.10],
+            ),
+            (
+                "+Y Front",
+                glam::Vec3::new(0.0, 4.0, 0.0),
+                [0.10, 0.52, 0.18],
+            ),
+            (
+                "-Y Back",
+                glam::Vec3::new(0.0, -4.0, 0.0),
+                [0.10, 0.40, 0.10],
+            ),
+            ("+Z Up", glam::Vec3::new(0.0, 0.0, 4.0), [0.10, 0.26, 0.68]),
+        ];
+
+        for (name, pos, colour) in objects {
+            let mesh = self.upload_box(renderer);
+            self.ct_state.scene.add_named(
+                name,
+                Some(mesh),
+                glam::Mat4::from_translation(*pos),
+                Material::from_colour(*colour),
+            );
+        }
+
+        self.ct_state.built = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_camera_tools(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Named Views:");
+    egui::Grid::new("cam_view_presets")
+        .num_columns(4)
+        .show(ui, |ui| {
+            for (label, preset) in [
+                ("Front", ViewPreset::Front),
+                ("Back", ViewPreset::Back),
+                ("Left", ViewPreset::Left),
+                ("Right", ViewPreset::Right),
+                ("Top", ViewPreset::Top),
+                ("Bottom", ViewPreset::Bottom),
+                ("Iso", ViewPreset::Isometric),
+            ] {
+                if ui.button(label).clicked() {
+                    app.cam_animator.fly_to_full(
+                        &app.camera,
+                        app.camera.center,
+                        app.camera.distance,
+                        preset.orientation(),
+                        preset.preferred_projection(),
+                        0.6,
+                        Easing::EaseInOutCubic,
+                    );
+                }
+            }
+        });
+    ui.separator();
+    ui.label("Projection:");
+    ui.horizontal(|ui| {
+        if ui
+            .radio(
+                app.camera.projection == Projection::Perspective,
+                "Perspective",
+            )
+            .clicked()
+        {
+            app.camera.projection = Projection::Perspective;
+        }
+        if ui
+            .radio(
+                app.camera.projection == Projection::Orthographic,
+                "Orthographic",
+            )
+            .clicked()
+        {
+            app.camera.projection = Projection::Orthographic;
+        }
+    });
+    if app.camera.projection == Projection::Perspective {
+        ui.separator();
+        let mut fov_deg = app.camera.fov_y.to_degrees();
+        ui.label(format!("FOV: {fov_deg:.0}\u{b0}"));
+        if ui
+            .add(egui::Slider::new(&mut fov_deg, 20.0_f32..=120.0_f32).suffix("\u{b0}"))
+            .changed()
+        {
+            app.camera.fov_y = fov_deg.to_radians();
+        }
+    }
+    ui.separator();
+    ui.label("The coloured boxes identify each axis:");
+    ui.label("Red = +X,  Green = +Y,  Blue = +Z");
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.ct_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_camera_tools_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 12.0,
+        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+        ..vpl::Camera::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app
+            .ct_state
+            .scene
+            .collect_render_items(&vpl::Selection::new());
+        let sg = app.ct_state.scene.version();
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0].into();
+            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t
+        };
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    if app.cam_animator.is_animating() {
+        cx.egui.request_repaint();
+    }
+}
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
+    app.cam_animator.update(dt, &mut app.camera);
+}
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScCameraTools;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScCameraTools = ScCameraTools;
+
+impl crate::Showcase for ScCameraTools {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        tick(app, cx)
+    }
+    fn advance(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        advance(app, cx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_camera_tools(app, ui)
+    }
+}

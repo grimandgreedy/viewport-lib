@@ -158,8 +158,15 @@ pub enum LightKind {
 pub struct LightSource {
     /// The type and geometric parameters of this light.
     pub kind: LightKind,
-    /// RGB light colour in linear 0..1. Default [1.0, 1.0, 1.0].
-    pub colour: [f32; 3],
+    /// Light colour: pure chromaticity, with the photometric magnitude carried
+    /// separately by [`intensity`](Self::intensity). Default white.
+    ///
+    /// Build it however the value arrives: [`Colour::rgb`](crate::colour::Colour::rgb)
+    /// or [`Colour::hex`](crate::colour::Colour::hex) for a value off a colour
+    /// picker or a Kelvin table, or
+    /// [`Colour::linear_rgb`](crate::colour::Colour::linear_rgb) for one already
+    /// in linear space.
+    pub colour: crate::colour::Colour,
     /// Photometric brightness, in the unit that matches [`Self::kind`]:
     /// **lux** ([`Lux`]) for [`LightKind::Directional`] (illuminance delivered to
     /// every surface), and **candela** ([`Candela`]) for [`LightKind::Point`] and
@@ -213,7 +220,7 @@ impl Default for LightSource {
                 // ~65 deg elevation: mostly overhead, slight front-right bias.
                 direction: [0.4, 0.3, 1.5],
             },
-            colour: [1.0, 1.0, 1.0],
+            colour: crate::colour::Colour::WHITE,
             // Faithful default: a modest key light, not a physical daylight
             // magnitude. With the energy-normalised (albedo/pi) diffuse, an
             // illuminance of ~pi reproduces the classic `albedo * intensity` look
@@ -384,10 +391,16 @@ pub enum ShadowFilter {
 pub struct LightingSettings {
     /// Active light sources (max 8). Default: one directional light.
     pub lights: Vec<LightSource>,
-    /// Sky colour for hemisphere ambient. Default [0.8, 0.9, 1.0].
-    pub sky_colour: [f32; 3],
-    /// Ground colour for hemisphere ambient. Default [0.5, 0.55, 0.6].
-    pub ground_colour: [f32; 3],
+    /// Sky colour for the hemisphere ambient fill: the tint of light arriving
+    /// from above, with the magnitude in
+    /// [`hemisphere_intensity`](Self::hemisphere_intensity). Default white.
+    ///
+    /// This is not the skybox, which comes from the environment map; with IBL
+    /// off, this and `ground_colour` are what a surface picks up as ambient.
+    pub sky_colour: crate::colour::Colour,
+    /// Ground colour for the hemisphere ambient fill: the tint of light bounced
+    /// from below. Default a neutral grey, a little darker than the sky.
+    pub ground_colour: crate::colour::Colour,
     /// Hemisphere (sky/ground) ambient fill, in the same linear scale as the
     /// lights' lux/candela. `0.0` disables it. The default is a gentle fill so
     /// shadowed surfaces stay readable rather than pitch black without washing
@@ -403,8 +416,8 @@ impl Default for LightingSettings {
     fn default() -> Self {
         Self {
             lights: vec![LightSource::default()],
-            sky_colour: [1.0, 1.0, 1.0],
-            ground_colour: [0.6, 0.6, 0.6],
+            sky_colour: crate::colour::Colour::WHITE,
+            ground_colour: crate::colour::Colour::linear_rgb(0.6, 0.6, 0.6),
             hemisphere_intensity: 0.4,
             shadows: ShadowSettings::default(),
         }

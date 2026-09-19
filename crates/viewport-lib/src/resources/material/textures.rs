@@ -1,38 +1,46 @@
 use crate::resources::*;
+use crate::scene::material::TextureSlot as MaterialSlot;
+
+pub use viewport_lib_types::data::texture::{TextureData, TexturePayload, TextureRole};
 
 impl DeviceResources {
-    /// Upload an RGBA texture to the GPU and return its texture ID.
+    /// Upload a texture and return its ID.
     ///
-    /// The ID can be stored in `Material::texture_id` to apply the texture to objects.
-    /// `rgba_data` must be exactly `width * height * 4` bytes in RGBA8 format.
+    /// The colour space travels on the [`TextureData`], not in the name of this
+    /// function: build the payload with [`TextureData::srgb`] for a colour
+    /// image, [`TextureData::linear`] for a data map, [`TextureData::normal_map`]
+    /// for a tangent-space normal map, or [`TextureData::hdr`] for float values
+    /// beyond the display range. The renderer picks the texture format from the
+    /// space and the bind slot from the role.
+    ///
+    /// Store the returned id in the matching slot, for example
+    /// `Material::texture_id` for an sRGB image or `Material::ao_map_id` for a
+    /// linear one.
     ///
     /// # Errors
     ///
-    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData) if the data length is incorrect.
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when the payload length does not match the dimensions.
     pub fn upload_texture(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba_data: &[u8],
+        data: TextureData,
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
         // Sync wrapper around the async path: build the job, drive it to
         // completion on the calling thread, and take the typed result. The
         // worker performs the same texture creation, sampler setup, and
-        // bind-group build that the apply closure runs from
-        // `process_uploads`. The data is copied into an owned `Vec` for the
-        // worker thread; small textures absorb this trivially, large
-        // textures pay one extra memcpy.
-        let id = self.begin_upload_texture(device, queue, width, height, rgba_data.to_vec())?;
+        // bind-group build that the apply closure runs from `process_uploads`.
+        let id = self.begin_upload_texture(device, queue, data)?;
         self.drain_until(device, queue, id)?;
         self.upload_result_texture(id)
     }
 
-    /// Upload an RGBA texture as a normal map and return its texture ID.
-    ///
-    /// Uses Rgba8Unorm format (not sRGB) so values are linear : required for correct
-    /// normal map decoding. `rgba_data` must be `width * height * 4` bytes.
+    /// Upload a tangent-space normal map.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: upload_texture(device, queue, TextureData::normal_map(w, h, rgba))"
+    )]
     pub fn upload_normal_map(
         &mut self,
         device: &crate::gpu::Device,
@@ -41,24 +49,18 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        // Sync wrapper; see `upload_texture` for the worker / apply layout.
-        let id = self.begin_upload_normal_map(device, queue, width, height, rgba_data.to_vec())?;
-        self.drain_until(device, queue, id)?;
-        self.upload_result_texture(id)
+        self.upload_texture(
+            device,
+            queue,
+            TextureData::normal_map(width, height, rgba_data.to_vec()),
+        )
     }
 
-    /// Upload a linear (non-sRGB) RGBA8 data texture and return its texture ID.
-    ///
-    /// For 8-bit textures that hold values rather than colour: metallic-roughness
-    /// / ORM, ambient occlusion, and standalone roughness or metallic maps. Uses
-    /// the linear `Rgba8Unorm` format (like [`upload_normal_map`](Self::upload_normal_map))
-    /// so the values are read back unchanged, and builds mips in linear space.
-    /// Store the returned id in the matching `Material` slot
-    /// (`metallic_roughness_texture_id`, `ao_map_id`, ...).
-    ///
-    /// Use [`upload_texture`](Self::upload_texture) instead for base-colour /
-    /// emissive images, which are sRGB. `rgba_data` must be `width * height * 4`
-    /// bytes.
+    /// Upload a linear (non-sRGB) RGBA8 data texture.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: upload_texture(device, queue, TextureData::linear(w, h, rgba))"
+    )]
     pub fn upload_data_texture(
         &mut self,
         device: &crate::gpu::Device,
@@ -67,149 +69,18 @@ impl DeviceResources {
         height: u32,
         rgba_data: &[u8],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        // Sync wrapper; see `upload_texture` for the worker / apply layout.
-        let id =
-            self.begin_upload_data_texture(device, queue, width, height, rgba_data.to_vec())?;
-        self.drain_until(device, queue, id)?;
-        self.upload_result_texture(id)
-    }
-
-    // -----------------------------------------------------------------------
-    // Async texture upload (routed through the upload-job runner)
-    // -----------------------------------------------------------------------
-
-    /// Start an asynchronous albedo texture upload.
-    ///
-    /// Returns a `JobId` immediately. The mip chain is built on a worker
-    /// thread; the texture creation and pixel copy then run on the device
-    /// thread during a `process_uploads` call, under the frame budget when
-    /// one is set, and the runner gates the job on a submission that
-    /// flushes those writes. Once the status is `Ready`, take the resulting
-    /// texture id with `upload_result_texture` and store it in
-    /// `Material::texture_id`.
-    ///
-    /// `rgba` transfers into the worker; clone at the call site to retain
-    /// it. Format and binding match the synchronous `upload_texture`.
-    ///
-    /// # Errors
-    ///
-    /// Returns
-    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// when `rgba.len() != width * height * 4`, reported before any job is
-    /// submitted.
-    pub fn begin_upload_texture(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        Ok(self.spawn_texture_upload(
+        self.upload_texture(
             device,
             queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba8UnormSrgb,
-                is_normal_map: false,
-                mip_levels: vec![rgba],
-            },
-        ))
+            TextureData::linear(width, height, rgba_data.to_vec()),
+        )
     }
 
-    /// Start an asynchronous normal-map upload.
-    ///
-    /// Same shape as `begin_upload_texture`, but the texture is created
-    /// with the linear `Rgba8Unorm` format and bound into the normal-map
-    /// slot. Take the result with `upload_result_texture` once `Ready`.
-    ///
-    /// # Errors
-    ///
-    /// Same as `begin_upload_texture`.
-    pub fn begin_upload_normal_map(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        Ok(self.spawn_texture_upload(
-            device,
-            queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba8Unorm,
-                is_normal_map: true,
-                mip_levels: vec![rgba],
-            },
-        ))
-    }
-
-    /// Start an asynchronous linear data-texture upload.
-    ///
-    /// Same shape as [`begin_upload_texture`](Self::begin_upload_texture) but the
-    /// texture is created with the linear `Rgba8Unorm` format (mips built in
-    /// linear space) and bound as a general material texture, not a normal map.
-    /// For metallic-roughness / ORM / AO / roughness / metallic maps. Take the
-    /// result with [`upload_result_texture`](Self::upload_result_texture) once
-    /// `Ready`.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`begin_upload_texture`](Self::begin_upload_texture).
-    pub fn begin_upload_data_texture(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        Ok(self.spawn_texture_upload(
-            device,
-            queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba8Unorm,
-                is_normal_map: false,
-                mip_levels: vec![rgba],
-            },
-        ))
-    }
-
-    /// Upload a linear HDR RGBA texture (`Rgba16Float`) and return its texture ID.
-    ///
-    /// For baked lightmaps and other data whose values exceed 1.0: the 8-bit
-    /// [`upload_texture`](Self::upload_texture) path clamps at upload, so bright
-    /// baked radiance is lost before it reaches the HDR render path. This keeps
-    /// the full range. `rgba` is `width * height * 4` linear `f32` values (RGBA,
-    /// row-major); they are converted to half floats. No mip chain is built
-    /// (lightmaps sample the base level), so the texture is single-mip.
+    /// Upload a linear HDR RGBA texture (`Rgba16Float`).
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: upload_texture(device, queue, TextureData::hdr(w, h, rgba))"
+    )]
     pub fn upload_texture_hdr(
         &mut self,
         device: &crate::gpu::Device,
@@ -218,24 +89,94 @@ impl DeviceResources {
         height: u32,
         rgba: &[f32],
     ) -> crate::error::ViewportResult<crate::resources::TextureId> {
-        let id = self.begin_upload_texture_hdr(device, queue, width, height, rgba.to_vec())?;
-        self.drain_until(device, queue, id)?;
-        self.upload_result_texture(id)
+        self.upload_texture(
+            device,
+            queue,
+            TextureData::hdr(width, height, rgba.to_vec()),
+        )
     }
 
-    /// Start an asynchronous linear-HDR (`Rgba16Float`) texture upload.
+    // -----------------------------------------------------------------------
+    // Async texture upload (routed through the upload-job runner)
+    // -----------------------------------------------------------------------
+
+    /// Start an asynchronous texture upload.
     ///
-    /// Same shape as [`begin_upload_texture`](Self::begin_upload_texture) but the
-    /// texture is created as `Rgba16Float` (single mip) so values above 1.0
-    /// survive. `rgba` is `width * height * 4` linear `f32` values, converted to
-    /// half floats before upload. Take the result with
-    /// [`upload_result_texture`](Self::upload_result_texture) once `Ready`.
+    /// Returns a [`JobId`](crate::resources::JobId) immediately; the texture is
+    /// created and written on a worker thread during a `process_uploads` call,
+    /// under the frame budget when one is set. Once the status is `Ready`, take
+    /// the id with [`upload_result_texture`](Self::upload_result_texture).
+    ///
+    /// Format and binding follow the [`TextureData`], exactly as for the
+    /// synchronous [`upload_texture`](Self::upload_texture); `data` transfers
+    /// into the worker.
     ///
     /// # Errors
     ///
-    /// Returns
-    /// [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
-    /// when `rgba.len() != width * height * 4`.
+    /// Returns [`ViewportError::InvalidTextureData`](crate::error::ViewportError::InvalidTextureData)
+    /// when the payload length does not match the dimensions, reported before
+    /// any job is submitted.
+    pub fn begin_upload_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        data: TextureData,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        data.validate()?;
+        let width = data.width();
+        let height = data.height();
+        let is_normal_map = data.role() == TextureRole::NormalMap;
+        let (format, bytes) = texture_format_and_bytes(data);
+        Ok(self.spawn_texture_upload(
+            device,
+            queue,
+            TextureUploadSpec {
+                width,
+                height,
+                format,
+                is_normal_map,
+                mip_levels: vec![bytes],
+            },
+        ))
+    }
+
+    /// Start an asynchronous normal-map upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::normal_map(w, h, rgba))"
+    )]
+    pub fn begin_upload_normal_map(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.begin_upload_texture(device, queue, TextureData::normal_map(width, height, rgba))
+    }
+
+    /// Start an asynchronous linear data-texture upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::linear(w, h, rgba))"
+    )]
+    pub fn begin_upload_data_texture(
+        &mut self,
+        device: &crate::gpu::Device,
+        queue: &crate::gpu::Queue,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> crate::error::ViewportResult<crate::resources::JobId> {
+        self.begin_upload_texture(device, queue, TextureData::linear(width, height, rgba))
+    }
+
+    /// Start an asynchronous linear-HDR (`Rgba16Float`) texture upload.
+    #[deprecated(
+        since = "0.23.0",
+        note = "build the payload instead: begin_upload_texture(device, queue, TextureData::hdr(w, h, rgba))"
+    )]
     pub fn begin_upload_texture_hdr(
         &mut self,
         device: &crate::gpu::Device,
@@ -244,29 +185,7 @@ impl DeviceResources {
         height: u32,
         rgba: Vec<f32>,
     ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let expected = (width * height * 4) as usize;
-        if rgba.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba.len(),
-            });
-        }
-        // Pack to half-float bytes (2 bytes per channel, little-endian).
-        let mut bytes = Vec::with_capacity(rgba.len() * 2);
-        for &v in &rgba {
-            bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
-        }
-        Ok(self.spawn_texture_upload(
-            device,
-            queue,
-            TextureUploadSpec {
-                width,
-                height,
-                format: crate::gpu::TextureFormat::Rgba16Float,
-                is_normal_map: false,
-                mip_levels: vec![bytes],
-            },
-        ))
+        self.begin_upload_texture(device, queue, TextureData::hdr(width, height, rgba))
     }
 
     /// Upload a multi-page HDR lightmap atlas (`Rgba16Float` texture array) and
@@ -390,6 +309,8 @@ impl DeviceResources {
             view,
             sampler,
             bind_group,
+            // Half-float radiance, always linear.
+            colour_space: Some(crate::ColourSpace::Linear),
         };
         Ok(self
             .content
@@ -769,6 +690,19 @@ impl DeviceResources {
         }
     }
 
+    /// The colour space `id` was uploaded in, or `None` if `id` does not resolve
+    /// to a live texture or names an external caller-owned view (whose format the
+    /// store cannot see).
+    ///
+    /// This is what a slot requiring a particular space is checked against, so it
+    /// is also the answer to "why did that texture come back as a mismatch".
+    pub fn texture_colour_space(
+        &self,
+        id: crate::resources::TextureId,
+    ) -> Option<crate::ColourSpace> {
+        self.content.textures.get(id).and_then(|t| t.colour_space)
+    }
+
     /// Release a user-uploaded texture, reclaiming its slot and GPU memory.
     ///
     /// Drops the `GpuTexture` (wgpu defers the real free until in-flight
@@ -780,8 +714,13 @@ impl DeviceResources {
     ///
     /// Returns `true` if a texture was released, `false` if `id` did not resolve
     /// to a live texture (already freed, never uploaded, or a stale handle).
-    /// Materials still holding `id` are not rewritten; they fall back to the
-    /// fallback texture until reassigned.
+    ///
+    /// Materials still holding `id` are not rewritten. They render as though that
+    /// slot had never been set: the material's own scalar values are used, so a
+    /// freed metallic-roughness map leaves `metallic` and `roughness` in charge
+    /// and a freed emissive map leaves the emissive colour in charge. The slot
+    /// binds a neutral fallback view to satisfy the layout, but nothing samples
+    /// it. Reassign the slot to a live texture to get it back.
     pub fn free_texture(&mut self, id: crate::resources::TextureId) -> bool {
         if !self.content.textures.remove(id) {
             return false;
@@ -801,10 +740,11 @@ impl DeviceResources {
     /// this for content that changes over time (a streamed or animated texture)
     /// where re-uploading and reassigning a fresh id would be wasteful.
     ///
-    /// The texture is recreated as an `Rgba8UnormSrgb` albedo texture, matching
-    /// [`upload_texture`](Self::upload_texture); `rgba_data` must be exactly
-    /// `width * height * 4` bytes. Dimensions and format need not match the
-    /// original upload.
+    /// The colour space and the bind slot come from `data`, exactly as for
+    /// [`upload_texture`](Self::upload_texture): replacing a normal map means
+    /// passing [`TextureData::normal_map`], not raw bytes that would be recreated
+    /// as sRGB colour. Dimensions, space, and role need not match the original
+    /// upload, though changing the role moves which slot the texture binds into.
     ///
     /// # Errors
     ///
@@ -823,31 +763,26 @@ impl DeviceResources {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         id: crate::resources::TextureId,
-        width: u32,
-        height: u32,
-        rgba_data: &[u8],
+        data: TextureData,
     ) -> crate::error::ViewportResult<()> {
-        let expected = (width * height * 4) as usize;
-        if rgba_data.len() != expected {
-            return Err(crate::error::ViewportError::InvalidTextureData {
-                expected,
-                actual: rgba_data.len(),
-            });
-        }
+        data.validate()?;
+        let (width, height) = (data.width(), data.height());
+        let is_normal_map = data.role() == TextureRole::NormalMap;
+        let (format, pixels) = texture_format_and_bytes(data);
         let gpu_texture = build_gpu_texture(
             device,
             queue,
             width,
             height,
-            crate::gpu::TextureFormat::Rgba8UnormSrgb,
-            false,
-            std::slice::from_ref(&rgba_data.to_vec()),
+            format,
+            is_normal_map,
+            std::slice::from_ref(&pixels),
             &self.material.texture_bgl,
             &self.material.texture.view,
             &self.material.normal_map_view,
             &self.material.ao_map_view,
         );
-        let bytes = rgba_data.len() as u64;
+        let bytes = pixels.len() as u64;
         if self
             .content
             .textures
@@ -867,6 +802,9 @@ impl DeviceResources {
         // item set (same mesh and texture id) never rebuilds those bind groups or the
         // cached render bundle, so a replaced texture keeps showing its old pixels.
         self.resource_free_epoch += 1;
+        // The view moved under a live id, so a cache that validates ids cannot tell
+        // anything changed. This is the counter that says it did.
+        self.resource_view_epoch += 1;
         Ok(())
     }
 
@@ -941,6 +879,7 @@ impl DeviceResources {
         // cached render bundle rebuild against the new view, exactly as for
         // `replace_texture`; without it a stable item set keeps sampling the old view.
         self.resource_free_epoch += 1;
+        self.resource_view_epoch += 1;
         true
     }
 
@@ -1229,6 +1168,7 @@ fn finish_gpu_texture(
         ],
     });
     GpuTexture {
+        colour_space: Some(format_colour_space(texture.format())),
         texture: Some(texture),
         view,
         sampler,
@@ -1278,6 +1218,9 @@ fn build_external_gpu_texture(
         view: view.clone(),
         sampler,
         bind_group,
+        // A `TextureView` does not report its format, so an external entry has
+        // no recorded space and slot checks skip it.
+        colour_space: None,
     }
 }
 
@@ -1339,24 +1282,21 @@ impl DeviceResources {
         );
 
         if !self.content.material_bind_groups.contains_key(&key) {
-            let albedo_view = match albedo_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.texture.view,
-            };
-            let normal_view = match normal_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.normal_map_view,
-            };
-            let ao_view = match ao_map_id {
-                Some(id) if self.content.textures.get(id).is_some() => {
-                    &self.content.textures.get(id).unwrap().view
-                }
-                _ => &self.material.ao_map_view,
-            };
+            let albedo_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+                .view;
+            let normal_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+                .view;
+            let ao_view = self
+                .content
+                .textures
+                .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+                .view;
 
             let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
                 label: Some("material_bg"),
@@ -1412,6 +1352,17 @@ impl DeviceResources {
         metallic_roughness_id: Option<crate::resources::TextureId>,
         emissive_texture_id: Option<crate::resources::TextureId>,
     ) {
+        // Each id lands in a slot with a colour-space requirement; a mismatch is
+        // recorded here and returned by `prepare` rather than rendered.
+        self.check_texture_slot(albedo_id, TextureSlot::MaterialAlbedo);
+        self.check_texture_slot(normal_map_id, TextureSlot::MaterialNormalMap);
+        self.check_texture_slot(ao_map_id, TextureSlot::MaterialAoMap);
+        self.check_texture_slot(
+            metallic_roughness_id,
+            TextureSlot::MaterialMetallicRoughness,
+        );
+        self.check_texture_slot(emissive_texture_id, TextureSlot::MaterialEmissive);
+
         let hash_str = |name: &str| -> u64 {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1474,24 +1425,21 @@ impl DeviceResources {
             }
         }
 
-        let albedo_view = match albedo_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.texture.view,
-        };
-        let normal_view = match normal_map_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.normal_map_view,
-        };
-        let ao_view = match ao_map_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.ao_map_view,
-        };
+        let albedo_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+            .view;
+        let normal_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+            .view;
+        let ao_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+            .view;
         let lut_view = match lut_id {
             Some(id) if id.0 < self.content.colourmap_views.len() => {
                 &self.content.colourmap_views[id.0]
@@ -1590,18 +1538,20 @@ impl DeviceResources {
             .or(mesh.extension_attr_buffer.as_ref())
             .unwrap_or(&self.content.fallback_extension_attr_buf);
 
-        let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.metallic_roughness_view,
-        };
-        let emissive_view: &crate::gpu::TextureView = match emissive_texture_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.emissive_view,
-        };
+        let metallic_roughness_view = self
+            .content
+            .textures
+            .resolve_slot(
+                &self.material,
+                MaterialSlot::MetallicRoughness,
+                metallic_roughness_id,
+            )
+            .view;
+        let emissive_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Emissive, emissive_texture_id)
+            .view;
 
         // Second UV set (binding 19): swap in the mesh's per-chunk uv1 buffer when
         // it carries one, otherwise keep the zero fallback. The per-object uniform
@@ -1839,24 +1789,21 @@ impl DeviceResources {
             return None;
         }
 
-        let albedo_view = match albedo_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.texture.view,
-        };
-        let normal_view = match normal_map_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.normal_map_view,
-        };
-        let ao_view = match ao_map_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.ao_map_view,
-        };
+        let albedo_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Albedo, albedo_id)
+            .view;
+        let normal_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Normal, normal_map_id)
+            .view;
+        let ao_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Ao, ao_map_id)
+            .view;
         let lut_view = match lut_id {
             Some(id) if id.0 < self.content.colourmap_views.len() => {
                 &self.content.colourmap_views[id.0]
@@ -1953,18 +1900,20 @@ impl DeviceResources {
             .as_ref()
             .unwrap_or(&self.material.texture_array_view);
 
-        let metallic_roughness_view: &crate::gpu::TextureView = match metallic_roughness_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.metallic_roughness_view,
-        };
-        let emissive_view: &crate::gpu::TextureView = match emissive_texture_id {
-            Some(id) if self.content.textures.get(id).is_some() => {
-                &self.content.textures.get(id).unwrap().view
-            }
-            _ => &self.material.emissive_view,
-        };
+        let metallic_roughness_view = self
+            .content
+            .textures
+            .resolve_slot(
+                &self.material,
+                MaterialSlot::MetallicRoughness,
+                metallic_roughness_id,
+            )
+            .view;
+        let emissive_view = self
+            .content
+            .textures
+            .resolve_slot(&self.material, MaterialSlot::Emissive, emissive_texture_id)
+            .view;
 
         // Second UV set (binding 19): the mesh's per-chunk uv1 buffer, or the zero
         // fallback when it has none. See `update_mesh_texture_bind_group`.
@@ -2361,6 +2310,7 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod async_texture_tests {
+    use super::TextureData;
     use crate::DeviceResources;
     use crate::resources::UploadStatus;
 
@@ -2440,7 +2390,7 @@ mod async_texture_tests {
         // before any job is submitted.
         let rgba = vec![0u8; 12];
         let err = resources
-            .begin_upload_texture(&device, &queue, 2, 2, rgba)
+            .begin_upload_texture(&device, &queue, TextureData::srgb(2, 2, rgba))
             .expect_err("invalid size should error");
         assert!(matches!(
             err,
@@ -2463,7 +2413,7 @@ mod async_texture_tests {
 
         let rgba = vec![128u8; 4 * 4 * 4];
         let id = resources
-            .begin_upload_texture(&device, &queue, 4, 4, rgba)
+            .begin_upload_texture(&device, &queue, TextureData::srgb(4, 4, rgba))
             .unwrap();
         assert_eq!(resources.uploads_pending(), 1);
 
@@ -2496,7 +2446,7 @@ mod async_texture_tests {
 
         let rgba = vec![64u8; 8 * 8 * 4];
         let id = resources
-            .begin_upload_normal_map(&device, &queue, 8, 8, rgba)
+            .begin_upload_texture(&device, &queue, TextureData::normal_map(8, 8, rgba))
             .unwrap();
         drive_until_ready(&mut resources, &device, &queue, id);
         let tex_id = resources.upload_result_texture(id).expect("ready result");
@@ -2514,7 +2464,7 @@ mod async_texture_tests {
 
         let rgba = vec![200u8; 4 * 4 * 4];
         let tex_id = resources
-            .upload_texture(&device, &queue, 4, 4, &rgba)
+            .upload_texture(&device, &queue, TextureData::srgb(4, 4, rgba.to_vec()))
             .unwrap();
         assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
     }
@@ -2531,7 +2481,7 @@ mod async_texture_tests {
         // A metallic-roughness style data map: linear bytes, not colour.
         let rgba = vec![128u8; 8 * 8 * 4];
         let tex_id = resources
-            .upload_data_texture(&device, &queue, 8, 8, &rgba)
+            .upload_texture(&device, &queue, TextureData::linear(8, 8, rgba.to_vec()))
             .unwrap();
         assert_eq!(tex_id, crate::resources::TextureId::from_raw(0));
     }
@@ -2546,13 +2496,22 @@ mod async_texture_tests {
             DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
 
         let id = resources
-            .upload_texture(&device, &queue, 4, 4, &vec![200u8; 4 * 4 * 4])
+            .upload_texture(
+                &device,
+                &queue,
+                TextureData::srgb(4, 4, vec![200u8; 4 * 4 * 4].to_vec()),
+            )
             .unwrap();
         let bytes_4x4 = resources.resident_bytes().texture_bytes;
 
         // Replace in place with a larger image: same handle, larger byte total.
         resources
-            .replace_texture(&device, &queue, id, 8, 8, &vec![10u8; 8 * 8 * 4])
+            .replace_texture(
+                &device,
+                &queue,
+                id,
+                TextureData::srgb(8, 8, vec![10u8; 8 * 8 * 4]),
+            )
             .expect("replace on a live handle succeeds");
         assert!(resources.texture_view(id).is_some(), "handle stays valid");
         let bytes_8x8 = resources.resident_bytes().texture_bytes;
@@ -2563,7 +2522,7 @@ mod async_texture_tests {
 
         // Wrong data length is rejected before touching the slot.
         let err = resources
-            .replace_texture(&device, &queue, id, 8, 8, &[0u8; 3])
+            .replace_texture(&device, &queue, id, TextureData::srgb(8, 8, vec![0u8; 3]))
             .unwrap_err();
         assert!(matches!(
             err,
@@ -2573,12 +2532,99 @@ mod async_texture_tests {
         // A stale handle is rejected.
         assert!(resources.free_texture(id));
         let err = resources
-            .replace_texture(&device, &queue, id, 4, 4, &vec![0u8; 4 * 4 * 4])
+            .replace_texture(
+                &device,
+                &queue,
+                id,
+                TextureData::srgb(4, 4, vec![0u8; 4 * 4 * 4]),
+            )
             .unwrap_err();
         assert!(matches!(
             err,
             crate::error::ViewportError::StaleHandle { .. }
         ));
+    }
+
+    #[test]
+    fn slot_mismatch_is_recorded_and_reported() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        // A normal map uploaded through the colour path: the exact mistake that
+        // shipped in the showcase decal.
+        let wrong = resources
+            .upload_texture(&device, &queue, TextureData::srgb(4, 4, vec![128u8; 64]))
+            .unwrap();
+        let right = resources
+            .upload_texture(
+                &device,
+                &queue,
+                TextureData::normal_map(4, 4, vec![128u8; 64]),
+            )
+            .unwrap();
+        assert!(
+            resources.texture_slot_mismatch().is_ok(),
+            "nothing bound yet"
+        );
+
+        resources.check_texture_slot(Some(right), super::TextureSlot::MaterialNormalMap);
+        assert!(
+            resources.texture_slot_mismatch().is_ok(),
+            "a linear upload into a linear slot is not a mismatch"
+        );
+
+        resources.check_texture_slot(Some(wrong), super::TextureSlot::MaterialNormalMap);
+        let err = resources.texture_slot_mismatch().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("normal_map_id"), "{msg}");
+        assert!(msg.contains("TextureData::normal_map"), "{msg}");
+
+        // Recorded once per (texture, slot), so redrawing does not grow the list.
+        resources.check_texture_slot(Some(wrong), super::TextureSlot::MaterialNormalMap);
+        assert_eq!(resources.texture_slot_mismatches().len(), 1);
+
+        resources.clear_texture_slot_mismatches();
+        assert!(resources.texture_slot_mismatch().is_ok());
+    }
+
+    #[test]
+    fn every_slot_names_a_constructor_producing_its_space() {
+        use super::TextureSlot::*;
+        for slot in [
+            MaterialAlbedo,
+            MaterialNormalMap,
+            MaterialAoMap,
+            MaterialMetallicRoughness,
+            MaterialEmissive,
+            DecalAlbedo,
+            DecalNormalMap,
+            DecalRoughness,
+            DecalMetallic,
+            DecalEmissive,
+            SpriteAlbedo,
+            SpriteNormalMap,
+            RibbonAlbedo,
+            MeshInstanceAlbedo,
+            LightmapPrimary,
+            LightmapSecondary,
+        ] {
+            let built = match slot.constructor() {
+                "TextureData::srgb" => TextureData::srgb(1, 1, vec![0u8; 4]),
+                "TextureData::linear" => TextureData::linear(1, 1, vec![0u8; 4]),
+                "TextureData::normal_map" => TextureData::normal_map(1, 1, vec![0u8; 4]),
+                other => panic!("{} names an unknown constructor {other}", slot.field_name()),
+            };
+            assert_eq!(
+                built.colour_space(),
+                slot.required_space(),
+                "{} names a constructor that produces the wrong space",
+                slot.field_name()
+            );
+        }
     }
 
     #[test]
@@ -2840,4 +2886,293 @@ pub struct GpuTexture {
     /// own material bind groups, so this one is not read.
     #[allow(dead_code)]
     pub bind_group: crate::gpu::BindGroup,
+    /// Colour space the pixels were uploaded in, taken from the texture format.
+    /// `None` for an external caller-owned view, whose format the store cannot
+    /// see. Slots that require a particular space compare against this, so a
+    /// data map uploaded through the colour path is reported rather than
+    /// rendered.
+    pub colour_space: Option<crate::ColourSpace>,
+}
+
+/// Pick the texture format for a payload and hand back the bytes to write.
+///
+/// The format comes from the payload precision and the colour space: an 8-bit
+/// payload is sRGB or linear depending on what the caller named, and a float
+/// payload is always linear. Shared by the upload path and `replace_texture` so
+/// both land on the same format for the same data.
+pub(crate) fn texture_format_and_bytes(data: TextureData) -> (crate::gpu::TextureFormat, Vec<u8>) {
+    let space = data.colour_space();
+    match data.into_payload() {
+        TexturePayload::Rgba8(rgba) => {
+            let format = match space {
+                crate::ColourSpace::Srgb => crate::gpu::TextureFormat::Rgba8UnormSrgb,
+                crate::ColourSpace::Linear => crate::gpu::TextureFormat::Rgba8Unorm,
+            };
+            (format, rgba)
+        }
+        TexturePayload::Rgba32F(texels) => {
+            // Pack to half-float bytes (2 bytes per channel, little-endian).
+            let mut bytes = Vec::with_capacity(texels.len() * 2);
+            for &v in &texels {
+                bytes.extend_from_slice(&half::f16::from_f32(v).to_le_bytes());
+            }
+            (crate::gpu::TextureFormat::Rgba16Float, bytes)
+        }
+    }
+}
+
+/// The colour space a format is sampled in: an sRGB format decodes to linear in
+/// hardware on read, and every other format is sampled as stored.
+pub(crate) fn format_colour_space(format: crate::gpu::TextureFormat) -> crate::ColourSpace {
+    if format.is_srgb() {
+        crate::ColourSpace::Srgb
+    } else {
+        crate::ColourSpace::Linear
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Slot colour-space checking
+// ---------------------------------------------------------------------------
+
+/// A public texture slot, paired with the colour space it needs its texture to
+/// have been uploaded in.
+///
+/// A slot that samples colour needs an sRGB upload so the hardware decode lands
+/// the sample in the renderer's linear working space. A slot that samples data
+/// (directions, roughness, occlusion, visibility) needs a linear upload, because
+/// there is nothing to decode and decoding it anyway bends every value.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum TextureSlot {
+    /// `Material::texture_id`.
+    MaterialAlbedo,
+    /// `Material::normal_map_id`.
+    MaterialNormalMap,
+    /// `Material::ao_map_id`.
+    MaterialAoMap,
+    /// `Material::metallic_roughness_texture_id`.
+    MaterialMetallicRoughness,
+    /// `Material::emissive_texture_id`.
+    MaterialEmissive,
+    /// `DecalItem::texture_id`.
+    DecalAlbedo,
+    /// `DecalItem::normal_texture_id`.
+    DecalNormalMap,
+    /// `DecalItem::roughness_texture_id`.
+    DecalRoughness,
+    /// `DecalItem::metallic_texture_id`.
+    DecalMetallic,
+    /// `DecalItem::emissive_texture_id`.
+    DecalEmissive,
+    /// `SpriteItem::texture_id`, or `ParticleRender::Sprite { texture_id }`.
+    SpriteAlbedo,
+    /// `SpriteItem::normal_texture_id`, or the particle sprite equivalent.
+    SpriteNormalMap,
+    /// `RibbonItem::texture_id`.
+    RibbonAlbedo,
+    /// `MeshInstanceItem::texture_id`, or `ParticleRender::Mesh { texture_id }`.
+    MeshInstanceAlbedo,
+    /// The radiance or occlusion texture of a [`LightmapData`](crate::resources::LightmapData).
+    LightmapPrimary,
+    /// The dominant-direction or shadowmask texture of a `LightmapData`.
+    LightmapSecondary,
+}
+
+impl TextureSlot {
+    /// The colour space this slot needs.
+    pub fn required_space(self) -> crate::ColourSpace {
+        use TextureSlot::*;
+        match self {
+            MaterialAlbedo | MaterialEmissive | DecalAlbedo | DecalEmissive | SpriteAlbedo
+            | RibbonAlbedo | MeshInstanceAlbedo => crate::ColourSpace::Srgb,
+            MaterialNormalMap
+            | MaterialAoMap
+            | MaterialMetallicRoughness
+            | DecalNormalMap
+            | DecalRoughness
+            | DecalMetallic
+            | SpriteNormalMap
+            | LightmapPrimary
+            | LightmapSecondary => crate::ColourSpace::Linear,
+        }
+    }
+
+    /// The field name, as a consumer writes it.
+    pub fn field_name(self) -> &'static str {
+        use TextureSlot::*;
+        match self {
+            MaterialAlbedo => "Material::texture_id",
+            MaterialNormalMap => "Material::normal_map_id",
+            MaterialAoMap => "Material::ao_map_id",
+            MaterialMetallicRoughness => "Material::metallic_roughness_texture_id",
+            MaterialEmissive => "Material::emissive_texture_id",
+            DecalAlbedo => "DecalItem::texture_id",
+            DecalNormalMap => "DecalItem::normal_texture_id",
+            DecalRoughness => "DecalItem::roughness_texture_id",
+            DecalMetallic => "DecalItem::metallic_texture_id",
+            DecalEmissive => "DecalItem::emissive_texture_id",
+            SpriteAlbedo => "SpriteItem::texture_id",
+            SpriteNormalMap => "SpriteItem::normal_texture_id",
+            RibbonAlbedo => "RibbonItem::texture_id",
+            MeshInstanceAlbedo => "MeshInstanceItem::texture_id",
+            LightmapPrimary => "LightmapData radiance / occlusion",
+            LightmapSecondary => "LightmapData direction / shadowmask",
+        }
+    }
+
+    /// The `TextureData` constructor that produces what this slot needs.
+    pub fn constructor(self) -> &'static str {
+        match self {
+            TextureSlot::MaterialNormalMap
+            | TextureSlot::DecalNormalMap
+            | TextureSlot::SpriteNormalMap => "TextureData::normal_map",
+            _ => match self.required_space() {
+                crate::ColourSpace::Srgb => "TextureData::srgb",
+                crate::ColourSpace::Linear => "TextureData::linear",
+            },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resolving a material texture slot to the view that binds for it
+// ---------------------------------------------------------------------------
+
+/// A material texture slot resolved to the view that binds for it.
+///
+/// Produced by `TextureStore::resolve_slot`, which is the one place a material's
+/// [`TextureId`](crate::resources::TextureId) becomes a binding.
+pub(crate) struct ResolvedTexture<'a> {
+    /// The view to bind: the texture's own when the slot names a live one, the
+    /// slot's fallback otherwise.
+    pub(crate) view: &'a crate::gpu::TextureView,
+    /// The store slot index, for a caller that indexes a texture array rather
+    /// than binding the view. `None` when the slot is unset and `None` when the
+    /// handle no longer resolves, which are the two cases a caller must not tell
+    /// apart from each other and must tell apart from a live texture.
+    #[allow(dead_code)]
+    pub(crate) index: Option<u32>,
+}
+
+impl crate::resources::material::texture_store::TextureStore {
+    /// Resolve a material texture slot: the live texture's view if `id` names
+    /// one, the slot's fallback view otherwise.
+    ///
+    /// The generation carried by `id` is what decides. A handle whose slot has
+    /// since been freed and reused does not resolve, so it cannot reach the
+    /// texture that took its place.
+    ///
+    /// A method on the store rather than on [`DeviceResources`], because callers
+    /// hold a mutable borrow of a sibling field (a mesh, a bind group cache)
+    /// while resolving. Reaching the store and the fallbacks separately keeps
+    /// those borrows disjoint.
+    pub(crate) fn resolve_slot<'a>(
+        &'a self,
+        fallbacks: &'a crate::resources::material::fallbacks::MaterialFallbacks,
+        slot: crate::scene::material::TextureSlot,
+        id: Option<crate::resources::TextureId>,
+    ) -> ResolvedTexture<'a> {
+        match id.and_then(|id| self.get(id).map(|t| (id, t))) {
+            Some((id, t)) => ResolvedTexture {
+                view: &t.view,
+                index: Some(id.index() as u32),
+            },
+            None => ResolvedTexture {
+                view: fallbacks.slot_view(slot),
+                index: None,
+            },
+        }
+    }
+
+    /// The array index a material texture slot should carry, or `None` when the
+    /// slot is unset or its handle no longer resolves.
+    ///
+    /// The index half of [`resolve_slot`](Self::resolve_slot), for the callers
+    /// that build a material block and have no use for the view. Both go through
+    /// the same generation-checked lookup, so a block's index and the flag that
+    /// says whether to sample it cannot disagree.
+    pub(crate) fn slot_index(&self, id: Option<crate::resources::TextureId>) -> Option<u32> {
+        id.filter(|id| self.get(*id).is_some())
+            .map(|id| id.index() as u32)
+    }
+}
+
+impl DeviceResources {
+    /// Check that `id` was uploaded in the space `slot` needs, recording a
+    /// mismatch for `prepare` to return.
+    ///
+    /// Called where a texture id becomes a binding. A texture with no recorded
+    /// space (an external caller-owned view) is passed: the store cannot see its
+    /// format, so there is nothing to compare.
+    pub(crate) fn check_texture_slot(
+        &mut self,
+        id: Option<crate::resources::TextureId>,
+        slot: TextureSlot,
+    ) {
+        let Some(id) = id else { return };
+        let Some(found) = self.texture_colour_space(id) else {
+            return;
+        };
+        if found == slot.required_space() {
+            return;
+        }
+        // One entry per (texture, slot): a mismatch reported every rebuild would
+        // grow without bound while the scene keeps drawing.
+        if self
+            .content
+            .texture_slot_mismatches
+            .iter()
+            .any(|&(t, s)| t == id.raw() && s == slot)
+        {
+            return;
+        }
+        self.content.texture_slot_mismatches.push((id.raw(), slot));
+        tracing::error!("{}", slot_mismatch_error(id.raw(), slot));
+    }
+
+    /// The recorded slot mismatches, oldest first, as `(raw texture id, slot)`.
+    ///
+    /// Each pair is recorded once, the first time the texture is bound into that
+    /// slot, and stays until [`clear_texture_slot_mismatches`](Self::clear_texture_slot_mismatches).
+    /// An empty slice means every texture drawn so far reached a slot that wants
+    /// the space it was uploaded in.
+    pub fn texture_slot_mismatches(&self) -> &[(u64, TextureSlot)] {
+        &self.content.texture_slot_mismatches
+    }
+
+    /// The first recorded slot mismatch, as an error naming the slot and the
+    /// constructor that fixes it.
+    ///
+    /// Call it after a frame to turn a mismatch into a hard failure: a test gate,
+    /// an asset-pipeline check, or a debug build that should not start with the
+    /// wrong textures loaded. The mismatch is also logged at error level as soon
+    /// as it is seen, because it renders a plausible image and nothing else about
+    /// the frame goes wrong.
+    pub fn texture_slot_mismatch(&self) -> crate::error::ViewportResult<()> {
+        match self.content.texture_slot_mismatches.first() {
+            Some(&(raw, slot)) => Err(slot_mismatch_error(raw, slot)),
+            None => Ok(()),
+        }
+    }
+
+    /// Forget the recorded slot mismatches, so a texture re-uploaded in the right
+    /// space can be reported again if it is still wrong.
+    pub fn clear_texture_slot_mismatches(&mut self) {
+        self.content.texture_slot_mismatches.clear();
+    }
+}
+
+/// Build the error for one recorded mismatch. Shared by the log line and the
+/// accessor so both say the same thing.
+fn slot_mismatch_error(raw: u64, slot: TextureSlot) -> crate::error::ViewportError {
+    let found = match slot.required_space() {
+        crate::ColourSpace::Srgb => "linear",
+        crate::ColourSpace::Linear => "sRGB",
+    };
+    crate::error::ViewportError::TextureColourSpaceMismatch {
+        slot: slot.field_name(),
+        found,
+        constructor: slot.constructor(),
+        texture: raw,
+    }
 }

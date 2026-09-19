@@ -97,7 +97,7 @@ impl OrbitCameraController {
 
     /// Create a controller with the [`BindingPreset::ViewportPrimitives`] preset.
     ///
-    /// This is the canonical control scheme matching `examples/winit_primitives`.
+    /// This is the canonical control scheme the winit examples use.
     pub fn viewport_primitives() -> Self {
         Self::new(BindingPreset::ViewportPrimitives)
     }

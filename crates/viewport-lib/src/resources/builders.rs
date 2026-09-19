@@ -45,14 +45,13 @@ pub(crate) fn with_primitive_index_enable(src: &str) -> String {
 /// `END_DEBUG_VIS` in debug_vis.wgsl) from a lit shader source unless `keep`
 /// is set.
 ///
-/// The block writes per-fragment values to the `debug_frag_buf` storage
-/// buffer. A fragment shader with a buffer write has an observable side
-/// effect, so the driver cannot reject occluded fragments with the early
-/// depth test: every rasterized fragment of every hidden surface runs the
-/// full lit shader. On the roman_mix reference scene that costs the scene
-/// pass an order of magnitude. The lit pipelines therefore compile without
-/// the block by default and are rebuilt from the full source only while
-/// `DebugVis` is active (see `rebuild_mesh_pipelines`).
+/// The block declares a 24-element array of candidate quantities. It sits under
+/// a uniform branch, so it does no work unless debug vis is on, but a lit
+/// shader carrying the allocation pays for it in registers on every draw:
+/// measured at about 5% of scene time on a fragment-bound scene, with identical
+/// pixels either way. The lit pipelines therefore compile without the block by
+/// default and are rebuilt from the full source only while `DebugVis` is active
+/// (see `rebuild_mesh_pipelines`).
 pub(crate) fn strip_debug_vis<'a>(
     source: impl Into<std::borrow::Cow<'a, str>>,
     keep: bool,
@@ -998,13 +997,13 @@ mod strip_debug_vis_tests {
         ];
         for (name, src) in sources {
             assert!(
-                src.contains("debug_frag_buf["),
+                src.contains("dbg_vals["),
                 "{name}: baked source lost the debug block; markers moved?"
             );
             let stripped = super::strip_debug_vis(src, false);
             assert!(
-                !stripped.contains("debug_frag_buf["),
-                "{name}: stripped module still writes debug_frag_buf"
+                !stripped.contains("dbg_vals["),
+                "{name}: stripped module still carries the debug block"
             );
             assert!(
                 !stripped.contains("BEGIN_DEBUG_VIS"),
@@ -1012,7 +1011,7 @@ mod strip_debug_vis_tests {
             );
             let kept = super::strip_debug_vis(src, true);
             assert!(
-                kept.contains("debug_frag_buf["),
+                kept.contains("dbg_vals["),
                 "{name}: debug variant lost the write"
             );
         }

@@ -295,6 +295,9 @@ impl SkinningPlugin {
     /// skeleton-local transform multiplied by its inverse bind. The mesh's
     /// `object.model` is applied separately at draw time, so the palette
     /// composes with the scene node transform rather than replacing it.
+    #[must_use = "returns false when the mesh has no weights attached, which skins \
+                  the mesh against no palette: the geometry collapses and drags its \
+                  UVs with it, which reads as ruined textures rather than a broken pose"]
     pub fn attach_palette(
         &self,
         resources: &mut DeviceResources,

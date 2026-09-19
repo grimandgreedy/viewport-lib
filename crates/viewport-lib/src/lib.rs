@@ -68,6 +68,26 @@
 //! let cmd1 = renderer.owned().render_viewport(&device, &queue, &view1, vp_top,   &frame_top);
 //! queue.submit([cmd0, cmd1]);
 //! ```
+//!
+//! # Reproducing a frame exactly
+//!
+//! Rendering the same [`FrameData`] twice on one device gives a bit-identical
+//! image, which is what regression capture, visual diff tooling and golden-image
+//! tests rest on. That holds as long as you submit the same items in the same
+//! order.
+//!
+//! Order matters because a fragment shader computes screen-space derivatives
+//! (`dpdx` / `dpdy`) over a 2x2 pixel quad, so each fragment's result depends in
+//! part on its neighbours in that quad. Where two surfaces meet inside a quad,
+//! which of them contributes depends on which draw got there first. The
+//! difference is a handful of ULPs, and on most of the frame it is invisible,
+//! but a low-roughness specular highlight amplifies it enough to move a pixel.
+//!
+//! So keep your submission order stable across frames when you need
+//! reproducibility: iterate scene items in a fixed order rather than out of a
+//! hash map, and keep any sort you apply total rather than leaving ties to
+//! resolve arbitrarily. The renderer's own ordering is fixed and does not vary
+//! between frames.
 
 // Internal alias for the selected wgpu version (see the module). Consumers name
 // wgpu through the `wgpu` re-export below, not this module directly.
@@ -193,8 +213,8 @@ pub use scene::traits;
 pub use error::{ViewportError, ViewportResult};
 
 pub use plugin_api::{
-    PluginInstallCtx, PostEffectContext, PostEffectProducer, PostEffectProducerId,
-    PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId, ViewportPlugin,
+    PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer, PostEffectProducerId,
+    PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId,
     build_post_effect_pipeline, install_plugin,
 };
 
@@ -216,6 +236,7 @@ pub use scene::scene::{
 };
 pub use scene::traits::{RenderMode, ViewportObject};
 pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
+pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
 
 pub use geometry::bvh::PickAccelerator;
 pub use geometry::implicit::{
@@ -238,9 +259,9 @@ pub use camera::controllers::{
     wish_xy_from_actions,
 };
 pub use interaction::input::{
-    ActionFrame, BindingPreset, ButtonState, ModifiersMatch, NavigationActions, PointerFrame,
-    ResolvedActionState, ScrollUnits, Theme, ViewportBinding, ViewportContext, ViewportEvent,
-    ViewportGesture, ViewportInput, viewport_all_bindings,
+    ActionFrame, BindingPreset, ButtonState, CursorShape, ModifiersMatch, NavigationActions,
+    PointerFrame, ResolvedActionState, ScrollUnits, Theme, ViewportBinding, ViewportContext,
+    ViewportEvent, ViewportGesture, ViewportInput, viewport_all_bindings,
 };
 pub use interaction::manipulation::solvers::{
     angular_rotation_from_cursor, constrained_scale, constrained_translation,

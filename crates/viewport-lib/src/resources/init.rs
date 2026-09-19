@@ -240,19 +240,6 @@ impl DeviceResources {
                     },
                     count: None,
                 },
-                // Binding 12: per-fragment debug storage buffer (written in debug_vis.wgsl).
-                // Sized to viewport_width * viewport_height * 16 bytes when debug is active;
-                // a 16-byte sentinel buffer is used otherwise.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
                 // Binding 13: read-only storage buffer of `SingleLightUniform`
                 // entries. Indexed against the `count` field of the lights
                 // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
@@ -990,14 +977,6 @@ impl DeviceResources {
 
         let ibl_sampler = crate::resources::builders::env_sampler(device, "ibl_sampler");
 
-        // 16-byte sentinel bound at group 0 binding 12 when the debug fragment buffer is inactive.
-        let debug_frag_sentinel_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
-            label: Some("debug_frag_sentinel_buf"),
-            size: 16,
-            usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         let clustered = crate::resources::gpu::clustered::ClusteredResources::new(device);
 
         mark("clustered");
@@ -1058,10 +1037,6 @@ impl DeviceResources {
                 crate::gpu::BindGroupEntry {
                     binding: 11,
                     resource: crate::gpu::BindingResource::TextureView(&ibl_fallback_view),
-                },
-                crate::gpu::BindGroupEntry {
-                    binding: 12,
-                    resource: debug_frag_sentinel_buf.as_entire_binding(),
                 },
                 crate::gpu::BindGroupEntry {
                     binding: 13,
@@ -1904,6 +1879,7 @@ impl DeviceResources {
                 view,
                 sampler,
                 bind_group,
+                colour_space: Some(crate::ColourSpace::Srgb),
             }
         };
 
@@ -2348,6 +2324,7 @@ impl DeviceResources {
             target_format,
             sample_count,
             debug_vis_shaders: false,
+            force_debug_vis_shaders: false,
             mesh_pipelines_dirty: false,
             pipeline_cache,
             scene: crate::resources::scene_pipelines::SceneCorePipelines {
@@ -2370,7 +2347,6 @@ impl DeviceResources {
                 object_bgl,
                 clip_planes_buf: clip_planes_uniform_buf,
                 clip_volume_buf: clip_volume_uniform_buf,
-                debug_frag_sentinel_buf,
             },
             lighting: crate::resources::lighting::LightingResources {
                 uniform_buf: light_uniform_buf,
@@ -2448,6 +2424,7 @@ impl DeviceResources {
             },
             content: crate::resources::types::ContentResources {
                 material_bind_groups: std::collections::HashMap::new(),
+                texture_slot_mismatches: Vec::new(),
                 textures: crate::resources::material::texture_store::TextureStore::new(),
                 polyline_store: crate::resources::PolylineStore::new(),
                 streamtube_store: crate::resources::StreamtubeStore::new(),
@@ -2575,6 +2552,8 @@ impl DeviceResources {
             frame_upload_bytes: 0,
             frame_pipelines_built: 0,
             resource_free_epoch: 0,
+            resource_view_epoch: 0,
+            retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
             decal: crate::resources::decal::DecalResources::default(),

@@ -37,6 +37,14 @@ pub struct GaussianSplatData {
     pub opacities: Vec<f32>,
     /// SH coefficients. Length must equal `positions.len() * sh_degree.coeff_count()`.
     /// For ShDegree::Zero these are [r, g, b] base colours per splat.
+    ///
+    /// The evaluated colour is sRGB-referred, matching how splat sets are
+    /// trained (from sRGB photographs), and the shader decodes it to linear
+    /// after evaluating the SH. Pass the coefficients exactly as the trainer
+    /// produced them; do not decode them first. This is the one colour in the
+    /// library converted in the shader rather than at the boundary: a
+    /// [`Colour`](crate::colour::Colour) converts at construction, and a texture
+    /// converts in the sampler.
     pub sh_coefficients: Vec<f32>,
     /// SH degree for this splat set.
     pub sh_degree: ShDegree,

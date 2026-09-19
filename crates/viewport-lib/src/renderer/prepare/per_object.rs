@@ -57,7 +57,7 @@ pub(super) fn build_object_uniform(
     } else {
         (0u32, 0.0, 1.0)
     };
-    let cm = common_material(item);
+    let cm = common_material(item, resources.resolve_material_slots(&item.material));
     ObjectUniform {
         model: cm.model,
         colour: cm.colour,
@@ -324,11 +324,24 @@ impl ViewportRenderer {
         // in FrameStats so a cache that is silently missing is visible.
         let mut bind_groups_built = 0u32;
 
-        // Purge the deduped material bind-group map when a texture or mesh was
-        // freed, so no bind group keeps freed GPU memory alive.
-        if mesh_uniforms.free_epoch != resources.resource_free_epoch {
+        // Drop material bind groups that no longer match what they sample, so no
+        // bind group keeps freed GPU memory alive or draws a texture that has
+        // been swapped underneath it.
+        //
+        // A replace changes the view behind a live id, which no per-entry check
+        // can see, so it clears the map. A free removes the id, so the entries
+        // naming it can be dropped on their own and every other entry kept: under
+        // a streaming eviction budget almost nothing in this map references what
+        // a given frame freed, and rebuilding all of it was the dominant cost.
+        if mesh_uniforms.view_epoch != resources.resource_view_epoch {
+            mesh_uniforms.view_epoch = resources.resource_view_epoch;
             mesh_uniforms.free_epoch = resources.resource_free_epoch;
             mesh_uniforms.material_bind_groups.clear();
+        } else if mesh_uniforms.free_epoch != resources.resource_free_epoch {
+            mesh_uniforms.free_epoch = resources.resource_free_epoch;
+            mesh_uniforms
+                .material_bind_groups
+                .retain(|_, bg| bg.resources_resolve(resources));
         }
 
         // Reset this frame's per-item slot maps. Slots for items on the
@@ -424,7 +437,10 @@ impl ViewportRenderer {
                     );
                     continue;
                 };
-                let material_id = resources.material_gpu_builder.intern(&item.material);
+                let resolved = resources.resolve_material_slots(&item.material);
+                let material_id = resources
+                    .material_gpu_builder
+                    .intern(&item.material, resolved);
                 let obj_uniform = build_object_uniform(
                     resources,
                     item,
@@ -563,8 +579,10 @@ impl ViewportRenderer {
                     let mut range_indices: Vec<u32> = Vec::with_capacity(mats.len());
                     for (r, mat) in mats.iter().enumerate() {
                         range_item.material = mat.clone();
-                        let range_material_id =
-                            resources.material_gpu_builder.intern(&range_item.material);
+                        let range_material_id = resources.material_gpu_builder.intern(
+                            &range_item.material,
+                            resources.resolve_material_slots(&range_item.material),
+                        );
                         let range_uniform = build_object_uniform(
                             resources,
                             &range_item,
@@ -650,6 +668,14 @@ impl ViewportRenderer {
                                     bind_group: bg,
                                     data_gen,
                                     last_frame: frame_index,
+                                    mesh_id: item.mesh_id,
+                                    textures: [
+                                        mat.texture_id,
+                                        mat.normal_map_id,
+                                        mat.ao_map_id,
+                                        mat.metallic_roughness_texture_id,
+                                        mat.emissive_texture_id,
+                                    ],
                                 },
                             );
                         }
@@ -909,7 +935,10 @@ impl ViewportRenderer {
                 item.material.emissive_texture_id,
             );
 
-            let material_id = resources.material_gpu_builder.intern(&item.material);
+            let material_id = resources.material_gpu_builder.intern(
+                &item.material,
+                resources.resolve_material_slots(&item.material),
+            );
             let obj_uniform = build_object_uniform(resources, item, false, None, material_id);
             let entry = &mut entries[idx];
             let uniform_changed = entry.last_uniform.as_ref().map_or(true, |u| {

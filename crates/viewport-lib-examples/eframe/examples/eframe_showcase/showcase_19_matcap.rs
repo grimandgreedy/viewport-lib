@@ -1,0 +1,441 @@
+//! Showcase 19: Matcap Shading.
+//!
+//! Displays all eight built-in matcap presets (four blendable, four static) plus a
+//! custom matcap generated procedurally at build time.  The controls panel lets you
+//! change the `base_colour` used by the blendable presets and regenerate the custom
+//! matcap with a different hue.
+
+use crate::eframe;
+use crate::App;
+use crate::geometry::make_uv_sphere;
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{BuiltinMatcap, MatcapId, Material, NodeId, ViewportRenderer, scene::Scene};
+
+/// All eight built-in presets with their display name and blendable flag.
+pub(crate) const BUILTIN_PRESETS: [(BuiltinMatcap, &str, bool); 8] = [
+    (BuiltinMatcap::Clay, "Clay", true),
+    (BuiltinMatcap::Wax, "Wax", true),
+    (BuiltinMatcap::Candy, "Candy", true),
+    (BuiltinMatcap::Flat, "Flat", true),
+    (BuiltinMatcap::Ceramic, "Ceramic", false),
+    (BuiltinMatcap::Jade, "Jade", false),
+    (BuiltinMatcap::Mud, "Mud", false),
+    (BuiltinMatcap::Normal, "Normal", false),
+];
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct MatcapState {
+    pub scene: Scene,
+    pub built: bool,
+    /// NodeId for each of the 8 built-in preset spheres (matches BUILTIN_PRESETS order).
+    pub builtin_node_ids: [NodeId; 8],
+    pub custom_node: Option<NodeId>,
+    pub custom_id: Option<MatcapId>,
+    /// Base colour applied to blendable matcap spheres.
+    pub blendable_colour: [f32; 3],
+    /// Hue (0..360) for the custom matcap.
+    pub custom_hue: f32,
+}
+
+impl Default for MatcapState {
+    fn default() -> Self {
+        Self {
+            scene: Scene::new(),
+            built: false,
+            builtin_node_ids: [0; 8],
+            custom_node: None,
+            custom_id: None,
+            blendable_colour: [0.7, 0.7, 0.7],
+            custom_hue: 200.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+impl App {
+    /// Build Showcase 19: Matcap Shading demo.
+    ///
+    /// Layout:
+    ///   Top row    (z = +1.5): Clay | Wax | Candy | Flat           : blendable
+    ///   Bottom row (z = -1.5): Ceramic | Jade | Mud | Normal       : static
+    ///   Center-front (y = -3.5): Custom procedural matcap upload demo
+    pub(crate) fn build_matcap_scene(&mut self, renderer: &mut ViewportRenderer) {
+        self.matcap_state.scene = Scene::new();
+
+        // The non-instanced path stores per-object GPU state (object_uniform_buf,
+        // object_bind_group) directly on the GpuMesh.  All objects sharing the same
+        // mesh_index would therefore overwrite each other during prepare().
+        // Each sphere needs its own GpuMesh so it gets independent GPU state.
+        let sphere = make_uv_sphere(48, 24, 1.0);
+        let upload_sphere = |renderer: &mut ViewportRenderer, device: &eframe::wgpu::Device| {
+            renderer
+                .resources_mut()
+                .upload_mesh_data(device, &sphere)
+                .expect("matcap sphere mesh upload")
+        };
+
+        // Initialise built-ins before calling builtin_matcap_id.
+        renderer
+            .resources_mut()
+            .ensure_matcaps_initialized(&self.device, &self.queue);
+
+        let x_positions: [f32; 4] = [-4.5, -1.5, 1.5, 4.5];
+
+        for (i, (preset, label, _blendable)) in BUILTIN_PRESETS.iter().enumerate() {
+            let col = i % 4;
+            let row = i / 4;
+            let x = x_positions[col];
+            let z = if row == 0 { 1.5_f32 } else { -1.5_f32 };
+
+            let sphere_id = upload_sphere(renderer, &self.device);
+            let matcap_id = renderer.resources().builtin_matcap_id(*preset);
+            let mat = {
+                let mut m = Material::from_colour(self.matcap_state.blendable_colour);
+                m.shading_model = vpl::ShadingModel::Matcap(matcap_id);
+                m
+            };
+            let node_id = self.matcap_state.scene.add_named(
+                *label,
+                Some(sphere_id),
+                glam::Mat4::from_translation(glam::Vec3::new(x, 0.0, z)),
+                mat,
+            );
+            self.matcap_state.builtin_node_ids[i] = node_id;
+        }
+
+        // Custom matcap: procedurally generated at startup with the current hue.
+        let custom_rgba = generate_custom_matcap(256, self.matcap_state.custom_hue);
+        let custom_id = renderer
+            .resources_mut()
+            .upload_matcap(&self.device, &self.queue, &custom_rgba, false)
+            .expect("custom matcap upload");
+        self.matcap_state.custom_id = Some(custom_id);
+
+        let custom_sphere_id = upload_sphere(renderer, &self.device);
+        let custom_node = self.matcap_state.scene.add_named(
+            "Custom",
+            Some(custom_sphere_id),
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, -3.5, 0.0)),
+            {
+                let mut m = Material::default();
+                m.shading_model = vpl::ShadingModel::Matcap(custom_id);
+                m
+            },
+        );
+        self.matcap_state.custom_node = Some(custom_node);
+
+        self.matcap_state.built = true;
+    }
+
+    /// Re-upload the custom matcap with the current hue and update the scene node.
+    pub(crate) fn rebuild_custom_matcap(&mut self, renderer: &mut ViewportRenderer) {
+        let rgba = generate_custom_matcap(256, self.matcap_state.custom_hue);
+        let id = renderer
+            .resources_mut()
+            .upload_matcap(&self.device, &self.queue, &rgba, false)
+            .expect("custom matcap re-upload");
+        self.matcap_state.custom_id = Some(id);
+        if let Some(node_id) = self.matcap_state.custom_node {
+            self.matcap_state.scene.set_material(node_id, {
+                let mut m = Material::default();
+                m.shading_model = vpl::ShadingModel::Matcap(id);
+                m
+            });
+        }
+    }
+
+    /// Push the current `blendable_colour` to all blendable preset nodes.
+    pub(crate) fn update_matcap_blendable_colours(&mut self, renderer: &mut ViewportRenderer) {
+        for (i, (preset, _, blendable)) in BUILTIN_PRESETS.iter().enumerate() {
+            if !blendable {
+                continue;
+            }
+            let matcap_id = renderer.resources().builtin_matcap_id(*preset);
+            self.matcap_state
+                .scene
+                .set_material(self.matcap_state.builtin_node_ids[i], {
+                    let mut m = Material::from_colour(self.matcap_state.blendable_colour);
+                    m.shading_model = vpl::ShadingModel::Matcap(matcap_id);
+                    m
+                });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_matcap(app: &mut App, ui: &mut egui::Ui, frame: &eframe::Frame) {
+    ui.label("Eight built-in matcap presets arranged in two rows:");
+    ui.label("  North (z+): Clay | Wax | Candy | Flat  (blendable)");
+    ui.label("  South (z-): Ceramic | Jade | Mud | Normal  (static)");
+    ui.label("  Front (y-): custom procedural upload");
+
+    ui.separator();
+    ui.label("Blendable base colour:");
+    ui.horizontal(|ui| {
+        let mut col = app.matcap_state.blendable_colour;
+        let changed = ui.color_edit_button_rgb(&mut col).changed();
+        if changed {
+            app.matcap_state.blendable_colour = col;
+            let rs = frame.wgpu_render_state().expect("wgpu must be enabled");
+            let mut guard = rs.renderer.write();
+            let renderer = guard
+                .callback_resources
+                .get_mut::<ViewportRenderer>()
+                .expect("ViewportRenderer");
+            app.update_matcap_blendable_colours(renderer);
+        }
+    });
+    ui.label("(tints Clay, Wax, Candy, Flat)");
+
+    ui.separator();
+    ui.label("Custom matcap hue:");
+    let hue_changed = ui
+        .add(
+            egui::Slider::new(&mut app.matcap_state.custom_hue, 0.0..=360.0)
+                .suffix(" deg")
+                .step_by(1.0),
+        )
+        .changed();
+    if ui.button("Rebuild custom matcap").clicked() || hue_changed {
+        let rs = frame.wgpu_render_state().expect("wgpu must be enabled");
+        let mut guard = rs.renderer.write();
+        let renderer = guard
+            .callback_resources
+            .get_mut::<ViewportRenderer>()
+            .expect("ViewportRenderer");
+        app.rebuild_custom_matcap(renderer);
+    }
+    ui.label("Generated via upload_matcap().");
+}
+
+// ---------------------------------------------------------------------------
+// Custom matcap generator
+// ---------------------------------------------------------------------------
+
+/// Generate a `sizexsize` RGBA matcap image with a metallic look at `hue_deg` (0..360).
+///
+/// Pixels outside the unit circle are transparent so the object silhouette is preserved.
+pub(crate) fn generate_custom_matcap(size: usize, hue_deg: f32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(size * size * 4);
+    let hue = hue_deg / 360.0;
+    let s = (size - 1) as f32;
+
+    for row in 0..size {
+        for col in 0..size {
+            // row 0 = top of matcap = ny = +1
+            let nx = (col as f32 / s) * 2.0 - 1.0;
+            let ny = 1.0 - (row as f32 / s) * 2.0;
+            let r2 = nx * nx + ny * ny;
+
+            if r2 > 1.0 {
+                out.extend_from_slice(&[0, 0, 0, 0]);
+                continue;
+            }
+
+            let nz = (1.0 - r2).sqrt();
+
+            // Single directional light from upper-left
+            let (lx, ly, lz) = normalise(-0.5_f32, 0.7, 0.5);
+            let diffuse = (nx * lx + ny * ly + nz * lz).max(0.0);
+
+            // Specular: half-vector with view direction (0,0,1)
+            let (hx, hy, hz) = normalise(lx, ly, lz + 1.0);
+            let spec = (nx * hx + ny * hy + nz * hz).max(0.0).powf(80.0);
+
+            let (r, g, b) = hsv_to_rgb(hue, 0.7, 0.15 + 0.6 * diffuse);
+            let r = ((r + spec) * 255.0).clamp(0.0, 255.0) as u8;
+            let g = ((g + spec * 0.9) * 255.0).clamp(0.0, 255.0) as u8;
+            let b = ((b + spec) * 255.0).clamp(0.0, 255.0) as u8;
+            out.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+    out
+}
+
+fn normalise(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+    let len = (x * x + y * y + z * z).sqrt();
+    (x / len, y / len, z / len)
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let h6 = h * 6.0;
+    let i = h6.floor() as u32 % 6;
+    let f = h6 - h6.floor();
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+    match i {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.matcap_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_matcap_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::new(0.0, 0.0, -0.5),
+        distance: 14.0,
+        orientation: glam::Quat::from_rotation_z(0.3)
+            * glam::Quat::from_rotation_x(0.9),
+        ..vpl::Camera::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let items = app
+            .matcap_state
+            .scene
+            .collect_render_items(&vpl::Selection::new());
+        let sg = app.matcap_state.scene.version();
+        // Lighting is not used by matcap-shaded objects, but we still
+        // need minimal settings for the framework.
+        let lighting = {
+            let mut _t = vpl::LightingSettings::default();
+            _t.hemisphere_intensity = 0.5;
+            _t.sky_colour = [1.0, 1.0, 1.0].into();
+            _t.ground_colour = [1.0, 1.0, 1.0].into();
+            _t
+        };
+        (items, None, lighting, sg, 0)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScMatcap;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScMatcap = ScMatcap;
+
+impl crate::Showcase for ScMatcap {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, frame: &crate::eframe::Frame) {
+        controls_matcap(app, ui, frame)
+    }
+}

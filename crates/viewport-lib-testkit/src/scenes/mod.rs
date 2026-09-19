@@ -12,6 +12,7 @@
 // The corpus the catalogue builds from: procedural meshes, lighting rigs,
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
+pub mod item_types;
 pub mod meshes;
 #[cfg(feature = "real_models")]
 pub mod real_models;
@@ -21,9 +22,12 @@ pub mod textures;
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, FrameData, GlyphItem, LightingSettings, Material,
-    MeshData, MeshId, PointCloudItem, PolylineItem, SceneFrame, SceneRenderItem,
-    ViewportGpuResources, primitives,
+    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GaussianSplatItem, GlyphItem,
+    GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, LightingSettings, Material, MeshData,
+    MeshId, MeshInstanceItem, PointCloudItem, PolylineItem, RibbonItem, ScatterSettings,
+    ScatterVolumeItem, SceneFrame, SceneRenderItem, ScreenImageItem, SpriteItem, StreamtubeItem,
+    TensorGlyphItem, TubeItem, ViewportGpuResources, VolumeItem, VolumeSurfaceSliceItem,
+    primitives,
 };
 
 /// Resources a scene's `build` function may upload into.
@@ -58,6 +62,48 @@ pub struct BuiltScene {
     pub polylines: Vec<PolylineItem>,
     /// Glyph (arrow/sphere/cube instance) items.
     pub glyphs: Vec<GlyphItem>,
+    /// Tensor glyph (ellipsoid) items.
+    pub tensor_glyphs: Vec<TensorGlyphItem>,
+    /// Tube items.
+    pub tube_items: Vec<TubeItem>,
+    /// Streamtube items.
+    pub streamtube_items: Vec<StreamtubeItem>,
+    /// Ribbon items.
+    pub ribbon_items: Vec<RibbonItem>,
+    /// Sprite (billboard) items.
+    pub sprite_items: Vec<SpriteItem>,
+    /// Ray-marched volume items.
+    pub volumes: Vec<VolumeItem>,
+    /// Gaussian splat items.
+    pub gaussian_splats: Vec<GaussianSplatItem>,
+    /// Axis-aligned volume slice items.
+    pub image_slices: Vec<ImageSliceItem>,
+    /// Mesh-sampled volume slice items.
+    pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
+    /// Screen-space image items.
+    pub screen_images: Vec<ScreenImageItem>,
+    /// GPU implicit-surface items.
+    pub gpu_implicit: Vec<GpuImplicitItem>,
+    /// GPU marching-cubes items.
+    pub gpu_mc_items: Vec<GpuMarchingCubesItem>,
+    /// Scatter (participating media) volume items.
+    pub scatter_volumes: Vec<ScatterVolumeItem>,
+    /// Decal items.
+    pub decals: Vec<DecalItem>,
+    /// Mesh-instance batch items.
+    pub mesh_instances: Vec<MeshInstanceItem>,
+    /// Scatter pass settings override. Scenes with scatter volumes pin these
+    /// so the still image is deterministic (no temporal blend, no jitter).
+    pub scatter_settings: Option<ScatterSettings>,
+    /// Scene-content version stamped onto `SceneFrame::generation`.
+    ///
+    /// The renderer's instanced-batch cache trusts this: two consecutive
+    /// frames with the same generation and the same item count reuse the
+    /// previous frame's batches. A harness renders many different scenes
+    /// through one renderer, so every built scene needs a distinct value or a
+    /// scene can be painted with its predecessor's meshes.
+    /// [`Harness::build_scene`](crate::Harness::build_scene) assigns it.
+    pub generation: u64,
     /// Lighting rig for this scene.
     pub lighting: LightingSettings,
     /// Optional background clear colour (linear RGBA).
@@ -127,11 +173,30 @@ pub const TEST_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
 /// off so it never draws over the scene.
 pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -> FrameData {
     let mut sf = SceneFrame::from_surface_items(scene.items.clone());
+    sf.generation = scene.generation;
     sf.point_clouds = scene.point_clouds.clone();
     sf.polylines = scene.polylines.clone();
     sf.glyphs = scene.glyphs.clone();
+    sf.tensor_glyphs = scene.tensor_glyphs.clone();
+    sf.tube_items = scene.tube_items.clone();
+    sf.streamtube_items = scene.streamtube_items.clone();
+    sf.ribbon_items = scene.ribbon_items.clone();
+    sf.sprite_items = scene.sprite_items.clone();
+    sf.volumes = scene.volumes.clone();
+    sf.gaussian_splats = scene.gaussian_splats.clone();
+    sf.image_slices = scene.image_slices.clone();
+    sf.volume_surface_slices = scene.volume_surface_slices.clone();
+    sf.screen_images = scene.screen_images.clone();
+    sf.gpu_implicit = scene.gpu_implicit.clone();
+    sf.gpu_mc_items = scene.gpu_mc_items.clone();
+    sf.scatter_volumes = scene.scatter_volumes.clone();
+    sf.decals = scene.decals.clone();
+    sf.mesh_instances = scene.mesh_instances.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
+    if let Some(scatter) = scene.scatter_settings.clone() {
+        fd.effects.scatter = scatter;
+    }
     fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
     fd.viewport.show_axes_indicator = false;
     fd
@@ -342,7 +407,11 @@ fn build_textured_checker(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = textures::checker(512, 8, [230, 230, 230], [40, 40, 50]);
     let tex_id = ctx
         .res
-        .upload_texture(ctx.device, ctx.queue, tex.width, tex.height, &tex.rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::srgb(tex.width, tex.height, tex.rgba.to_vec()),
+        )
         .expect("texture upload");
     let s = upload(ctx, &primitives::sphere(1.2, 48, 24));
     let mut mat = Material::pbr([1.0, 1.0, 1.0], 0.0, 0.6);
@@ -359,7 +428,11 @@ fn build_textured_normalmap(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let nm = textures::normal_bumps(512, 8);
     let nm_id = ctx
         .res
-        .upload_normal_map(ctx.device, ctx.queue, nm.width, nm.height, &nm.rgba)
+        .upload_texture(
+            ctx.device,
+            ctx.queue,
+            viewport_lib::TextureData::normal_map(nm.width, nm.height, nm.rgba.to_vec()),
+        )
         .expect("normal map upload");
     let s = upload(ctx, &primitives::sphere(1.3, 64, 32));
     let mut mat = Material::pbr([0.7, 0.7, 0.75], 0.1, 0.5);
@@ -590,7 +663,7 @@ fn build_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// The full catalogue of named scenes. The same list drives the counter tests,
 /// the snapshot tests, the benches, and the `catalogue_viewer` example.
 pub fn catalogue() -> Vec<NamedScene> {
-    vec![
+    let mut scenes = vec![
         NamedScene {
             name: "primitives_trio",
             cameras: standard_cameras(Vec3::ZERO, 9.0),
@@ -686,7 +759,9 @@ pub fn catalogue() -> Vec<NamedScene> {
             cameras: standard_cameras(Vec3::ZERO, 8.0),
             build: build_glyphs,
         },
-    ]
+    ];
+    scenes.extend(item_types::scenes());
+    scenes
 }
 
 /// Look up a scene by name.

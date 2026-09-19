@@ -160,7 +160,16 @@ pub(super) struct CommonMaterial {
     pub(super) ao_range: [f32; 2],
 }
 
-pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
+/// `resolved` carries the material's texture slots looked up against the store.
+/// The has-a-texture flags come from it rather than from `is_some()`: a slot
+/// holding a handle whose texture has been freed binds the fallback, so the flag
+/// has to say there is no texture, or the shader samples the fallback as though
+/// it were authored.
+pub(super) fn common_material(
+    item: &SceneRenderItem,
+    resolved: crate::resources::material_gpu::MaterialSlots,
+) -> CommonMaterial {
+    use crate::scene::material::TextureSlot::{Albedo, Ao, Normal};
     let m = &item.material;
     CommonMaterial {
         model: item.model,
@@ -173,13 +182,13 @@ pub(super) fn common_material(item: &SceneRenderItem) -> CommonMaterial {
         diffuse: m.diffuse,
         specular: m.specular,
         shininess: m.shininess,
-        has_texture: if m.texture_id.is_some() { 1 } else { 0 },
+        has_texture: if resolved.live(Albedo) { 1 } else { 0 },
         use_pbr: if m.is_pbr() { 1 } else { 0 },
         metallic: m.metallic,
         roughness: m.roughness,
-        has_normal_map: if m.normal_map_id.is_some() { 1 } else { 0 },
+        has_normal_map: if resolved.live(Normal) { 1 } else { 0 },
         normal_strength: m.normal_strength,
-        has_ao_map: if m.ao_map_id.is_some() { 1 } else { 0 },
+        has_ao_map: if resolved.live(Ao) { 1 } else { 0 },
         unlit: if item.settings.unlit { 1 } else { 0 },
         receive_shadows: if item.settings.receive_shadows { 1 } else { 0 },
         use_flat: if m.is_flat() { 1 } else { 0 },
@@ -434,7 +443,12 @@ mod tests {
         );
 
         let tex = resources
-            .upload_texture(&device, &queue, 1, 1, &[255u8, 255, 255, 255])
+            .upload_texture(
+                &device,
+                &queue,
+                // Baked radiance, so linear: a lightmap slot rejects an sRGB upload.
+                crate::resources::TextureData::linear(1, 1, [255u8, 255, 255, 255].to_vec()),
+            )
             .unwrap();
         resources
             .set_lightmap(

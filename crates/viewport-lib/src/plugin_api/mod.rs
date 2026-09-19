@@ -72,7 +72,7 @@
 //!   `#[non_exhaustive]`, so new borrows are appended as fields and existing
 //!   ones keep their names and types within a minor version. Construct it
 //!   through [`PluginInstallCtx::new`]; adding a field is a minor bump noted in
-//!   the CHANGELOG. [`ViewportPlugin::install`] returns a
+//!   the CHANGELOG. [`PluginInstaller::install`] returns a
 //!   [`crate::ViewportResult`], so a feature that needs a piece the context did
 //!   not carry fails with [`crate::ViewportError`] rather than panicking.
 //!
@@ -98,7 +98,7 @@ pub mod shared_wgsl;
 pub mod target_desc;
 
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
-pub use install::{PluginInstallCtx, ViewportPlugin, install_plugin};
+pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{
     DepthReadContext, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickPassContext, PickRay, PluginItemCollection, ShadowCastContext,

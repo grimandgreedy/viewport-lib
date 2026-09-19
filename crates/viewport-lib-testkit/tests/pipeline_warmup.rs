@@ -21,7 +21,11 @@ fn checker_texture(h: &mut Harness) -> viewport_lib::TextureId {
     let tex = viewport_lib_testkit::textures::checker(64, 8, [200, 40, 40], [240, 240, 240]);
     h.renderer
         .resources_mut()
-        .upload_texture(&h.device, &h.queue, tex.width, tex.height, &tex.rgba)
+        .upload_texture(
+            &h.device,
+            &h.queue,
+            viewport_lib::TextureData::srgb(tex.width, tex.height, tex.rgba.to_vec()),
+        )
         .expect("texture upload")
 }
 

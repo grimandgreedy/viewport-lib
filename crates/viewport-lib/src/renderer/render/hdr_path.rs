@@ -301,7 +301,10 @@ impl ViewportRenderer {
     /// which boundary of the slot's begin/end pair this pass writes, so a
     /// multi-pass effect can begin on its first pass and end on its last
     /// (each query index must be written at most once per frame).
-    fn ts_writes_for(
+    ///
+    /// Shared with the LDR path, which times the same overlay slot when a
+    /// backdrop-blur shape forces the overlay into its own pass.
+    pub(crate) fn ts_writes_for(
         &self,
         slot: u32,
         begin: bool,
@@ -2289,7 +2292,7 @@ impl ViewportRenderer {
         let resources = &self.resources;
         let vp_idx = ctx.vp_idx;
         // -----------------------------------------------------------------------
-        // Decal exclude pass (D5): stamp stencil = 0 on non-receiver surfaces.
+        // Decal exclude pass: stamp stencil = 0 on non-receiver surfaces.
         // Runs after the opaque pass, before the decal pass.
         // -----------------------------------------------------------------------
         if !self.decal_exclude_items.is_empty() {
@@ -2338,7 +2341,7 @@ impl ViewportRenderer {
         }
 
         // -----------------------------------------------------------------------
-        // Decal pass (D1): projects each decal texture onto opaque surfaces.
+        // Decal pass: projects each decal texture onto opaque surfaces.
         // Reads scene depth as a texture; no depth attachment.
         // Runs after opaque geometry and SSAA resolve, before transparent passes.
         // -----------------------------------------------------------------------
@@ -4942,6 +4945,7 @@ impl ViewportRenderer {
                 .as_ref()
                 .unwrap()
                 .output_depth_view;
+            let overlay_ts_writes = self.ts_writes_for(crate::renderer::GPU_TS_OVERLAY, true, true);
             let mut overlay_pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
                 #[cfg(any(wgpu29, wgpu30))]
                 multiview_mask: None,
@@ -4963,7 +4967,7 @@ impl ViewportRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: overlay_ts_writes,
                 occlusion_query_set: None,
             });
             // Blur backdrop shapes drawn first (behind normal shapes).

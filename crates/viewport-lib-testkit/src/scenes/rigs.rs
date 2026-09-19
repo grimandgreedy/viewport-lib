@@ -24,7 +24,7 @@ fn point(position: [f32; 3], range: f32, colour: [f32; 3], intensity: f32) -> Li
         range,
         radius: 0.0,
     };
-    s.colour = colour;
+    s.colour = colour.into();
     s.intensity = intensity;
     s.cast_shadows = false;
     s
@@ -53,8 +53,8 @@ pub fn grazing() -> LightingSettings {
 pub fn from_below() -> LightingSettings {
     let mut l = with_lights(vec![directional([0.2, 0.2, -1.2], 1.0)], 0.25);
     // Warm the under-light, cool the sky so the inversion is obvious.
-    l.sky_colour = [0.5, 0.55, 0.65];
-    l.ground_colour = [0.7, 0.6, 0.45];
+    l.sky_colour = [0.5, 0.55, 0.65].into();
+    l.ground_colour = [0.7, 0.6, 0.45].into();
     l
 }
 

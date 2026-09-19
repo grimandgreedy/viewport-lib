@@ -1,0 +1,778 @@
+//! Showcase 4: Professional Interaction.
+
+use crate::App;
+use crate::eframe::egui;
+use std::collections::HashMap;
+use viewport_lib as vpl;
+use vpl::{
+    CameraAnimator, CameraFrame, Easing, FrameData, Gizmo, GizmoMode, GizmoSpace, LightingSettings,
+    ManipulationController, Material, NodeId, SceneRenderItem, ViewPreset, ViewportRenderer,
+    scene::Scene, selection::Selection,
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct InteractState {
+    pub scene: Scene,
+    pub selection: Selection,
+    pub animator: CameraAnimator,
+    pub gizmo: Gizmo,
+    pub manip: ManipulationController,
+    pub transforms_snapshot: HashMap<NodeId, glam::Mat4>,
+    pub left_held: bool,
+    pub built: bool,
+    pub gizmo_center: Option<glam::Vec3>,
+    pub gizmo_scale: f32,
+    pub spline: vpl::SplineWidget,
+}
+
+impl Default for InteractState {
+    fn default() -> Self {
+        Self {
+            scene: Scene::new(),
+            selection: Selection::new(),
+            animator: CameraAnimator::with_default_damping(),
+            gizmo: Gizmo::new(),
+            manip: ManipulationController::new(),
+            transforms_snapshot: HashMap::new(),
+            left_held: false,
+            built: false,
+            gizmo_center: None,
+            gizmo_scale: 1.0,
+            spline: vpl::SplineWidget::new(vec![
+                glam::Vec3::new(-2.0, 0.0, 1.5),
+                glam::Vec3::new(-0.5, 1.5, 1.5),
+                glam::Vec3::new(0.5, -1.5, 1.5),
+                glam::Vec3::new(2.0, 0.0, 1.5),
+            ]),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
+
+impl App {
+    pub(crate) fn build_interact_scene(&mut self, renderer: &mut ViewportRenderer) {
+        self.interact_state.scene = Scene::new();
+        self.interact_state.selection.clear();
+
+        let positions = [
+            [0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [-3.0, 0.0, 0.0],
+            [0.0, 3.0, 0.0],
+            [0.0, -3.0, 0.0],
+        ];
+        let colours = [
+            [0.45, 0.45, 0.45],
+            [0.65, 0.09, 0.07],
+            [0.10, 0.52, 0.18],
+            [0.10, 0.26, 0.68],
+            [0.60, 0.50, 0.05],
+        ];
+        let names = ["Center", "Right", "Left", "Front", "Back"];
+
+        for (i, ((pos, colour), name)) in positions.iter().zip(&colours).zip(&names).enumerate() {
+            let mesh = self.upload_box(renderer);
+            let transform = glam::Mat4::from_translation(glam::Vec3::from(*pos));
+            let mat = Material::from_colour(*colour);
+            let id = self
+                .interact_state
+                .scene
+                .add_named(name, Some(mesh), transform, mat);
+            if i == 0 {
+                self.interact_state.selection.select_one(id);
+            }
+        }
+
+        self.interact_state.built = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Manipulation helpers
+// ---------------------------------------------------------------------------
+
+impl App {
+    /// Apply a [`viewport_lib::TransformDelta`] to all selected scene nodes.
+    ///
+    /// Rotation and scale pivot around `interact_gizmo_center`.
+    /// When a numeric override is set (position, rotation, or scale), the snapshot
+    /// is restored first and the override applied relative to it. Whether numeric
+    /// input reads as relative or absolute is an app-side choice: this reference
+    /// applies it relative to the drag-start transform.
+    pub(crate) fn apply_interact_delta(&mut self, delta: vpl::TransformDelta) {
+        let Some(center) = self.interact_state.gizmo_center else {
+            return;
+        };
+
+        let has_pos_override = delta.position_override.iter().any(|v| v.is_some());
+        let has_rot_override = delta.rotation_override.iter().any(|v| v.is_some());
+        let has_scale_override = delta.scale_override.iter().any(|v| v.is_some());
+
+        if has_pos_override || has_rot_override || has_scale_override {
+            self.restore_interact_snapshots();
+        }
+
+        let translation = if has_pos_override {
+            glam::Vec3::new(
+                delta.position_override[0].unwrap_or(0.0),
+                delta.position_override[1].unwrap_or(0.0),
+                delta.position_override[2].unwrap_or(0.0),
+            )
+        } else {
+            delta.translation
+        };
+
+        let scale = if has_scale_override {
+            glam::Vec3::new(
+                delta.scale_override[0].unwrap_or(1.0),
+                delta.scale_override[1].unwrap_or(1.0),
+                delta.scale_override[2].unwrap_or(1.0),
+            )
+        } else {
+            delta.scale
+        };
+
+        let rotation = if has_rot_override {
+            // Numeric rotation is typed in degrees, one value per axis.
+            let rx = delta.rotation_override[0].unwrap_or(0.0).to_radians();
+            let ry = delta.rotation_override[1].unwrap_or(0.0).to_radians();
+            let rz = delta.rotation_override[2].unwrap_or(0.0).to_radians();
+            glam::Quat::from_euler(glam::EulerRot::XYZ, rx, ry, rz)
+        } else {
+            delta.rotation
+        };
+
+        let rot_mat = glam::Mat4::from_quat(rotation);
+        let scale_mat = glam::Mat4::from_scale(scale);
+        let translate_mat = glam::Mat4::from_translation(translation);
+        let to_pivot = glam::Mat4::from_translation(-center);
+        let from_pivot = glam::Mat4::from_translation(center);
+
+        for id in self
+            .interact_state
+            .selection
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+        {
+            if let Some(node) = self.interact_state.scene.node(id) {
+                let cur = node.local_transform();
+                let new_t = translate_mat * from_pivot * rot_mat * scale_mat * to_pivot * cur;
+                self.interact_state.scene.set_local_transform(id, new_t);
+            }
+        }
+        self.interact_state.scene.update_transforms();
+    }
+
+    /// Snapshot the current local transforms of all selected nodes.
+    pub(crate) fn save_interact_snapshots(&mut self) {
+        self.interact_state.transforms_snapshot.clear();
+        for id in self
+            .interact_state
+            .selection
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+        {
+            if let Some(node) = self.interact_state.scene.node(id) {
+                self.interact_state
+                    .transforms_snapshot
+                    .insert(id, node.local_transform());
+            }
+        }
+    }
+
+    /// Restore local transforms from the last snapshot (used by Cancel / ConstraintChanged).
+    pub(crate) fn restore_interact_snapshots(&mut self) {
+        let ids: Vec<_> = self
+            .interact_state
+            .transforms_snapshot
+            .keys()
+            .copied()
+            .collect();
+        for id in ids {
+            if let Some(&t) = self.interact_state.transforms_snapshot.get(&id) {
+                self.interact_state.scene.set_local_transform(id, t);
+            }
+        }
+        self.interact_state.scene.update_transforms();
+    }
+
+    pub(crate) fn zoom_to_fit_interact(&mut self) {
+        let mut min = glam::Vec3::splat(f32::INFINITY);
+        let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+        let mut any = false;
+
+        let iter_nodes: Vec<_> = if !self.interact_state.selection.is_empty() {
+            self.interact_state.selection.iter().copied().collect()
+        } else {
+            self.interact_state
+                .scene
+                .walk_depth_first()
+                .iter()
+                .map(|(id, _)| *id)
+                .collect()
+        };
+
+        for nid in iter_nodes {
+            if let Some(node) = self.interact_state.scene.node(nid) {
+                let t = node.world_transform();
+                let pos = glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z);
+                min = min.min(pos - glam::Vec3::splat(0.6));
+                max = max.max(pos + glam::Vec3::splat(0.6));
+                any = true;
+            }
+        }
+
+        if any {
+            let aabb = vpl::Aabb { min, max };
+            let target = self.camera.fit_aabb_target(&aabb);
+            self.interact_state.animator.fly_to(
+                &self.camera,
+                target.center,
+                target.distance,
+                target.orientation,
+                0.6,
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_interaction(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Gizmo Mode:");
+    ui.horizontal(|ui| {
+        if ui
+            .radio(
+                app.interact_state.gizmo.mode == GizmoMode::Translate,
+                "Translate",
+            )
+            .clicked()
+        {
+            app.interact_state.gizmo.mode = GizmoMode::Translate;
+        }
+        if ui
+            .radio(app.interact_state.gizmo.mode == GizmoMode::Rotate, "Rotate")
+            .clicked()
+        {
+            app.interact_state.gizmo.mode = GizmoMode::Rotate;
+        }
+        if ui
+            .radio(app.interact_state.gizmo.mode == GizmoMode::Scale, "Scale")
+            .clicked()
+        {
+            app.interact_state.gizmo.mode = GizmoMode::Scale;
+        }
+    });
+
+    ui.separator();
+
+    ui.label("Gizmo Space:");
+    ui.horizontal(|ui| {
+        if ui
+            .radio(app.interact_state.gizmo.space == GizmoSpace::World, "World")
+            .clicked()
+        {
+            app.interact_state.gizmo.space = GizmoSpace::World;
+        }
+        if ui
+            .radio(app.interact_state.gizmo.space == GizmoSpace::Local, "Local")
+            .clicked()
+        {
+            app.interact_state.gizmo.space = GizmoSpace::Local;
+        }
+    });
+
+    ui.separator();
+    ui.label("Shortcuts: G move | R rotate | S scale");
+    ui.label("X / Y / Z : constrain axis  |  Enter / click : confirm  |  Esc : cancel");
+    ui.separator();
+    ui.label("View presets:");
+    egui::Grid::new("view_presets_grid")
+        .num_columns(4)
+        .show(ui, |ui| {
+            for (label, preset) in [
+                ("Front", ViewPreset::Front),
+                ("Back", ViewPreset::Back),
+                ("Left", ViewPreset::Left),
+                ("Right", ViewPreset::Right),
+                ("Top", ViewPreset::Top),
+                ("Bottom", ViewPreset::Bottom),
+                ("Iso", ViewPreset::Isometric),
+            ] {
+                if ui.button(label).clicked() {
+                    app.interact_state.animator.fly_to_full(
+                        &app.camera,
+                        app.camera.center,
+                        app.camera.distance,
+                        preset.orientation(),
+                        preset.preferred_projection(),
+                        0.6,
+                        Easing::EaseInOutCubic,
+                    );
+                }
+            }
+        });
+
+    ui.separator();
+
+    if ui.button("Zoom to Fit").clicked() {
+        app.zoom_to_fit_interact();
+    }
+
+    ui.separator();
+
+    if ui.button("Clear Selection").clicked() {
+        app.interact_state.selection.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn interact_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let items = app
+        .interact_state
+        .scene
+        .collect_render_items(&app.interact_state.selection);
+    let sg = app.interact_state.scene.version();
+    let ss = app.interact_state.selection.version();
+    let lighting = {
+        let mut _t = LightingSettings::default();
+        _t.hemisphere_intensity = 0.5;
+        _t.sky_colour = [1.0, 1.0, 1.0].into();
+        _t.ground_colour = [1.0, 1.0, 1.0].into();
+        _t
+    };
+    (items, lighting, sg, ss)
+}
+
+pub(crate) fn interact_outline_selected(app: &App) -> bool {
+    !app.interact_state.selection.is_empty()
+}
+
+pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
+    if !app.interact_state.built {
+        return;
+    }
+    fd.scene
+        .polylines
+        .push(app.interact_state.spline.polyline_item(9900));
+    let render_cam = CameraFrame::from_camera(&app.camera, [w, h]).render_camera;
+    let spline_ctx = vpl::WidgetContext {
+        camera: render_cam,
+        viewport_size: glam::Vec2::new(w, h),
+        cursor_viewport: app.cursor_viewport,
+        drag_started: false,
+        dragging: false,
+        released: false,
+        double_clicked: false,
+    };
+    fd.scene
+        .glyphs
+        .push(app.interact_state.spline.handle_glyphs(9901, &spline_ctx));
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.interact_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_interact_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 12.0,
+        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
+        ..vpl::Camera::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let (items, lighting, sg, ss) = interact_collect_scene_items(app);
+        (items, None, lighting, sg, ss)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+    // Spline widget polyline + handles (Showcase 4) : submitted every frame.
+    submit_interact_items(app, &mut *fd, ctx.w, ctx.h);
+}
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+pub(crate) fn overlay(
+    app: &mut crate::App,
+    ui: &mut crate::eframe::egui::Ui,
+    cx: &crate::ViewportCtx,
+) {
+    // ----- Manipulation mode overlay (Showcase 4) -----
+    if let Some(ms) = app.interact_state.manip.state() {
+        let kind_label = match ms.kind {
+            vpl::ManipulationKind::Move => "Move",
+            vpl::ManipulationKind::Rotate => "Rotate",
+            vpl::ManipulationKind::Scale => "Scale",
+        };
+        let axis_label = match ms.axis {
+            Some(vpl::GizmoAxis::X) => {
+                if ms.exclude_axis {
+                    " (YZ)"
+                } else {
+                    " (X)"
+                }
+            }
+            Some(vpl::GizmoAxis::Y) => {
+                if ms.exclude_axis {
+                    " (XZ)"
+                } else {
+                    " (Y)"
+                }
+            }
+            Some(vpl::GizmoAxis::Z) => {
+                if ms.exclude_axis {
+                    " (XY)"
+                } else {
+                    " (Z)"
+                }
+            }
+            _ => "",
+        };
+        let text = if let Some(ref numeric) = ms.numeric_display {
+            format!("{kind_label}{axis_label}: {numeric}")
+        } else {
+            format!("{kind_label}{axis_label}")
+        };
+        let font = egui::FontId::proportional(14.0);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text, font, egui::Color32::WHITE);
+        let pos = egui::pos2(
+            cx.rect.center().x - galley.size().x / 2.0,
+            cx.rect.max.y - 30.0,
+        );
+        let bg = egui::Rect::from_min_size(
+            pos - egui::vec2(6.0, 3.0),
+            galley.size() + egui::vec2(12.0, 6.0),
+        );
+        ui.painter()
+            .rect_filled(bg, 3.0, egui::Color32::from_black_alpha(180));
+        ui.painter().galley(pos, galley, egui::Color32::WHITE);
+        cx.egui.request_repaint();
+    }
+}
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Continuous repaint for animated camera -----
+    if app.interact_state.animator.is_animating() {
+        cx.egui.request_repaint();
+    }
+}
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
+    // Object-level selection: defer the pick to the render site, where the
+    // renderer and the on-screen `FrameData` are in scope, and resolve it with
+    // the unified GPU picker. See `apply_pending_pick`.
+    app.pending_pick = Some(cx.pos);
+}
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Advance camera animator (Showcases 4 and 10) -----
+    let dt = cx.egui.input(|i| i.stable_dt.min(1.0 / 30.0));
+    app.interact_state.animator.update(dt, &mut app.camera);
+}
+
+/// Update this showcase's interactive widgets for the frame.
+pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Spline widget update (Showcase 4) -----
+    if app.interact_state.built {
+        let render_cam =
+            vpl::CameraFrame::from_camera(&app.camera, [cx.rect.width(), cx.rect.height()])
+                .render_camera;
+        let widget_ctx = vpl::WidgetContext {
+            camera: render_cam,
+            viewport_size: glam::Vec2::new(cx.rect.width(), cx.rect.height()),
+            cursor_viewport: app.cursor_viewport,
+            drag_started: cx.response.drag_started(),
+            dragging: cx.response.dragged(),
+            released: cx.response.drag_stopped(),
+            double_clicked: false,
+        };
+        app.interact_state.spline.update(&widget_ctx);
+    }
+}
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
+    // ----- Update gizmo_center cache for next frame's hit-testing -----
+    app.interact_state.gizmo_center =
+        vpl::gizmo::gizmo_center_from_selection(&app.interact_state.selection, |id| {
+            app.interact_state.scene.node(id).map(|n| {
+                let t = n.world_transform();
+                glam::Vec3::new(t.w_axis.x, t.w_axis.y, t.w_axis.z)
+            })
+        });
+    if let Some(center) = app.interact_state.gizmo_center {
+        app.interact_state.gizmo_scale = vpl::gizmo::compute_gizmo_scale(
+            center,
+            app.camera.eye_position(),
+            app.camera.fov_y,
+            cx.rect.height(),
+        );
+    }
+}
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Manipulation needs the
+/// `ActionFrame` that driving the camera produces, so that the same frame
+/// feeds both the camera and the gizmo; returning true tells the host this
+/// showcase has taken care of the camera itself.
+pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+    if app.interact_state.built {
+        let w = cx.rect.width();
+        let h = cx.rect.height();
+        let viewport_size = glam::Vec2::new(w, h);
+        let view_proj = app.camera.proj_matrix() * app.camera.view_matrix();
+
+        // Per-frame gizmo hover when no session is active.
+        if !app.interact_state.manip.is_active() {
+            if let Some(center) = app.interact_state.gizmo_center {
+                let ray_origin = app.camera.eye_position();
+                let cursor = app.cursor_viewport;
+                let ndc_x = (cursor.x / w.max(1.0)) * 2.0 - 1.0;
+                let ndc_y = 1.0 - (cursor.y / h.max(1.0)) * 2.0;
+                let inv_vp = view_proj.inverse();
+                let far = inv_vp.project_point3(glam::Vec3::new(ndc_x, ndc_y, 1.0));
+                let ray_dir = (far - ray_origin).normalize_or_zero();
+                let orient = crate::gizmo_helpers::gizmo_orientation(
+                    &app.interact_state.gizmo,
+                    &app.interact_state.selection,
+                    &app.interact_state.scene,
+                );
+                app.interact_state.gizmo.hovered_axis = app.interact_state.gizmo.hit_test_oriented(
+                    ray_origin,
+                    ray_dir,
+                    center,
+                    app.interact_state.gizmo_scale,
+                    orient,
+                );
+            } else {
+                app.interact_state.gizmo.hovered_axis = vpl::GizmoAxis::None;
+            }
+        }
+
+        // Build GizmoInfo.
+        let orient = crate::gizmo_helpers::gizmo_orientation(
+            &app.interact_state.gizmo,
+            &app.interact_state.selection,
+            &app.interact_state.scene,
+        );
+        let gizmo_info = app
+            .interact_state
+            .gizmo_center
+            .map(|center| vpl::GizmoInfo {
+                center,
+                scale: app.interact_state.gizmo_scale,
+                orientation: orient,
+                mode: app.interact_state.gizmo.mode,
+            });
+
+        // Build ManipulationContext.
+        let pointer_delta = cx
+            .egui
+            .input(|i| glam::Vec2::new(i.pointer.delta().x, i.pointer.delta().y));
+        let manip_ctx = vpl::ManipulationContext {
+            camera: app.camera.clone(),
+            viewport_size,
+            cursor_viewport: Some(app.cursor_viewport),
+            pointer_delta,
+            selection_center: app.interact_state.gizmo_center,
+            gizmo: gizmo_info,
+            drag_started: cx.response.drag_started(),
+            dragging: app.interact_state.left_held,
+            clicked: cx.response.clicked(),
+        };
+
+        // Orbit: resolve (no camera movement) while manipulation is active.
+        let action_frame = if app.interact_state.manip.is_active() {
+            app.controller.resolve()
+        } else {
+            app.controller.apply_to_camera(&mut app.camera)
+        };
+
+        // Tab cycles gizmo mode when no session is active.
+        if !app.interact_state.manip.is_active()
+            && action_frame.is_active(vpl::Action::CycleGizmoMode)
+        {
+            app.interact_state.gizmo.mode = match app.interact_state.gizmo.mode {
+                vpl::GizmoMode::Translate => vpl::GizmoMode::Rotate,
+                vpl::GizmoMode::Rotate => vpl::GizmoMode::Scale,
+                vpl::GizmoMode::Scale => vpl::GizmoMode::Translate,
+                _ => vpl::GizmoMode::Translate,
+            };
+        }
+
+        match app.interact_state.manip.update(&action_frame, manip_ctx) {
+            vpl::ManipResult::Update(delta) => {
+                app.apply_interact_delta(delta);
+            }
+            vpl::ManipResult::Cancel | vpl::ManipResult::ConstraintChanged => {
+                app.restore_interact_snapshots();
+            }
+            vpl::ManipResult::Commit => {
+                app.save_interact_snapshots();
+            }
+            vpl::ManipResult::None => {
+                if !app.interact_state.manip.is_active() {
+                    // Keep snapshots current so G/R/S always starts clean.
+                    app.save_interact_snapshots();
+                }
+            }
+            _ => {}
+        }
+
+        // Click-to-select: only when no session is active.
+        if cx.response.clicked() && !app.interact_state.manip.is_active() {
+            let pick_pos = app.cursor_viewport;
+            let click_cx = crate::ClickCtx {
+                frame: cx.frame,
+                pos: pick_pos,
+                w,
+                h,
+                pixels_per_point: cx.egui.pixels_per_point(),
+            };
+            app.handle_click_select(&click_cx);
+        }
+    } else {
+        app.controller.apply_to_camera(&mut app.camera);
+    }
+    true
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScInteraction;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScInteraction = ScInteraction;
+
+impl crate::Showcase for ScInteraction {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+        frame(app, fd, ctx)
+    }
+    fn overlay(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+        overlay(app, ui, cx)
+    }
+    fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        tick(app, cx)
+    }
+    fn on_click(&self, app: &mut crate::App, cx: &crate::ClickCtx) {
+        on_click(app, cx)
+    }
+    fn advance(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        advance(app, cx)
+    }
+    fn widgets(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        widgets(app, cx)
+    }
+    fn cache_gizmo(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
+        cache_gizmo(app, cx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_interaction(app, ui)
+    }
+}

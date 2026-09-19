@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::interaction::select::selection::{NodeId, Selection};
 use crate::renderer::{PickId, SceneRenderItem};
+use crate::resources::TextureId;
 use crate::resources::mesh::mesh_store::MeshId;
 use crate::scene::aabb::Aabb;
 use crate::scene::material::Material;
@@ -68,6 +69,21 @@ pub struct Group {
 // ---------------------------------------------------------------------------
 // SceneNode
 // ---------------------------------------------------------------------------
+
+/// Whether any of `material`'s texture slots names `texture_id`.
+///
+/// Kept next to [`Scene::texture_ref_count`] so the slot list is written once:
+/// a new texture slot on `Material` needs adding here and nowhere else.
+fn material_references_texture(material: &Material, texture_id: TextureId) -> bool {
+    [
+        material.texture_id,
+        material.normal_map_id,
+        material.ao_map_id,
+        material.metallic_roughness_texture_id,
+        material.emissive_texture_id,
+    ]
+    .contains(&Some(texture_id))
+}
 
 /// A node in the scene graph.
 pub struct SceneNode {
@@ -336,7 +352,7 @@ pub struct Scene {
     /// True after the first full octree build. Incremental updates apply from here.
     spatial_built: bool,
     last_scene_stats: SceneStats,
-    // D4: live decals with lifetime / animation.
+    // Live decals with lifetime / animation.
     live_decals: Vec<LiveDecal>,
     next_decal_id: u64,
 }
@@ -1339,6 +1355,32 @@ impl Scene {
             .count()
     }
 
+    /// Count how many scene nodes reference the given texture through any
+    /// material slot.
+    ///
+    /// A node counts once however many of its slots name the texture. Every
+    /// slot on [`Material`] is checked: `texture_id`, `normal_map_id`,
+    /// `ao_map_id`, `metallic_roughness_texture_id`, and
+    /// `emissive_texture_id`, on the node's own material and on each of its
+    /// submesh materials.
+    ///
+    /// O(n) over all nodes, the texture counterpart of
+    /// [`mesh_ref_count`](Self::mesh_ref_count). Use it to decide whether a
+    /// texture is still needed before calling
+    /// [`free_texture`](crate::resources::DeviceResources::free_texture). It
+    /// sees the scene only: a texture referenced solely by a decal, an overlay,
+    /// or a render item built outside the scene graph counts zero here.
+    pub fn texture_ref_count(&self, texture_id: TextureId) -> usize {
+        self.nodes
+            .values()
+            .filter(|n| {
+                std::iter::once(&n.material)
+                    .chain(n.submesh_materials.iter().flatten())
+                    .any(|m| material_references_texture(m, texture_id))
+            })
+            .count()
+    }
+
     // -- Tree walking --
 
     /// Depth-first traversal of the scene tree. Returns `(NodeId, depth)` pairs.
@@ -1367,7 +1409,7 @@ impl Default for Scene {
 }
 
 // ---------------------------------------------------------------------------
-// D4: Live decals with lifetime and animation.
+// Live decals with lifetime and animation.
 // ---------------------------------------------------------------------------
 
 /// Opaque handle returned by [`Scene::add_decal`].
@@ -2174,5 +2216,56 @@ mod tests {
 
         let (items2, _) = scene.collect_render_items_culled(&sel, &frustum, |_| Some(unit_aabb()));
         assert_eq!(items2.len(), 450, "should have 450 after removing 150");
+    }
+
+    #[test]
+    fn texture_ref_count_sees_every_material_slot() {
+        let tex = TextureId::from_raw(7);
+        let other = TextureId::from_raw(8);
+
+        // One node per slot: every one must be found, or a policy that frees on
+        // a zero count drops a texture still being sampled.
+        let slots: [fn(&mut Material, TextureId); 5] = [
+            |m, t| m.texture_id = Some(t),
+            |m, t| m.normal_map_id = Some(t),
+            |m, t| m.ao_map_id = Some(t),
+            |m, t| m.metallic_roughness_texture_id = Some(t),
+            |m, t| m.emissive_texture_id = Some(t),
+        ];
+
+        for (i, set_slot) in slots.iter().enumerate() {
+            let mut scene = Scene::new();
+            let mut material = Material::default();
+            set_slot(&mut material, tex);
+            scene.add(Some(MeshId::from_index(0)), glam::Mat4::IDENTITY, material);
+            assert_eq!(
+                scene.texture_ref_count(tex),
+                1,
+                "material slot {i} must be counted"
+            );
+            assert_eq!(scene.texture_ref_count(other), 0);
+        }
+    }
+
+    #[test]
+    fn texture_ref_count_covers_submesh_materials_and_counts_nodes_once() {
+        let tex = TextureId::from_raw(7);
+        let mut scene = Scene::new();
+
+        // A node whose own material is untextured but whose submesh material
+        // samples the texture still references it.
+        let submeshed = scene.add(
+            Some(MeshId::from_index(0)),
+            glam::Mat4::IDENTITY,
+            Material::default(),
+        );
+        scene.set_submesh_materials(submeshed, Some(vec![Material::textured(tex)]));
+        assert_eq!(scene.texture_ref_count(tex), 1);
+
+        // A node naming the texture in two slots counts once, not twice.
+        let mut both = Material::textured(tex);
+        both.emissive_texture_id = Some(tex);
+        scene.add(Some(MeshId::from_index(0)), glam::Mat4::IDENTITY, both);
+        assert_eq!(scene.texture_ref_count(tex), 2);
     }
 }

@@ -141,7 +141,7 @@ fn occluder_casts_a_shadow() {
     // Black floor and occluder so the test isolates visibility: no surface
     // bounces light into the shadow, so a shadowed texel goes to ~0.
     let black = RtMaterial {
-        base_colour: [0.0, 0.0, 0.0],
+        base_colour: [0.0, 0.0, 0.0].into(),
         ..RtMaterial::default()
     };
     let mut scene = RtScene::new();
@@ -196,7 +196,7 @@ fn indirect_light_carries_colour() {
     ];
     let n = [Vec3::Z; 4];
     let emissive = RtMaterial {
-        emissive: [5.0, 0.0, 0.0],
+        emissive: [5.0, 0.0, 0.0].into(),
         ..RtMaterial::default()
     };
     scene.add_mesh(&p, &[0u32, 1, 2, 0, 2, 3], Some(&n), emissive);
@@ -372,7 +372,7 @@ fn emissive_panel_lights_the_floor_with_low_noise() {
         &[0u32, 1, 2, 0, 2, 3],
         Some(&[-Vec3::Z; 4]),
         RtMaterial {
-            emissive: [40.0, 40.0, 40.0],
+            emissive: [40.0, 40.0, 40.0].into(),
             ..RtMaterial::default()
         },
     );

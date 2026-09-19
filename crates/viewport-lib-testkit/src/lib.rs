@@ -27,6 +27,11 @@
 pub mod device;
 pub mod harness;
 
+// Minimal plugin implementations, one per seam of the plugin API. Part of the
+// core: they are small, they pull no dependencies, and hiding them behind a
+// feature would let them rot.
+pub mod fixtures;
+
 // The scene corpus, behind the `scenes` feature so the core builds without it.
 // The `scenes` module tree holds the catalogue plus the meshes, rigs, textures,
 // and optional real-model loaders it builds from.

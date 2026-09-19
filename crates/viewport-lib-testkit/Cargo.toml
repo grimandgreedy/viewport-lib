@@ -76,3 +76,8 @@ required-features = ["wgpu27", "scenes"]
 name = "catalogue-viewer"
 path = "examples/catalogue_viewer/main.rs"
 required-features = ["wgpu27", "scenes"]
+
+[[example]]
+name = "scene_dump"
+path = "examples/scene_dump/main.rs"
+required-features = ["scenes"]

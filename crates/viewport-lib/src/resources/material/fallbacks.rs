@@ -69,6 +69,27 @@ pub(crate) struct MaterialFallbacks {
 }
 
 impl MaterialFallbacks {
+    /// The neutral fallback view for a material texture slot: what binds when
+    /// the slot names no texture.
+    ///
+    /// Each one is chosen so the slot contributes nothing of its own: white for
+    /// albedo and AO, a flat tangent-space normal, `[0, 1, 1]` for
+    /// metallic-roughness so the scalar factors pass through, and black for
+    /// emissive.
+    pub(crate) fn slot_view(
+        &self,
+        slot: crate::scene::material::TextureSlot,
+    ) -> &crate::gpu::TextureView {
+        use crate::scene::material::TextureSlot::*;
+        match slot {
+            Albedo => &self.texture.view,
+            Normal => &self.normal_map_view,
+            Ao => &self.ao_map_view,
+            MetallicRoughness => &self.metallic_roughness_view,
+            Emissive => &self.emissive_view,
+        }
+    }
+
     /// Resolve a material [`SamplerKey`](crate::scene::material::SamplerKey) to a
     /// wgpu sampler, deduped through [`sampler_palette`](Self::sampler_palette).
     /// Repeated keys (the common case: a scene full of the same tiling material)

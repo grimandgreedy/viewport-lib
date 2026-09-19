@@ -1,0 +1,554 @@
+//! Showcase 32: Extended Quantity Coverage
+//!
+//! Three sub-modes demonstrating additional quantity types:
+//!
+//! **A : Edge/Halfedge/Corner Scalars**: Three spheres coloured by the Z coordinate
+//! of each edge midpoint (Edge) or corner (Halfedge/Corner).  Edge is vertex-averaged
+//! (smooth gradient); Halfedge and Corner are flat per triangle corner.
+//!
+//! **B : Volume Mesh Vectors**: Hex-sphere boundary surface with radial arrows placed
+//! at every vertex (blue) and every cell centroid (orange).
+//!
+//! **C : Point Cloud Radius + Transparency**: Fibonacci sphere where per-point radius
+//! is large near the equator and per-point transparency follows a sinusoidal longitude
+//! pattern, producing transparent stripes.
+
+use crate::{App, MeshId};
+use crate::eframe::egui;
+use viewport_lib as vpl;
+use vpl::{
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, CELL_SENTINEL, ColourmapId,
+    FrameData, GlyphItem, LightingSettings, PointCloudItem, SceneRenderItem, ViewportRenderer,
+    VolumeMeshData, volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
+};
+
+// ---------------------------------------------------------------------------
+// Sub-mode
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EqSubMode {
+    EdgeCornerScalars,
+    VolumeMeshVectors,
+    PointCloudRadiusTransparency,
+}
+
+// ---------------------------------------------------------------------------
+// Geometry helpers
+// ---------------------------------------------------------------------------
+
+fn edge_scalars(positions: &[[f32; 3]], indices: &[u32]) -> Vec<f32> {
+    let n_tris = indices.len() / 3;
+    let mut out = Vec::with_capacity(3 * n_tris);
+    for t in 0..n_tris {
+        for k in 0..3 {
+            let i0 = indices[t * 3 + k] as usize;
+            let i1 = indices[t * 3 + (k + 1) % 3] as usize;
+            out.push((positions[i0][2] + positions[i1][2]) * 0.5);
+        }
+    }
+    out
+}
+
+/// Per-corner scalars that cycle (0.0, 0.5, 1.0) across the three corners of
+/// every triangle.  Within each triangle the value interpolates, but neighbouring
+/// triangles restart at the same pattern, making the triangulation clearly visible
+/// and looking different from the smooth Edge gradient.
+fn corner_index_scalars(indices: &[u32]) -> Vec<f32> {
+    let n_tris = indices.len() / 3;
+    let mut out = Vec::with_capacity(3 * n_tris);
+    for _ in 0..n_tris {
+        out.push(0.0);
+        out.push(0.5);
+        out.push(1.0);
+    }
+    out
+}
+
+fn make_hex_sphere_volume_mesh() -> VolumeMeshData {
+    let n = 5usize; // 5x5x5 grid : 125 vertices, 64 cells
+    let r = 2.0f32;
+    let h = 1.0f32;
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut idx_map = std::collections::HashMap::new();
+    for iz in 0..n {
+        for iy in 0..n {
+            for ix in 0..n {
+                let lx = -h + (ix as f32) / (n as f32 - 1.0) * 2.0 * h;
+                let ly = -h + (iy as f32) / (n as f32 - 1.0) * 2.0 * h;
+                let lz = -h + (iz as f32) / (n as f32 - 1.0) * 2.0 * h;
+                let len = (lx * lx + ly * ly + lz * lz).sqrt().max(1e-9);
+                idx_map.insert((ix, iy, iz), positions.len() as u32);
+                positions.push([lx / len * r, ly / len * r, lz / len * r]);
+            }
+        }
+    }
+    let nc = n - 1;
+    let mut cells: Vec<[u32; 8]> = Vec::new();
+    for iz in 0..nc {
+        for iy in 0..nc {
+            for ix in 0..nc {
+                let v = |dx, dy, dz| *idx_map.get(&(ix + dx, iy + dy, iz + dz)).unwrap();
+                cells.push([
+                    v(0, 0, 0),
+                    v(1, 0, 0),
+                    v(1, 1, 0),
+                    v(0, 1, 0),
+                    v(0, 0, 1),
+                    v(1, 0, 1),
+                    v(1, 1, 1),
+                    v(0, 1, 1),
+                ]);
+            }
+        }
+    }
+    let mut data = VolumeMeshData::default();
+    data.positions = positions;
+    data.cells = cells;
+    data
+}
+
+fn vertex_radial_vectors(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
+    positions
+        .iter()
+        .map(|&p| {
+            let len = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt().max(1e-9);
+            [p[0] / len, p[1] / len, p[2] / len]
+        })
+        .collect()
+}
+
+fn cell_radial_vectors(data: &VolumeMeshData) -> Vec<[f32; 3]> {
+    data.cells
+        .iter()
+        .map(|cell| {
+            let valid: Vec<usize> = cell
+                .iter()
+                .filter(|&&i| i != CELL_SENTINEL && (i as usize) < data.positions.len())
+                .map(|&i| i as usize)
+                .collect();
+            if valid.is_empty() {
+                return [0.0, 1.0, 0.0];
+            }
+            let inv = 1.0 / valid.len() as f32;
+            let cx: f32 = valid.iter().map(|&i| data.positions[i][0]).sum::<f32>() * inv;
+            let cy: f32 = valid.iter().map(|&i| data.positions[i][1]).sum::<f32>() * inv;
+            let cz: f32 = valid.iter().map(|&i| data.positions[i][2]).sum::<f32>() * inv;
+            let len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-9);
+            [cx / len, cy / len, cz / len]
+        })
+        .collect()
+}
+
+fn make_pc_data(n: usize) -> (Vec<[f32; 3]>, Vec<f32>, Vec<f32>, Vec<f32>) {
+    let r = 2.0f32;
+    let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+    let mut pos = Vec::with_capacity(n);
+    let mut sc = Vec::with_capacity(n);
+    let mut rad = Vec::with_capacity(n);
+    let mut tr = Vec::with_capacity(n);
+    for i in 0..n {
+        let y = 1.0 - (i as f32) / (n as f32 - 1.0) * 2.0;
+        let ry = (1.0 - y * y).max(0.0).sqrt();
+        let theta = golden * i as f32;
+        pos.push([theta.cos() * ry * r, y * r, theta.sin() * ry * r]);
+        sc.push((y + 1.0) * 0.5);
+        rad.push(3.0 + 27.0 * (1.0 - y * y)); // 3px at poles, 30px at equator
+        let t_norm = theta.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU;
+        tr.push((t_norm * 8.0 * std::f32::consts::PI).sin() * 0.5 + 0.5);
+    }
+    (pos, sc, rad, tr)
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub(crate) struct EqState {
+    pub built: bool,
+    pub sub_mode: EqSubMode,
+    pub edge_mesh_ids: [MeshId; 3],
+    pub vm_mesh_id: MeshId,
+    pub vm_data: vpl::VolumeMeshData,
+    pub pc_positions: Vec<[f32; 3]>,
+    pub pc_scalars: Vec<f32>,
+    pub pc_radii: Vec<f32>,
+    pub pc_transp: Vec<f32>,
+    pub pc_bg_mesh_id: MeshId,
+    pub colourmap: BuiltinColourmap,
+}
+
+impl Default for EqState {
+    fn default() -> Self {
+        Self {
+            built: false,
+            sub_mode: EqSubMode::EdgeCornerScalars,
+            edge_mesh_ids: [MeshId::INVALID; 3],
+            vm_mesh_id: MeshId::INVALID,
+            vm_data: vpl::VolumeMeshData::default(),
+            pc_positions: Vec::new(),
+            pc_scalars: Vec::new(),
+            pc_radii: Vec::new(),
+            pc_transp: Vec::new(),
+            pc_bg_mesh_id: MeshId::INVALID,
+            colourmap: BuiltinColourmap::Viridis,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// App impl
+// ---------------------------------------------------------------------------
+
+impl App {
+    pub(crate) fn build_eq_scene(&mut self, renderer: &mut ViewportRenderer) {
+        let sphere = vpl::primitives::sphere(2.0, 48, 24);
+        let ev = edge_scalars(&sphere.positions, &sphere.indices);
+        let cv = corner_index_scalars(&sphere.indices);
+
+        let mut em = vpl::primitives::sphere(2.0, 48, 24);
+        em.attributes
+            .insert("edge_z".into(), AttributeData::Edge(ev));
+        self.eq_state.edge_mesh_ids[0] = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &em)
+            .expect("edge mesh");
+
+        let mut hm = vpl::primitives::sphere(2.0, 48, 24);
+        hm.attributes
+            .insert("halfedge_z".into(), AttributeData::Halfedge(cv.clone()));
+        self.eq_state.edge_mesh_ids[1] = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &hm)
+            .expect("halfedge mesh");
+
+        let mut cm = vpl::primitives::sphere(2.0, 48, 24);
+        cm.attributes
+            .insert("corner_z".into(), AttributeData::Corner(cv));
+        self.eq_state.edge_mesh_ids[2] = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &cm)
+            .expect("corner mesh");
+
+        let vm_data = make_hex_sphere_volume_mesh();
+        let vm_item = renderer
+            .resources_mut()
+            .upload_volume_mesh(&self.device, &vm_data)
+            .expect("vm mesh");
+        self.eq_state.vm_mesh_id = vm_item.boundary_mesh_id;
+        self.eq_state.vm_data = vm_data;
+
+        let (p, s, r, t) = make_pc_data(5_000);
+        self.eq_state.pc_positions = p;
+        self.eq_state.pc_scalars = s;
+        self.eq_state.pc_radii = r;
+        self.eq_state.pc_transp = t;
+
+        // Opaque background sphere slightly smaller than the point-cloud shell (r=2.0).
+        // Placed in the middle so back-facing points are occluded.
+        let bg_sphere = vpl::primitives::sphere(1.75, 32, 16);
+        self.eq_state.pc_bg_mesh_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &bg_sphere)
+            .expect("pc bg sphere");
+
+        self.eq_state.built = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+pub(crate) fn controls_eq(app: &mut App, ui: &mut egui::Ui) {
+    ui.label("Sub-mode:");
+    ui.horizontal_wrapped(|ui| {
+        for (label, mode) in [
+            ("Edge/Corner Scalars", EqSubMode::EdgeCornerScalars),
+            ("Volume Vectors", EqSubMode::VolumeMeshVectors),
+            ("PC Radius+Alpha", EqSubMode::PointCloudRadiusTransparency),
+        ] {
+            if ui.radio(app.eq_state.sub_mode == mode, label).clicked() {
+                app.eq_state.sub_mode = mode;
+            }
+        }
+    });
+    ui.separator();
+    match app.eq_state.sub_mode {
+        EqSubMode::EdgeCornerScalars => {
+            ui.label("Left: Edge : smooth gradient (Z midpoints averaged to vertices)");
+            ui.label("Centre/Right: Halfedge & Corner : repeating 3-colour triangle pattern");
+            ui.label("(corner 0=purple, 1=teal, 2=yellow; discontinuous across edges)");
+            ui.separator();
+            ui.label("Colourmap:");
+            for cm in [
+                BuiltinColourmap::Viridis,
+                BuiltinColourmap::Plasma,
+                BuiltinColourmap::Coolwarm,
+            ] {
+                if ui
+                    .radio(app.eq_state.colourmap == cm, format!("{cm:?}"))
+                    .clicked()
+                {
+                    app.eq_state.colourmap = cm;
+                }
+            }
+        }
+        EqSubMode::VolumeMeshVectors => {
+            ui.label("Blue arrows: per-vertex radial vectors.");
+            ui.label("Orange arrows: per-cell centroid radial vectors.");
+        }
+        EqSubMode::PointCloudRadiusTransparency => {
+            ui.label("Radius: large at equator, small at poles.");
+            ui.label("Transparency: sinusoidal longitude stripes.");
+        }
+    }
+}
+
+impl App {
+    pub(crate) fn eq_scene_items(
+        &self,
+    ) -> (Vec<SceneRenderItem>, Vec<GlyphItem>, Vec<PointCloudItem>) {
+        let mut scene_items: Vec<SceneRenderItem> = Vec::new();
+        let mut glyph_items: Vec<GlyphItem> = Vec::new();
+        let mut pc_items: Vec<PointCloudItem> = Vec::new();
+
+        match self.eq_state.sub_mode {
+            EqSubMode::EdgeCornerScalars => {
+                let cm_id = Some(ColourmapId(self.eq_state.colourmap as usize));
+                let offsets = [-5.0f32, 0.0, 5.0];
+                let names = ["edge_z", "halfedge_z", "corner_z"];
+                let kinds = [
+                    AttributeKind::Edge,
+                    AttributeKind::Halfedge,
+                    AttributeKind::Corner,
+                ];
+                for i in 0..3 {
+                    let mut item = SceneRenderItem::default();
+                    item.mesh_id = self.eq_state.edge_mesh_ids[i];
+                    item.model = glam::Mat4::from_translation(glam::vec3(offsets[i], 0.0, 0.0))
+                        .to_cols_array_2d();
+                    item.active_attribute = Some(AttributeRef {
+                        name: names[i].into(),
+                        kind: kinds[i],
+                    });
+                    item.colourmap_id = cm_id;
+                    scene_items.push(item);
+                }
+            }
+            EqSubMode::VolumeMeshVectors => {
+                let mut item = SceneRenderItem::default();
+                item.mesh_id = self.eq_state.vm_mesh_id;
+                scene_items.push(item);
+                // Vertex vectors: blue (Viridis at 0.15).
+                let vv = vertex_radial_vectors(&self.eq_state.vm_data.positions);
+                let mut vg = volume_mesh_vertex_vectors_to_glyphs(
+                    &self.eq_state.vm_data.positions,
+                    &vv,
+                    0.4,
+                );
+                vg.scalars = vec![0.15; vg.positions.len()];
+                vg.scalar_range = Some((0.0, 1.0));
+                vg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Viridis as usize));
+                glyph_items.push(vg);
+                // Cell vectors: orange (Plasma at 0.65).  Use Plasma to guarantee a
+                // warm hue clearly distinct from the blue vertex arrows.
+                let cv = cell_radial_vectors(&self.eq_state.vm_data);
+                let mut cg = volume_mesh_cell_vectors_to_glyphs(&self.eq_state.vm_data, &cv, 1.5);
+                cg.scalars = vec![0.65; cg.positions.len()];
+                cg.scalar_range = Some((0.0, 1.0));
+                cg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Plasma as usize));
+                glyph_items.push(cg);
+            }
+            EqSubMode::PointCloudRadiusTransparency => {
+                // Opaque sphere behind the point cloud to occlude back-facing points.
+                let mut bg = SceneRenderItem::default();
+                bg.mesh_id = self.eq_state.pc_bg_mesh_id;
+                scene_items.push(bg);
+
+                let mut pc = PointCloudItem::default();
+                pc.positions = self.eq_state.pc_positions.clone();
+                pc.scalars = self.eq_state.pc_scalars.clone();
+                pc.radii = self.eq_state.pc_radii.clone();
+                pc.transparencies = self.eq_state.pc_transp.clone();
+                pc_items.push(pc);
+            }
+        }
+
+        (scene_items, glyph_items, pc_items)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frame assembly
+// ---------------------------------------------------------------------------
+
+pub(crate) fn eq_collect_scene_items(
+    app: &mut App,
+) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
+    let (items, _glyphs, _pcs) = app.eq_scene_items();
+    (items, LightingSettings::default(), 0, 0)
+}
+
+pub(crate) fn submit_eq_items(app: &mut App, fd: &mut FrameData) {
+    if !app.eq_state.built {
+        return;
+    }
+    let (_items, glyphs, pcs) = app.eq_scene_items();
+    fd.scene.glyphs.extend(glyphs);
+    fd.scene.point_clouds.extend(pcs);
+}
+
+// ---------------------------------------------------------------------------
+// Lazy scene build
+// ---------------------------------------------------------------------------
+
+/// Whether the host should call [`build`] before the next frame.
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    !app.eq_state.built
+}
+
+/// Build this showcase's scene and frame its opening camera. Called once, on
+/// the first frame after it becomes the active showcase.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_eq_scene(renderer);
+    app.camera = vpl::Camera {
+        center: glam::Vec3::ZERO,
+        distance: 18.0,
+        orientation: glam::Quat::from_rotation_z(0.4)
+            * glam::Quat::from_rotation_x(0.8),
+        ..vpl::Camera::default()
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame scene contents
+// ---------------------------------------------------------------------------
+
+/// Collect this showcase's render items and lighting for the frame. `_out` carries
+/// the few extra frame settings a showcase can set alongside its items.
+pub(crate) fn scene(
+    app: &mut crate::App,
+    _frame: &crate::eframe::Frame,
+    _out: &mut crate::SceneOverrides,
+) -> crate::SceneContents {
+    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
+        let (items, lighting, sg, ss) =
+            eq_collect_scene_items(app);
+        (items, None, lighting, sg, ss)
+    };
+    crate::SceneContents {
+        items,
+        bg_colour,
+        lighting,
+        scene_gen,
+        sel_gen,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame frame-data tweaks
+// ---------------------------------------------------------------------------
+
+/// Fold this showcase's own contributions into the assembled frame: extra
+/// render items, overlays, and effect settings that are re-submitted every
+/// frame rather than baked into the scene.
+pub(crate) fn frame(
+    app: &mut crate::App,
+    fd: &mut vpl::FrameData,
+    _ctx: &crate::FrameCtx,
+) {
+    // Extended quantity glyphs and point clouds (Showcase 32) : submitted every frame.
+    submit_eq_items(app, &mut *fd);
+}
+
+// ---------------------------------------------------------------------------
+// Viewport overlay and per-frame tick
+// ---------------------------------------------------------------------------
+
+/// Draw this showcase's own egui overlay on top of the rendered viewport:
+/// selection rectangles, mode readouts, and in-scene labels.
+
+
+/// Advance this showcase's animation and ask for another frame. Runs after the
+/// viewport has been drawn, so it only affects the next frame.
+
+
+/// Route a viewport click for this showcase. The host calls this for a plain
+/// click that no gizmo or widget has already consumed; `pos` is in viewport
+/// pixels.
+
+
+/// Handle drag gestures this showcase owns, before the camera controller runs.
+
+
+/// Advance this showcase's own camera animation or object motion for the frame.
+
+
+/// Update this showcase's interactive widgets for the frame.
+
+
+/// Flush any per-frame GPU writes this showcase has queued.
+
+
+/// Cache gizmo placement for next frame's hit-testing.
+
+
+/// Take over the whole viewport for this frame. Returning false leaves the
+/// host's normal single-viewport path in charge.
+pub(crate) fn viewport_override(
+    _app: &mut crate::App,
+    _ui: &mut crate::eframe::egui::Ui,
+    _cx: &crate::ViewportCtx,
+) -> bool {
+    false
+}
+
+/// Drive the orbit controller for this showcase. Returning false leaves the
+/// host to run the usual suppress-or-apply path.
+pub(crate) fn drive_camera(_app: &mut crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+/// Whether the orbit controller should resolve without moving the camera this
+/// frame. This showcase never suppresses it.
+pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Showcase entry point
+// ---------------------------------------------------------------------------
+
+/// Stateless handle for this showcase; the scene state lives on [`crate::App`].
+pub(crate) struct ScExtendedQuantities;
+
+/// The registry's handle to this showcase.
+pub(crate) static SHOWCASE: ScExtendedQuantities = ScExtendedQuantities;
+
+impl crate::Showcase for ScExtendedQuantities {
+    fn needs_build(&self, app: &crate::App) -> bool {
+        needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+        scene(app, frame, out)
+    }
+    fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
+        frame(app, fd, ctx)
+    }
+    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+        viewport_override(app, ui, cx)
+    }
+    fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
+        drive_camera(app, cx)
+    }
+    fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
+        suppress_orbit(app, cx)
+    }
+    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+        controls_eq(app, ui)
+    }
+}

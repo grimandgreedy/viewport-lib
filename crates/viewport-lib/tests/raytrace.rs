@@ -123,7 +123,7 @@ fn lit_and_emissive_deposit_radiance() {
         &mut unlit,
         1.5,
         RtMaterial {
-            base_colour: [0.8, 0.8, 0.8],
+            base_colour: [0.8, 0.8, 0.8].into(),
             ..RtMaterial::default()
         },
     );
@@ -136,7 +136,7 @@ fn lit_and_emissive_deposit_radiance() {
         &mut lit,
         1.5,
         RtMaterial {
-            base_colour: [0.8, 0.8, 0.8],
+            base_colour: [0.8, 0.8, 0.8].into(),
             ..RtMaterial::default()
         },
     );
@@ -153,8 +153,8 @@ fn lit_and_emissive_deposit_radiance() {
         &mut emis,
         1.5,
         RtMaterial {
-            base_colour: [0.0; 3],
-            emissive: [5.0, 5.0, 5.0],
+            base_colour: [0.0; 3].into(),
+            emissive: [5.0, 5.0, 5.0].into(),
             ..RtMaterial::default()
         },
     );
@@ -198,7 +198,7 @@ fn instancing_matches_expanded_scene() {
     let obj_n = [Vec3::new(0.0, -1.0, 0.0); 4];
     let idx = [0u32, 1, 2, 0, 2, 3];
     let material = RtMaterial {
-        base_colour: [0.7, 0.5, 0.3],
+        base_colour: [0.7, 0.5, 0.3].into(),
         ..RtMaterial::default()
     };
 
@@ -321,7 +321,7 @@ fn transmission_lets_the_background_through() {
         &mut clear,
         4.0,
         RtMaterial {
-            base_colour: [1.0, 1.0, 1.0],
+            base_colour: [1.0, 1.0, 1.0].into(),
             roughness: 0.05,
             transmission: 1.0,
             ior: 1.0,
@@ -336,7 +336,7 @@ fn transmission_lets_the_background_through() {
         &mut opaque,
         4.0,
         RtMaterial {
-            base_colour: [0.0, 0.0, 0.0],
+            base_colour: [0.0, 0.0, 0.0].into(),
             ..RtMaterial::default()
         },
     );
@@ -362,7 +362,7 @@ fn denoise_reduces_noise_and_preserves_mean() {
         &mut scene,
         4.0,
         RtMaterial {
-            base_colour: [0.9, 0.9, 0.9],
+            base_colour: [0.9, 0.9, 0.9].into(),
             metallic: 1.0,
             roughness: 0.6,
             ..RtMaterial::default()
@@ -424,7 +424,7 @@ fn tracer_reuse_across_cameras_and_sizes() {
         &mut scene,
         1.5,
         RtMaterial {
-            base_colour: [0.8, 0.8, 0.8],
+            base_colour: [0.8, 0.8, 0.8].into(),
             ..RtMaterial::default()
         },
     );
@@ -484,7 +484,7 @@ fn environment_lights_the_scene() {
             &mut scene,
             1.5,
             RtMaterial {
-                base_colour: [0.8, 0.8, 0.8],
+                base_colour: [0.8, 0.8, 0.8].into(),
                 ..RtMaterial::default()
             },
         );
@@ -515,7 +515,7 @@ fn progressive_accumulation_converges() {
         &mut scene,
         4.0,
         RtMaterial {
-            base_colour: [0.9, 0.9, 0.9],
+            base_colour: [0.9, 0.9, 0.9].into(),
             metallic: 1.0,
             roughness: 0.6,
             ..RtMaterial::default()
@@ -608,7 +608,7 @@ fn env_importance_sampling_matches_analytic_uniform_env() {
         &mut scene,
         3.0,
         RtMaterial {
-            base_colour: [0.5, 0.5, 0.5],
+            base_colour: [0.5, 0.5, 0.5].into(),
             ..RtMaterial::default()
         },
     );
@@ -658,7 +658,7 @@ fn env_importance_sampling_keeps_concentrated_source_low_noise() {
         &mut scene,
         3.0,
         RtMaterial {
-            base_colour: [0.6, 0.6, 0.6],
+            base_colour: [0.6, 0.6, 0.6].into(),
             ..RtMaterial::default()
         },
     );

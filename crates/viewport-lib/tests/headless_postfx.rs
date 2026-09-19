@@ -599,10 +599,13 @@ fn lit_clamp_hdr_passes_above_one_ldr_saturates() {
         renderer.render_offscreen(&device, &queue, &frame, 64, 64)
     };
 
-    // Both intensities are far past the old saturation point for every lit
-    // pixel, so under a [0, 1] clamp they render identically.
-    let hdr_lo = render_at(50.0, true, &mut renderer);
-    let hdr_hi = render_at(500.0, true, &mut renderer);
+    // Both intensities are past the old saturation point for every lit pixel, so
+    // under a [0, 1] clamp they would render identically. Keep them inside the
+    // tone curve's responsive range: far enough up (50 and beyond) every value
+    // quantises to 255 in the 8-bit target and the comparison stops measuring
+    // the clamp.
+    let hdr_lo = render_at(2.0, true, &mut renderer);
+    let hdr_hi = render_at(20.0, true, &mut renderer);
     assert_ne!(
         hdr_lo, hdr_hi,
         "HDR path: lit output must respond to intensity above 1.0 (clamp should not saturate before tone mapping)"
@@ -764,7 +767,11 @@ fn grade_lut_remaps_colour() {
     }
     let lut_id = renderer
         .resources_mut()
-        .upload_normal_map(&device, &queue, n * n, n, &lut)
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::normal_map(n * n, n, lut.to_vec()),
+        )
         .unwrap();
 
     let size = 32u32;

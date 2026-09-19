@@ -24,6 +24,9 @@ pub use crate::resources::material::colourmap_data::ColourmapId;
 pub use crate::resources::material::matcap_data::BuiltinMatcap;
 pub use crate::resources::material::matcap_data::MatcapId;
 pub use crate::resources::material::textures::GpuTexture;
+pub use crate::resources::material::textures::{
+    TextureData, TexturePayload, TextureRole, TextureSlot,
+};
 pub use crate::resources::memory::ResidentBytes;
 pub use crate::resources::memory::TextureMemoryStats;
 pub use crate::resources::memory::VramBudget;
@@ -393,9 +396,22 @@ pub(crate) struct FrustumUniform {
     /// bound), 0 = skip it (shadow / single-mesh / plugin dispatches bind the
     /// fallback instance buffer and leave this off).
     pub(crate) do_mask_cull: u32,
+    /// 1 = the order-free compaction runs after the cull kernel and will write
+    /// both the visible list and the per-batch visible counts, so the cull
+    /// kernel skips its own arrival-order list and counter increments. 0 = the
+    /// compaction scratch this submission needs is past the device's
+    /// storage-buffer binding limit, so the cull kernel writes the list itself,
+    /// in arrival order.
+    pub(crate) compact_enabled: u32,
+    /// Size of the chunk-plan region of the compaction scratch, in u32s
+    /// (`batch_count + 1`). The shader lays the rest of the buffer out after it.
+    pub(crate) plan_cap: u32,
+    /// Size of the per-chunk totals region of the compaction scratch, in u32s.
+    pub(crate) chunk_cap: u32,
+    pub(crate) _pad: [u32; 1],
 }
 
-const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 192);
+const _: () = assert!(std::mem::size_of::<FrustumUniform>() == 208);
 
 /// Clip planes uniform for section-view clipping (binding 4 of camera bind group).
 ///

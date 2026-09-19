@@ -122,7 +122,8 @@ pub(crate) use self::types::{
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, DeviceResources, MatcapId, MeshData,
-    ProjectedTetId, ResidentBytes, SubmeshRange, TextureMemoryStats, VolumeId, VramBudget,
+    ProjectedTetId, ResidentBytes, SubmeshRange, TextureData, TextureMemoryStats, TexturePayload,
+    TextureRole, TextureSlot, VolumeId, VramBudget,
 };
 // GPU-side layout types (uniform blocks, vertex and per-item buffer structs).
 // These mirror shader-side memory and have no use outside the renderer, so they

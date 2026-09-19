@@ -84,7 +84,11 @@ fn register_update_free_semantics() {
 
     // An owned (CPU-uploaded) texture is rejected by the external update path.
     let owned = res
-        .upload_texture(&device, &queue, 1, 1, &[255u8, 255, 255, 255])
+        .upload_texture(
+            &device,
+            &queue,
+            viewport_lib::TextureData::srgb(1, 1, [255u8, 255, 255, 255].to_vec()),
+        )
         .unwrap();
     assert!(
         !res.update_texture_view(&device, owned, &v1, 4, 4),
