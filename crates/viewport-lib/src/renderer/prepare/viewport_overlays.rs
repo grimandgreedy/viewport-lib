@@ -233,6 +233,36 @@ fn combine_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     r
 }
 
+/// Multiply a gradient (or solid) fill into the colours of `batch[from..]`,
+/// sampled at each vertex position over the item's box.
+///
+/// This is how the glyph families get a fill: a glyph is a coverage bitmap
+/// tinted by the vertex colour, so evaluating the gradient per vertex and
+/// letting the rasteriser interpolate gives an exact linear gradient (a linear
+/// function interpolated linearly is itself) and a per-glyph piecewise-linear
+/// radial or conical one. A per-glyph `colours` entry multiplies into it,
+/// matching how `tint` composes.
+pub(super) fn fill_vertices_from(
+    batch: &mut [crate::resources::OverlayTextVertex],
+    from: usize,
+    fill: &crate::renderer::types::OverlayFill,
+    box_min: [f32; 2],
+    box_size: [f32; 2],
+) {
+    let half = [box_size[0] * 0.5, box_size[1] * 0.5];
+    let centre = [box_min[0] + half[0], box_min[1] + half[1]];
+    for v in &mut batch[from..] {
+        // Text-stream vertex positions are logical pixels.
+        let c = fill.sample_in_box([v.position[0] - centre[0], v.position[1] - centre[1]], half);
+        v.colour = [
+            v.colour[0] * c[0],
+            v.colour[1] * c[1],
+            v.colour[2] * c[2],
+            v.colour[3] * c[3],
+        ];
+    }
+}
+
 /// Multiply an item's `tint` into the colours of `batch[from..]`.
 ///
 /// Called per emitted range rather than over the whole batch so shadow ranges
@@ -983,6 +1013,15 @@ impl ViewportRenderer {
                         vp_w,
                         vp_h,
                     );
+                    if let Some(fill) = &label.style.fill {
+                        fill_vertices_from(
+                            &mut batch,
+                            glyph_start,
+                            fill,
+                            [text_x, text_y],
+                            [layout.total_width, layout.height],
+                        );
+                    }
                     tint_vertices_from(&mut batch, glyph_start, label.tint);
 
                     rotate_vertices_from(&mut batch, text_start, rot);
@@ -1120,6 +1159,15 @@ impl ViewportRenderer {
                     // labels.
                     let glyph_start = batch.len();
                     emit_glyph_quads_colored(&mut batch, &quads, run_x, run_y, vp_w, vp_h);
+                    if let Some(fill) = &run.style.fill {
+                        fill_vertices_from(
+                            &mut batch,
+                            glyph_start,
+                            fill,
+                            [run_x + min_x, run_y + min_y],
+                            [max_x - min_x, max_y - min_y],
+                        );
+                    }
                     tint_vertices_from(&mut batch, glyph_start, run.tint);
                     rotate_vertices_from(&mut batch, 0, rot);
 

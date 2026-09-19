@@ -129,6 +129,7 @@ fn expected(name: &str) -> Option<Expected> {
         "overlay_clipping" => e(1, 1, 1, 0, 0, 960),
         "overlay_retained" => e(1, 1, 1, 0, 0, 960),
         "overlay_composition" => e(1, 1, 1, 0, 0, 960),
+        "overlay_text_fill" => e(1, 1, 1, 0, 0, 960),
         _ => return None,
     })
 }

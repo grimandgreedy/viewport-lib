@@ -34,6 +34,13 @@ pub fn scenes() -> Vec<NamedScene> {
         scene("overlay_clipping", build_clipping),
         scene("overlay_retained", build_retained),
         scene("overlay_composition", build_composition),
+        // Appended rather than slotted next to the other text scenes: the
+        // harness renders the catalogue through one renderer, so a scene that
+        // rasterises new glyph sizes grows the shared atlas and shifts every
+        // later scene's atlas UVs by a fraction of a texel. Adding a
+        // glyph-bearing scene in the middle of the list re-blesses everything
+        // after it for no behavioural reason.
+        scene("overlay_text_fill", build_text_fill),
     ]
 }
 
@@ -284,6 +291,54 @@ fn build_glyph_runs(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
         ovl.glyph_runs = vec![plain, per_glyph];
+        ovl
+    })
+}
+
+fn build_text_fill(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // Gradient-filled text. The fill is evaluated per glyph vertex over the
+    // laid-out text box, so a linear gradient is exact and a radial one is
+    // piecewise-linear per glyph: both worth pinning, since the faceting is
+    // the part that would show first if the sampling box drifted.
+    let linear = OverlayFill::LinearGradient {
+        start_colour: Colour::srgb(1.0, 0.85, 0.2, 1.0),
+        end_colour: Colour::srgb(0.9, 0.2, 0.55, 1.0),
+        angle: 0.0,
+    };
+    let radial = OverlayFill::RadialGradient {
+        centre_colour: Colour::srgb(0.6, 1.0, 0.9, 1.0),
+        edge_colour: Colour::srgb(0.1, 0.25, 0.6, 1.0),
+    };
+
+    let mut wide = LabelItem::new("Gradient")
+        .with_position([20.0, 20.0])
+        .with_font_size(44.0);
+    wide.style.fill = Some(linear.clone());
+
+    let mut wrapped = LabelItem::new("A gradient across wrapped lines")
+        .with_position([20.0, 90.0])
+        .with_font_size(20.0)
+        .with_max_width(180.0);
+    wrapped.style.fill = Some(radial);
+
+    // Per-glyph colours multiply into the fill, so the run shows both.
+    let mut run = GlyphRunItem::new(run_glyphs(20.0));
+    run.font_size = 30.0;
+    run.transform.translate = [20.0, 200.0];
+    run.colours = RUN_IDS
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let t = i as f32 / (RUN_IDS.len() - 1) as f32;
+            Colour::srgb(1.0, 1.0 - t * 0.6, 1.0, 1.0)
+        })
+        .collect();
+    run.style.fill = Some(linear);
+
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.labels = vec![wide, wrapped];
+        ovl.glyph_runs = vec![run];
         ovl
     })
 }

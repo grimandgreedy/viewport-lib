@@ -167,6 +167,15 @@ fn emit_glyph_run(
     }
     let glyph_start = verts.len();
     overlay_geometry::emit_glyph_quads_colored(verts, &quads, run_x, run_y, 0.0, 0.0);
+    if let Some(fill) = &run.style.fill {
+        viewport_overlays::fill_vertices_from(
+            verts,
+            glyph_start,
+            fill,
+            [run_x + min_x, run_y + min_y],
+            [max_x - min_x, max_y - min_y],
+        );
+    }
     viewport_overlays::tint_vertices_from(verts, glyph_start, run.tint);
     overlay_geometry::rotate_vertices_from(verts, rot_start, rot);
 }
@@ -337,6 +346,15 @@ fn emit_label(
         0.0,
         0.0,
     );
+    if let Some(fill) = &label.style.fill {
+        viewport_overlays::fill_vertices_from(
+            verts,
+            glyph_start,
+            fill,
+            [text_x, text_y],
+            [layout.total_width, layout.height],
+        );
+    }
     viewport_overlays::tint_vertices_from(verts, glyph_start, label.tint);
     overlay_geometry::rotate_vertices_from(verts, text_start, rot);
 }

@@ -241,12 +241,16 @@ impl OverlayStyleSupport {
     }
 
     /// What a `LabelItem` or a `GlyphRunItem` draws. Both rasterise through the
-    /// glyph atlas, where a shadow is a dilated and blurred coverage cell.
-    /// Gradient and texture fills on glyphs are not implemented yet; use
-    /// `colour` (and `colours` on a run) until they are.
+    /// glyph atlas, where a shadow is a dilated and blurred coverage cell and a
+    /// fill is a per-vertex tint over the coverage.
+    ///
+    /// `texture` is the one gap left: the text pass binds the glyph atlas and
+    /// issues a single batched draw, so sampling a second image means grouping
+    /// the text by texture the way the shape pass does. Until then a textured
+    /// glyph fill reports as unsupported rather than silently dropping.
     pub const fn for_glyphs() -> Self {
         Self {
-            fill: false,
+            fill: true,
             shadows: true,
             inner_shadows: false,
             texture: false,

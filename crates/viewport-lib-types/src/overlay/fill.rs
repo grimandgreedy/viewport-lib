@@ -125,3 +125,105 @@ pub enum BorderMode {
     /// Border is centred on the fill edge (half inside, half outside).
     Center,
 }
+
+impl OverlayFill {
+    /// Sample the fill at `p`, given in logical pixels relative to the centre
+    /// of a box of half-extents `half_size`. Returns linear RGBA.
+    ///
+    /// This mirrors the gradient maths the SDF shape shader runs per fragment
+    /// (`overlay_shape.wgsl`), so a gradient means the same thing wherever it
+    /// is evaluated. The glyph families use it per vertex: a linear gradient
+    /// interpolated across a quad is exact, and a radial or conical one is
+    /// piecewise-linear per glyph, which is close at text sizes and visibly
+    /// faceted on very large display text.
+    pub fn sample_in_box(&self, p: [f32; 2], half_size: [f32; 2]) -> [f32; 4] {
+        fn lerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+            [
+                a[0] + (b[0] - a[0]) * t,
+                a[1] + (b[1] - a[1]) * t,
+                a[2] + (b[2] - a[2]) * t,
+                a[3] + (b[3] - a[3]) * t,
+            ]
+        }
+        fn linear_t(p: [f32; 2], hs: [f32; 2], angle: f32) -> f32 {
+            let dir = [angle.cos(), angle.sin()];
+            let max_proj = (hs[0] * dir[0]).abs() + (hs[1] * dir[1]).abs();
+            ((p[0] * dir[0] + p[1] * dir[1]) / max_proj.max(0.001) * 0.5 + 0.5).clamp(0.0, 1.0)
+        }
+        fn radial_t(p: [f32; 2], hs: [f32; 2]) -> f32 {
+            let max_half = hs[0].max(hs[1]);
+            ((p[0] * p[0] + p[1] * p[1]).sqrt() / max_half.max(0.001)).clamp(0.0, 1.0)
+        }
+        fn conical_t(p: [f32; 2], offset: f32) -> f32 {
+            let a = p[1].atan2(p[0]) - offset;
+            (a / std::f32::consts::TAU + 1.0).fract()
+        }
+        /// Interpolate a sorted stop list at `t`, clamping outside the ends.
+        fn sample_stops(stops: &[GradientStop], t: f32) -> [f32; 4] {
+            let mut sorted: Vec<&GradientStop> = stops.iter().collect();
+            sorted.sort_by(|a, b| {
+                a.position
+                    .partial_cmp(&b.position)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let Some(first) = sorted.first() else {
+                return [0.0; 4];
+            };
+            if t <= first.position {
+                return first.colour.to_linear_rgba();
+            }
+            for pair in sorted.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                if t <= b.position {
+                    let span = (b.position - a.position).max(1e-6);
+                    return lerp(
+                        a.colour.to_linear_rgba(),
+                        b.colour.to_linear_rgba(),
+                        ((t - a.position) / span).clamp(0.0, 1.0),
+                    );
+                }
+            }
+            sorted[sorted.len() - 1].colour.to_linear_rgba()
+        }
+
+        match self {
+            OverlayFill::Solid(c) => c.to_linear_rgba(),
+            OverlayFill::LinearGradient {
+                start_colour,
+                end_colour,
+                angle,
+            } => lerp(
+                start_colour.to_linear_rgba(),
+                end_colour.to_linear_rgba(),
+                linear_t(p, half_size, *angle),
+            ),
+            OverlayFill::RadialGradient {
+                centre_colour,
+                edge_colour,
+            } => lerp(
+                centre_colour.to_linear_rgba(),
+                edge_colour.to_linear_rgba(),
+                radial_t(p, half_size),
+            ),
+            OverlayFill::ConicalGradient {
+                start_colour,
+                end_colour,
+                offset_angle,
+            } => lerp(
+                start_colour.to_linear_rgba(),
+                end_colour.to_linear_rgba(),
+                conical_t(p, *offset_angle),
+            ),
+            OverlayFill::LinearGradientMulti { stops, angle } => {
+                sample_stops(stops, linear_t(p, half_size, *angle))
+            }
+            OverlayFill::RadialGradientMulti { stops } => {
+                sample_stops(stops, radial_t(p, half_size))
+            }
+            OverlayFill::ConicalGradientMulti {
+                stops,
+                offset_angle,
+            } => sample_stops(stops, conical_t(p, *offset_angle)),
+        }
+    }
+}
