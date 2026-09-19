@@ -108,6 +108,16 @@ pub struct LabelItem {
     /// any overlay shape (rect, rounded rect, circle, ...), and masks may nest.
     /// `None` (the default) draws the label unclipped, as does a missing mask.
     pub clip_id: Option<u32>,
+    /// Stacked drop shadows and contours drawn behind this item, first entry
+    /// furthest back. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
+    ///
+    /// Empty by default, which draws none. A contour that keeps the item legible
+    /// over an unpredictable background is one
+    /// [`ShadowLayer::outline`] entry; a soft drop shadow is a blurred entry.
+    ///
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
+    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
+    pub shadows: Vec<crate::overlay::ShadowLayer>,
 }
 
 impl Default for LabelItem {
@@ -133,6 +143,7 @@ impl Default for LabelItem {
             z_order: 0,
             occlude: false,
             clip_id: None,
+            shadows: Vec::new(),
         }
     }
 }
@@ -283,6 +294,28 @@ impl LabelItem {
     /// discarded, so text scrolled inside a region is contained.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
         self.clip_id = Some(clip_id);
+        self
+    }
+
+    /// Set the stacked shadow layers drawn behind this item.
+    pub fn with_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
+        self.shadows = shadows;
+        self
+    }
+
+    /// Add one shadow layer, in front of any already set.
+    pub fn with_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
+        self.shadows.push(shadow);
+        self
+    }
+
+    /// Add a contour of `width` logical pixels in `colour` behind this item.
+    /// Shorthand for pushing a [`ShadowLayer::outline`].
+    ///
+    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
+    pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
+        self.shadows
+            .push(crate::overlay::ShadowLayer::outline(colour, width));
         self
     }
 }

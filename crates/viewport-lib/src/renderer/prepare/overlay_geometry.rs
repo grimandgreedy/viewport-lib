@@ -1052,3 +1052,147 @@ pub(super) fn emit_rounded_quad(
         }
     }
 }
+
+/// Number of concentric bands used to fake a blurred edge on tessellated
+/// geometry (polyline strokes and vector fills). Glyphs do not use this: their
+/// blur is baked exactly into the atlas cell. Five is enough that the banding
+/// is not visible at the blur distances overlays actually use.
+const SHADOW_BANDS: usize = 5;
+
+/// Coverage of a shadow layer at `d` pixels outside its spread edge, matching
+/// `shadow_coverage` in `overlay_shape.wgsl` so the same `ShadowLayer` reads the
+/// same way on an SDF shape and on tessellated geometry.
+fn shadow_coverage(d: f32, blur: f32, falloff: f32) -> f32 {
+    if blur <= 0.0 {
+        return if d <= 0.0 { 1.0 } else { 0.0 };
+    }
+    let t = (d / blur).clamp(0.0, 1.0);
+    let base = 1.0 - (t * t * (3.0 - 2.0 * t));
+    if (falloff - 1.0).abs() <= f32::EPSILON {
+        base
+    } else {
+        base.powf(falloff)
+    }
+}
+
+/// The (offset-from-edge, per-band alpha) pairs to draw a shadow layer as
+/// concentric bands, widest first.
+///
+/// Bands are drawn outside-in and composited src-over, so each band's own alpha
+/// is solved from the coverage the previous bands already laid down. That makes
+/// the accumulated alpha follow the target curve instead of simply summing.
+pub(super) fn shadow_bands(layer: &crate::renderer::types::ShadowLayer) -> Vec<(f32, f32)> {
+    let blur = layer.blur.max(0.0);
+    if blur <= 0.0 {
+        return vec![(0.0, 1.0)];
+    }
+    let mut out = Vec::with_capacity(SHADOW_BANDS);
+    let mut acc = 0.0f32;
+    for i in 0..SHADOW_BANDS {
+        // i = 0 is the outermost band, at the full blur distance.
+        let d = blur * (1.0 - i as f32 / SHADOW_BANDS as f32);
+        let c = shadow_coverage(d, blur, layer.falloff);
+        if c <= 0.0 {
+            continue;
+        }
+        let a = if acc >= 1.0 {
+            0.0
+        } else {
+            ((c - acc) / (1.0 - acc)).clamp(0.0, 1.0)
+        };
+        if a > 0.0 {
+            out.push((d, a));
+            acc = c;
+        }
+    }
+    out
+}
+
+/// Emit a stroked path's shadow: the same path re-stroked wider, once per band.
+///
+/// A contour (no blur) is a single wider stroke. A blurred shadow is a stack of
+/// them stepping inward. The path is not offset geometrically, so a very large
+/// spread on a sharply concave path reads softer at the concavity than a true
+/// dilation would; at the widths overlays use the difference is not visible.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_polyline_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    layer: &crate::renderer::types::ShadowLayer,
+    opacity: f32,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let base = layer.colour.to_linear_rgba();
+    for (d, band_alpha) in shadow_bands(layer) {
+        let mut shadow_poly = poly.clone();
+        shadow_poly.thickness = poly.thickness + 2.0 * (layer.spread + d);
+        shadow_poly.points = poly
+            .points
+            .iter()
+            .map(|p| [p[0] + layer.offset[0], p[1] + layer.offset[1]])
+            .collect();
+        // The shadow is one silhouette, so it never carries the item's fill or
+        // texture; only the stroke shape matters.
+        shadow_poly.fill = None;
+        shadow_poly.texture = None;
+        let colour = apply_opacity(base, opacity * band_alpha);
+        emit_polyline_stroke(verts, &shadow_poly, colour, vp_w, vp_h);
+        if poly.closed && poly.fill.is_some() {
+            // A filled closed path casts its interior too, not just its edge.
+            emit_closed_fill_shadow(verts, &shadow_poly.points, colour, vp_w, vp_h);
+        }
+    }
+}
+
+/// Emit the interior of a closed path as flat shadow-coloured triangles.
+fn emit_closed_fill_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    points: &[[f32; 2]],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    if points.len() < 3 {
+        return;
+    }
+    let v = |p: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: overlay_local_px(p[0], p[1], vp_w, vp_h),
+        uv: [0.0, 0.0],
+        colour,
+        use_texture: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
+    };
+    // Fan from the first vertex. Exact for convex paths and close enough for the
+    // soft silhouette a shadow is; the surrounding stroke bands cover the rest.
+    for i in 1..points.len() - 1 {
+        verts.extend_from_slice(&[v(points[0]), v(points[i]), v(points[i + 1])]);
+    }
+}
+
+/// Emit an indexed triangle mesh as flat, single-colour geometry.
+pub(super) fn emit_flat_mesh(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    positions: &[[f32; 2]],
+    indices: &[u32],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let v = |p: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: overlay_local_px(p[0], p[1], vp_w, vp_h),
+        uv: [0.0, 0.0],
+        colour,
+        use_texture: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
+    };
+    for tri in indices.chunks_exact(3) {
+        verts.extend_from_slice(&[
+            v(positions[tri[0] as usize]),
+            v(positions[tri[1] as usize]),
+            v(positions[tri[2] as usize]),
+        ]);
+    }
+}
