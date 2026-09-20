@@ -1995,30 +1995,40 @@ impl ViewportRenderer {
                         crate::renderer::types::BorderMode::Outer => 1.0,
                         crate::renderer::types::BorderMode::Center => 2.0,
                     };
-                    // The textured and backdrop-blur shape pipelines carry a
-                    // single shadow on the vertex rather than the stacked
-                    // layer buffer the solid path uses, so they draw the first
-                    // layer only and ignore `spread` and `falloff`. Pack the
-                    // inset flag alongside border_mode in shadow_params.w: the
-                    // shader decodes (combined % 3) for border_mode and
-                    // (combined >= 3) for inset.
-                    let (first_layer, inset_flag) = match (
-                        shape.style.shadows.first(),
-                        shape.style.inner_shadows.first(),
-                    ) {
-                        (Some(l), _) => (Some(l), 0.0),
-                        (None, Some(l)) => (Some(l), 3.0),
-                        (None, None) => (None, 0.0),
-                    };
-                    let mut sc = first_layer
-                        .map(|l| l.colour.to_linear_rgba())
-                        .unwrap_or([0.0; 4]);
-                    sc[3] *= resolved_opacity;
-                    let shadow_params = [
-                        first_layer.map_or(0.0, |l| l.blur),
-                        first_layer.map_or(0.0, |l| l.offset[0]),
-                        first_layer.map_or(0.0, |l| l.offset[1]),
-                        border_mode_f + inset_flag,
+                    // Build the stacked shadow layers for this shape: outer
+                    // layers first, then inner, appended to the shared frame
+                    // buffer. The solid, textured and backdrop-blur pipelines
+                    // all read that buffer, so a shape takes the same layers
+                    // whichever one draws it.
+                    let base_index = shadow_layers.len();
+                    let mut outer_count = 0usize;
+                    let mut inner_count = 0usize;
+                    let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
+                    for l in shape.style.shadows.iter().take(max_layers) {
+                        let mut col = l.colour.to_linear_rgba();
+                        col[3] *= resolved_opacity;
+                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                            colour: col,
+                            params: [l.blur, l.offset[0], l.offset[1], 0.0],
+                            params2: [l.spread, l.falloff, 0.0, 0.0],
+                        });
+                        outer_count += 1;
+                    }
+                    for l in shape.style.inner_shadows.iter().take(max_layers) {
+                        let mut col = l.colour.to_linear_rgba();
+                        col[3] *= resolved_opacity;
+                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                            colour: col,
+                            params: [l.blur, l.offset[0], l.offset[1], 1.0],
+                            params2: [l.spread, l.falloff, 0.0, 0.0],
+                        });
+                        inner_count += 1;
+                    }
+                    let shadow_index = [
+                        base_index as f32,
+                        outer_count as f32,
+                        inner_count as f32,
+                        border_mode_f,
                     ];
 
                     // Emit 6 vertices (two triangles) for the bounding quad.
@@ -2150,8 +2160,7 @@ impl ViewportRenderer {
                                 border_width: shape.border_width,
                                 shape_type,
                                 uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
-                                shadow_colour: sc,
-                                shadow_params,
+                                shadow_index,
                                 extras: [
                                     0.0,
                                     nine_extras_yzw[0],
@@ -2186,8 +2195,7 @@ impl ViewportRenderer {
                                 border_width: shape.border_width,
                                 shape_type,
                                 uv: [px / vp_w, py / vp_h],
-                                shadow_colour: sc,
-                                shadow_params,
+                                shadow_index,
                                 // extras.x = 1.0 flags the blur path; yzw carry
                                 // the backdrop colour filters (saturation,
                                 // brightness, hue-shift radians).
@@ -2211,45 +2219,6 @@ impl ViewportRenderer {
                         // gradient_params is now vec4: [type, angle, stop_count, _pad]
                         let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
 
-                        // Build the stacked shadow layers for this shape:
-                        // outer layers first, then inner, appended to the
-                        // shared frame buffer. Prefer the Vec-based lists; fall
-                        // back to the single legacy `shadow_*` fields so old
-                        // call sites keep working.
-                        let base_index = shadow_layers.len();
-                        let mut outer_count = 0usize;
-                        let mut inner_count = 0usize;
-                        let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
-                        if !shape.style.shadows.is_empty() {
-                            for l in shape.style.shadows.iter().take(max_layers) {
-                                let mut col = l.colour.to_linear_rgba();
-                                col[3] *= resolved_opacity;
-                                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                    colour: col,
-                                    params: [l.blur, l.offset[0], l.offset[1], 0.0],
-                                    params2: [l.spread, l.falloff, 0.0, 0.0],
-                                });
-                                outer_count += 1;
-                            }
-                        }
-                        if !shape.style.inner_shadows.is_empty() {
-                            for l in shape.style.inner_shadows.iter().take(max_layers) {
-                                let mut col = l.colour.to_linear_rgba();
-                                col[3] *= resolved_opacity;
-                                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                    colour: col,
-                                    params: [l.blur, l.offset[0], l.offset[1], 1.0],
-                                    params2: [l.spread, l.falloff, 0.0, 0.0],
-                                });
-                                inner_count += 1;
-                            }
-                        }
-                        let shadow_index = [
-                            base_index as f32,
-                            outer_count as f32,
-                            inner_count as f32,
-                            border_mode_f,
-                        ];
                         let rotation_pivot = [
                             shape.transform.rotation,
                             shape.transform.pivot[0],
@@ -2384,8 +2353,7 @@ impl ViewportRenderer {
                                 border_width: 0.0,
                                 shape_type: 0.0,
                                 uv,
-                                shadow_colour: [0.0; 4],
-                                shadow_params: [0.0; 4],
+                                shadow_index: [0.0; 4],
                                 extras: [0.0; 4],
                                 nine_slice_uv: [0.0; 4],
                                 nine_slice_frac: [0.0; 4],
@@ -2414,7 +2382,10 @@ impl ViewportRenderer {
                 // The solid pipeline layout always expects group 0, so we
                 // provide at least one (dummy) element even when no shape has
                 // shadows.
-                let (shadow_bind_group, shadow_buf, shape_clip_buf) = if solid_vbuf.is_some() {
+                // One shadow-layer buffer per frame, read by all three shape
+                // pipelines. A layer is always present so the storage binding
+                // has something to point at.
+                let shadow_buf = if solid_vbuf.is_some() || has_tex || has_blur {
                     if shadow_layers.is_empty() {
                         shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                             colour: [0.0; 4],
@@ -2430,37 +2401,44 @@ impl ViewportRenderer {
                         mapped_at_creation: false,
                     });
                     queue.write_buffer(&buf, 0, bytemuck::cast_slice(&shadow_layers));
-                    let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
-                    let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
-                    let inst_buf = self.overlay_instances_buf.as_ref().unwrap();
-                    let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
-                        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                            label: Some("overlay_shape_shadow_bg"),
-                            layout: bgl,
-                            entries: &[
-                                crate::gpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: clip_buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: vp_buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 3,
-                                    resource: inst_buf.as_entire_binding(),
-                                },
-                            ],
-                        })
-                    });
-                    (bg, Some(buf), Some(clip_buf))
+                    Some(buf)
                 } else {
-                    (None, None, None)
+                    None
                 };
+
+                let (shadow_bind_group, shape_clip_buf) =
+                    if let (true, Some(buf)) = (solid_vbuf.is_some(), shadow_buf.as_ref()) {
+                        let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                        let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
+                        let inst_buf = self.overlay_instances_buf.as_ref().unwrap();
+                        let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
+                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                label: Some("overlay_shape_shadow_bg"),
+                                layout: bgl,
+                                entries: &[
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: clip_buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: vp_buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 3,
+                                        resource: inst_buf.as_entire_binding(),
+                                    },
+                                ],
+                            })
+                        });
+                        (bg, Some(clip_buf))
+                    } else {
+                        (None, None)
+                    };
 
                 let mut tex_batches = Vec::new();
                 // Maps a texture group index to its batch index in `tex_batches`
@@ -2558,6 +2536,10 @@ impl ViewportRenderer {
                                 crate::gpu::BindGroupEntry {
                                     binding: 1,
                                     resource: vp_buf.as_entire_binding(),
+                                },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: shadow_buf.as_ref().unwrap().as_entire_binding(),
                                 },
                             ],
                         });

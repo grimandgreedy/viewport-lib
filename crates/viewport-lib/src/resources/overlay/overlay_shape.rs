@@ -182,7 +182,8 @@ impl crate::resources::DeviceResources {
             crate::resources::builders::clamp_linear_sampler(device, "overlay_shape_tex_sampler");
 
         // Group 1: the clip-mask storage buffer, so a textured shape honours
-        // `with_clip` the same way a solid shape does.
+        // `with_clip` the same way a solid shape does, plus the shared
+        // shadow-layer buffer.
         let clip_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("overlay_shape_tex_clip_bgl"),
             entries: &[
@@ -208,6 +209,23 @@ impl crate::resources::DeviceResources {
                         ty: crate::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 2: the stacked shadow layers, the same buffer the
+                // solid pass reads, so a textured shape takes the same layers.
+                crate::gpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: crate::gpu::ShaderStages::FRAGMENT,
+                    ty: crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(
+                            std::num::NonZeroU64::new(
+                                std::mem::size_of::<OverlayShadowLayerGpu>() as u64
+                            )
+                            .unwrap(),
+                        ),
                     },
                     count: None,
                 },
@@ -870,10 +888,11 @@ pub(crate) struct OverlayShapeTexVertex {
     /// Texture UV coordinates. (0,0) = top-left of image, (1,1) = bottom-right.
     /// Slightly outside [0,1] in the border/AA padding region.
     pub uv: [f32; 2],
-    /// RGBA shadow colour (pre-multiplied opacity).
-    pub shadow_colour: [f32; 4],
-    /// Shadow parameters: x = radius (pixels), y = offset_x, z = offset_y, w = border_mode.
-    pub shadow_params: [f32; 4],
+    /// `[base_index, outer_count, inner_count, border_mode]`: where this
+    /// shape's run of stacked shadow layers starts in the shared buffer, how
+    /// many of each kind it has, and how the border band sits on the edge.
+    /// Same encoding as `OverlayShapeVertex::shadow_index`.
+    pub shadow_index: [f32; 4],
     /// Per-shape flags.
     /// - `x` = is_backdrop_blur (0.0 = regular tinted sample; 1.0 = the bound
     ///   texture is the scene-blur output composited under the tint).
@@ -966,46 +985,40 @@ impl OverlayShapeTexVertex {
                     shader_location: 8,
                     format: crate::gpu::VertexFormat::Float32x2,
                 },
-                // location 9: shadow_colour vec4f
+                // location 9: shadow_index vec4f (base, outer_ct, inner_ct, border_mode)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_colour) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_index) as u64,
                     shader_location: 9,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 10: shadow_params vec4f (radius, offset_x, offset_y, border_mode)
+                // location 10: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, shadow_params) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, extras) as u64,
                     shader_location: 10,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 11: extras vec4f (blur, centre_mode, edge_mode, nine_slice_enabled)
+                // location 11: nine_slice_uv vec4f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, extras) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_uv) as u64,
                     shader_location: 11,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 12: nine_slice_uv vec4f
+                // location 12: nine_slice_frac vec4f
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_uv) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_frac) as u64,
                     shader_location: 12,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 13: nine_slice_frac vec4f
+                // location 13: texture_transform_a vec4f (offset.xy, scale.xy)
                 crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, nine_slice_frac) as u64,
+                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_a) as u64,
                     shader_location: 13,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
-                // location 14: texture_transform_a vec4f (offset.xy, scale.xy)
-                crate::gpu::VertexAttribute {
-                    offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_a) as u64,
-                    shader_location: 14,
-                    format: crate::gpu::VertexFormat::Float32x4,
-                },
-                // location 15: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
+                // location 14: texture_transform_b vec4f (rotation, tile_mode, flip_x, flip_y)
                 crate::gpu::VertexAttribute {
                     offset: std::mem::offset_of!(OverlayShapeTexVertex, texture_transform_b) as u64,
-                    shader_location: 15,
+                    shader_location: 14,
                     format: crate::gpu::VertexFormat::Float32x4,
                 },
             ],
