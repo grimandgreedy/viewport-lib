@@ -155,7 +155,7 @@ pub struct OverlayAnimations {
     /// Arbitrary path channel driving `transform.translate`. Overrides the
     /// linear `translate` track when set.
     #[deprecated(
-        since = "0.24.0",
+        since = "0.23.0",
         note = "PathTrack holds a closure, so it cannot be serialised, baked into a retained                 group, or sent across a plugin boundary. Use `translate` with an easing, or                 sample the path yourself and set the field."
     )]
     #[allow(deprecated)]
@@ -200,7 +200,7 @@ impl OverlayAnimations {
     }
 
     /// Set the arbitrary-path translate channel.
-    #[deprecated(since = "0.24.0", note = "see `OverlayAnimations::translate_path`")]
+    #[deprecated(since = "0.23.0", note = "see `OverlayAnimations::translate_path`")]
     #[allow(deprecated)]
     pub fn with_translate_path(mut self, track: PathTrack<[f32; 2]>) -> Self {
         self.translate_path = Some(track);
@@ -481,7 +481,7 @@ fn apply_easing(phase: f32, easing: OverlayEasing) -> f32 {
 /// that capture only owned/by-value data.
 #[derive(Clone)]
 #[deprecated(
-    since = "0.24.0",
+    since = "0.23.0",
     note = "a closure cannot be serialised, baked into a retained group, or sent across a \
             plugin boundary, which makes this the one overlay type authored content cannot \
             carry. Use an AnimTrack with an easing, or sample the path yourself."
