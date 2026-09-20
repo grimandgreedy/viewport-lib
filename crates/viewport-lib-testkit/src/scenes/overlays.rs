@@ -13,10 +13,10 @@
 
 use glam::Vec3;
 use viewport_lib::{
-    AnchorX, AnchorY, BorderMode, Colour, FillRule, GlyphRunItem, LabelItem, LineCap, LineJoin,
-    Material, OverlayAnchor, OverlayFill, OverlayFrame, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, PolylineCap, PositionedGlyph, RetainedOverlay, ShadowLayer, SubPath,
-    TriangleDirection, primitives,
+    Alignment, AnchorX, AnchorY, BorderMode, Colour, FillRule, GlyphRunItem, LabelItem, LineCap,
+    LineJoin, Material, OverlayFill, OverlayFrame, OverlayOrigin, OverlayPolylineItem,
+    OverlayShape, OverlayShapeItem, PolylineCap, PositionedGlyph, RetainedOverlay, ShadowLayer,
+    SubPath, TriangleDirection, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs};
@@ -397,10 +397,10 @@ fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             .with_max_width(160.0)
             .with_colour(Colour::srgb(0.85, 0.95, 0.7, 1.0)),
         LabelItem::new("Right, bottom")
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Right,
-                y: AnchorY::Bottom,
-            })
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Bottom,
+            )))
             .with_position([-20.0, -20.0])
             .with_align_x(AnchorX::Right)
             .with_align_y(AnchorY::Bottom)
@@ -448,22 +448,22 @@ fn build_group_anchor(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let id = compile_group(ctx);
     let retained = vec![
         RetainedOverlay::new(id)
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Left,
-                y: AnchorY::Top,
-            })
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Left,
+                AnchorY::Top,
+            )))
             .with_translate([8.0, 8.0]),
         RetainedOverlay::new(id)
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Right,
-                y: AnchorY::Bottom,
-            })
-            .with_align(AnchorX::Right, AnchorY::Bottom)
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Bottom,
+            )))
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom))
             .with_translate([-8.0, -8.0])
             .with_tint([0.6, 1.0, 0.7, 1.0]),
         RetainedOverlay::new(id)
-            .with_anchor(OverlayAnchor::World([0.0, 0.0, -1.9]))
-            .with_align(AnchorX::Middle, AnchorY::Top)
+            .with_anchor(OverlayOrigin::World([0.0, 0.0, -1.9]))
+            .with_align(Alignment::new(AnchorX::Middle, AnchorY::Top))
             .with_scale(0.7),
     ];
     backdrop(ctx, {

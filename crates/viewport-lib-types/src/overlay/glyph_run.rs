@@ -58,15 +58,17 @@ pub struct GlyphRunItem {
     /// positions themselves come from `glyphs`.
     pub font_size: f32,
 
-    /// Origin the run hangs from: a viewport corner (default top-left) or a
-    /// projected world point. Each glyph's `(x, y)` is relative to this.
-    pub anchor: crate::overlay::OverlayAnchor,
+    /// Where the item hangs from and which point of its own box lands there.
+    ///
+    /// `transform.translate` is a nudge from the resolved origin, and a world
+    /// origin behind the camera or off screen culls the item for the frame.
+    pub anchoring: crate::overlay::OverlayAnchoring,
     /// Translate, rotate, and scale, in logical pixels and radians.
     ///
     /// `translate` is the nudge from the resolved `anchor` origin, so with the
     /// default anchor and alignment it is the absolute screen placement.
     /// Rotation turns the item inside its extent box, which stays
-    /// axis-aligned, so `align_x` / `align_y` place the unrotated box and the
+    /// axis-aligned, so `anchoring.align` places the unrotated box and the
     /// content turns within it. See [`OverlayTransform`] for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
@@ -95,14 +97,6 @@ pub struct GlyphRunItem {
     /// both. The default clips nothing.
     pub clip: OverlayClip,
 
-    /// How the run's glyph-extent box sits horizontally on `anchor` + `position`.
-    /// Default `Left` leaves the glyph positions as authored.
-    pub align_x: crate::overlay::AnchorX,
-
-    /// How the run's glyph-extent box sits vertically on `anchor` + `position`.
-    /// Default `Top` leaves the glyph positions as authored.
-    pub align_y: crate::overlay::AnchorY,
-
     /// Positioned glyphs, in draw order.
     pub glyphs: Vec<PositionedGlyph>,
 
@@ -130,14 +124,12 @@ impl Default for GlyphRunItem {
         Self {
             font: None,
             font_size: 14.0,
-            anchor: crate::overlay::OverlayAnchor::default(),
+            anchoring: crate::overlay::OverlayAnchoring::default(),
             transform: crate::overlay::OverlayTransform::IDENTITY,
             style: crate::overlay::OverlayStyle::default(),
             animations: None,
             tint: [1.0, 1.0, 1.0, 1.0],
             clip: OverlayClip::default(),
-            align_x: crate::overlay::AnchorX::Left,
-            align_y: crate::overlay::AnchorY::Top,
             glyphs: Vec::new(),
             colour: [1.0, 1.0, 1.0, 1.0].into(),
             colours: Vec::new(),
@@ -171,15 +163,15 @@ impl GlyphRunItem {
     }
 
     /// Set the origin the run hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: crate::overlay::OverlayAnchor) -> Self {
-        self.anchor = anchor;
+    pub fn with_anchor(mut self, anchor: crate::overlay::OverlayOrigin) -> Self {
+        self.anchoring.origin = anchor;
         self
     }
 
     /// Pin the run to a world-space position, reprojected each frame. Sugar for
-    /// `with_anchor(OverlayAnchor::World(pos))`.
+    /// `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = crate::overlay::OverlayAnchor::World(pos);
+        self.anchoring.origin = crate::overlay::OverlayOrigin::World(pos);
         self
     }
 
@@ -192,13 +184,8 @@ impl GlyphRunItem {
     }
 
     /// Set how the run's glyph-extent box aligns onto the resolved anchor origin.
-    pub fn with_align(
-        mut self,
-        align_x: crate::overlay::AnchorX,
-        align_y: crate::overlay::AnchorY,
-    ) -> Self {
-        self.align_x = align_x;
-        self.align_y = align_y;
+    pub fn with_align(mut self, align: crate::overlay::Alignment) -> Self {
+        self.anchoring.align = align;
         self
     }
 
@@ -357,14 +344,16 @@ mod tests {
         // Anchored and aligned bottom-right: the box's bottom-right corner sits
         // on the viewport's, so its top-left is back by the extent.
         let run = GlyphRunItem::new(glyphs)
-            .with_anchor(crate::overlay::OverlayAnchor::Viewport {
-                x: crate::overlay::AnchorX::Right,
-                y: crate::overlay::AnchorY::Bottom,
-            })
-            .with_align(
+            .with_anchor(crate::overlay::OverlayOrigin::Viewport(
+                crate::overlay::Alignment::new(
+                    crate::overlay::AnchorX::Right,
+                    crate::overlay::AnchorY::Bottom,
+                ),
+            ))
+            .with_align(crate::overlay::Alignment::new(
                 crate::overlay::AnchorX::Right,
                 crate::overlay::AnchorY::Bottom,
-            );
+            ));
         let tl = run
             .resolve_top_left([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
             .unwrap();
@@ -392,7 +381,7 @@ impl GlyphRunItem {
     }
 
     /// Resolve the top-left pixel of the run's extent box for a frame: the
-    /// `anchor` origin, plus `position`, shifted by `align_x` / `align_y` for
+    /// origin, plus `position`, shifted by `anchoring.align` for
     /// that box. Returns `None` when a `World` anchor projects behind the camera
     /// or off-screen, which is the frame the run is skipped on, and for a run
     /// with no glyphs.
@@ -406,12 +395,22 @@ impl GlyphRunItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin =
-            crate::overlay::resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let origin = crate::overlay::resolve_anchor_origin(
+            &self.anchoring.origin,
+            viewport_size,
+            view,
+            proj,
+        )?;
         let (min, size) = self.extent()?;
         Some([
-            origin[0] + self.transform.translate[0] + self.align_x.align_shift(size[0]) + min[0],
-            origin[1] + self.transform.translate[1] + self.align_y.align_shift(size[1]) + min[1],
+            origin[0]
+                + self.transform.translate[0]
+                + self.anchoring.align.x.align_shift(size[0])
+                + min[0],
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(size[1])
+                + min[1],
         ])
     }
 

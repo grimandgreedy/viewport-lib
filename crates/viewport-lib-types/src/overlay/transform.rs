@@ -32,7 +32,7 @@
 ///
 /// # What does not live here
 ///
-/// `opacity`, `tint`, `z_order`, `anchor`, `align_x` / `align_y` and `clip`
+/// `opacity`, `tint`, `z_order`, `anchoring` and `clip`
 /// stay flat on the item and on the group, because their meaning is
 /// role-dependent: `z_order` is a draw-order key rather than a transform,
 /// anchoring resolves an origin before any of this applies, and a clip is

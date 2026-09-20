@@ -42,37 +42,103 @@ pub type LabelAnchor = AnchorX;
 /// `LabelAnchorY` keep working.
 pub type LabelAnchorY = AnchorY;
 
+/// A horizontal and a vertical alignment together: one point on a rect.
+///
+/// Used for both halves of [`OverlayAnchoring`], which is why it exists: the
+/// point on the viewport an item hangs from and the point on the item's own box
+/// that lands there are the same kind of thing, asked of two different rects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Alignment {
+    /// Horizontal: `Left`, `Middle`, or `Right`.
+    pub x: AnchorX,
+    /// Vertical: `Top`, `Middle`, or `Bottom`.
+    pub y: AnchorY,
+}
+
+impl Alignment {
+    /// The top-left corner.
+    pub const TOP_LEFT: Self = Self {
+        x: AnchorX::Left,
+        y: AnchorY::Top,
+    };
+    /// The centre.
+    pub const CENTRE: Self = Self {
+        x: AnchorX::Middle,
+        y: AnchorY::Middle,
+    };
+
+    /// An alignment from its two halves.
+    pub const fn new(x: AnchorX, y: AnchorY) -> Self {
+        Self { x, y }
+    }
+}
+
 /// Where an overlay item hangs from: exactly one origin, resolved to a screen
 /// pixel each frame. The item's `position` is then a screen-pixel nudge from
-/// that origin and `align_x` / `align_y` place the item's box onto it.
+/// that origin, and the anchoring's `align` places the item's box onto it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum OverlayAnchor {
-    /// A point on the viewport rect, re-resolved on resize. `Viewport { x:
-    /// Left, y: Top }` is the top-left corner, so with a zero `position` and
-    /// `Left` / `Top` alignment it reproduces absolute screen-space placement.
-    Viewport {
-        /// Horizontal position on the viewport rect.
-        x: AnchorX,
-        /// Vertical position on the viewport rect.
-        y: AnchorY,
-    },
+pub enum OverlayOrigin {
+    /// A point on the viewport rect, re-resolved on resize. The top-left corner
+    /// with a zero `position` and top-left alignment reproduces absolute
+    /// screen-space placement.
+    Viewport(Alignment),
     /// A 3D world position, projected to screen each frame. The item is skipped
     /// for the frame when the point is behind the camera or off-screen.
     World([f32; 3]),
 }
 
-impl Default for OverlayAnchor {
+impl Default for OverlayOrigin {
     fn default() -> Self {
-        OverlayAnchor::Viewport {
-            x: AnchorX::Left,
-            y: AnchorY::Top,
-        }
+        OverlayOrigin::Viewport(Alignment::TOP_LEFT)
     }
 }
 
-/// Resolve an [`OverlayAnchor`] to its origin pixel (top-left origin) on a
+/// How an overlay item is placed: the point it hangs from, and the point of its
+/// own box that lands there.
+///
+/// The two are separate questions on the same item. A readout pinned to the
+/// bottom-right corner of the viewport with its own bottom-right corner on that
+/// point is `origin: Viewport(bottom-right)` with `align: bottom-right`; the
+/// same origin with a top-left `align` hangs the readout off the screen instead.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct OverlayAnchoring {
+    /// The point the item hangs from: a point on the viewport rect, or a world
+    /// position projected each frame.
+    pub origin: OverlayOrigin,
+    /// The point of the item's own box that lands on the origin.
+    pub align: Alignment,
+}
+
+impl OverlayAnchoring {
+    /// Hang from a point on the viewport rect.
+    pub const fn viewport(x: AnchorX, y: AnchorY) -> Self {
+        Self {
+            origin: OverlayOrigin::Viewport(Alignment::new(x, y)),
+            align: Alignment::TOP_LEFT,
+        }
+    }
+
+    /// Hang from a world position, projected to the screen each frame.
+    pub const fn world(pos: [f32; 3]) -> Self {
+        Self {
+            origin: OverlayOrigin::World(pos),
+            align: Alignment::TOP_LEFT,
+        }
+    }
+
+    /// Set which point of the item's own box lands on the origin.
+    pub const fn with_align(mut self, align: Alignment) -> Self {
+        self.align = align;
+        self
+    }
+}
+
+/// Resolve an [`OverlayOrigin`] to its origin pixel (top-left origin) on a
 /// `viewport` of logical pixels. `Viewport` origins map to the matching point on
 /// the viewport rect; `World` origins project through `view` / `proj` and return
 /// `None` when behind the camera or outside the frustum, which skips the item
@@ -84,14 +150,14 @@ impl Default for OverlayAnchor {
 /// approximation of it, including the behind-camera cull and the y flip out of
 /// NDC. Pass the camera's `view_matrix()` and `proj_matrix()`.
 pub fn resolve_anchor_origin(
-    anchor: &OverlayAnchor,
+    anchor: &OverlayOrigin,
     viewport: [f32; 2],
     view: &glam::Mat4,
     proj: &glam::Mat4,
 ) -> Option<[f32; 2]> {
     match anchor {
-        OverlayAnchor::Viewport { x, y } => Some([x.coord(viewport[0]), y.coord(viewport[1])]),
-        OverlayAnchor::World(w) => {
+        OverlayOrigin::Viewport(a) => Some([a.x.coord(viewport[0]), a.y.coord(viewport[1])]),
+        OverlayOrigin::World(w) => {
             let clip = *proj * *view * glam::Vec3::from(*w).extend(1.0);
             if clip.w <= 0.0 {
                 return None;
@@ -193,4 +259,79 @@ pub fn viewport_anchored_ndc(
         1.0 - 2.0 * (tl[1] + size[1]) / h,
         1.0 - 2.0 * tl[1] / h,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pairing reproduces what the two flat alignment fields did: the
+    /// origin picks a point on the viewport rect and the alignment picks the
+    /// point of the item's own box that lands there. Both used to be spelled
+    /// with the same two enums on the same struct, which is why they are named
+    /// apart now.
+    #[test]
+    fn origin_and_align_place_a_box_the_way_the_flat_fields_did() {
+        let anchoring = OverlayAnchoring::viewport(AnchorX::Right, AnchorY::Bottom)
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom));
+
+        let origin = resolve_anchor_origin(
+            &anchoring.origin,
+            [800.0, 600.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        )
+        .unwrap();
+        assert_eq!(origin, [800.0, 600.0]);
+
+        let size = [120.0, 40.0];
+        let placed = [
+            origin[0] + anchoring.align.x.align_shift(size[0]),
+            origin[1] + anchoring.align.y.align_shift(size[1]),
+        ];
+        assert_eq!(placed, [800.0 - 120.0, 600.0 - 40.0]);
+    }
+
+    /// The default is the top-left of the viewport with the box's own top-left
+    /// on it, which is absolute screen placement and what every item but the
+    /// label starts from.
+    #[test]
+    fn the_default_anchoring_is_absolute_screen_placement() {
+        let anchoring = OverlayAnchoring::default();
+        assert_eq!(
+            anchoring.origin,
+            OverlayOrigin::Viewport(Alignment::TOP_LEFT)
+        );
+        assert_eq!(anchoring.align, Alignment::TOP_LEFT);
+        let origin = resolve_anchor_origin(
+            &anchoring.origin,
+            [800.0, 600.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        )
+        .unwrap();
+        assert_eq!(origin, [0.0, 0.0]);
+    }
+
+    /// A world origin culls rather than clamping when it projects behind the
+    /// camera, which is what skips the item for the frame.
+    #[test]
+    fn a_world_origin_behind_the_camera_resolves_to_nothing() {
+        let behind = glam::Mat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, -1.0, //
+            0.0, 0.0, 0.0, 0.0,
+        ]);
+        let anchoring = OverlayAnchoring::world([0.0, 0.0, 10.0]);
+        assert!(
+            resolve_anchor_origin(
+                &anchoring.origin,
+                [800.0, 600.0],
+                &glam::Mat4::IDENTITY,
+                &behind
+            )
+            .is_none()
+        );
+    }
 }

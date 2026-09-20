@@ -846,7 +846,7 @@ impl ViewportRenderer {
                     }
 
                     let Some(anchor_px) = crate::renderer::types::resolve_anchor_origin(
-                        &label.anchor,
+                        &label.anchoring.origin,
                         [vp_w, vp_h],
                         view,
                         proj,
@@ -907,7 +907,7 @@ impl ViewportRenderer {
                         .glyph_atlas
                         .font_ascent(font_index, label.font_size);
 
-                    let align_offset = match label.align_x {
+                    let align_offset = match label.anchoring.align.x {
                         crate::renderer::types::AnchorX::Left => label.anchor_padding,
                         crate::renderer::types::AnchorX::Middle => -layout.total_width * 0.5,
                         crate::renderer::types::AnchorX::Right => {
@@ -915,7 +915,7 @@ impl ViewportRenderer {
                         }
                     };
 
-                    let align_offset_y = match label.align_y {
+                    let align_offset_y = match label.anchoring.align.y {
                         crate::renderer::types::AnchorY::Top => 0.0,
                         crate::renderer::types::AnchorY::Middle => -layout.height * 0.5,
                         crate::renderer::types::AnchorY::Bottom => -layout.height,
@@ -970,7 +970,9 @@ impl ViewportRenderer {
                     rotate_vertices_from(&mut batch, bg_start, rot);
 
                     if label.leader_line {
-                        if let crate::renderer::types::OverlayAnchor::World(wa) = label.anchor {
+                        if let crate::renderer::types::OverlayOrigin::World(wa) =
+                            label.anchoring.origin
+                        {
                             let world_px = project_to_screen(wa, view, proj, vp_w, vp_h);
                             if let Some(wp) = world_px {
                                 emit_line_quad(
@@ -1151,7 +1153,7 @@ impl ViewportRenderer {
                     // is culled. Alignment shifts the whole run by its glyph-extent
                     // box, so default Left/Top leaves the authored positions.
                     let Some(origin) = crate::renderer::types::resolve_anchor_origin(
-                        &run.anchor,
+                        &run.anchoring.origin,
                         [vp_w, vp_h],
                         view,
                         proj,
@@ -1161,10 +1163,12 @@ impl ViewportRenderer {
                     let Some(([min_x, min_y], [ext_w, ext_h])) = run.extent() else {
                         continue;
                     };
-                    let run_x =
-                        origin[0] + run.transform.translate[0] + run.align_x.align_shift(ext_w);
-                    let run_y =
-                        origin[1] + run.transform.translate[1] + run.align_y.align_shift(ext_h);
+                    let run_x = origin[0]
+                        + run.transform.translate[0]
+                        + run.anchoring.align.x.align_shift(ext_w);
+                    let run_y = origin[1]
+                        + run.transform.translate[1]
+                        + run.anchoring.align.y.align_shift(ext_h);
 
                     let opacity = run.opacity.clamp(0.0, 1.0);
                     // Each glyph carries its tint through layout so per-glyph
@@ -1377,7 +1381,8 @@ impl ViewportRenderer {
                     // The submission's anchor wins over the one a group compiled
                     // from a single label carries, so a caller can re-anchor a
                     // compiled label without re-compiling it.
-                    let translate = match r.anchor.or(compiled_anchor) {
+                    let submitted_origin = r.anchoring.map(|a| a.origin);
+                    let translate = match submitted_origin.or(compiled_anchor) {
                         Some(a) => {
                             let Some(origin) = crate::renderer::types::resolve_anchor_origin(
                                 &a,
@@ -1390,11 +1395,11 @@ impl ViewportRenderer {
                             // Alignment only means something against an extent,
                             // and a group compiled from one label already placed
                             // its own alignment at compile time, so it is applied
-                            // only for an anchor the submission set.
-                            let align = match (r.anchor, bounds) {
-                                (Some(_), Some((min, max))) => [
-                                    r.align_x.align_shift(max[0] - min[0]) - min[0],
-                                    r.align_y.align_shift(max[1] - min[1]) - min[1],
+                            // only for an anchoring the submission set.
+                            let align = match (r.anchoring, bounds) {
+                                (Some(anchoring), Some((min, max))) => [
+                                    anchoring.align.x.align_shift(max[0] - min[0]) - min[0],
+                                    anchoring.align.y.align_shift(max[1] - min[1]) - min[1],
                                 ],
                                 _ => [0.0, 0.0],
                             };

@@ -328,18 +328,17 @@ pub struct OverlayShapeItem {
     /// carries its own extent, so this only sets the box the transform pivots
     /// and the alignment resolve against.
     pub size: [f32; 2],
-    /// Where the shape hangs from: a viewport corner (default top-left) or a
-    /// projected world point. `position` is a screen-pixel nudge from this
-    /// origin and `align_x` / `align_y` place the bounding box onto it. The
-    /// default `Viewport { Left, Top }` resolves to `[0, 0]`, so with the
-    /// default alignment `position` is the absolute top-left.
-    pub anchor: OverlayAnchor,
+    /// Where the item hangs from and which point of its own box lands there.
+    ///
+    /// `transform.translate` is a nudge from the resolved origin, and a world
+    /// origin behind the camera or off screen culls the item for the frame.
+    pub anchoring: OverlayAnchoring,
     /// Translate, rotate, and scale, in logical pixels and radians.
     ///
     /// `translate` is the nudge from the resolved `anchor` origin, so with the
     /// default anchor and alignment it is the absolute screen placement.
     /// Rotation turns the item inside its extent box, which stays
-    /// axis-aligned, so `align_x` / `align_y` place the unrotated box and the
+    /// axis-aligned, so `anchoring.align` places the unrotated box and the
     /// content turns within it. See [`OverlayTransform`] for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
@@ -361,14 +360,6 @@ pub struct OverlayShapeItem {
     /// What this item is clipped to: an axis-aligned box, a mask shape, or
     /// both. The default clips nothing.
     pub clip: OverlayClip,
-    /// How the bounding box sits horizontally on `anchor` + `position`: `Left`
-    /// (default) puts the left edge there, `Middle` centres, `Right` the right
-    /// edge.
-    pub align_x: AnchorX,
-    /// How the bounding box sits vertically on `anchor` + `position`: `Top`
-    /// (default) puts the top edge there, `Middle` centres, `Bottom` the bottom
-    /// edge.
-    pub align_y: AnchorY,
     /// Overall opacity multiplier applied to the fill and every shadow layer.
     /// Range 0.0-1.0.
     pub opacity: f32,
@@ -405,7 +396,7 @@ pub struct OverlayShapeItem {
 impl Default for OverlayShapeItem {
     fn default() -> Self {
         Self {
-            anchor: OverlayAnchor::default(),
+            anchoring: crate::overlay::OverlayAnchoring::default(),
             transform: OverlayTransform::IDENTITY,
             style: OverlayStyle {
                 fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()),
@@ -413,8 +404,6 @@ impl Default for OverlayShapeItem {
             },
             tint: [1.0, 1.0, 1.0, 1.0],
             clip: OverlayClip::default(),
-            align_x: AnchorX::Left,
-            align_y: AnchorY::Top,
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
             opacity: 1.0,
@@ -883,27 +872,26 @@ impl OverlayShapeItem {
     }
 
     /// Set the origin the shape hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
-        self.anchor = anchor;
+    pub fn with_anchor(mut self, anchor: OverlayOrigin) -> Self {
+        self.anchoring.origin = anchor;
         self
     }
 
     /// Pin the shape to a 3D world position, projected to screen each frame.
-    /// Sugar for `with_anchor(OverlayAnchor::World(pos))`.
+    /// Sugar for `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = OverlayAnchor::World(pos);
+        self.anchoring.origin = OverlayOrigin::World(pos);
         self
     }
 
     /// Set how the bounding box aligns onto the resolved anchor origin.
-    pub fn with_align(mut self, align_x: AnchorX, align_y: AnchorY) -> Self {
-        self.align_x = align_x;
-        self.align_y = align_y;
+    pub fn with_align(mut self, align: Alignment) -> Self {
+        self.anchoring.align = align;
         self
     }
 
     /// Resolve the effective top-left pixel of the bounding box for a frame:
-    /// the `anchor` origin, plus `position`, shifted by `align_x` / `align_y`
+    /// the resolved origin, plus `position`, shifted by `anchoring.align`
     /// for the current `size`. Returns `None` when a `World` anchor projects
     /// behind the camera or off-screen (the shape is skipped that frame).
     ///
@@ -916,10 +904,14 @@ impl OverlayShapeItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
         Some([
-            origin[0] + self.transform.translate[0] + self.align_x.align_shift(self.size[0]),
-            origin[1] + self.transform.translate[1] + self.align_y.align_shift(self.size[1]),
+            origin[0]
+                + self.transform.translate[0]
+                + self.anchoring.align.x.align_shift(self.size[0]),
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(self.size[1]),
         ])
     }
 
@@ -1529,11 +1521,11 @@ mod tests {
             [0.0, 0.0],
             [50.0, 20.0],
         )
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Right,
-            y: AnchorY::Bottom,
-        })
-        .with_align(AnchorX::Right, AnchorY::Bottom);
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Right,
+            AnchorY::Bottom,
+        )))
+        .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom));
         let id = glam::Mat4::IDENTITY;
         let a = s.resolve_top_left([800.0, 600.0], &id, &id).unwrap();
         assert_eq!(a, [750.0, 580.0]);
@@ -1550,11 +1542,11 @@ mod tests {
             [0.0, 0.0],
             [80.0, 60.0],
         )
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Middle,
-            y: AnchorY::Middle,
-        })
-        .with_align(AnchorX::Middle, AnchorY::Middle);
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Middle,
+            AnchorY::Middle,
+        )))
+        .with_align(Alignment::new(AnchorX::Middle, AnchorY::Middle));
         let id = glam::Mat4::IDENTITY;
         let tl = s.resolve_top_left([800.0, 600.0], &id, &id).unwrap();
         assert_eq!(tl, [360.0, 270.0]); // 400-40, 300-30
@@ -1569,11 +1561,11 @@ mod tests {
         // `position` layers on top of the resolved origin, so it nudges an
         // anchored box away from the corner (the animatable channel does the same).
         let s = OverlayShapeItem::new(OverlayShape::Circle, [12.0, -8.0], [20.0, 20.0])
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Right,
-                y: AnchorY::Top,
-            })
-            .with_align(AnchorX::Right, AnchorY::Top);
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Top,
+            )))
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Top));
         let id = glam::Mat4::IDENTITY;
         let tl = s.resolve_top_left([500.0, 500.0], &id, &id).unwrap();
         // origin x = 500, align Right shifts by -20, position adds [12, -8].

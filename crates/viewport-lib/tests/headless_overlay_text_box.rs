@@ -84,10 +84,9 @@ fn a_measured_wrapped_label_lands_in_its_resolved_box() {
     ];
     for (ax, ay) in cases {
         let label = LabelItem::new(TEXT)
-            .with_anchor(viewport_lib::OverlayAnchor::Viewport {
-                x: AnchorX::Middle,
-                y: AnchorY::Middle,
-            })
+            .with_anchor(viewport_lib::OverlayOrigin::Viewport(
+                viewport_lib::Alignment::new(AnchorX::Middle, AnchorY::Middle),
+            ))
             .with_font_size(FONT_SIZE)
             .with_max_width(MAX_WIDTH)
             .with_align_x(ax)

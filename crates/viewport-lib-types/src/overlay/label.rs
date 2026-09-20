@@ -1,6 +1,8 @@
 //! Text label overlay items.
 
-use super::anchor::{AnchorX, AnchorY, OverlayAnchor, resolve_anchor_origin};
+use super::anchor::{
+    Alignment, AnchorX, AnchorY, OverlayAnchoring, OverlayOrigin, resolve_anchor_origin,
+};
 use super::animation::OverlayAnimations;
 use super::clip::OverlayClip;
 use super::transform::OverlayTransform;
@@ -12,10 +14,10 @@ use super::transform::OverlayTransform;
 ///
 /// # Anchoring
 ///
-/// `anchor` sets the origin the label hangs from: an [`OverlayAnchor::Viewport`]
-/// corner (the default is the top-left) or an [`OverlayAnchor::World`] point that
+/// `anchor` sets the origin the label hangs from: an [`OverlayOrigin::Viewport`]
+/// corner (the default is the top-left) or an [`OverlayOrigin::World`] point that
 /// is reprojected each frame.  `position` nudges the text from that origin in
-/// logical pixels, and `align_x` / `align_y` place the text box on it.  A
+/// logical pixels, and `anchoring.align` places the text box on it.  A
 /// world-anchored label is frustum-culled: it is not drawn when the point is
 /// behind the camera or outside the viewport, and it draws a leader line when
 /// `leader_line` is set.
@@ -31,16 +33,17 @@ use super::transform::OverlayTransform;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LabelItem {
-    /// Origin the label hangs from: a viewport corner (default top-left) or a
-    /// projected world point.  `position` nudges the text from here and the
-    /// leader line draws for an [`OverlayAnchor::World`] anchor.
-    pub anchor: OverlayAnchor,
+    /// Where the item hangs from and which point of its own box lands there.
+    ///
+    /// `transform.translate` is a nudge from the resolved origin, and a world
+    /// origin behind the camera or off screen culls the item for the frame.
+    pub anchoring: OverlayAnchoring,
     /// Translate, rotate, and scale, in logical pixels and radians.
     ///
     /// `translate` is the nudge from the resolved `anchor` origin, so with the
     /// default anchor and alignment it is the absolute screen placement.
     /// Rotation turns the item inside its extent box, which stays
-    /// axis-aligned, so `align_x` / `align_y` place the unrotated box and the
+    /// axis-aligned, so `anchoring.align` places the unrotated box and the
     /// content turns within it. See [`OverlayTransform`] for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
@@ -98,14 +101,6 @@ pub struct LabelItem {
     /// RGBA colour of the leader line.
     pub leader_colour: crate::colour::Colour,
 
-    /// Horizontal alignment of the label text relative to its anchor.
-    pub align_x: AnchorX,
-
-    /// Vertical alignment of the label text relative to its anchor. Default:
-    /// `Middle`, which centres the text on the anchor. Use `Top` to place the
-    /// top edge of the text at the anchor when laying out screen-space UI.
-    pub align_y: AnchorY,
-
     /// Gap in logical pixels between the anchor and the near edge of the text,
     /// applied in the anchor-facing direction: `Left` text is pushed this far
     /// right of the anchor, `Right` text this far left. `Middle` is
@@ -133,7 +128,9 @@ pub struct LabelItem {
 impl Default for LabelItem {
     fn default() -> Self {
         Self {
-            anchor: OverlayAnchor::default(),
+            anchoring: crate::overlay::OverlayAnchoring::default().with_align(
+                crate::overlay::Alignment::new(AnchorX::Left, AnchorY::Middle),
+            ),
             text: String::new(),
             colour: [1.0, 1.0, 1.0, 1.0].into(),
             font_size: 14.0,
@@ -143,8 +140,6 @@ impl Default for LabelItem {
             padding: 3.0,
             leader_line: false,
             leader_colour: [1.0, 1.0, 1.0, 0.6].into(),
-            align_x: AnchorX::Left,
-            align_y: AnchorY::Middle,
             anchor_padding: 6.0,
             transform: OverlayTransform::IDENTITY,
             style: crate::overlay::OverlayStyle::default(),
@@ -170,15 +165,15 @@ impl LabelItem {
     }
 
     /// Set the origin the label hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
-        self.anchor = anchor;
+    pub fn with_anchor(mut self, anchor: OverlayOrigin) -> Self {
+        self.anchoring.origin = anchor;
         self
     }
 
     /// Pin the label to a world-space position, reprojected each frame. Sugar
-    /// for `with_anchor(OverlayAnchor::World(pos))`.
+    /// for `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = OverlayAnchor::World(pos);
+        self.anchoring.origin = OverlayOrigin::World(pos);
         self
     }
 
@@ -186,10 +181,8 @@ impl LabelItem {
     /// top-left. Sugar for the default viewport-top-left anchor with `position`
     /// set to `pos`.
     pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
-        self.anchor = OverlayAnchor::Viewport {
-            x: AnchorX::Left,
-            y: AnchorY::Top,
-        };
+        self.anchoring.origin =
+            OverlayOrigin::Viewport(Alignment::new(AnchorX::Left, AnchorY::Top));
         self.transform.translate = pos;
         self
     }
@@ -244,14 +237,21 @@ impl LabelItem {
 
     /// Set the horizontal alignment of the text relative to its anchor.
     pub fn with_align_x(mut self, align_x: AnchorX) -> Self {
-        self.align_x = align_x;
+        self.anchoring.align.x = align_x;
         self
     }
 
     /// Set the vertical alignment of the text relative to its anchor. Defaults
     /// to `Middle`; pass `Top` to place the top edge of the text at the anchor.
     pub fn with_align_y(mut self, align_y: AnchorY) -> Self {
-        self.align_y = align_y;
+        self.anchoring.align.y = align_y;
+        self
+    }
+
+    /// Set both alignments at once: which point of the text box lands on the
+    /// resolved origin.
+    pub fn with_align(mut self, align: Alignment) -> Self {
+        self.anchoring.align = align;
         self
     }
 
@@ -263,7 +263,7 @@ impl LabelItem {
     }
 
     /// Resolve the top-left pixel of the laid-out text for a frame: the
-    /// `anchor` origin, plus `position`, shifted by `align_x` / `align_y` for a
+    /// origin, plus `position`, shifted by `anchoring.align` for a
     /// text box of `size`, plus `anchor_padding` on the horizontal edge the
     /// text is aligned to. Returns `None` when a `World` anchor projects behind
     /// the camera or off-screen, which is the frame the label is skipped on.
@@ -284,17 +284,17 @@ impl LabelItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
         // The horizontal rule is the shared align shift plus the anchor gap,
         // which pushes the text away from the anchor on whichever side it sits.
-        let shift_x = match self.align_x {
+        let shift_x = match self.anchoring.align.x {
             AnchorX::Left => self.anchor_padding,
             AnchorX::Middle => -size[0] * 0.5,
             AnchorX::Right => -size[0] - self.anchor_padding,
         };
         Some([
             origin[0] + self.transform.translate[0] + shift_x,
-            origin[1] + self.transform.translate[1] + self.align_y.align_shift(size[1]),
+            origin[1] + self.transform.translate[1] + self.anchoring.align.y.align_shift(size[1]),
         ])
     }
 
@@ -434,10 +434,10 @@ mod tests {
     /// pushes the text away from the anchor on the side it is aligned to.
     #[test]
     fn resolve_top_left_shifts_by_alignment_and_anchor_padding() {
-        let base = LabelItem::new("hello").with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Right,
-            y: AnchorY::Bottom,
-        });
+        let base = LabelItem::new("hello").with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Right,
+            AnchorY::Bottom,
+        )));
         let size = [60.0, 14.0];
 
         let right = base

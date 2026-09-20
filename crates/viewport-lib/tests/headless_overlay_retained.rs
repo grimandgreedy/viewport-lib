@@ -15,8 +15,8 @@ mod common;
 use common::*;
 
 use viewport_lib::{
-    AnchorX, AnchorY, GlyphRunItem, LabelItem, OverlayAnchor, OverlayFill, OverlayPolylineItem,
-    OverlayShape, OverlayShapeItem, PositionedGlyph, RetainedOverlay,
+    Alignment, AnchorX, AnchorY, GlyphRunItem, LabelItem, OverlayFill, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, PositionedGlyph, RetainedOverlay,
 };
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
@@ -446,10 +446,10 @@ fn retained_label_anchor_resolves_to_corner() {
     let top_left = LabelItem::new("ABCD")
         .with_font_size(22.0)
         .with_colour([1.0, 1.0, 1.0, 1.0])
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Left,
-            y: AnchorY::Top,
-        })
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Left,
+            AnchorY::Top,
+        )))
         .with_align_x(AnchorX::Left)
         .with_align_y(AnchorY::Top)
         .with_position([6.0, 6.0]);
@@ -471,10 +471,10 @@ fn retained_label_anchor_resolves_to_corner() {
     let bottom_right = LabelItem::new("ABCD")
         .with_font_size(22.0)
         .with_colour([1.0, 1.0, 1.0, 1.0])
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Right,
-            y: AnchorY::Bottom,
-        })
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Right,
+            AnchorY::Bottom,
+        )))
         .with_align_x(AnchorX::Right)
         .with_align_y(AnchorY::Bottom)
         .with_position([-6.0, -6.0]);
@@ -631,7 +631,7 @@ fn retained_opacity_and_free() {
 /// camera and culls when it leaves the frustum.
 #[test]
 fn retained_group_anchors_to_a_corner_and_a_world_point() {
-    use viewport_lib::{AnchorX, AnchorY, OverlayAnchor};
+    use viewport_lib::{AnchorX, AnchorY, OverlayOrigin};
 
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -649,11 +649,11 @@ fn retained_group_anchors_to_a_corner_and_a_world_point() {
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![
         RetainedOverlay::new(id)
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Right,
-                y: AnchorY::Bottom,
-            })
-            .with_align(AnchorX::Right, AnchorY::Bottom),
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Bottom,
+            )))
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom)),
     ];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
@@ -669,7 +669,7 @@ fn retained_group_anchors_to_a_corner_and_a_world_point() {
     // at a projected-but-meaningless position.
     let mut behind = overlay_frame(size);
     behind.overlays.retained =
-        vec![RetainedOverlay::new(id).with_anchor(OverlayAnchor::World([0.0, 0.0, -1000.0]))];
+        vec![RetainedOverlay::new(id).with_anchor(OverlayOrigin::World([0.0, 0.0, -1000.0]))];
     let px = renderer.render_offscreen(&device, &queue, &behind, size, size);
     assert!(
         px.chunks_exact(4).all(|p| !is_red((p[0], p[1], p[2]))),

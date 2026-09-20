@@ -693,7 +693,7 @@ impl DebugDraw {
             } = prim
             {
                 let mut label = LabelItem::default();
-                label.anchor = crate::renderer::OverlayAnchor::World((*position).into());
+                label.anchoring.origin = crate::renderer::OverlayOrigin::World((*position).into());
                 label.text = text.clone();
                 label.colour = (*colour).into();
                 label.leader_line = true;

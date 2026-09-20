@@ -4,8 +4,8 @@
 //! previous egui painter approach.
 
 use crate::App;
-use crate::geometry::make_box_with_uvs;
 use crate::eframe::egui;
+use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
 use vpl::{Camera, LabelItem, Material, ViewportRenderer, scene::Scene};
 
@@ -100,7 +100,7 @@ pub(crate) fn controls_annotation(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Labels render natively via OverlayFrame.");
     ui.separator();
     for (i, label) in app.ann_state.labels.iter().enumerate() {
-        let status = if let vpl::OverlayAnchor::World(wa) = label.anchor {
+        let status = if let vpl::OverlayOrigin::World(wa) = label.anchoring.origin {
             let view = app.camera.view_matrix();
             let proj = app.camera.proj_matrix();
             let pos = glam::Vec3::from(wa);
@@ -145,7 +145,10 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let items = app.ann_state.scene.collect_render_items(&vpl::Selection::new());
+        let items = app
+            .ann_state
+            .scene
+            .collect_render_items(&vpl::Selection::new());
         let sg = app.ann_state.scene.version();
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
@@ -172,11 +175,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     // Overlay labels (Showcase 9 and 34): populate OverlayFrame.
     if app.ann_state.built {
         fd.overlays.labels = app.ann_state.labels.clone();
@@ -190,30 +189,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -254,13 +245,23 @@ impl crate::Showcase for ScAnnotation {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -269,7 +270,12 @@ impl crate::Showcase for ScAnnotation {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_annotation(app, ui)
     }
 }

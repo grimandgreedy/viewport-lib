@@ -193,8 +193,8 @@ fn emit_glyph_run(
         return;
     };
     let item_start = verts.len();
-    let run_x = run.transform.translate[0] + run.align_x.align_shift(ext_w);
-    let run_y = run.transform.translate[1] + run.align_y.align_shift(ext_h);
+    let run_x = run.transform.translate[0] + run.anchoring.align.x.align_shift(ext_w);
+    let run_y = run.transform.translate[1] + run.anchoring.align.y.align_shift(ext_h);
     let opacity = run.opacity.clamp(0.0, 1.0);
     let rot_start = verts.len();
     let rot = overlay_geometry::OverlayRotation::new(
@@ -322,7 +322,7 @@ fn emit_label(
     emit_leader: bool,
     ppp: f32,
 ) {
-    use crate::renderer::types::{AnchorX, AnchorY, OverlayAnchor};
+    use crate::renderer::types::{AnchorX, AnchorY, OverlayOrigin};
     if label.text.is_empty() || label.opacity <= 0.0 || names_unusable_mask(&label.clip, "label") {
         return;
     }
@@ -353,12 +353,12 @@ fn emit_label(
 
     // Alignment folds in anchor_padding on X (Left pushes right, Right pulls
     // left, Middle unaffected); position nudges last. The anchor origin is [0, 0].
-    let align_offset = match label.align_x {
+    let align_offset = match label.anchoring.align.x {
         AnchorX::Left => label.anchor_padding,
         AnchorX::Middle => -layout.total_width * 0.5,
         AnchorX::Right => -layout.total_width - label.anchor_padding,
     };
-    let align_offset_y = match label.align_y {
+    let align_offset_y = match label.anchoring.align.y {
         AnchorY::Top => 0.0,
         AnchorY::Middle => -layout.height * 0.5,
         AnchorY::Bottom => -layout.height,
@@ -405,7 +405,8 @@ fn emit_label(
     viewport_overlays::tint_vertices_from(verts, bg_start, label.tint);
     overlay_geometry::rotate_vertices_from(verts, bg_start, rot);
 
-    if emit_leader && label.leader_line && matches!(label.anchor, OverlayAnchor::World(_)) {
+    if emit_leader && label.leader_line && matches!(label.anchoring.origin, OverlayOrigin::World(_))
+    {
         overlay_geometry::emit_line_quad(
             verts,
             0.0,
@@ -868,7 +869,7 @@ fn emit_sdf_shape(
 /// The extent of a compiled group in its own local logical pixels, over both
 /// vertex streams. `None` when the group compiled nothing.
 ///
-/// This is the box `align_x` / `align_y` shift against when a group is
+/// This is the box the group's alignment shifts against when it is
 /// anchored, so it plays the role an item's own extent box plays. Computed once
 /// at compile rather than per frame: the geometry is fixed by definition.
 fn group_bounds(
@@ -1130,7 +1131,7 @@ impl ViewportRenderer {
                 shape_vertex_count: 0,
                 shadow_buf: None,
                 source: Some(source),
-                anchor: Some(label.anchor),
+                anchor: Some(label.anchoring.origin),
                 bounds: group_bounds(&verts, &[]),
             },
             bytes,

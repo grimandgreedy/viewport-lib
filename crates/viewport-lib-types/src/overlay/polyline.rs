@@ -157,15 +157,17 @@ pub struct OverlayPolylineItem {
     /// With the default anchor (viewport top-left) and a zero `position` these
     /// are absolute screen coordinates.
     pub points: Vec<[f32; 2]>,
-    /// Origin the path hangs from: a viewport corner (default top-left) or a
-    /// projected world point. Every point in `points` is relative to this.
-    pub anchor: OverlayAnchor,
+    /// Where the item hangs from and which point of its own box lands there.
+    ///
+    /// `transform.translate` is a nudge from the resolved origin, and a world
+    /// origin behind the camera or off screen culls the item for the frame.
+    pub anchoring: OverlayAnchoring,
     /// Translate, rotate, and scale, in logical pixels and radians.
     ///
     /// `translate` is the nudge from the resolved `anchor` origin, so with the
     /// default anchor and alignment it is the absolute screen placement.
     /// Rotation turns the item inside its extent box, which stays
-    /// axis-aligned, so `align_x` / `align_y` place the unrotated box and the
+    /// axis-aligned, so `anchoring.align` places the unrotated box and the
     /// content turns within it. See [`OverlayTransform`] for how an item's
     /// transform composes with the transform of a retained group containing
     /// it.
@@ -193,12 +195,6 @@ pub struct OverlayPolylineItem {
     /// What this item is clipped to: an axis-aligned box, a mask shape, or
     /// both. The default clips nothing.
     pub clip: OverlayClip,
-    /// How the path's bounding box sits horizontally on `anchor` + `position`.
-    /// Default `Left` leaves the points as authored.
-    pub align_x: AnchorX,
-    /// How the path's bounding box sits vertically on `anchor` + `position`.
-    /// Default `Top` leaves the points as authored.
-    pub align_y: AnchorY,
     /// The line itself: width, colour, pattern, joins and caps.
     ///
     /// `None` draws no line at all, which is what a closed polyline with a
@@ -222,14 +218,12 @@ impl Default for OverlayPolylineItem {
     fn default() -> Self {
         Self {
             points: Vec::new(),
-            anchor: OverlayAnchor::default(),
+            anchoring: crate::overlay::OverlayAnchoring::default(),
             transform: OverlayTransform::IDENTITY,
             style: OverlayStyle::default(),
             animations: None,
             tint: [1.0, 1.0, 1.0, 1.0],
             clip: OverlayClip::default(),
-            align_x: AnchorX::Left,
-            align_y: AnchorY::Top,
             stroke: Some(OverlayStroke::default()),
             closed: false,
             uvs: None,
@@ -251,15 +245,15 @@ impl OverlayPolylineItem {
     }
 
     /// Set the origin the path hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
-        self.anchor = anchor;
+    pub fn with_anchor(mut self, anchor: OverlayOrigin) -> Self {
+        self.anchoring.origin = anchor;
         self
     }
 
     /// Pin the path to a world-space position, reprojected each frame. Sugar for
-    /// `with_anchor(OverlayAnchor::World(pos))`.
+    /// `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = OverlayAnchor::World(pos);
+        self.anchoring.origin = OverlayOrigin::World(pos);
         self
     }
 
@@ -271,14 +265,13 @@ impl OverlayPolylineItem {
     }
 
     /// Set how the path's bounding box aligns onto the resolved anchor origin.
-    pub fn with_align(mut self, align_x: AnchorX, align_y: AnchorY) -> Self {
-        self.align_x = align_x;
-        self.align_y = align_y;
+    pub fn with_align(mut self, align: Alignment) -> Self {
+        self.anchoring.align = align;
         self
     }
 
     /// Resolve the screen-pixel offset added to every point for a frame: the
-    /// `anchor` origin, plus `position`, shifted by `align_x` / `align_y` for the
+    /// origin, plus `position`, shifted by `anchoring.align` for the
     /// path's bounding box. Returns `None` when a `World` anchor projects behind
     /// the camera or off-screen (the path is skipped that frame). The default
     /// anchor with a zero `position` and `Left` / `Top` alignment resolves to
@@ -289,7 +282,7 @@ impl OverlayPolylineItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
         let (mut min_x, mut min_y, mut max_x, mut max_y) = (0.0, 0.0, 0.0, 0.0);
         if let Some((first, rest)) = self.points.split_first() {
             min_x = first[0];
@@ -304,8 +297,12 @@ impl OverlayPolylineItem {
             }
         }
         Some([
-            origin[0] + self.transform.translate[0] + self.align_x.align_shift(max_x - min_x),
-            origin[1] + self.transform.translate[1] + self.align_y.align_shift(max_y - min_y),
+            origin[0]
+                + self.transform.translate[0]
+                + self.anchoring.align.x.align_shift(max_x - min_x),
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(max_y - min_y),
         ])
     }
 
@@ -583,11 +580,11 @@ mod path_sample_tests {
         // A path spanning [0,0]..[40,20], anchored and aligned bottom-right, has
         // its bounding-box bottom-right corner pinned to the viewport corner.
         let p = OverlayPolylineItem::new(vec![[0.0, 0.0], [40.0, 20.0]])
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Right,
-                y: AnchorY::Bottom,
-            })
-            .with_align(AnchorX::Right, AnchorY::Bottom);
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Bottom,
+            )))
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom));
         let off = p
             .resolve_offset([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
             .unwrap();
