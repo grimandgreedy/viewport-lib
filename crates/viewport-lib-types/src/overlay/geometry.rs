@@ -1,6 +1,8 @@
 //! Retained overlay geometry: a handle to a group of overlay items compiled
 //! once into GPU buffers, plus the per-frame submission that draws it.
 
+use crate::overlay::OverlayClip;
+
 crate::slot_handle! {
     /// Handle to a compiled overlay-geometry group.
     ///
@@ -23,7 +25,7 @@ crate::slot_handle! {
 /// References a group compiled with `compile_overlay_geometry` and carries the
 /// cheap per-frame parameters that do not require re-tessellation: a `translate`
 /// (so a scroll container just updates the offset), an `opacity` multiplier, a
-/// `z_order` for cross-family draw order, and an optional outer `clip_rect`. The
+/// `z_order` for cross-family draw order, and an optional outer clip. The
 /// group's own geometry is fixed in the handle.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -50,23 +52,9 @@ pub struct RetainedOverlay {
     /// Cross-family draw order, low to high, matching the `z_order` on the
     /// immediate overlay items. Default `0`.
     pub z_order: i32,
-    /// Outer clip bounding box in logical pixels `[x0, y0, x1, y1]`, in
-    /// framebuffer space. Fragments of the group outside it are discarded,
-    /// which is how a rectangular scroll viewport clips its content. `None`
-    /// (the default) applies no rectangular clip.
-    ///
-    /// The box is screen-axis-aligned by definition and does not turn with
-    /// `transform.rotation`, matching a scissor rect and matching the per-item
-    /// `clip_rect`. For a clip that follows a rotated group, use `clip_id`.
-    pub clip_rect: Option<[f32; 4]>,
-    /// Clip the group to a mask shape for shaped (non-rectangular) clipping, e.g.
-    /// a rounded-rect scroll viewport. The value matches the `clip_mask_id` of an
-    /// overlay shape submitted in the same frame (masks are registered per frame
-    /// because they resolve in screen space); the group's fragments outside that
-    /// mask, and outside any of its nested parent masks, are discarded. `None`
-    /// (the default) applies no shaped clip. Composes with `clip_rect`: both are
-    /// applied. A mask absent from the frame leaves the group unclipped.
-    pub clip_id: Option<u32>,
+    /// What this item is clipped to: an axis-aligned box, a mask shape, or
+    /// both. The default clips nothing.
+    pub clip: OverlayClip,
     /// Per-frame colour multiplier applied to the whole group, identity
     /// `[1, 1, 1, 1]`. A colour flash, fade, or tint rides this instead of
     /// re-compiling the group. On SDF shapes the tint reaches the fill, border, and
@@ -106,8 +94,7 @@ impl RetainedOverlay {
             transform: crate::overlay::OverlayTransform::IDENTITY,
             opacity: 1.0,
             z_order: 0,
-            clip_rect: None,
-            clip_id: None,
+            clip: OverlayClip::default(),
             tint: [1.0, 1.0, 1.0, 1.0],
             anchor: None,
             align_x: crate::overlay::AnchorX::Left,
@@ -155,15 +142,15 @@ impl RetainedOverlay {
 
     /// Set the outer clip bounding box in logical pixels.
     pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip_rect = Some(clip_rect);
+        self.clip.rect = Some(clip_rect);
         self
     }
 
-    /// Clip the group to the mask shape whose `clip_mask_id` matches `clip_id`
+    /// Clip the group to the mask shape whose `provides_mask` matches `clip_id`
     /// (registered by an overlay shape submitted in the same frame), for shaped
     /// clipping such as a rounded-rect scroll viewport.
     pub fn with_clip_mask(mut self, clip_id: u32) -> Self {
-        self.clip_id = Some(clip_id);
+        self.clip.mask = Some(clip_id);
         self
     }
 

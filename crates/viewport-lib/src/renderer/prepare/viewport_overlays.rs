@@ -356,15 +356,15 @@ fn emit_vector_shadow(
 }
 
 /// Build the per-frame clip-shape registry from the overlay shapes that are clip
-/// masks (`clip_mask_id` set). Returns the GPU array (framebuffer-pixel geometry),
-/// a map from `clip_mask_id` to its index in that array, and the axis-aligned
+/// masks (`provides_mask` set). Returns the GPU array (framebuffer-pixel geometry),
+/// a map from mask id to its index in that array, and the axis-aligned
 /// bounding box (framebuffer pixels) of each mask, parallel to the GPU array. A
-/// mask's own `clip_id` links it to a parent, so nested masks compose by
+/// mask's own `clip.mask` links it to a parent, so nested masks compose by
 /// intersection.
 ///
 /// The bounding boxes drive the shader's cheap pre-reject and share this array's
 /// indexing, so a drawn item's `clip_rect` and `clip_index` always describe the
-/// same mask. A `clip_mask_id` is expected to be unique within a frame; if one is
+/// same mask. A mask id is expected to be unique within a frame; if one is
 /// reused, the first mask with that id wins (both for the index and the bbox),
 /// which is why the bbox comes from here rather than a separate id-keyed map.
 fn build_clip_shapes(
@@ -386,7 +386,7 @@ fn build_clip_shapes(
     let mut index_of: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
     let mut masks: Vec<(&crate::renderer::types::OverlayShapeItem, [f32; 2])> = Vec::new();
     for s in shapes {
-        if let Some(id) = s.clip_mask_id {
+        if let Some(id) = s.provides_mask {
             if let std::collections::hash_map::Entry::Vacant(e) = index_of.entry(id) {
                 if let Some(tl) = s.resolve_top_left(viewport, view, proj) {
                     e.insert(masks.len() as i32);
@@ -415,7 +415,8 @@ fn build_clip_shapes(
         let center = [(tl[0] + hw) * ppp, (tl[1] + hh) * ppp];
         let half = [hw * ppp, hh * ppp];
         let parent = s
-            .clip_id
+            .clip
+            .mask
             .and_then(|pid| index_of.get(&pid).copied())
             .unwrap_or(-1);
         out.push(crate::resources::ClipShapeGpu {
@@ -780,7 +781,7 @@ impl ViewportRenderer {
                         );
                         rotate_vertices_from(&mut batch, 0, rot);
                     }
-                    stamp_clip(&mut batch, poly.clip_id, poly.clip_rect);
+                    stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
                     if !batch.is_empty() {
                         batches.push((poly.z_order, batch));
                     }
@@ -804,7 +805,7 @@ impl ViewportRenderer {
                     // fully transparent ones. A `texture` set on a vector shape
                     // is ignored (documented on the variant): the fill still
                     // draws.
-                    if shape.clip_mask_id.is_some() || shape.opacity <= 0.0 {
+                    if shape.provides_mask.is_some() || shape.opacity <= 0.0 {
                         continue;
                     }
                     super::overlay_style_check::warn_inert_style(
@@ -832,7 +833,7 @@ impl ViewportRenderer {
                     owned.transform.translate = tl;
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     emit_vector_shape(&mut batch, &owned, subpaths, *fill_rule, vp_w, vp_h);
-                    stamp_clip(&mut batch, owned.clip_id, owned.clip_rect);
+                    stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
                     if !batch.is_empty() {
                         batches.push((shape.z_order, batch));
                     }
@@ -1115,7 +1116,7 @@ impl ViewportRenderer {
 
                     rotate_vertices_from(&mut batch, text_start, rot);
 
-                    stamp_clip(&mut batch, label.clip_id, label.clip_rect);
+                    stamp_clip(&mut batch, label.clip.mask, label.clip.rect);
                     batches.push((label.z_order, batch));
                 }
 
@@ -1284,7 +1285,7 @@ impl ViewportRenderer {
 
                     rotate_vertices_from(&mut batch, 0, rot);
 
-                    stamp_clip(&mut batch, run.clip_id, run.clip_rect);
+                    stamp_clip(&mut batch, run.clip.mask, run.clip.rect);
                     batches.push((run.z_order, batch));
                 }
 
@@ -1409,14 +1410,14 @@ impl ViewportRenderer {
                     // `stamp_clip`. The mask is registered as an immediate shape
                     // each frame; if it is absent this frame the group is unclipped.
                     let (clip_index, mask_bbox) =
-                        match r.clip_id.and_then(|id| clip_index_of.get(&id).copied()) {
+                        match r.clip.mask.and_then(|id| clip_index_of.get(&id).copied()) {
                             Some(ci) => (ci as f32, Some(clip_bboxes[ci as usize])),
                             None => (-1.0, None),
                         };
                     // Outer bbox in framebuffer pixels: the group's explicit
                     // `clip_rect` if set, else the mask's own bbox (a cheap reject
                     // matching the shaped mask), else none.
-                    let clip_rect = if let Some(rect) = r.clip_rect {
+                    let clip_rect = if let Some(rect) = r.clip.rect {
                         [rect[0] * ppp, rect[1] * ppp, rect[2] * ppp, rect[3] * ppp]
                     } else if let Some(bb) = mask_bbox {
                         bb
@@ -1673,7 +1674,7 @@ impl ViewportRenderer {
                 for shape_orig in &sorted {
                     // Mask-only shapes contribute a clip rectangle but are
                     // not drawn themselves.
-                    if shape_orig.clip_mask_id.is_some() {
+                    if shape_orig.provides_mask.is_some() {
                         continue;
                     }
                     // Vector shapes have no analytic SDF; the solid/textured
@@ -2019,7 +2020,8 @@ impl ViewportRenderer {
                     // treat as no clipping. The bbox and index come from the same
                     // registry entry, so they never disagree.
                     let clip_index_i = shape
-                        .clip_id
+                        .clip
+                        .mask
                         .and_then(|id| clip_index_of.get(&id).copied())
                         .unwrap_or(-1);
                     let mask_rect = if clip_index_i >= 0 {
@@ -2027,7 +2029,7 @@ impl ViewportRenderer {
                     } else {
                         [0.0, 0.0, 0.0, 0.0]
                     };
-                    let clip_rect = match shape.clip_rect {
+                    let clip_rect = match shape.clip.rect {
                         Some(r) => combine_clip_rects(
                             mask_rect,
                             [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp],
@@ -2253,7 +2255,8 @@ impl ViewportRenderer {
                     // absent mask id falls through to a -1 index and an all-zero
                     // rect, which the shader reads as no clipping.
                     let clip_index_i = poly
-                        .clip_id
+                        .clip
+                        .mask
                         .and_then(|id| clip_index_of.get(&id).copied())
                         .unwrap_or(-1);
                     let poly_clip_rect = if clip_index_i >= 0 {

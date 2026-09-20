@@ -95,7 +95,7 @@ pub enum OverlayShape {
     ///
     /// A vector shape honours the coverage- and box-relative fields of
     /// [`OverlayShapeItem`]: `fill` (solid and gradients), both shadow lists,
-    /// `opacity`, `z_order`, the AABB clip (`clip_id`), and `rotation` /
+    /// `opacity`, `z_order`, the clip, and `rotation` /
     /// `rotation_pivot`. `position` places the path origin and `size` sets the
     /// rotation centre; the fill and gradient bounds come from the path's own
     /// extent, not `size`.
@@ -358,18 +358,9 @@ pub struct OverlayShapeItem {
     /// baked, so honouring it here would make the same content look different
     /// on the two paths.
     pub tint: [f32; 4],
-    /// Axis-aligned clip box in logical pixels `[x0, y0, x1, y1]`, in
-    /// framebuffer space. Fragments outside it are discarded. `None` (the
-    /// default) applies no rectangular clip; composes with `clip_id`, so both
-    /// apply when both are set.
-    ///
-    /// Framebuffer space is the definition, not an approximation: the box stays
-    /// axis-aligned on screen and does **not** turn with the item's own
-    /// rotation or with the rotation of a retained group containing it, the
-    /// same way a scissor rect behaves everywhere else. For a clip that follows
-    /// rotated content, use `clip_id` with a mask shape, which is evaluated per
-    /// fragment against a shape that can itself rotate.
-    pub clip_rect: Option<[f32; 4]>,
+    /// What this item is clipped to: an axis-aligned box, a mask shape, or
+    /// both. The default clips nothing.
+    pub clip: OverlayClip,
     /// How the bounding box sits horizontally on `anchor` + `position`: `Left`
     /// (default) puts the left edge there, `Middle` centres, `Right` the right
     /// edge.
@@ -383,11 +374,11 @@ pub struct OverlayShapeItem {
     pub opacity: f32,
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
-    /// Marks this shape as a clip mask. The shape itself is not drawn; its
-    /// bounding box defines a clipping rectangle for any shape whose
-    /// `clip_id` equals this value. `None` means the shape is not a mask.
+    /// Marks this shape as a clip mask under this id: other items whose
+    /// `clip.mask` matches are clipped to it. The shape itself is not drawn.
+    /// `None` (the default) means the shape is not a mask.
     ///
-    /// A `clip_mask_id` must be unique within a frame. If two shapes carry the
+    /// The id must be unique within a frame. If two shapes carry the
     /// same id, the first one in submission order is used as the mask and the
     /// rest are ignored. When several independent sources emit into one frame,
     /// offset their ids so they do not collide.
@@ -400,13 +391,7 @@ pub struct OverlayShapeItem {
     /// is evaluated per fragment, so a `Circle` mask clips to a circle. Masks
     /// nest, and a fragment must be inside the whole parent chain to survive.
     /// The bounding box is still used, as a cheap reject before the SDF.
-    pub clip_mask_id: Option<u32>,
-    /// When set, this shape is clipped to the mask shape whose `clip_mask_id`
-    /// matches this value: fragments outside that shape, and outside any of its
-    /// nested parent masks, are discarded. `None` means the shape is drawn
-    /// unclipped, as does a missing mask. Composes with `clip_rect`, so both
-    /// apply when both are set.
-    pub clip_id: Option<u32>,
+    pub provides_mask: Option<u32>,
     /// Animation tracks resolved each frame against `OverlayFrame::time`. Each
     /// `Some` track replaces the matching field on the item for the frame. See
     /// [`OverlayAnimations`] for why the channel list is what it is.
@@ -427,15 +412,14 @@ impl Default for OverlayShapeItem {
                 ..Default::default()
             },
             tint: [1.0, 1.0, 1.0, 1.0],
-            clip_rect: None,
+            clip: OverlayClip::default(),
             align_x: AnchorX::Left,
             align_y: AnchorY::Top,
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
             opacity: 1.0,
             z_order: 0,
-            clip_mask_id: None,
-            clip_id: None,
+            provides_mask: None,
             animations: None,
         }
     }
@@ -861,14 +845,14 @@ impl OverlayShapeItem {
     /// Mark this shape as a clip mask with the given id. Other shapes whose
     /// clip id matches are clipped to this shape's bounding box.
     pub fn with_clip_mask(mut self, mask_id: u32) -> Self {
-        self.clip_mask_id = Some(mask_id);
+        self.provides_mask = Some(mask_id);
         self
     }
 
     /// Clip this shape to the mask shape with this id. The mask's SDF (not just
     /// its bounding box) is used, and masks may nest.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
-        self.clip_id = Some(clip_id);
+        self.clip.mask = Some(clip_id);
         self
     }
 
@@ -1689,7 +1673,7 @@ impl OverlayShapeItem {
 
     /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
     pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip_rect = Some(clip_rect);
+        self.clip.rect = Some(clip_rect);
         self
     }
 }

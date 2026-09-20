@@ -2,6 +2,7 @@
 
 use super::anchor::{AnchorX, AnchorY, OverlayAnchor, resolve_anchor_origin};
 use super::animation::OverlayAnimations;
+use super::clip::OverlayClip;
 use super::transform::OverlayTransform;
 
 /// A text label rendered as a screen-space overlay.
@@ -64,18 +65,9 @@ pub struct LabelItem {
     /// baked, so honouring it here would make the same content look different
     /// on the two paths.
     pub tint: [f32; 4],
-    /// Axis-aligned clip box in logical pixels `[x0, y0, x1, y1]`, in
-    /// framebuffer space. Fragments outside it are discarded. `None` (the
-    /// default) applies no rectangular clip; composes with `clip_id`, so both
-    /// apply when both are set.
-    ///
-    /// Framebuffer space is the definition, not an approximation: the box stays
-    /// axis-aligned on screen and does **not** turn with the item's own
-    /// rotation or with the rotation of a retained group containing it, the
-    /// same way a scissor rect behaves everywhere else. For a clip that follows
-    /// rotated content, use `clip_id` with a mask shape, which is evaluated per
-    /// fragment against a shape that can itself rotate.
-    pub clip_rect: Option<[f32; 4]>,
+    /// What this item is clipped to: an axis-aligned box, a mask shape, or
+    /// both. The default clips nothing.
+    pub clip: OverlayClip,
 
     /// Text content to display.
     pub text: String,
@@ -136,13 +128,6 @@ pub struct LabelItem {
     /// Explicit draw order.  Labels with lower values are drawn first
     /// (further back).  Labels with equal `z_order` are drawn in list order.
     pub z_order: i32,
-
-    /// When set, this label is clipped to the mask shape whose `clip_mask_id`
-    /// matches this value: glyph and background fragments outside the mask are
-    /// discarded, so text scrolled inside a region is contained. The mask can be
-    /// any overlay shape (rect, rounded rect, circle, ...), and masks may nest.
-    /// `None` (the default) draws the label unclipped, as does a missing mask.
-    pub clip_id: Option<u32>,
 }
 
 impl Default for LabelItem {
@@ -165,12 +150,11 @@ impl Default for LabelItem {
             style: crate::overlay::OverlayStyle::default(),
             animations: None,
             tint: [1.0, 1.0, 1.0, 1.0],
-            clip_rect: None,
+            clip: OverlayClip::default(),
             opacity: 1.0,
             max_width: None,
             border_radius: 0.0,
             z_order: 0,
-            clip_id: None,
         }
     }
 }
@@ -350,7 +334,7 @@ impl LabelItem {
     /// [`OverlayShapeItem::with_clip_mask`](crate::overlay::OverlayShapeItem::with_clip_mask)). Fragments outside the mask are
     /// discarded, so text scrolled inside a region is contained.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
-        self.clip_id = Some(clip_id);
+        self.clip.mask = Some(clip_id);
         self
     }
 
@@ -417,7 +401,7 @@ impl LabelItem {
 
     /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
     pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip_rect = Some(clip_rect);
+        self.clip.rect = Some(clip_rect);
         self
     }
 }

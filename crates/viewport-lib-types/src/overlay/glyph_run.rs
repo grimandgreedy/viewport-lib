@@ -1,5 +1,7 @@
 //! Positioned glyph runs: shaped, laid-out text ready for the overlay atlas.
 
+use crate::overlay::OverlayClip;
+
 /// One glyph placed at an explicit position within a [`GlyphRunItem`].
 ///
 /// `glyph_id` is an index into the font's glyph table, not a Unicode codepoint.
@@ -89,18 +91,9 @@ pub struct GlyphRunItem {
     /// baked, so honouring it here would make the same content look different
     /// on the two paths.
     pub tint: [f32; 4],
-    /// Axis-aligned clip box in logical pixels `[x0, y0, x1, y1]`, in
-    /// framebuffer space. Fragments outside it are discarded. `None` (the
-    /// default) applies no rectangular clip; composes with `clip_id`, so both
-    /// apply when both are set.
-    ///
-    /// Framebuffer space is the definition, not an approximation: the box stays
-    /// axis-aligned on screen and does **not** turn with the item's own
-    /// rotation or with the rotation of a retained group containing it, the
-    /// same way a scissor rect behaves everywhere else. For a clip that follows
-    /// rotated content, use `clip_id` with a mask shape, which is evaluated per
-    /// fragment against a shape that can itself rotate.
-    pub clip_rect: Option<[f32; 4]>,
+    /// What this item is clipped to: an axis-aligned box, a mask shape, or
+    /// both. The default clips nothing.
+    pub clip: OverlayClip,
 
     /// How the run's glyph-extent box sits horizontally on `anchor` + `position`.
     /// Default `Left` leaves the glyph positions as authored.
@@ -130,13 +123,6 @@ pub struct GlyphRunItem {
     /// Explicit draw order. Runs with lower values are drawn first (further
     /// back). Shares the cross-family z-order space with labels and shapes.
     pub z_order: i32,
-
-    /// When set, the run is clipped to the mask shape whose `clip_mask_id`
-    /// matches this value, the same clip model [`LabelItem`] uses. `None` (the
-    /// default) draws the run unclipped.
-    ///
-    /// [`LabelItem`]: crate::overlay::LabelItem
-    pub clip_id: Option<u32>,
 }
 
 impl Default for GlyphRunItem {
@@ -149,7 +135,7 @@ impl Default for GlyphRunItem {
             style: crate::overlay::OverlayStyle::default(),
             animations: None,
             tint: [1.0, 1.0, 1.0, 1.0],
-            clip_rect: None,
+            clip: OverlayClip::default(),
             align_x: crate::overlay::AnchorX::Left,
             align_y: crate::overlay::AnchorY::Top,
             glyphs: Vec::new(),
@@ -157,7 +143,6 @@ impl Default for GlyphRunItem {
             colours: Vec::new(),
             opacity: 1.0,
             z_order: 0,
-            clip_id: None,
         }
     }
 }
@@ -258,7 +243,7 @@ impl GlyphRunItem {
     ///
     /// [`OverlayShapeItem::with_clip_mask`]: crate::overlay::OverlayShapeItem::with_clip_mask
     pub fn with_clip(mut self, clip_id: u32) -> Self {
-        self.clip_id = Some(clip_id);
+        self.clip.mask = Some(clip_id);
         self
     }
 
@@ -312,7 +297,7 @@ mod tests {
         assert!(run.colours.is_empty());
         assert_eq!(run.opacity, 1.0);
         assert_eq!(run.z_order, 0);
-        assert!(run.clip_id.is_none());
+        assert!(run.clip.mask.is_none());
 
         let glyphs = vec![
             PositionedGlyph::new(4, 0.0, 0.0),
@@ -340,7 +325,7 @@ mod tests {
         );
         assert_eq!(run.opacity, 0.5);
         assert_eq!(run.z_order, 3);
-        assert_eq!(run.clip_id, Some(7));
+        assert_eq!(run.clip.mask, Some(7));
     }
 
     #[test]
@@ -456,7 +441,7 @@ impl GlyphRunItem {
 
     /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
     pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip_rect = Some(clip_rect);
+        self.clip.rect = Some(clip_rect);
         self
     }
 }

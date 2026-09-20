@@ -5,6 +5,65 @@
 use super::*;
 use crate::resources::overlay::font::GlyphStyle;
 
+/// Bake an item's own `clip.rect` onto the vertices it just emitted, from
+/// `start` to the end of `verts`.
+///
+/// The immediate path stamps the same box onto an item's vertices every frame.
+/// A compiled item has no frame to be stamped in, so the box is resolved once
+/// here instead, in framebuffer pixels, and rides the compiled vertices. It is
+/// a screen box, so it stays where it was authored when the group translates,
+/// which is the rule the field already follows for rotation.
+fn bake_clip_rect(
+    verts: &mut [crate::resources::OverlayTextVertex],
+    clip: &crate::renderer::types::OverlayClip,
+    start: usize,
+    ppp: f32,
+) {
+    let Some(r) = clip.rect else {
+        return;
+    };
+    let cr = [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp];
+    for v in &mut verts[start..] {
+        v.clip_rect = cr;
+    }
+}
+
+/// `bake_clip_rect` for the shape stream.
+fn bake_shape_clip_rect(
+    verts: &mut [crate::resources::OverlayShapeVertex],
+    clip: &crate::renderer::types::OverlayClip,
+    start: usize,
+    ppp: f32,
+) {
+    let Some(r) = clip.rect else {
+        return;
+    };
+    let cr = [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp];
+    for v in &mut verts[start..] {
+        v.clip_rect = cr;
+    }
+}
+
+/// Whether `clip` names a mask, which a compiled item cannot be clipped to.
+///
+/// Masks are registered per frame in screen space and a compiled group has no
+/// frame to resolve one against. An item naming one is skipped rather than
+/// drawn unclipped, so the mistake shows up as missing content instead of as
+/// content escaping the region it was meant to stay inside.
+fn names_unusable_mask(clip: &crate::renderer::types::OverlayClip, item: &str) -> bool {
+    if clip.mask.is_none() {
+        return false;
+    }
+    #[cfg(debug_assertions)]
+    tracing::warn!(
+        "overlay: a compiled {item} names a clip mask, which only resolves on the immediate \
+         path, so it was skipped. Clip the retained group instead, or submit the item each \
+         frame."
+    );
+    let _ = item;
+    true
+}
+
 /// Emit a group's polyline and vector-shape fills into `verts` (local logical
 /// pixels). These are viewport- and DPI-independent, so they are emitted once and
 /// never need re-emission.
@@ -12,9 +71,13 @@ fn emit_base(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     polylines: &[crate::renderer::types::OverlayPolylineItem],
     vector_shapes: &[crate::renderer::types::OverlayShapeItem],
+    ppp: f32,
 ) {
     for poly in polylines {
-        if poly.points.len() < 2 || poly.opacity <= 0.0 {
+        if poly.points.len() < 2
+            || poly.opacity <= 0.0
+            || names_unusable_mask(&poly.clip, "polyline")
+        {
             continue;
         }
         let item_start = verts.len();
@@ -95,9 +158,10 @@ fn emit_base(
                 v.position = [v.position[0] + t[0], v.position[1] + t[1]];
             }
         }
+        bake_clip_rect(verts, &poly.clip, item_start, ppp);
     }
     for shape in vector_shapes {
-        if shape.opacity <= 0.0 {
+        if shape.opacity <= 0.0 || names_unusable_mask(&shape.clip, "vector shape") {
             continue;
         }
         if let crate::renderer::types::OverlayShape::Vector {
@@ -105,7 +169,9 @@ fn emit_base(
             fill_rule,
         } = &shape.shape
         {
+            let item_start = verts.len();
             viewport_overlays::emit_vector_shape(verts, shape, subpaths, *fill_rule, 0.0, 0.0);
+            bake_clip_rect(verts, &shape.clip, item_start, ppp);
         }
     }
 }
@@ -120,12 +186,13 @@ fn emit_glyph_run(
     run: &crate::renderer::types::GlyphRunItem,
     ppp: f32,
 ) {
-    if run.glyphs.is_empty() || run.opacity <= 0.0 {
+    if run.glyphs.is_empty() || run.opacity <= 0.0 || names_unusable_mask(&run.clip, "glyph run") {
         return;
     }
     let Some(([min_x, min_y], [ext_w, ext_h])) = run.extent() else {
         return;
     };
+    let item_start = verts.len();
     let run_x = run.transform.translate[0] + run.align_x.align_shift(ext_w);
     let run_y = run.transform.translate[1] + run.align_y.align_shift(ext_h);
     let opacity = run.opacity.clamp(0.0, 1.0);
@@ -230,6 +297,7 @@ fn emit_glyph_run(
         overlay_geometry::emit_glyph_quads_colored(verts, &sq, run_x, run_y, 0.0, 0.0);
     }
     overlay_geometry::rotate_vertices_from(verts, rot_start, rot);
+    bake_clip_rect(verts, &run.clip, item_start, ppp);
 }
 
 /// Emit one label's text-stream geometry (background box, leader line, glyph
@@ -255,9 +323,10 @@ fn emit_label(
     ppp: f32,
 ) {
     use crate::renderer::types::{AnchorX, AnchorY, OverlayAnchor};
-    if label.text.is_empty() || label.opacity <= 0.0 {
+    if label.text.is_empty() || label.opacity <= 0.0 || names_unusable_mask(&label.clip, "label") {
         return;
     }
+    let item_start = verts.len();
     let opacity = label.opacity.clamp(0.0, 1.0);
     let layout = if let Some(max_w) = label.max_width {
         atlas.layout_text_wrapped(
@@ -450,6 +519,7 @@ fn emit_label(
         );
     }
     overlay_geometry::rotate_vertices_from(verts, text_start, rot);
+    bake_clip_rect(verts, &label.clip, item_start, ppp);
 }
 
 /// Emit a whole group (polylines, vector shapes, glyph runs, labels) into a fresh
@@ -474,7 +544,7 @@ pub(super) fn emit_group_verts(
     ppp: f32,
 ) -> (Vec<crate::resources::OverlayTextVertex>, u64) {
     let mut base = Vec::new();
-    emit_base(&mut base, polylines, vector_shapes);
+    emit_base(&mut base, polylines, vector_shapes, ppp);
 
     // Fast path: no glyph-bearing content (runs or labels), nothing grows the atlas.
     let has_glyphs = glyph_runs
@@ -515,16 +585,19 @@ fn emit_sdf_shape(
     shape: &crate::renderer::types::OverlayShapeItem,
     out_verts: &mut Vec<crate::resources::OverlayShapeVertex>,
     out_shadows: &mut Vec<crate::resources::OverlayShadowLayerGpu>,
+    ppp: f32,
 ) {
     use crate::renderer::types::{LineCap, OverlayFill, OverlayShape, TriangleDirection};
     if matches!(shape.shape, OverlayShape::Vector { .. })
-        || shape.clip_mask_id.is_some()
+        || shape.provides_mask.is_some()
         || shape.style.fill.texture_id().is_some()
         || shape.style.backdrop.blur > 0.0
         || shape.opacity <= 0.0
+        || names_unusable_mask(&shape.clip, "shape")
     {
         return;
     }
+    let item_start = out_verts.len();
     let op = shape.opacity;
     let hw = shape.size[0] * 0.5;
     let hh = shape.size[1] * 0.5;
@@ -789,6 +862,7 @@ fn emit_sdf_shape(
             stop_positions,
         });
     }
+    bake_shape_clip_rect(out_verts, &shape.clip, item_start, ppp);
 }
 
 /// The extent of a compiled group in its own local logical pixels, over both
@@ -854,6 +928,14 @@ impl ViewportRenderer {
     /// here; it still orders the whole group against other overlay content
     /// through `RetainedOverlay::z_order`. To control order within a group,
     /// submit the items in the order you want, or compile several groups.
+    ///
+    /// **An item's own clip is resolved here, not per frame.** `clip.rect` is
+    /// baked into the compiled geometry as a fixed screen box, so it clips
+    /// where it was authored rather than following the group's translate. A
+    /// `clip.mask` cannot be honoured at all, because masks are registered per
+    /// frame and a compiled group has no frame to resolve one against: an item
+    /// naming one is skipped rather than drawn unclipped. Clip the group
+    /// instead, through `RetainedOverlay`.
     pub fn compile_overlay_geometry(
         &mut self,
         device: &crate::gpu::Device,
@@ -903,7 +985,12 @@ impl ViewportRenderer {
                 shape.shape,
                 crate::renderer::types::OverlayShape::Vector { .. }
             ) {
-                emit_sdf_shape(shape, &mut shape_verts, &mut shadow_layers);
+                emit_sdf_shape(
+                    shape,
+                    &mut shape_verts,
+                    &mut shadow_layers,
+                    pixels_per_point,
+                );
             }
         }
         let (shape_vertex_buf, shadow_buf, shape_bytes) = if shape_verts.is_empty() {
@@ -982,11 +1069,17 @@ impl ViewportRenderer {
     /// when the atlas grows or `pixels_per_point` changes, like any glyph-bearing
     /// group. Submit the returned id through `OverlayFrame::retained`; a
     /// [`RetainedOverlay::translate`](crate::renderer::RetainedOverlay) composes on
-    /// top of the resolved anchor (to scroll or nudge), and the per-frame opacity
-    /// and outer `clip_rect` apply as for any retained group. The label's own
-    /// `clip_id` mask is not applied to a retained label; use the group's
-    /// `clip_rect`. Release it with
-    /// [`free_overlay_geometry`](Self::free_overlay_geometry).
+    /// top of the resolved anchor (to scroll or nudge), and the group's own
+    /// per-frame opacity and clip apply as for any retained group.
+    ///
+    /// The label's own `clip.rect` is baked into the compiled geometry as a
+    /// fixed screen box, so it clips where it was authored rather than
+    /// following the group's translate. A `clip.mask` cannot be honoured at all,
+    /// because masks are registered per frame and a compiled group has no frame
+    /// to resolve one against: a label naming one is skipped rather than drawn
+    /// unclipped. Clip the group instead.
+    ///
+    /// Release it with [`free_overlay_geometry`](Self::free_overlay_geometry).
     pub fn compile_overlay_label(
         &mut self,
         device: &crate::gpu::Device,
