@@ -379,18 +379,33 @@ fn build_polylines(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 }
 
 fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // A label draws text and nothing else, so its backing is a shape: measured
-    // text plus padding, the same placement, and the same `z_order`, which puts
-    // it under the text by family rank.
-    let backed_text = "Backed and padded";
+    // A label draws text and nothing else, so its backing is a shape. The
+    // panel is the measured text plus padding on every side, placed on the
+    // label's own resolved box rather than on its position: a label aligns its
+    // box against the origin, so the two are not the same point.
+    let backed = LabelItem::new("Backed and padded")
+        .with_position([20.0, 55.0])
+        .with_font_size(14.0)
+        .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0));
     let backed_pad = 6.0;
-    let backed_size = ctx
-        .renderer
-        .resources()
-        .measure_overlay_text(backed_text, 14.0, None);
+    let backed_size = ctx.renderer.resources().measure_overlay_text(
+        &backed.text,
+        backed.text_style.size,
+        backed.text_style.font,
+    );
+    // A viewport origin at the top-left resolves to [0, 0] whatever the
+    // viewport size, so the scene does not need to know what it renders at.
+    let backed_tl = backed
+        .resolve_top_left(
+            [backed_size.width, backed_size.height],
+            [0.0, 0.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        )
+        .expect("a viewport-anchored label always resolves");
     let backing = OverlayShapeItem::new(
         OverlayShape::Rect { corner_radius: 4.0 },
-        [20.0 - backed_pad, 55.0 - backed_pad],
+        [backed_tl[0] - backed_pad, backed_tl[1] - backed_pad],
         [
             backed_size.width + backed_pad * 2.0,
             backed_size.height + backed_pad * 2.0,
@@ -403,10 +418,7 @@ fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             .with_position([20.0, 20.0])
             .with_font_size(20.0)
             .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
-        LabelItem::new("Backed and padded")
-            .with_position([20.0, 55.0])
-            .with_font_size(14.0)
-            .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
+        backed,
         LabelItem::new("Wrapped text that runs past the maximum width it was given")
             .with_position([20.0, 100.0])
             .with_font_size(13.0)
