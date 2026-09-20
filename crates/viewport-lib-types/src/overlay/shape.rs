@@ -257,18 +257,42 @@ impl Default for OverlayShape {
     }
 }
 
-/// A screen-space overlay shape rendered with a signed-distance function.
+/// A screen-space overlay shape: a region, plus options for drawing it.
 ///
-/// Each item becomes a single bounding quad on the GPU. The fragment shader
-/// evaluates an SDF to produce anti-aliased fill, border, and discard regions.
+/// `shape` says what the region is and `size` gives its extent; everything else
+/// on the item is how to draw it. That split is the whole model, and it is why
+/// an arbitrary vector path is an [`OverlayShape`] variant rather than a
+/// separate item type: a path is another way of specifying a region.
 ///
-/// `fill` controls the interior colour. Use `OverlayFill::Solid` for a flat
-/// colour or `OverlayFill::LinearGradient` for a two-colour gradient.
+/// # Two coverage backends
 ///
-/// When `texture` is set the shape samples the uploaded image as its fill.
-/// In that case `fill` must be `OverlayFill::Solid`; the solid colour acts as
-/// a tint multiplied with each texel. Use `[1.0, 1.0, 1.0, 1.0]` for no tint.
-/// The SDF boundary, border, and AA apply the same way regardless of fill mode.
+/// The analytic variants (`Rect`, `Circle`, `Ring`, and the rest) have a
+/// closed-form signed-distance function. Each becomes one bounding quad, and
+/// the fragment shader evaluates the SDF to produce anti-aliased fill, border,
+/// shadow, and discard regions at any scale.
+///
+/// [`OverlayShape::Vector`] has no closed-form distance field. It is flattened
+/// and tessellated to triangles and drawn on the text pipeline instead, with
+/// its border stroked like a polyline and its shadows re-emitted as geometry.
+///
+/// The item hides which backend runs, but it cannot hide that they differ in
+/// what they can express: the options that need a distance field
+/// (`style.inner_shadows`, `style.backdrop`, `style.texture`, `nine_slice`) do
+/// nothing on a vector path. Ask
+/// [`OverlayStyleSupport::for_shape`](crate::overlay::OverlayStyleSupport::for_shape)
+/// rather than memorising that, and see the per-variant note on
+/// [`OverlayShape::Vector`].
+///
+/// # Fill
+///
+/// `style.fill` controls the interior colour: `OverlayFill::Solid` for a flat
+/// colour, or one of the gradient variants. `None` draws no fill, leaving the
+/// border and shadows on their own.
+///
+/// When `style.texture` is set the shape samples the uploaded image as its
+/// fill, and a solid `style.fill` acts as a tint multiplied with each texel
+/// (`[1, 1, 1, 1]` for no tint). The boundary, border, and anti-aliasing apply
+/// the same way regardless of fill mode.
 ///
 /// # Examples
 ///
@@ -294,6 +318,16 @@ impl Default for OverlayShape {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct OverlayShapeItem {
+    /// The region this item draws: an analytic variant, or an arbitrary vector
+    /// path. This specifies the items shape; every other field specifies how and where to draw it.
+    pub shape: OverlayShape,
+    /// Extent of the shape's bounding box in logical pixels.
+    ///
+    /// For an analytic variant this is the shape: a `Circle` is round because
+    /// it is inscribed in this box. For [`OverlayShape::Vector`] the path
+    /// carries its own extent, so this only sets the box the transform pivots
+    /// and the alignment resolve against.
+    pub size: [f32; 2],
     /// Where the shape hangs from: a viewport corner (default top-left) or a
     /// projected world point. `position` is a screen-pixel nudge from this
     /// origin and `align_x` / `align_y` place the bounding box onto it. The
@@ -344,10 +378,6 @@ pub struct OverlayShapeItem {
     /// (default) puts the top edge there, `Middle` centres, `Bottom` the bottom
     /// edge.
     pub align_y: AnchorY,
-    /// Width and height in logical pixels.
-    pub size: [f32; 2],
-    /// Which SDF shape to render.
-    pub shape: OverlayShape,
     /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
     pub opacity: f32,
     /// RGBA border colour in linear float format.
@@ -368,27 +398,26 @@ pub struct OverlayShapeItem {
     /// offset their ids so they do not collide.
     ///
     /// Used for scroll containers, masked panels, and composite widgets.
-    /// Only the solid (non-textured, non-blur) shape path participates in
-    /// clipping; textured and backdrop-blur shapes ignore both
-    /// `clip_id` and `clip_mask_id`.
+    /// Backdrop-blur shapes are composited by a separate pass and are not
+    /// clipped; every other overlay family is, textured shapes included.
     ///
-    /// Current limitation: the clip uses the mask shape's axis-aligned
-    /// bounding box, not its SDF. For `Rect` and `RoundedRect` masks this
-    /// matches the visible bounds; for `Circle`, `Ellipse`, and other
-    /// curved shapes the clip is the enclosing square/rectangle.
+    /// The clip follows the mask's shape, not its bounding box: the mask's SDF
+    /// is evaluated per fragment, so a `Circle` mask clips to a circle. Masks
+    /// nest, and a fragment must be inside the whole parent chain to survive.
+    /// The bounding box is still used, as a cheap reject before the SDF.
     pub clip_mask_id: Option<u32>,
-    /// When set, this shape is clipped to the bounding box of the mask shape
-    /// whose `clip_mask_id` matches this value. Fragments outside the mask's
-    /// bounding rect are discarded. `None` means the shape is drawn
-    /// unclipped. If no mask with the matching id is present in the frame,
-    /// the shape is also drawn unclipped.
+    /// When set, this shape is clipped to the mask shape whose `clip_mask_id`
+    /// matches this value: fragments outside that shape, and outside any of its
+    /// nested parent masks, are discarded. `None` means the shape is drawn
+    /// unclipped, as does a missing mask. Composes with `clip_rect`, so both
+    /// apply when both are set.
     pub clip_id: Option<u32>,
     /// 9-slice texture sampling for the shape's `texture` fill. When `None`
     /// the texture stretches to fill the bounding box (default).
     pub nine_slice: Option<NineSlice>,
-    /// Multi-channel animation tracks for `position`, `size`, `fill`,
-    /// `border_colour`, `rotation`, and `opacity`. Each `Some` track replaces
-    /// the matching field on the item for the frame.
+    /// Animation tracks resolved each frame against `OverlayFrame::time`. Each
+    /// `Some` track replaces the matching field on the item for the frame. See
+    /// [`OverlayAnimations`] for why the channel list is what it is.
     ///
     /// Boxed and `None` for a static shape: the track block is several times
     /// the size of the rest of the item, so only shapes that animate pay for
