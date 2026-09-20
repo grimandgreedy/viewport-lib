@@ -44,6 +44,10 @@ pub(crate) struct GlyphStyle {
     blur_tenths: u32,
     /// Falloff exponent in tenths. `0` marks the plain (unstyled) glyph.
     falloff_tenths: u32,
+    /// Erode inward from the glyph edge instead of dilating outward, for an
+    /// inset layer. The cell is the glyph's own coverage with its interior
+    /// eaten away, so it draws over the glyph rather than behind it.
+    inner: bool,
 }
 
 /// Largest dilation or blur honoured on a glyph cell, in physical pixels.
@@ -56,11 +60,22 @@ impl GlyphStyle {
         spread_tenths: 0,
         blur_tenths: 0,
         falloff_tenths: 0,
+        inner: false,
     };
 
     /// Build a style from a shadow layer's physical-pixel spread and blur.
     /// Returns [`GlyphStyle::PLAIN`] when the layer would not change the cell.
     pub(crate) fn from_shadow(spread_px: f32, blur_px: f32, falloff: f32) -> Self {
+        Self::from_layer(spread_px, blur_px, falloff, false)
+    }
+
+    /// The inset counterpart: the cell is the glyph with a band eaten inward
+    /// from its edge, drawn over the glyph in the layer colour.
+    pub(crate) fn from_inner_shadow(spread_px: f32, blur_px: f32, falloff: f32) -> Self {
+        Self::from_layer(spread_px, blur_px, falloff, true)
+    }
+
+    fn from_layer(spread_px: f32, blur_px: f32, falloff: f32, inner: bool) -> Self {
         let spread = spread_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
         let blur = blur_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
         if spread <= 0.0 && blur <= 0.0 {
@@ -70,6 +85,7 @@ impl GlyphStyle {
             spread_tenths: (spread * 10.0).round() as u32,
             blur_tenths: (blur * 10.0).round() as u32,
             falloff_tenths: ((falloff.clamp(0.05, 16.0)) * 10.0).round().max(1.0) as u32,
+            inner,
         }
     }
 
@@ -93,6 +109,11 @@ impl GlyphStyle {
     fn pad(&self) -> u32 {
         if self.is_plain() {
             return 0;
+        }
+        if self.inner {
+            // An inset cell never grows past the glyph; one pixel of margin
+            // keeps the blur off the cell border.
+            return 1;
         }
         (self.spread() + self.blur()).ceil() as u32 + 1
     }
@@ -1016,9 +1037,16 @@ fn style_coverage(
         }
     }
 
+    // Kept for the inset case, which needs the glyph's own coverage back.
+    let src = if style.inner { a.clone() } else { Vec::new() };
+
     let spread = style.spread();
     if spread > 0.0 {
-        a = dilate_disc(&a, ow, oh, spread);
+        a = if style.inner {
+            erode_disc(&a, ow, oh, spread)
+        } else {
+            dilate_disc(&a, ow, oh, spread)
+        };
     }
 
     let blur = style.blur();
@@ -1027,6 +1055,17 @@ fn style_coverage(
         let r = (blur * 0.25).round().max(1.0) as u32;
         a = box_blur(&a, ow, oh, r);
         a = box_blur(&a, ow, oh, r);
+    }
+
+    if style.inner {
+        // The band is what the erosion ate: the glyph's own coverage minus
+        // what survived. Multiplying by the source keeps the outer edge as
+        // clean as the glyph's, which is what an inset layer needs, since it
+        // draws over the letterform rather than behind it.
+        for (v, &s) in a.iter_mut().zip(src.iter()) {
+            *v = 255 - *v;
+            *v = ((*v as u32 * s as u32) / 255) as u8;
+        }
     }
 
     let falloff = style.falloff();
@@ -1068,6 +1107,44 @@ fn dilate_disc(src: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
                 if v > m {
                     m = v;
                     if m == 255 {
+                        break;
+                    }
+                }
+            }
+            out[(y * w as i32 + x) as usize] = m;
+        }
+    }
+    out
+}
+
+/// Shrink coverage by taking the minimum over a disc of `radius` pixels.
+/// Outside the cell counts as empty, so the glyph erodes in from its edge.
+fn erode_disc(src: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
+    let r = radius.ceil() as i32;
+    let r2 = radius * radius;
+    let mut disc: Vec<(i32, i32)> = Vec::new();
+    for dy in -r..=r {
+        for dx in -r..=r {
+            if (dx * dx + dy * dy) as f32 <= r2 {
+                disc.push((dx, dy));
+            }
+        }
+    }
+
+    let mut out = vec![0u8; src.len()];
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let mut m = 255u8;
+            for &(dx, dy) in &disc {
+                let (sx, sy) = (x + dx, y + dy);
+                let v = if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
+                    0
+                } else {
+                    src[(sy * w as i32 + sx) as usize]
+                };
+                if v < m {
+                    m = v;
+                    if m == 0 {
                         break;
                     }
                 }

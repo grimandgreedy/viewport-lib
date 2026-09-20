@@ -69,12 +69,12 @@ mod tests {
         let style = OverlayStyle::default()
             .with_inner_shadows(vec![ShadowLayer::default()])
             .with_texture(crate::renderer::types::OverlayTextureId::INVALID);
-        let support = OverlayStyleSupport::for_polyline();
+        let support = OverlayStyleSupport::for_glyphs();
 
         // A name of this test's own, so the process-wide set is not shared with
         // whatever the renderer reported in another test.
         let first = take_unreported("TestFamily", support, &style);
-        assert_eq!(first, ["inner_shadows"]);
+        assert_eq!(first, ["texture"]);
         for _ in 0..1000 {
             assert!(take_unreported("TestFamily", support, &style).is_empty());
         }

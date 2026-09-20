@@ -260,11 +260,61 @@ pub(super) fn tessellate_polyline(
     vp_w: f32,
     vp_h: f32,
 ) -> Vec<crate::resources::OverlayTextVertex> {
+    let half_t = thickness * 0.5;
+    tessellate_ribbon(
+        points,
+        -half_t,
+        half_t,
+        [0.0, 0.0],
+        closed,
+        join,
+        mitre_limit,
+        cap,
+        colour,
+        vp_w,
+        vp_h,
+    )
+}
+
+/// Tessellate a band running alongside a path, between two signed offsets from
+/// its centreline. `d_lo` and `d_hi` are distances along the left-hand normal,
+/// with `d_lo <= d_hi`; a centred stroke of thickness `t` is `(-t/2, t/2)`.
+///
+/// A band that sits wholly on one side of the path is how a shadow layer is
+/// clipped to one side of a silhouette: an outer layer runs from the contour
+/// outward, an inner layer from the contour inward, and neither crosses into
+/// the other's territory the way a centred stroke does.
+///
+/// `shift` moves a one-sided band's far edge by the component of `shift` along
+/// the band, leaving the near edge on the path. That is what a shadow layer's
+/// offset becomes once the layer is clipped to one side of the contour: moving
+/// the whole band would push it across the contour, while moving only the far
+/// edge widens the band where the offset points and narrows it where it points
+/// away, which is the same region. A straddling band ignores `shift`.
+///
+/// Caps are a half-disc about the centreline, which only reads correctly for a
+/// band that straddles it. A one-sided band is meant for closed paths, where
+/// there are no ends to cap.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn tessellate_ribbon(
+    points: &[[f32; 2]],
+    d_lo: f32,
+    d_hi: f32,
+    shift: [f32; 2],
+    closed: bool,
+    join: crate::renderer::types::LineJoin,
+    mitre_limit: f32,
+    cap: crate::renderer::types::PolylineCap,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) -> Vec<crate::resources::OverlayTextVertex> {
     let n = points.len();
-    if n < 2 {
+    if n < 2 || d_hi <= d_lo {
         return Vec::new();
     }
-    let half_t = thickness * 0.5;
+    // Reach of the band from the centreline, used to place caps.
+    let half_t = d_lo.abs().max(d_hi.abs());
 
     let get = |i: i32| -> Option<[f32; 2]> {
         if closed {
@@ -290,6 +340,22 @@ pub(super) fn tessellate_polyline(
     let scale = |a: [f32; 2], k: f32| -> [f32; 2] { [a[0] * k, a[1] * k] };
     let perp_left = |t: [f32; 2]| -> [f32; 2] { [-t[1], t[0]] };
     let dot = |a: [f32; 2], b: [f32; 2]| -> f32 { a[0] * b[0] + a[1] * b[1] };
+
+    // The band's two edges at a rib whose outward direction is `nrm`. A
+    // one-sided band keeps its near edge on the path and moves the far one by
+    // the shift's component along `nrm`; a straddling band is a plain stroke.
+    let one_sided = d_lo >= 0.0 || d_hi <= 0.0;
+    let edges = |nrm: [f32; 2]| -> (f32, f32) {
+        if !one_sided || shift == [0.0, 0.0] {
+            return (d_hi, d_lo);
+        }
+        let m = dot(shift, nrm);
+        if d_lo >= 0.0 {
+            ((d_hi + m).max(d_lo), d_lo)
+        } else {
+            (d_hi, (d_lo + m).min(d_hi))
+        }
+    };
 
     // Build "ribs": for each logical join, one or two (left, right) pairs.
     let mut ribs: Vec<([f32; 2], [f32; 2])> = Vec::with_capacity(n + 4);
@@ -322,25 +388,29 @@ pub(super) fn tessellate_polyline(
                     crate::renderer::types::LineJoin::Bevel => false,
                 };
                 if use_mitre {
-                    let off = scale(bisect, half_t * mitre_scale);
-                    ribs.push((add(cur, off), sub(cur, off)));
+                    let k = mitre_scale;
+                    let (hi, lo) = edges(bisect);
+                    ribs.push((
+                        add(cur, scale(bisect, hi * k)),
+                        add(cur, scale(bisect, lo * k)),
+                    ));
                 } else {
                     // Bevel: two ribs at this point, one per adjacent segment.
-                    let off1 = scale(n1, half_t);
-                    let off2 = scale(n2, half_t);
-                    ribs.push((add(cur, off1), sub(cur, off1)));
-                    ribs.push((add(cur, off2), sub(cur, off2)));
+                    let (h1, l1) = edges(n1);
+                    let (h2, l2) = edges(n2);
+                    ribs.push((add(cur, scale(n1, h1)), add(cur, scale(n1, l1))));
+                    ribs.push((add(cur, scale(n2, h2)), add(cur, scale(n2, l2))));
                 }
             }
             (Some(t1), None) => {
                 let n1 = perp_left(t1);
-                let off = scale(n1, half_t);
-                ribs.push((add(cur, off), sub(cur, off)));
+                let (hi, lo) = edges(n1);
+                ribs.push((add(cur, scale(n1, hi)), add(cur, scale(n1, lo))));
             }
             (None, Some(t2)) => {
                 let n2 = perp_left(t2);
-                let off = scale(n2, half_t);
-                ribs.push((add(cur, off), sub(cur, off)));
+                let (hi, lo) = edges(n2);
+                ribs.push((add(cur, scale(n2, hi)), add(cur, scale(n2, lo))));
             }
             (None, None) => {}
         }
@@ -1108,6 +1178,62 @@ pub(super) fn shadow_bands(layer: &crate::renderer::types::ShadowLayer) -> Vec<(
     out
 }
 
+/// Mitre limit used when a shadow band follows a tessellated contour. Flattened
+/// curves have shallow joins, so the limit only ever bites on a genuine spike.
+const CONTOUR_BAND_MITRE_LIMIT: f32 = 4.0;
+
+/// Which side of a contour faces away from the area it encloses, as a sign on
+/// the left-hand normal. A contour wound counter-clockwise encloses what is to
+/// its left, so its outward side is the right one.
+pub(super) fn contour_outward_sign(points: &[[f32; 2]]) -> f32 {
+    if polygon_area(points) > 0.0 {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+/// Emit one side of a shadow band along a closed contour: from the contour out
+/// to `width` on the side `side` selects (a sign on the left-hand normal), with
+/// `shift` moving the far edge the way a layer offset does.
+///
+/// This is how a shadow layer is clipped to one side of a tessellated
+/// silhouette. An outer layer takes the outward side and so never paints over
+/// the fill it belongs to; an inner layer takes the other and never leaves it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_contour_band(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    points: &[[f32; 2]],
+    side: f32,
+    width: f32,
+    shift: [f32; 2],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    if width <= 0.0 || points.len() < 3 {
+        return;
+    }
+    let (lo, hi) = if side > 0.0 {
+        (0.0, width)
+    } else {
+        (-width, 0.0)
+    };
+    verts.extend(tessellate_ribbon(
+        points,
+        lo,
+        hi,
+        shift,
+        true,
+        crate::renderer::types::LineJoin::Mitre,
+        CONTOUR_BAND_MITRE_LIMIT,
+        crate::renderer::types::PolylineCap::Butt,
+        colour,
+        vp_w,
+        vp_h,
+    ));
+}
+
 /// Emit a stroked path's shadow: the same path re-stroked wider, once per band.
 ///
 /// A contour (no blur) is a single wider stroke. A blurred shadow is a stack of
@@ -1141,6 +1267,64 @@ pub(super) fn emit_polyline_shadow(
         if poly.closed && poly.style.fill.is_some() {
             // A filled closed path casts its interior too, not just its edge.
             emit_closed_fill_shadow(verts, &shadow_poly.points, colour, vp_w, vp_h);
+        }
+    }
+}
+
+/// Emit one inner shadow layer of a polyline: a band running inward from the
+/// edge of what the item covers, once per blur band.
+///
+/// A closed path with a fill covers an area, so the band runs inward from the
+/// contour, as it does on any other filled silhouette. Anything else covers
+/// only its stroke, so the band eats into the stroke from both of its edges,
+/// which is what an inset layer means for a line. In that case the layer offset
+/// is left out: a stroke has no interior for the band to slide within.
+pub(super) fn emit_polyline_inner_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    layer: &crate::renderer::types::ShadowLayer,
+    opacity: f32,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let base = layer.colour.to_linear_rgba();
+    let area = poly.closed && poly.style.fill.is_some();
+    for (d, band_alpha) in shadow_bands(layer) {
+        let colour = apply_opacity(base, opacity * band_alpha);
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
+            continue;
+        }
+        if area {
+            let side = -contour_outward_sign(&poly.points);
+            emit_contour_band(
+                verts,
+                &poly.points,
+                side,
+                width,
+                layer.offset,
+                colour,
+                vp_w,
+                vp_h,
+            );
+        } else if poly.thickness > 0.0 {
+            let half = poly.thickness * 0.5;
+            let w = width.min(half);
+            for (lo, hi) in [(half - w, half), (-half, w - half)] {
+                verts.extend(tessellate_ribbon(
+                    &poly.points,
+                    lo,
+                    hi,
+                    [0.0, 0.0],
+                    poly.closed,
+                    crate::renderer::types::LineJoin::Mitre,
+                    CONTOUR_BAND_MITRE_LIMIT,
+                    crate::renderer::types::PolylineCap::Butt,
+                    colour,
+                    vp_w,
+                    vp_h,
+                ));
+            }
         }
     }
 }

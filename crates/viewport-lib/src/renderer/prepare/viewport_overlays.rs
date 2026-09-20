@@ -173,6 +173,24 @@ pub(super) fn emit_vector_shape(
         );
     }
 
+    // Tint the fill now rather than at the end: the inner shadows that follow
+    // are shadow geometry, and a tint never reaches a shadow layer.
+    tint_vertices_from(batch, content_start, shape.tint);
+
+    // Inner shadow layers, over the fill and under the border, matching the
+    // order the SDF path composites in. A band runs inward from each contour,
+    // which is the erosion an inset layer describes.
+    for layer in shape
+        .style
+        .inner_shadows
+        .iter()
+        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+        .filter(|l| l.is_visible())
+    {
+        emit_vector_inner_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
+    }
+    let border_start = batch.len();
+
     // Border: a vector outline stroke, not an SDF band. Stroke each flattened
     // contour through the same tessellator polylines use, honouring the subpath's
     // `closed` flag: an open subpath strokes as an open line (a wireframe edge, a
@@ -204,7 +222,7 @@ pub(super) fn emit_vector_shape(
             ));
         }
     }
-    tint_vertices_from(batch, content_start, shape.tint);
+    tint_vertices_from(batch, border_start, shape.tint);
 }
 
 /// Intersect two clip boxes in framebuffer pixels. An all-zero box means "no
@@ -285,6 +303,49 @@ pub(super) fn tint_vertices_from(
             v.colour[2] * tint[2],
             v.colour[3] * tint[3],
         ];
+    }
+}
+
+/// Emit one inner shadow layer of a vector path: a band running inward from
+/// each contour, `spread + d` wide for each blur band, in the layer colour.
+///
+/// The band is stacked from the contour rather than drawn as an eroded copy of
+/// the fill, so it stays inside the silhouette whatever the layer offset does:
+/// the offset widens the band where it points and narrows it where it points
+/// away, which is the region an offset erosion covers.
+fn emit_vector_inner_shadow(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    layer: &crate::renderer::types::ShadowLayer,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let base = layer.colour.to_linear_rgba();
+    let contours = crate::renderer::types::flatten_contours(subpaths);
+    for (d, band_alpha) in overlay_geometry::shadow_bands(layer) {
+        let mut colour = base;
+        colour[3] *= shape.opacity * band_alpha;
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
+            continue;
+        }
+        for (contour, _closed) in &contours {
+            // A contour bounds the fill whether or not its subpath was closed,
+            // so the band follows it as a loop either way.
+            let pts = transform_vector_positions(contour, shape);
+            let side = -overlay_geometry::contour_outward_sign(&pts);
+            overlay_geometry::emit_contour_band(
+                batch,
+                &pts,
+                side,
+                width,
+                layer.offset,
+                colour,
+                vp_w,
+                vp_h,
+            );
+        }
     }
 }
 
@@ -722,12 +783,45 @@ impl ViewportRenderer {
                             );
                         }
                     }
+                    // Tint the fill before the inner shadows go over it: a tint
+                    // never reaches a shadow layer.
+                    tint_vertices_from(&mut batch, content_start, poly.tint);
+                    // An inset layer goes over what it erodes and under the
+                    // edge of it: over the fill and under the stroke for a
+                    // filled path, over the stroke when the stroke is all the
+                    // item covers.
+                    let filled = poly.closed && poly.style.fill.is_some();
+                    let mut inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                        for layer in poly
+                            .style
+                            .inner_shadows
+                            .iter()
+                            .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                            .filter(|l| l.is_visible())
+                        {
+                            emit_polyline_inner_shadow(
+                                batch,
+                                poly,
+                                layer,
+                                poly.opacity,
+                                vp_w,
+                                vp_h,
+                            );
+                        }
+                    };
+                    if filled {
+                        inner(&mut batch);
+                    }
+                    let stroke_start = batch.len();
                     if poly.thickness > 0.0 {
                         let mut colour = poly.colour.to_linear_rgba();
                         colour[3] *= poly.opacity;
                         emit_polyline_stroke(&mut batch, poly, colour, vp_w, vp_h);
                     }
-                    tint_vertices_from(&mut batch, content_start, poly.tint);
+                    tint_vertices_from(&mut batch, stroke_start, poly.tint);
+                    if !filled {
+                        inner(&mut batch);
+                    }
                     // The path turns and scales about its own bounding box,
                     // shadows included, after every part of it has been emitted.
                     if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
@@ -1024,6 +1118,56 @@ impl ViewportRenderer {
                     }
                     tint_vertices_from(&mut batch, glyph_start, label.tint);
 
+                    // Inner shadow layers, over the glyphs. The cell is the
+                    // letterform with a band eaten in from its edge, so it lands
+                    // on the same quads the plain pass used.
+                    for layer in label
+                        .style
+                        .inner_shadows
+                        .iter()
+                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                        .filter(|l| l.is_visible())
+                    {
+                        let style = GlyphStyle::from_inner_shadow(
+                            layer.spread * ppp,
+                            layer.blur * ppp,
+                            layer.falloff,
+                        );
+                        if style == GlyphStyle::PLAIN {
+                            continue;
+                        }
+                        let sl = if let Some(max_w) = label.max_width {
+                            self.resources.content.glyph_atlas.layout_text_wrapped(
+                                &label.text,
+                                label.font_size,
+                                label.font,
+                                max_w,
+                                ppp,
+                                device,
+                                style,
+                            )
+                        } else {
+                            self.resources.content.glyph_atlas.layout_text(
+                                &label.text,
+                                label.font_size,
+                                label.font,
+                                ppp,
+                                device,
+                                style,
+                            )
+                        };
+                        let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
+                        emit_glyph_quads(
+                            &mut batch,
+                            &sl.quads,
+                            text_x,
+                            text_y + ascent,
+                            col,
+                            vp_w,
+                            vp_h,
+                        );
+                    }
+
                     rotate_vertices_from(&mut batch, text_start, rot);
 
                     stamp_clip(&mut batch, label.clip_id, label.clip_rect);
@@ -1169,6 +1313,36 @@ impl ViewportRenderer {
                         );
                     }
                     tint_vertices_from(&mut batch, glyph_start, run.tint);
+
+                    // Inner shadow layers, over the run, on the same quads the
+                    // plain pass used.
+                    for layer in run
+                        .style
+                        .inner_shadows
+                        .iter()
+                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                        .filter(|l| l.is_visible())
+                    {
+                        let style = GlyphStyle::from_inner_shadow(
+                            layer.spread * ppp,
+                            layer.blur * ppp,
+                            layer.falloff,
+                        );
+                        if style == GlyphStyle::PLAIN {
+                            continue;
+                        }
+                        let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
+                        let sq = self.resources.content.glyph_atlas.layout_glyph_run(
+                            run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
+                            run.font_size,
+                            run.font,
+                            ppp,
+                            device,
+                            style,
+                        );
+                        emit_glyph_quads_colored(&mut batch, &sq, run_x, run_y, vp_w, vp_h);
+                    }
+
                     rotate_vertices_from(&mut batch, 0, rot);
 
                     stamp_clip(&mut batch, run.clip_id, run.clip_rect);

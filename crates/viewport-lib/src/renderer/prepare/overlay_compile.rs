@@ -28,7 +28,8 @@ fn emit_base(
             overlay_geometry::emit_polyline_shadow(verts, poly, layer, poly.opacity, 0.0, 0.0);
         }
         let content_start = verts.len();
-        if poly.closed && poly.style.texture.is_none() {
+        let filled = poly.closed && poly.style.fill.is_some();
+        if filled && poly.style.texture.is_none() {
             if let Some(fill) = &poly.style.fill {
                 overlay_geometry::emit_filled_polyline(
                     verts,
@@ -40,12 +41,41 @@ fn emit_base(
                 );
             }
         }
+        viewport_overlays::tint_vertices_from(verts, content_start, poly.tint);
+        // An inset layer goes over what it erodes and under the edge of it:
+        // over the fill and under the stroke for a filled path, over the stroke
+        // when the stroke is all the item covers.
+        let mut inner = |verts: &mut Vec<crate::resources::OverlayTextVertex>| {
+            for layer in poly
+                .style
+                .inner_shadows
+                .iter()
+                .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                .filter(|l| l.is_visible())
+            {
+                overlay_geometry::emit_polyline_inner_shadow(
+                    verts,
+                    poly,
+                    layer,
+                    poly.opacity,
+                    0.0,
+                    0.0,
+                );
+            }
+        };
+        if filled {
+            inner(verts);
+        }
+        let stroke_start = verts.len();
         if poly.thickness > 0.0 {
             let mut colour = poly.colour.to_linear_rgba();
             colour[3] *= poly.opacity;
             overlay_geometry::emit_polyline_stroke(verts, poly, colour, 0.0, 0.0);
         }
-        viewport_overlays::tint_vertices_from(verts, content_start, poly.tint);
+        viewport_overlays::tint_vertices_from(verts, stroke_start, poly.tint);
+        if !filled {
+            inner(verts);
+        }
         // The item transform is baked into the compiled geometry; the group
         // transform rides the instance each frame. A compiled group ignores
         // `anchor`, so `translate` is a plain offset in group-local pixels.
@@ -177,6 +207,29 @@ fn emit_glyph_run(
         );
     }
     viewport_overlays::tint_vertices_from(verts, glyph_start, run.tint);
+    for layer in run
+        .style
+        .inner_shadows
+        .iter()
+        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+        .filter(|l| l.is_visible())
+    {
+        let style =
+            GlyphStyle::from_inner_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        if style == GlyphStyle::PLAIN {
+            continue;
+        }
+        let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
+        let sq = atlas.layout_glyph_run(
+            run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
+            run.font_size,
+            run.font,
+            ppp,
+            device,
+            style,
+        );
+        overlay_geometry::emit_glyph_quads_colored(verts, &sq, run_x, run_y, 0.0, 0.0);
+    }
     overlay_geometry::rotate_vertices_from(verts, rot_start, rot);
 }
 
@@ -356,6 +409,42 @@ fn emit_label(
         );
     }
     viewport_overlays::tint_vertices_from(verts, glyph_start, label.tint);
+    for layer in label
+        .style
+        .inner_shadows
+        .iter()
+        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+        .filter(|l| l.is_visible())
+    {
+        let style =
+            GlyphStyle::from_inner_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        if style == GlyphStyle::PLAIN {
+            continue;
+        }
+        let sl = if let Some(max_w) = label.max_width {
+            atlas.layout_text_wrapped(
+                &label.text,
+                label.font_size,
+                label.font,
+                max_w,
+                ppp,
+                device,
+                style,
+            )
+        } else {
+            atlas.layout_text(&label.text, label.font_size, label.font, ppp, device, style)
+        };
+        let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
+        overlay_geometry::emit_glyph_quads(
+            verts,
+            &sl.quads,
+            text_x,
+            text_y + ascent,
+            col,
+            0.0,
+            0.0,
+        );
+    }
     overlay_geometry::rotate_vertices_from(verts, text_start, rot);
 }
 

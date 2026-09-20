@@ -208,7 +208,7 @@ impl OverlayStyleSupport {
     /// What an [`OverlayShapeItem`] draws, which depends on its variant:
     /// analytic variants have a distance field and draw everything, while
     /// `OverlayShape::Vector` is tessellated triangles and has no distance
-    /// field to run an inset shadow or a backdrop mask off.
+    /// field to run a backdrop mask off.
     ///
     /// This is why the query takes the shape rather than being a constant per
     /// type: the variant is known where the item is built, which is where a
@@ -220,7 +220,7 @@ impl OverlayStyleSupport {
             crate::overlay::OverlayShape::Vector { .. } => Self {
                 fill: true,
                 shadows: true,
-                inner_shadows: false,
+                inner_shadows: true,
                 texture: false,
                 backdrop: false,
             },
@@ -228,22 +228,23 @@ impl OverlayStyleSupport {
         }
     }
 
-    /// What an `OverlayPolylineItem` draws. A stroke has no interior, so an
-    /// inset shadow is meaningless; a closed polyline with a fill is a
-    /// tessellated area, which is why `fill` and `texture` are drawn.
+    /// What an `OverlayPolylineItem` draws. A closed polyline with a fill is a
+    /// tessellated area, which is why `fill` and `texture` are drawn; an open
+    /// one covers only its stroke, and an inset shadow eats into that.
     pub const fn for_polyline() -> Self {
         Self {
             fill: true,
             shadows: true,
-            inner_shadows: false,
+            inner_shadows: true,
             texture: true,
             backdrop: false,
         }
     }
 
     /// What a `LabelItem` or a `GlyphRunItem` draws. Both rasterise through the
-    /// glyph atlas, where a shadow is a dilated and blurred coverage cell and a
-    /// fill is a per-vertex tint over the coverage.
+    /// glyph atlas, where a shadow is a dilated and blurred coverage cell, an
+    /// inset shadow is an eroded one, and a fill is a per-vertex tint over the
+    /// coverage.
     ///
     /// `texture` is the one gap left: the text pass binds the glyph atlas and
     /// issues a single batched draw, so sampling a second image means grouping
@@ -253,7 +254,7 @@ impl OverlayStyleSupport {
         Self {
             fill: true,
             shadows: true,
-            inner_shadows: false,
+            inner_shadows: true,
             texture: false,
             backdrop: false,
         }
@@ -304,7 +305,7 @@ mod tests {
             subpaths: Vec::new(),
             fill_rule: crate::overlay::FillRule::NonZero,
         });
-        assert_eq!(vector.inert_fields(&style), ["inner_shadows", "backdrop"]);
+        assert_eq!(vector.inert_fields(&style), ["backdrop"]);
     }
 
     #[test]
