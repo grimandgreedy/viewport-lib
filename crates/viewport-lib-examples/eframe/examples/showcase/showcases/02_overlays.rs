@@ -577,14 +577,13 @@ impl OverlaysShowcase {
             OverlayShapeItem::new(OverlayShape::Circle, [x, y], [70.0, 70.0])
                 .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 1.0, 0.9)))
                 .with_border(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw)
-                .with_animations(OverlayAnimations::default().with_opacity(AnimTrack {
-                    start_time: 0.0,
-                    duration: 2.0,
-                    from: 0.0,
-                    to: 0.9,
-                    easing: OverlayEasing::Pulse,
-                    repeat: RepeatMode::Loop,
-                })),
+                .with_animations(
+                    OverlayAnimations::default().with_opacity(
+                        AnimTrack::new(0.0, 2.0, 0.0, 0.9)
+                            .with_easing(OverlayEasing::Pulse)
+                            .with_repeat(RepeatMode::Loop),
+                    ),
+                ),
         );
         x += 86.0;
         // Fade-in capsule that restarts every 4 seconds.
@@ -594,13 +593,10 @@ impl OverlaysShowcase {
             OverlayShapeItem::new(OverlayShape::Capsule, [x, y + 15.0], [120.0, 40.0])
                 .with_fill(OverlayFill::Solid(Colour::srgb(0.6, 0.2, 0.1, 0.9)))
                 .with_border(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw)
-                .with_animations(OverlayAnimations::default().with_opacity(AnimTrack {
-                    start_time: fade_start,
-                    duration: 3.0,
-                    from: 0.0,
-                    to: 0.9,
-                    ..Default::default()
-                })),
+                .with_animations(
+                    OverlayAnimations::default()
+                        .with_opacity(AnimTrack::new(fade_start, 3.0, 0.0, 0.9)),
+                ),
         );
         x += 136.0;
         // Multi-channel: a sliding rect via the position track.
@@ -612,14 +608,13 @@ impl OverlaysShowcase {
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.65, 0.25, 0.95)))
             .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw)
-            .with_animations(OverlayAnimations::default().with_translate(AnimTrack {
-                start_time: 0.0,
-                duration: 1.8,
-                from: [x, y + 20.0],
-                to: [x + 50.0, y + 20.0],
-                easing: OverlayEasing::EaseInOut,
-                repeat: RepeatMode::PingPong,
-            })),
+            .with_animations(
+                OverlayAnimations::default().with_translate(
+                    AnimTrack::new(0.0, 1.8, [x, y + 20.0], [x + 50.0, y + 20.0])
+                        .with_easing(OverlayEasing::EaseInOut)
+                        .with_repeat(RepeatMode::PingPong),
+                ),
+            ),
         );
     }
 
@@ -734,10 +729,7 @@ impl OverlaysShowcase {
                         .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
                         .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw)
                         .with_texture(tid)
-                        .with_texture_transform(TextureTransform {
-                            rotation: t * 0.5,
-                            ..Default::default()
-                        }),
+                        .with_texture_transform(TextureTransform::default().with_rotation(t * 0.5)),
                 );
                 x += 106.0;
                 // Tiled 3x3.
@@ -750,11 +742,11 @@ impl OverlaysShowcase {
                     .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
                     .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw)
                     .with_texture(tid)
-                    .with_texture_transform(TextureTransform {
-                        scale: [3.0, 3.0],
-                        tile_mode: TileMode::Tile,
-                        ..Default::default()
-                    }),
+                    .with_texture_transform(
+                        TextureTransform::default()
+                            .with_scale([3.0, 3.0])
+                            .with_tile_mode(TileMode::Tile),
+                    ),
                 );
                 x += 166.0;
             }
@@ -792,11 +784,7 @@ impl OverlaysShowcase {
                     )
                     .with_texture(tid)
                     .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-                    .with_nine_slice(NineSlice {
-                        insets_px: [10.0, 10.0, 10.0, 10.0],
-                        centre_mode: TileMode::Stretch,
-                        edge_mode: TileMode::Stretch,
-                    }),
+                    .with_nine_slice(NineSlice::new([10.0, 10.0, 10.0, 10.0])),
                 );
             }
         }

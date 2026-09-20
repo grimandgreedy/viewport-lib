@@ -59,6 +59,7 @@ pub enum OverlayEasing {
 
 /// How an [`AnimTrack`] handles time past the end of its duration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum RepeatMode {
     /// Run the track once and hold the final value. Default.
     #[default]
@@ -77,6 +78,7 @@ pub enum RepeatMode {
 /// same application-defined epoch as the rest of the overlay animation
 /// system. Negative or zero `duration` snaps directly to `to`.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct AnimTrack<T: Copy> {
     /// Absolute time at which the track starts.
     pub start_time: f64,
@@ -282,6 +284,40 @@ impl LerpAnim for [f32; 4] {
             f32::lerp(from[2], to[2], t),
             f32::lerp(from[3], to[3], t),
         ]
+    }
+}
+
+impl<T: Copy> AnimTrack<T> {
+    /// A track running `from` to `to` over `duration` seconds, starting at
+    /// `start_time` (a delay from [`OverlayAnimations::epoch`], or an absolute
+    /// time when that is left at zero). Linear, once through.
+    pub fn new(start_time: f64, duration: f32, from: T, to: T) -> Self {
+        Self {
+            start_time,
+            duration,
+            from,
+            to,
+            easing: OverlayEasing::Linear,
+            repeat: RepeatMode::Once,
+        }
+    }
+
+    /// Set the easing curve.
+    pub fn with_easing(mut self, easing: OverlayEasing) -> Self {
+        self.easing = easing;
+        self
+    }
+
+    /// Set what happens past the end of one cycle.
+    pub fn with_repeat(mut self, repeat: RepeatMode) -> Self {
+        self.repeat = repeat;
+        self
+    }
+
+    /// Set the start time, a delay from [`OverlayAnimations::epoch`].
+    pub fn with_start_time(mut self, start_time: f64) -> Self {
+        self.start_time = start_time;
+        self
     }
 }
 

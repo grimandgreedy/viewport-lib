@@ -9,6 +9,7 @@
 /// glyph straight from this id; it never sees the source text.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct PositionedGlyph {
     /// Index into the run's font glyph table.
     pub glyph_id: u16,

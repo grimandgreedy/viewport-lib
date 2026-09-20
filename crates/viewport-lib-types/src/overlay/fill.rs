@@ -84,6 +84,7 @@ impl Default for OverlayFill {
 
 /// A single colour stop in a multi-stop gradient.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[non_exhaustive]
 pub struct GradientStop {
     /// Position along the gradient axis, in `[0, 1]`. Stops outside the
     /// range are clamped at evaluation time.

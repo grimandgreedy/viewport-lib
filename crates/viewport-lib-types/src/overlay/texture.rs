@@ -50,6 +50,7 @@ impl crate::ids::ContentHandle for OverlayTextureId {
 /// axis, and a centre region that follows both axes. The standard way to ship
 /// resizable button, dialog, and scrollbar art without the corners stretching.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct NineSlice {
     /// Inset in *texture pixels* from each edge to the centre region:
     /// `[top, right, bottom, left]`. Defines where the four corner regions end.
@@ -67,6 +68,29 @@ impl Default for NineSlice {
             centre_mode: TileMode::Stretch,
             edge_mode: TileMode::Stretch,
         }
+    }
+}
+
+impl NineSlice {
+    /// Nine-slice sampling with the given pixel insets `[left, top, right,
+    /// bottom]`, stretching both the centre and the edges.
+    pub fn new(insets_px: [f32; 4]) -> Self {
+        Self {
+            insets_px,
+            ..Default::default()
+        }
+    }
+
+    /// Set how the centre region (between all four insets) is sampled.
+    pub fn with_centre_mode(mut self, mode: TileMode) -> Self {
+        self.centre_mode = mode;
+        self
+    }
+
+    /// Set how the four edge regions are sampled.
+    pub fn with_edge_mode(mut self, mode: TileMode) -> Self {
+        self.edge_mode = mode;
+        self
     }
 }
 
@@ -99,6 +123,7 @@ pub enum TileMode {
 /// set on the same shape, the 9-slice remap wins and the texture transform
 /// is ignored.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct TextureTransform {
     /// UV offset added after scale and rotation. `[0.0, 0.0]` keeps the
     /// sample centred. Drives panning / scrolling.
@@ -136,6 +161,37 @@ impl Default for TextureTransform {
 impl TextureTransform {
     /// Returns `true` when the transform is the identity (no offset, unit
     /// scale, no rotation, no flips, `Stretch` mode).
+    /// Set the UV offset, applied after scale and rotation. Drives panning.
+    pub fn with_offset(mut self, offset: [f32; 2]) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Set the UV scale multiplier about the centre.
+    pub fn with_scale(mut self, scale: [f32; 2]) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    /// Set the rotation in radians about the sample centre.
+    pub fn with_rotation(mut self, rotation: f32) -> Self {
+        self.rotation = rotation;
+        self
+    }
+
+    /// Set what happens outside the `[0, 1]` UV range.
+    pub fn with_tile_mode(mut self, tile_mode: TileMode) -> Self {
+        self.tile_mode = tile_mode;
+        self
+    }
+
+    /// Mirror the sample horizontally and/or vertically.
+    pub fn with_flip(mut self, flip_x: bool, flip_y: bool) -> Self {
+        self.flip_x = flip_x;
+        self.flip_y = flip_y;
+        self
+    }
+
     pub fn is_identity(&self) -> bool {
         self.offset == [0.0, 0.0]
             && self.scale == [1.0, 1.0]

@@ -63,20 +63,13 @@ fn a_retained_group_animates_from_its_compiled_buffers() {
 
     let group = RetainedOverlay::new(id).with_animations(
         OverlayAnimations::default()
-            .with_translate(AnimTrack {
-                start_time: 0.0,
-                duration: 1.0,
-                from: [0.0, 0.0],
-                to: [16.0, 0.0],
-                ..Default::default()
-            })
-            .with_tint(AnimTrack {
-                start_time: 0.0,
-                duration: 1.0,
-                from: [1.0, 1.0, 1.0, 1.0],
-                to: [0.0, 1.0, 0.0, 1.0],
-                ..Default::default()
-            }),
+            .with_translate(AnimTrack::new(0.0, 1.0, [0.0, 0.0], [16.0, 0.0]))
+            .with_tint(AnimTrack::new(
+                0.0,
+                1.0,
+                [1.0, 1.0, 1.0, 1.0],
+                [0.0, 1.0, 0.0, 1.0],
+            )),
     );
 
     let mut at_start = frame_at(0.0);
@@ -116,13 +109,12 @@ fn an_immediate_item_animates_the_same_way() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let anims = OverlayAnimations::default().with_translate(AnimTrack {
-        start_time: 0.0,
-        duration: 1.0,
-        from: [0.0, 0.0],
-        to: [16.0, 0.0],
-        ..Default::default()
-    });
+    let anims = OverlayAnimations::default().with_translate(AnimTrack::new(
+        0.0,
+        1.0,
+        [0.0, 0.0],
+        [16.0, 0.0],
+    ));
     let item = red_square().with_animations(anims);
 
     let mut at_start = frame_at(0.0);
@@ -150,14 +142,11 @@ fn the_epoch_shifts_a_whole_track() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     // Authored: "start a second in, run for a second".
-    let authored = OverlayAnimations::default().with_translate(AnimTrack {
-        start_time: 1.0,
-        duration: 1.0,
-        from: [0.0, 0.0],
-        to: [16.0, 0.0],
-        easing: OverlayEasing::Linear,
-        repeat: RepeatMode::Once,
-    });
+    let authored = OverlayAnimations::default().with_translate(
+        AnimTrack::new(1.0, 1.0, [0.0, 0.0], [16.0, 0.0])
+            .with_easing(OverlayEasing::Linear)
+            .with_repeat(RepeatMode::Once),
+    );
 
     // Played from a clock that happens to be at 1000.
     let item = red_square().with_animations(authored.with_epoch(1000.0));
@@ -192,13 +181,12 @@ fn labels_and_glyph_runs_animate() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let slide = || {
-        OverlayAnimations::default().with_translate(AnimTrack {
-            start_time: 0.0,
-            duration: 1.0,
-            from: [0.0, 0.0],
-            to: [24.0, 0.0],
-            ..Default::default()
-        })
+        OverlayAnimations::default().with_translate(AnimTrack::new(
+            0.0,
+            1.0,
+            [0.0, 0.0],
+            [24.0, 0.0],
+        ))
     };
 
     let mut at_start = frame_at(0.0);

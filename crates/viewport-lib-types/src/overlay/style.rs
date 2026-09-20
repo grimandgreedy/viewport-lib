@@ -172,6 +172,7 @@ impl OverlayStyle {
 /// identical across families. That is deliberate and is not reported here:
 /// `shadows` is supported by all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct OverlayStyleSupport {
     /// `fill` is drawn, gradients included.
     pub fill: bool,

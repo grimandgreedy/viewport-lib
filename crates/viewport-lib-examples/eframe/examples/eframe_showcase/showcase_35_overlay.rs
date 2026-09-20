@@ -676,10 +676,7 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
                 .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2)
                 .with_texture(tid)
-                .with_texture_transform(vpl::TextureTransform {
-                    rotation: t * 0.5,
-                    ..Default::default()
-                }),
+                .with_texture_transform(vpl::TextureTransform::default().with_rotation(t * 0.5)),
         );
         x2 += sz + gap;
     }
@@ -696,11 +693,11 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
             .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2)
             .with_texture(tid)
-            .with_texture_transform(vpl::TextureTransform {
-                scale: [3.0, 3.0],
-                tile_mode: vpl::TileMode::Tile,
-                ..Default::default()
-            }),
+            .with_texture_transform(
+                vpl::TextureTransform::default()
+                    .with_scale([3.0, 3.0])
+                    .with_tile_mode(vpl::TileMode::Tile),
+            ),
         );
     }
 }
@@ -1068,14 +1065,11 @@ fn row_anim(
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 1.0, 0.9)))
         .with_border(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw)
         .with_animations(
-            vpl::OverlayAnimations::default().with_opacity(vpl::AnimTrack {
-                start_time: 0.0,
-                duration: 2.0,
-                from: 0.0,
-                to: 0.9,
-                easing: vpl::OverlayEasing::Pulse,
-                repeat: vpl::RepeatMode::Loop,
-            }),
+            vpl::OverlayAnimations::default().with_opacity(
+                vpl::AnimTrack::new(0.0, 2.0, 0.0, 0.9)
+                    .with_easing(vpl::OverlayEasing::Pulse)
+                    .with_repeat(vpl::RepeatMode::Loop),
+            ),
         ),
     );
     x5 += row5_h + gap;
@@ -1089,13 +1083,8 @@ fn row_anim(
             .with_fill(OverlayFill::Solid(Colour::srgb(0.6, 0.2, 0.1, 0.9)))
             .with_border(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw)
             .with_animations(
-                vpl::OverlayAnimations::default().with_opacity(vpl::AnimTrack {
-                    start_time: fade_start,
-                    duration: 3.0,
-                    from: 0.0,
-                    to: 0.9,
-                    ..Default::default()
-                }),
+                vpl::OverlayAnimations::default()
+                    .with_opacity(vpl::AnimTrack::new(fade_start, 3.0, 0.0, 0.9)),
             ),
     );
     x5 += 120.0 + gap;
@@ -1155,14 +1144,16 @@ fn row_anim(
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.65, 0.25, 0.95)))
         .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw)
         .with_animations(
-            vpl::OverlayAnimations::default().with_translate(vpl::AnimTrack {
-                start_time: 0.0,
-                duration: 1.8,
-                from: [base_x, y5_mid - 14.0],
-                to: [base_x + 50.0, y5_mid - 14.0],
-                easing: vpl::OverlayEasing::EaseInOut,
-                repeat: vpl::RepeatMode::PingPong,
-            }),
+            vpl::OverlayAnimations::default().with_translate(
+                vpl::AnimTrack::new(
+                    0.0,
+                    1.8,
+                    [base_x, y5_mid - 14.0],
+                    [base_x + 50.0, y5_mid - 14.0],
+                )
+                .with_easing(vpl::OverlayEasing::EaseInOut)
+                .with_repeat(vpl::RepeatMode::PingPong),
+            ),
         ),
     );
     x5 += 100.0 + gap;
@@ -1182,14 +1173,11 @@ fn row_anim(
         // track animates a compiled group without re-tessellating it, and it
         // pulses about the pivot so nothing has to recentre it.
         .with_animations(
-            vpl::OverlayAnimations::default().with_scale(vpl::AnimTrack {
-                start_time: 0.0,
-                duration: 1.4,
-                from: 1.0,
-                to: 1.45,
-                easing: vpl::OverlayEasing::Pulse,
-                repeat: vpl::RepeatMode::Loop,
-            }),
+            vpl::OverlayAnimations::default().with_scale(
+                vpl::AnimTrack::new(0.0, 1.4, 1.0, 1.45)
+                    .with_easing(vpl::OverlayEasing::Pulse)
+                    .with_repeat(vpl::RepeatMode::Loop),
+            ),
         ),
     );
     x5 += row5_h + gap;
@@ -1207,14 +1195,13 @@ fn row_anim(
         // Tint, not fill: a tint is a per-draw multiplier, so a colour cycle
         // costs nothing on a compiled group. The authored fill is white here so
         // the tint reads as the colour.
-        .with_animations(vpl::OverlayAnimations::default().with_tint(vpl::AnimTrack {
-            start_time: 0.0,
-            duration: 1.6,
-            from: [1.0, 0.55, 0.75, 1.0],
-            to: [0.45, 0.75, 1.0, 1.0],
-            easing: vpl::OverlayEasing::EaseInOut,
-            repeat: vpl::RepeatMode::PingPong,
-        })),
+        .with_animations(
+            vpl::OverlayAnimations::default().with_tint(
+                vpl::AnimTrack::new(0.0, 1.6, [1.0, 0.55, 0.75, 1.0], [0.45, 0.75, 1.0, 1.0])
+                    .with_easing(vpl::OverlayEasing::EaseInOut)
+                    .with_repeat(vpl::RepeatMode::PingPong),
+            ),
+        ),
     );
     x5 += 70.0 + gap;
 
@@ -1232,14 +1219,11 @@ fn row_anim(
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.9, 0.3, 0.95)))
         .with_border(Colour::srgb(1.0, 0.95, 0.5, 0.9), bw)
         .with_animations(
-            vpl::OverlayAnimations::default().with_rotation(vpl::AnimTrack {
-                start_time: 0.0,
-                duration: 4.0,
-                from: 0.0,
-                to: std::f32::consts::TAU,
-                easing: vpl::OverlayEasing::Linear,
-                repeat: vpl::RepeatMode::Loop,
-            }),
+            vpl::OverlayAnimations::default().with_rotation(
+                vpl::AnimTrack::new(0.0, 4.0, 0.0, std::f32::consts::TAU)
+                    .with_easing(vpl::OverlayEasing::Linear)
+                    .with_repeat(vpl::RepeatMode::Loop),
+            ),
         ),
     );
     x5 += row5_h + gap;
@@ -1493,11 +1477,7 @@ fn row_masks_and_polylines(
             )
             .with_texture(tid)
             .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_nine_slice(vpl::NineSlice {
-                insets_px: [10.0, 10.0, 10.0, 10.0],
-                centre_mode: vpl::TileMode::Stretch,
-                edge_mode: vpl::TileMode::Stretch,
-            }),
+            .with_nine_slice(vpl::NineSlice::new([10.0, 10.0, 10.0, 10.0])),
         );
     }
 

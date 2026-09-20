@@ -47,6 +47,7 @@ pub type LabelAnchorY = AnchorY;
 /// that origin and `align_x` / `align_y` place the item's box onto it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum OverlayAnchor {
     /// A point on the viewport rect, re-resolved on resize. `Viewport { x:
     /// Left, y: Top }` is the top-left corner, so with a zero `position` and

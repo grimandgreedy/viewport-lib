@@ -252,9 +252,6 @@ fn the_probe_baseline_actually_draws_something() {
     ];
     let drawn = render(&mut renderer, &device, &queue, ovl);
     assert!(differs(&empty, &drawn));
-    let _ = GradientStop {
-        position: 0.0,
-        colour: Colour::srgb(0.0, 0.0, 0.0, 1.0),
-    };
+    let _ = GradientStop::new(0.0, Colour::srgb(0.0, 0.0, 0.0, 1.0));
     let _ = BackdropEffects::default();
 }
