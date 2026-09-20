@@ -166,21 +166,21 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     let mut label = LabelItem::new("Parity")
         .with_position([24.0, 196.0])
-        .with_font_size(34.0)
-        .with_colour(Colour::srgb(0.95, 0.95, 0.98, 0.6));
+        .with_font_size(34.0);
     label.style = style.clone();
+    label.style.fill = OverlayFill::Solid(Colour::srgb(0.95, 0.95, 0.98, 0.6));
 
     let mut run = GlyphRunItem::new(run_glyphs(16.0));
-    run.font_size = 26.0;
+    run.text_style.size = 26.0;
     run.transform.translate = [190.0, 210.0];
-    run.colour = Colour::srgb(0.95, 0.95, 0.98, 0.6);
     run.style = style.clone();
+    run.style.fill = OverlayFill::Solid(Colour::srgb(0.95, 0.95, 0.98, 0.6));
 
     let mut retained_label = LabelItem::new("Group")
         .with_position([24.0, 246.0])
-        .with_font_size(26.0)
-        .with_colour(Colour::srgb(0.95, 0.95, 0.98, 0.6));
+        .with_font_size(26.0);
     retained_label.style = style;
+    retained_label.style.fill = OverlayFill::Solid(Colour::srgb(0.95, 0.95, 0.98, 0.6));
     let id = ctx.renderer.compile_overlay_geometry(
         ctx.device,
         ctx.queue,
@@ -416,21 +416,22 @@ fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
 fn build_glyph_runs(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut per_glyph = GlyphRunItem::new(run_glyphs(14.0));
-    per_glyph.font_size = 22.0;
+    per_glyph.text_style.size = 22.0;
     per_glyph.transform.translate = [20.0, 90.0];
-    per_glyph.colours = RUN_IDS
+    per_glyph.style.fill = OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0));
+    per_glyph.glyph_tints = RUN_IDS
         .iter()
         .enumerate()
         .map(|(i, _)| {
             let t = i as f32 / (RUN_IDS.len() - 1) as f32;
-            Colour::srgb(1.0 - t * 0.7, 0.4 + t * 0.5, 0.3 + t * 0.6, 1.0)
+            Colour::srgb(1.0 - t * 0.7, 0.4 + t * 0.5, 0.3 + t * 0.6, 1.0).to_linear_rgba()
         })
         .collect();
 
     let mut plain = GlyphRunItem::new(run_glyphs(16.0));
-    plain.font_size = 26.0;
+    plain.text_style.size = 26.0;
     plain.transform.translate = [20.0, 30.0];
-    plain.colour = Colour::srgb(1.0, 1.0, 1.0, 1.0);
+    plain.style.fill = OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0));
 
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
@@ -501,14 +502,14 @@ fn build_text_fill(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 
     // Per-glyph colours multiply into the fill, so the run shows both.
     let mut run = GlyphRunItem::new(run_glyphs(20.0));
-    run.font_size = 30.0;
+    run.text_style.size = 30.0;
     run.transform.translate = [20.0, 200.0];
-    run.colours = RUN_IDS
+    run.glyph_tints = RUN_IDS
         .iter()
         .enumerate()
         .map(|(i, _)| {
             let t = i as f32 / (RUN_IDS.len() - 1) as f32;
-            Colour::srgb(1.0, 1.0 - t * 0.6, 1.0, 1.0)
+            Colour::srgb(1.0, 1.0 - t * 0.6, 1.0, 1.0).to_linear_rgba()
         })
         .collect();
     run.style.fill = linear;
@@ -570,9 +571,9 @@ fn build_shadows(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     contour.style.shadows = vec![ShadowLayer::outline(Colour::srgb(0.0, 0.0, 0.0, 1.0), 2.0)];
 
     let mut run = GlyphRunItem::new(run_glyphs(18.0));
-    run.font_size = 28.0;
+    run.text_style.size = 28.0;
     run.transform.translate = [20.0, 190.0];
-    run.colour = Colour::srgb(1.0, 1.0, 1.0, 1.0);
+    run.style.fill = OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0));
     run.style.shadows = nameplate;
 
     // A polyline shadow: the tessellated backend's banded falloff.
@@ -630,9 +631,9 @@ fn build_rotation(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     label.transform.pivot = off_centre;
 
     let mut run = GlyphRunItem::new(run_glyphs(16.0));
-    run.font_size = 24.0;
+    run.text_style.size = 24.0;
     run.transform.translate = [60.0, 180.0];
-    run.colour = Colour::srgb(0.7, 1.0, 0.6, 1.0);
+    run.style.fill = OverlayFill::Solid(Colour::srgb(0.7, 1.0, 0.6, 1.0));
     run.transform.rotation = 0.9;
     run.transform.pivot = off_centre;
 
@@ -762,9 +763,9 @@ fn group_items() -> (Vec<OverlayPolylineItem>, Vec<LabelItem>, Vec<GlyphRunItem>
             .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
     ];
     let mut run = GlyphRunItem::new(run_glyphs(10.0));
-    run.font_size = 14.0;
+    run.text_style.size = 14.0;
     run.transform.translate = [8.0, 62.0];
-    run.colour = Colour::srgb(0.6, 1.0, 0.8, 1.0);
+    run.style.fill = OverlayFill::Solid(Colour::srgb(0.6, 1.0, 0.8, 1.0));
     (polylines, labels, vec![run])
 }
 

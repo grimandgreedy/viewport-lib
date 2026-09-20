@@ -695,9 +695,9 @@ impl DebugDraw {
                 let mut label = LabelItem::default();
                 label.anchoring.origin = crate::renderer::OverlayOrigin::World((*position).into());
                 label.text = text.clone();
-                label.colour = (*colour).into();
+                label.style.fill = crate::renderer::OverlayFill::Solid((*colour).into());
                 label.leader_line = true;
-                label.font_size = 12.0;
+                label.text_style.size = 12.0;
                 out.push(label);
             }
         }

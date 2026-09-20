@@ -218,21 +218,22 @@ fn emit_glyph_run(
     );
     let quads = atlas.layout_glyph_run(
         run.glyphs.iter().enumerate().map(|(i, g)| {
-            let colour = run
-                .colours
+            // White where the run has no per-glyph multiplier: the fill goes on
+            // afterwards and multiplies, so white is "the fill unmodified".
+            let tint = run
+                .glyph_tints
                 .get(i)
                 .copied()
-                .unwrap_or(run.colour)
-                .to_linear_rgba();
+                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
             (
                 g.glyph_id,
                 g.x,
                 g.y,
-                overlay_geometry::apply_opacity(colour, opacity),
+                overlay_geometry::apply_opacity(tint, opacity),
             )
         }),
-        run.font_size,
-        run.font,
+        run.text_style.size,
+        run.text_style.font,
         ppp,
         device,
         GlyphStyle::PLAIN,
@@ -256,8 +257,8 @@ fn emit_glyph_run(
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
         let sq = atlas.layout_glyph_run(
             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
-            run.font_size,
-            run.font,
+            run.text_style.size,
+            run.text_style.font,
             ppp,
             device,
             style,
@@ -298,8 +299,8 @@ fn emit_glyph_run(
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
         let sq = atlas.layout_glyph_run(
             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
-            run.font_size,
-            run.font,
+            run.text_style.size,
+            run.text_style.font,
             ppp,
             device,
             style,
@@ -344,8 +345,8 @@ fn emit_label(
     let layout = if let Some(max_w) = label.max_width {
         atlas.layout_text_wrapped(
             &label.text,
-            label.font_size,
-            label.font,
+            label.text_style.size,
+            label.text_style.font,
             max_w,
             ppp,
             device,
@@ -354,15 +355,15 @@ fn emit_label(
     } else {
         atlas.layout_text(
             &label.text,
-            label.font_size,
-            label.font,
+            label.text_style.size,
+            label.text_style.font,
             ppp,
             device,
             GlyphStyle::PLAIN,
         )
     };
-    let font_index = label.font.map_or(0, |h| h.0);
-    let ascent = atlas.font_ascent(font_index, label.font_size);
+    let font_index = label.text_style.font.map_or(0, |h| h.0);
+    let ascent = atlas.font_ascent(font_index, label.text_style.size);
 
     // Alignment folds in anchor_padding on X (Left pushes right, Right pulls
     // left, Middle unaffected); position nudges last. The anchor origin is [0, 0].
@@ -451,15 +452,22 @@ fn emit_label(
         let sl = if let Some(max_w) = label.max_width {
             atlas.layout_text_wrapped(
                 &label.text,
-                label.font_size,
-                label.font,
+                label.text_style.size,
+                label.text_style.font,
                 max_w,
                 ppp,
                 device,
                 style,
             )
         } else {
-            atlas.layout_text(&label.text, label.font_size, label.font, ppp, device, style)
+            atlas.layout_text(
+                &label.text,
+                label.text_style.size,
+                label.text_style.font,
+                ppp,
+                device,
+                style,
+            )
         };
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
         overlay_geometry::emit_glyph_quads(
@@ -473,7 +481,9 @@ fn emit_label(
         );
     }
 
-    let text_colour = overlay_geometry::apply_opacity(label.colour.to_linear_rgba(), opacity);
+    // The glyphs start white and `style.fill` multiplies into them below, so a
+    // label has one colour source.
+    let text_colour = overlay_geometry::apply_opacity([1.0, 1.0, 1.0, 1.0], opacity);
     // The label origin is the text-box top-left; add the ascent to reach the
     // first baseline the quads are relative to.
     let glyph_start = verts.len();
@@ -511,15 +521,22 @@ fn emit_label(
         let sl = if let Some(max_w) = label.max_width {
             atlas.layout_text_wrapped(
                 &label.text,
-                label.font_size,
-                label.font,
+                label.text_style.size,
+                label.text_style.font,
                 max_w,
                 ppp,
                 device,
                 style,
             )
         } else {
-            atlas.layout_text(&label.text, label.font_size, label.font, ppp, device, style)
+            atlas.layout_text(
+                &label.text,
+                label.text_style.size,
+                label.text_style.font,
+                ppp,
+                device,
+                style,
+            )
         };
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
         overlay_geometry::emit_glyph_quads(

@@ -124,3 +124,47 @@ fn a_measured_wrapped_label_lands_in_its_resolved_box() {
         );
     }
 }
+
+/// A label has one colour source: its fill. Setting it through `with_colour`
+/// and setting `style.fill` directly are the same thing, and a per-glyph tint
+/// multiplies over it rather than replacing it.
+#[test]
+fn a_labels_colour_is_its_fill() {
+    use viewport_lib::OverlayFill;
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let orange = [0.9_f32, 0.5, 0.1, 1.0];
+
+    let mut via_sugar = overlay_frame();
+    via_sugar.overlays.labels = vec![
+        LabelItem::new("Colour")
+            .with_position([10.0, 40.0])
+            .with_font_size(24.0)
+            .with_colour(orange),
+    ];
+    let sugar_px = renderer.render_offscreen(&device, &queue, &via_sugar, SIZE, SIZE);
+
+    let mut via_fill = overlay_frame();
+    let mut label = LabelItem::new("Colour")
+        .with_position([10.0, 40.0])
+        .with_font_size(24.0);
+    label.style.fill = OverlayFill::Solid(orange.into());
+    via_fill.overlays.labels = vec![label];
+    let fill_px = renderer.render_offscreen(&device, &queue, &via_fill, SIZE, SIZE);
+
+    assert_eq!(
+        sugar_px, fill_px,
+        "with_colour is sugar for a solid fill and has to draw the same pixels"
+    );
+
+    // And the text is actually drawn in that colour, not left white.
+    let coloured = fill_px
+        .chunks_exact(4)
+        .any(|p| p[0] > 150 && p[1] > 60 && p[1] < 190 && p[2] < 110);
+    assert!(coloured, "the label should draw in its fill colour");
+}

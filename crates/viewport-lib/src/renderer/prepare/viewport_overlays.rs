@@ -894,8 +894,8 @@ impl ViewportRenderer {
                     let layout = if let Some(max_w) = label.max_width {
                         self.resources.content.glyph_atlas.layout_text_wrapped(
                             &label.text,
-                            label.font_size,
-                            label.font,
+                            label.text_style.size,
+                            label.text_style.font,
                             max_w,
                             ppp,
                             device,
@@ -904,20 +904,20 @@ impl ViewportRenderer {
                     } else {
                         self.resources.content.glyph_atlas.layout_text(
                             &label.text,
-                            label.font_size,
-                            label.font,
+                            label.text_style.size,
+                            label.text_style.font,
                             ppp,
                             device,
                             GlyphStyle::PLAIN,
                         )
                     };
 
-                    let font_index = label.font.map_or(0, |h| h.0);
+                    let font_index = label.text_style.font.map_or(0, |h| h.0);
                     let ascent = self
                         .resources
                         .content
                         .glyph_atlas
-                        .font_ascent(font_index, label.font_size);
+                        .font_ascent(font_index, label.text_style.size);
 
                     let align_offset = match label.anchoring.align.x {
                         crate::renderer::types::AnchorX::Left => label.anchor_padding,
@@ -1025,8 +1025,8 @@ impl ViewportRenderer {
                         let sl = if let Some(max_w) = label.max_width {
                             self.resources.content.glyph_atlas.layout_text_wrapped(
                                 &label.text,
-                                label.font_size,
-                                label.font,
+                                label.text_style.size,
+                                label.text_style.font,
                                 max_w,
                                 ppp,
                                 device,
@@ -1035,8 +1035,8 @@ impl ViewportRenderer {
                         } else {
                             self.resources.content.glyph_atlas.layout_text(
                                 &label.text,
-                                label.font_size,
-                                label.font,
+                                label.text_style.size,
+                                label.text_style.font,
                                 ppp,
                                 device,
                                 style,
@@ -1054,7 +1054,9 @@ impl ViewportRenderer {
                         );
                     }
 
-                    let text_colour = apply_opacity(label.colour.to_linear_rgba(), opacity);
+                    // The glyphs start white and `style.fill` multiplies into
+                    // them below, so a label has one colour source.
+                    let text_colour = apply_opacity([1.0, 1.0, 1.0, 1.0], opacity);
                     // The label origin is the top-left of the text box; add the
                     // ascent to reach the first baseline the quads are relative to.
                     let glyph_start = batch.len();
@@ -1099,8 +1101,8 @@ impl ViewportRenderer {
                         let sl = if let Some(max_w) = label.max_width {
                             self.resources.content.glyph_atlas.layout_text_wrapped(
                                 &label.text,
-                                label.font_size,
-                                label.font,
+                                label.text_style.size,
+                                label.text_style.font,
                                 max_w,
                                 ppp,
                                 device,
@@ -1109,8 +1111,8 @@ impl ViewportRenderer {
                         } else {
                             self.resources.content.glyph_atlas.layout_text(
                                 &label.text,
-                                label.font_size,
-                                label.font,
+                                label.text_style.size,
+                                label.text_style.font,
                                 ppp,
                                 device,
                                 style,
@@ -1183,21 +1185,21 @@ impl ViewportRenderer {
                         + run.anchoring.align.y.align_shift(ext_h);
 
                     let opacity = run.style.opacity.clamp(0.0, 1.0);
-                    // Each glyph carries its tint through layout so per-glyph
-                    // colours stay aligned with the quads after zero-area skips.
-                    // Glyphs without a per-glyph entry fall back to the run colour.
+                    // Each glyph carries its multiplier through layout so the
+                    // per-glyph entries stay aligned with the quads after
+                    // zero-area skips. White is "the fill unmodified": the fill
+                    // multiplies into the quads below.
                     let quads = self.resources.content.glyph_atlas.layout_glyph_run(
                         run.glyphs.iter().enumerate().map(|(i, g)| {
-                            let colour = run
-                                .colours
+                            let tint = run
+                                .glyph_tints
                                 .get(i)
                                 .copied()
-                                .unwrap_or(run.colour)
-                                .to_linear_rgba();
-                            (g.glyph_id, g.x, g.y, apply_opacity(colour, opacity))
+                                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                            (g.glyph_id, g.x, g.y, apply_opacity(tint, opacity))
                         }),
-                        run.font_size,
-                        run.font,
+                        run.text_style.size,
+                        run.text_style.font,
                         ppp,
                         device,
                         GlyphStyle::PLAIN,
@@ -1238,8 +1240,8 @@ impl ViewportRenderer {
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
                         let sq = self.resources.content.glyph_atlas.layout_glyph_run(
                             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
-                            run.font_size,
-                            run.font,
+                            run.text_style.size,
+                            run.text_style.font,
                             ppp,
                             device,
                             style,
@@ -1290,8 +1292,8 @@ impl ViewportRenderer {
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
                         let sq = self.resources.content.glyph_atlas.layout_glyph_run(
                             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
-                            run.font_size,
-                            run.font,
+                            run.text_style.size,
+                            run.text_style.font,
                             ppp,
                             device,
                             style,

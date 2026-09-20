@@ -229,7 +229,7 @@ impl OverlaysShowcase {
     fn build_glyph_run(&self, out: &mut Vec<GlyphRunItem>) {
         let count = 24usize;
         let mut glyphs = Vec::with_capacity(count);
-        let mut colours = Vec::with_capacity(count);
+        let mut glyph_tints = Vec::with_capacity(count);
         for i in 0..count {
             let x = i as f32 * 24.0;
             let y = (i as f32 * 0.5 + self.time * 2.0).sin() * 12.0;
@@ -237,14 +237,14 @@ impl OverlaysShowcase {
             // may be blank and are simply skipped.
             glyphs.push(PositionedGlyph::new(20 + i as u16, x, y));
             let [r, g, b] = hsv_to_rgb(i as f32 / count as f32, 0.85, 1.0);
-            colours.push([r, g, b, 1.0]);
+            glyph_tints.push([r, g, b, 1.0]);
         }
         out.push(
             GlyphRunItem::new(glyphs)
                 // Just above the emoji row at the bottom.
                 .with_position([40.0, 870.0])
                 .with_font_size(30.0)
-                .with_colours(colours),
+                .with_glyph_tints(glyph_tints),
         );
     }
 

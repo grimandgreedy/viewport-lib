@@ -10,13 +10,15 @@ use super::transform::OverlayTransform;
 /// A text label rendered as a screen-space overlay.
 ///
 /// Anchored to a viewport corner or a projected world point with an optional
-/// leader line and background box.
+/// leader line and background box. The text colour is `style.fill`, which can
+/// be a gradient across the text box as well as a flat colour.
 ///
 /// # Anchoring
 ///
-/// `anchor` sets the origin the label hangs from: an [`OverlayOrigin::Viewport`]
-/// corner (the default is the top-left) or an [`OverlayOrigin::World`] point that
-/// is reprojected each frame.  `position` nudges the text from that origin in
+/// `anchoring.origin` sets the point the label hangs from: an
+/// [`OverlayOrigin::Viewport`]
+/// corner (the default is the top-left) or an [`OverlayOrigin::World`] point
+/// that is reprojected each frame.  `position` nudges the text from that origin in
 /// logical pixels, and `anchoring.align` places the text box on it.  A
 /// world-anchored label is frustum-culled: it is not drawn when the point is
 /// behind the camera or outside the viewport, and it draws a leader line when
@@ -68,14 +70,8 @@ pub struct LabelItem {
     /// Text content to display.
     pub text: String,
 
-    /// RGBA text colour in linear float format.
-    pub colour: crate::colour::Colour,
-
-    /// Font size in logical pixels.
-    pub font_size: f32,
-
-    /// Font to use.  `None` uses the built-in default font.
-    pub font: Option<crate::overlay::font::FontHandle>,
+    /// Which font to draw the text in, and at what size.
+    pub text_style: crate::overlay::TextStyle,
 
     /// Draw a filled rectangle behind the text.
     pub background: bool,
@@ -121,9 +117,7 @@ impl Default for LabelItem {
                 crate::overlay::Alignment::new(AnchorX::Left, AnchorY::Middle),
             ),
             text: String::new(),
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
-            font_size: 14.0,
-            font: None,
+            text_style: crate::overlay::TextStyle::default(),
             background: false,
             background_colour: [0.0, 0.0, 0.0, 0.55].into(),
             padding: 3.0,
@@ -174,21 +168,34 @@ impl LabelItem {
         self
     }
 
-    /// Set the text colour.
+    /// Set what the glyphs are filled with: a colour, or a gradient across the
+    /// text box. This is the text colour, and the only source of it.
+    pub fn with_fill(mut self, fill: crate::overlay::OverlayFill) -> Self {
+        self.style.fill = fill;
+        self
+    }
+
+    /// Set the text colour. Sugar for a solid [`with_fill`](Self::with_fill).
     pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
-        self.colour = colour.into();
+        self.style.fill = crate::overlay::OverlayFill::Solid(colour.into());
+        self
+    }
+
+    /// Set the whole text style: the font and its size.
+    pub fn with_text_style(mut self, text_style: crate::overlay::TextStyle) -> Self {
+        self.text_style = text_style;
         self
     }
 
     /// Set the font size in logical pixels.
     pub fn with_font_size(mut self, font_size: f32) -> Self {
-        self.font_size = font_size;
+        self.text_style.size = font_size;
         self
     }
 
     /// Set the font. Without this the built-in default font is used.
     pub fn with_font(mut self, font: crate::overlay::font::FontHandle) -> Self {
-        self.font = Some(font);
+        self.text_style.font = Some(font);
         self
     }
 

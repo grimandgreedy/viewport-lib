@@ -208,9 +208,9 @@ fn labels_and_glyph_runs_animate() {
     let mut at_start = frame_at(0.0);
     let mut at_end = frame_at(1.0);
     let mut run = GlyphRunItem::new(vec![PositionedGlyph::new(55, 0.0, 0.0)]);
-    run.font_size = 28.0;
+    run.text_style.size = 28.0;
     run.transform.translate = [4.0, 40.0];
-    run.colour = Colour::linear(1.0, 1.0, 1.0, 1.0);
+    run.style.fill = OverlayFill::Solid(Colour::linear(1.0, 1.0, 1.0, 1.0));
     run.animations = Some(Box::new(slide()));
     at_start.overlays.glyph_runs = vec![run.clone()];
     at_end.overlays.glyph_runs = vec![run];

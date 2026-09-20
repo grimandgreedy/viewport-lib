@@ -197,8 +197,7 @@ fn reported_support_matches_what_the_renderer_draws() {
                 let mut ovl = OverlayFrame::default();
                 let mut item = LabelItem::new("Mg")
                     .with_position([20.0, 20.0])
-                    .with_font_size(36.0)
-                    .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0));
+                    .with_font_size(36.0);
                 item.style = style;
                 ovl.labels = vec![item];
                 ovl
@@ -213,9 +212,8 @@ fn reported_support_matches_what_the_renderer_draws() {
                     PositionedGlyph::new(55, 0.0, 0.0),
                     PositionedGlyph::new(82, 22.0, 0.0),
                 ]);
-                item.font_size = 36.0;
+                item.text_style.size = 36.0;
                 item.transform.translate = [20.0, 40.0];
-                item.colour = Colour::srgb(1.0, 1.0, 1.0, 1.0);
                 item.style = style;
                 ovl.glyph_runs = vec![item];
                 ovl
@@ -265,9 +263,10 @@ fn reported_support_matches_what_the_renderer_draws() {
 /// be true for every probe.
 fn base_style(family: &str, texture: viewport_lib::OverlayTextureId) -> OverlayStyle {
     match family {
-        // The glyph families draw from `colour`, not `fill`, until gradient
-        // text lands; a fill here would be the very thing under test.
-        "label" | "glyph run" => OverlayStyle::default(),
+        // A text item's colour is its fill, so the glyph families need a
+        // visible one to start from like everything else; the probe then swaps
+        // it for a gradient.
+        "label" | "glyph run" => OverlayStyle::solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
         // The textured pipeline is reached by the fill being a texture, so
         // that is this family's baseline: the fill probe then replaces it with
         // a gradient, which is exactly the swap the table has to predict.

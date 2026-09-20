@@ -45,18 +45,18 @@ impl PositionedGlyph {
 /// One run carries one font. A line that spans several fonts (script fallback,
 /// or mixing a text font with an icon font) is submitted as several runs sharing
 /// a baseline, one per font. Glyph positions are relative to the resolved
-/// `anchor` origin, so moving a whole run is a change to `anchor` / `position`.
+/// origin, so moving a whole run is a change to `anchoring` or `position`.
+///
+/// The run's colour is `style.fill`, with `glyph_tints` multiplying over it per
+/// glyph.
 ///
 /// [`LabelItem`]: crate::overlay::LabelItem
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct GlyphRunItem {
-    /// Font the glyph ids index into. `None` uses the built-in default font.
-    pub font: Option<crate::overlay::font::FontHandle>,
-
-    /// Font size in logical pixels. Sizes the rasterised glyph bitmaps; the glyph
-    /// positions themselves come from `glyphs`.
-    pub font_size: f32,
+    /// Which font the glyph ids index into, and the size the bitmaps are
+    /// rasterised at. The glyph positions themselves come from `glyphs`.
+    pub text_style: crate::overlay::TextStyle,
 
     /// Where the item hangs from and which point of its own box lands there.
     ///
@@ -93,15 +93,16 @@ pub struct GlyphRunItem {
     /// Positioned glyphs, in draw order.
     pub glyphs: Vec<PositionedGlyph>,
 
-    /// RGBA tint in linear float, applied to every glyph in the run that does
-    /// not have its own entry in `colours`.
-    pub colour: crate::colour::Colour,
-
-    /// Optional per-glyph tint, parallel to `glyphs`. When non-empty, glyph `i`
-    /// uses `colours[i]`; glyphs past the end of this list (or all glyphs when it
-    /// is empty) fall back to `colour`. Use it for runs where glyphs differ in
-    /// colour, such as syntax highlighting.
-    pub colours: Vec<crate::colour::Colour>,
+    /// Optional per-glyph colour multiplier over `style.fill`, parallel to
+    /// `glyphs`. When non-empty, glyph `i` is multiplied by `glyph_tints[i]`;
+    /// glyphs past the end of this list (and every glyph when it is empty) draw
+    /// the fill unmodified. Use it for runs where glyphs differ in colour, such
+    /// as syntax highlighting.
+    ///
+    /// It is a multiplier and not a colour, and it behaves like the item's own
+    /// `style.tint`: it never reaches a shadow layer, so a run's contour stays
+    /// one colour however many the glyphs are.
+    pub glyph_tints: Vec<[f32; 4]>,
 
     /// Explicit draw order. Runs with lower values are drawn first (further
     /// back). Shares the cross-family z-order space with labels and shapes.
@@ -111,16 +112,14 @@ pub struct GlyphRunItem {
 impl Default for GlyphRunItem {
     fn default() -> Self {
         Self {
-            font: None,
-            font_size: 14.0,
+            text_style: crate::overlay::TextStyle::default(),
             anchoring: crate::overlay::OverlayAnchoring::default(),
             transform: crate::overlay::OverlayTransform::IDENTITY,
             style: crate::overlay::OverlayStyle::default(),
             animations: None,
             clip: OverlayClip::default(),
             glyphs: Vec::new(),
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
-            colours: Vec::new(),
+            glyph_tints: Vec::new(),
             z_order: 0,
         }
     }
@@ -139,13 +138,32 @@ impl GlyphRunItem {
     /// Set the font the glyph ids index into. Without this the built-in default
     /// font is used.
     pub fn with_font(mut self, font: crate::overlay::font::FontHandle) -> Self {
-        self.font = Some(font);
+        self.text_style.font = Some(font);
         self
     }
 
     /// Set the font size in logical pixels.
     pub fn with_font_size(mut self, font_size: f32) -> Self {
-        self.font_size = font_size;
+        self.text_style.size = font_size;
+        self
+    }
+
+    /// Set what the glyphs are filled with: a colour, or a gradient across the
+    /// text box. This is the text colour, and the only source of it.
+    pub fn with_fill(mut self, fill: crate::overlay::OverlayFill) -> Self {
+        self.style.fill = fill;
+        self
+    }
+
+    /// Set the text colour. Sugar for a solid [`with_fill`](Self::with_fill).
+    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.style.fill = crate::overlay::OverlayFill::Solid(colour.into());
+        self
+    }
+
+    /// Set the whole text style: the font and its size.
+    pub fn with_text_style(mut self, text_style: crate::overlay::TextStyle) -> Self {
+        self.text_style = text_style;
         self
     }
 
@@ -182,20 +200,10 @@ impl GlyphRunItem {
         self
     }
 
-    /// Set the run tint colour, used for any glyph without a per-glyph entry in
-    /// `colours`.
-    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
-        self.colour = colour.into();
-        self
-    }
-
-    /// Set per-glyph tint colours, parallel to the glyphs. Glyphs past the end of
-    /// this list fall back to the run `colour`.
-    pub fn with_colours(
-        mut self,
-        colours: impl IntoIterator<Item = impl Into<crate::colour::Colour>>,
-    ) -> Self {
-        self.colours = colours.into_iter().map(Into::into).collect();
+    /// Set the per-glyph colour multipliers over `style.fill`, parallel to the
+    /// glyphs. Glyphs past the end of this list draw the fill unmodified.
+    pub fn with_glyph_tints(mut self, glyph_tints: impl IntoIterator<Item = [f32; 4]>) -> Self {
+        self.glyph_tints = glyph_tints.into_iter().collect();
         self
     }
 
@@ -264,11 +272,11 @@ mod tests {
     #[test]
     fn defaults_and_builders() {
         let run = GlyphRunItem::default();
-        assert!(run.font.is_none());
-        assert_eq!(run.font_size, 14.0);
+        assert!(run.text_style.font.is_none());
+        assert_eq!(run.text_style.size, 14.0);
         assert_eq!(run.transform.translate, [0.0, 0.0]);
         assert!(run.glyphs.is_empty());
-        assert!(run.colours.is_empty());
+        assert!(run.glyph_tints.is_empty());
         assert_eq!(run.style.opacity, 1.0);
         assert_eq!(run.z_order, 0);
         assert!(run.clip.mask.is_none());
@@ -280,23 +288,22 @@ mod tests {
         let run = GlyphRunItem::new(glyphs.clone())
             .with_font_size(20.0)
             .with_position([10.0, 12.0])
-            .with_colour([1.0, 0.0, 0.0, 1.0])
-            .with_colours(vec![[0.0, 1.0, 0.0, 1.0]])
+            .with_fill(crate::overlay::OverlayFill::Solid(
+                [1.0, 0.0, 0.0, 1.0].into(),
+            ))
+            .with_glyph_tints(vec![[0.0, 1.0, 0.0, 1.0]])
             .with_opacity(0.5)
             .with_z_order(3)
             .with_clip(7);
 
         assert_eq!(run.glyphs, glyphs);
-        assert_eq!(run.font_size, 20.0);
+        assert_eq!(run.text_style.size, 20.0);
         assert_eq!(run.transform.translate, [10.0, 12.0]);
-        assert_eq!(run.colour.to_linear_rgba(), [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(
-            run.colours
-                .iter()
-                .map(|c| c.to_linear_rgba())
-                .collect::<Vec<_>>(),
-            vec![[0.0, 1.0, 0.0, 1.0]]
+            run.style.fill,
+            crate::overlay::OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into())
         );
+        assert_eq!(run.glyph_tints, vec![[0.0, 1.0, 0.0, 1.0]]);
         assert_eq!(run.style.opacity, 0.5);
         assert_eq!(run.z_order, 3);
         assert_eq!(run.clip.mask, Some(7));

@@ -118,19 +118,19 @@ pub(crate) fn build_glyph_run(app: &App) -> Vec<GlyphRunItem> {
     let t = app.ovl_state.start_time.elapsed().as_secs_f32();
     let count = 24usize;
     let mut glyphs = Vec::with_capacity(count);
-    let mut colours = Vec::with_capacity(count);
+    let mut glyph_tints = Vec::with_capacity(count);
     for i in 0..count {
         let x = i as f32 * 24.0;
         let y = (i as f32 * 0.5 + t * 2.0).sin() * 12.0;
         glyphs.push(PositionedGlyph::new(20 + i as u16, x, y));
-        colours.push(hue_rgba(i as f32 / count as f32));
+        glyph_tints.push(hue_rgba(i as f32 / count as f32));
     }
     vec![
         GlyphRunItem::new(glyphs)
             // A fixed row below the shape gallery, above the emoji row.
             .with_position([40.0, 870.0])
             .with_font_size(30.0)
-            .with_colours(colours),
+            .with_glyph_tints(glyph_tints),
     ]
 }
 

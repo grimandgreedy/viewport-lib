@@ -117,10 +117,10 @@ fn empty_glyph_run_draws_nothing() {
     assert_eq!(bright_pixels(&px), 0, "an empty run must not draw");
 }
 
-/// Per-glyph `colours` route through layout: a run whose first half is red and
-/// second half blue draws both colours.
+/// Per-glyph tints route through layout: a white-filled run whose first half is
+/// multiplied red and second half blue draws both colours.
 #[test]
-fn per_glyph_colours_apply() {
+fn per_glyph_tints_apply() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
@@ -130,7 +130,7 @@ fn per_glyph_colours_apply() {
     let size = 128u32;
     let glyphs = glyph_grid();
     let half = glyphs.len() / 2;
-    let colours: Vec<[f32; 4]> = (0..glyphs.len())
+    let glyph_tints: Vec<[f32; 4]> = (0..glyphs.len())
         .map(|i| {
             if i < half {
                 [1.0, 0.0, 0.0, 1.0]
@@ -144,7 +144,8 @@ fn per_glyph_colours_apply() {
     frame.overlays.glyph_runs = vec![
         GlyphRunItem::new(glyphs)
             .with_font_size(24.0)
-            .with_colours(colours),
+            .with_colour([1.0, 1.0, 1.0, 1.0])
+            .with_glyph_tints(glyph_tints),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
