@@ -94,12 +94,11 @@ pub enum OverlayShape {
     /// placed at the item's `position`.
     ///
     /// A vector shape honours the coverage- and box-relative fields of
-    /// [`OverlayShapeItem`]: `fill` (solid and gradients), `opacity`,
-    /// `z_order`, the AABB clip (`clip_id`), `rotation` / `rotation_pivot`, and
-    /// `border_colour` / `border_width` (drawn as an outline stroke of the
-    /// contours, not an SDF band). `position` places the path origin and
-    /// `size` sets the rotation centre; the fill and gradient bounds come from
-    /// the path's own extent, not `size`.
+    /// [`OverlayShapeItem`]: `fill` (solid and gradients), both shadow lists,
+    /// `opacity`, `z_order`, the AABB clip (`clip_id`), and `rotation` /
+    /// `rotation_pivot`. `position` places the path origin and `size` sets the
+    /// rotation centre; the fill and gradient bounds come from the path's own
+    /// extent, not `size`.
     ///
     /// Fields that depend on the distance field or the bounding quad have no
     /// effect on a vector shape and are ignored: `shadows` / `inner_shadows` /
@@ -116,11 +115,11 @@ pub enum OverlayShape {
 
 /// One soft drop or inset shadow.
 ///
-/// Used with [`OverlayShapeItem::shadows`] (drawn behind the fill) and
-/// [`OverlayShapeItem::inner_shadows`] (drawn on top of the fill, under the
-/// border) to stack several shadow effects on a single shape: a soft ambient
-/// shadow for depth plus a tighter one for contact, or an outer glow for
-/// focus.
+/// Used with [`OverlayShapeItem::shadows`] (drawn behind the item, clipped to
+/// outside it) and [`OverlayShapeItem::inner_shadows`] (drawn over it, eroding
+/// inward from the boundary) to stack several effects on one item: a soft
+/// ambient shadow for depth plus a tighter one for contact, an outer glow for
+/// focus, or a plain contour band for a border.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ShadowLayer {
@@ -268,17 +267,17 @@ impl Default for OverlayShape {
 ///
 /// The analytic variants (`Rect`, `Circle`, `Ring`, and the rest) have a
 /// closed-form signed-distance function. Each becomes one bounding quad, and
-/// the fragment shader evaluates the SDF to produce anti-aliased fill, border,
-/// shadow, and discard regions at any scale.
+/// the fragment shader evaluates the SDF to produce anti-aliased fill, shadow,
+/// and discard regions at any scale.
 ///
 /// [`OverlayShape::Vector`] has no closed-form distance field. It is flattened
 /// and tessellated to triangles and drawn on the text pipeline instead, with
-/// its border stroked like a polyline and its shadows re-emitted as geometry.
+/// its shadow layers re-emitted as geometry.
 ///
 /// The item hides which backend runs, but it cannot hide that they differ in
 /// what they can express: the options that need a distance field
-/// (`style.inner_shadows`, `style.backdrop`, `style.texture`, `nine_slice`) do
-/// nothing on a vector path. Ask
+/// (`style.backdrop`, `style.texture`, `nine_slice`) do nothing on a vector
+/// path. Ask
 /// [`OverlayStyleSupport::for_shape`](crate::overlay::OverlayStyleSupport::for_shape)
 /// rather than memorising that, and see the per-variant note on
 /// [`OverlayShape::Vector`].
@@ -287,17 +286,17 @@ impl Default for OverlayShape {
 ///
 /// `style.fill` controls the interior colour: `OverlayFill::Solid` for a flat
 /// colour, or one of the gradient variants. `None` draws no fill, leaving the
-/// border and shadows on their own.
+/// shadow layers on their own.
 ///
 /// When `style.texture` is set the shape samples the uploaded image as its
 /// fill, and a solid `style.fill` acts as a tint multiplied with each texel
-/// (`[1, 1, 1, 1]` for no tint). The boundary, border, and anti-aliasing apply
-/// the same way regardless of fill mode.
+/// (`[1, 1, 1, 1]` for no tint). The boundary, the shadow layers, and
+/// anti-aliasing apply the same way regardless of fill mode.
 ///
 /// # Examples
 ///
 /// ```rust
-/// # use viewport_lib_types::overlay::{OverlayShapeItem, OverlayShape, OverlayFill};
+/// # use viewport_lib_types::overlay::{BorderMode, OverlayShapeItem, OverlayShape, OverlayFill};
 /// // Rounded-rect panel background.
 /// let panel = OverlayShapeItem::new(
 ///     OverlayShape::Rect { corner_radius: 8.0 },
@@ -305,7 +304,7 @@ impl Default for OverlayShape {
 ///     [300.0, 200.0],
 /// )
 /// .with_fill(OverlayFill::Solid([0.1, 0.1, 0.1, 0.85].into()))
-/// .with_border([0.4, 0.4, 0.4, 1.0], 1.0);
+/// .with_border([0.4, 0.4, 0.4, 1.0], 1.0, BorderMode::Inset);
 ///
 /// // Circle with a left-to-right gradient.
 /// let grad_dot = OverlayShapeItem::new(OverlayShape::Circle, [100.0, 100.0], [60.0, 60.0])
@@ -378,14 +377,9 @@ pub struct OverlayShapeItem {
     /// (default) puts the top edge there, `Middle` centres, `Bottom` the bottom
     /// edge.
     pub align_y: AnchorY,
-    /// Overall opacity multiplier applied to both fill and border. Range 0.0-1.0.
+    /// Overall opacity multiplier applied to the fill and every shadow layer.
+    /// Range 0.0-1.0.
     pub opacity: f32,
-    /// RGBA border colour in linear float format.
-    pub border_colour: crate::colour::Colour,
-    /// Border thickness in logical pixels. `0.0` disables the border.
-    pub border_width: f32,
-    /// Where the border sits relative to the shape edge. Default: `Inset`.
-    pub border_mode: BorderMode,
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
     /// Marks this shape as a clip mask. The shape itself is not drawn; its
@@ -441,9 +435,6 @@ impl Default for OverlayShapeItem {
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
             opacity: 1.0,
-            border_colour: [1.0, 1.0, 1.0, 1.0].into(),
-            border_width: 0.0,
-            border_mode: BorderMode::Inset,
             z_order: 0,
             clip_mask_id: None,
             clip_id: None,
@@ -754,16 +745,41 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Set the border colour and width. A width of `0.0` disables the border.
-    pub fn with_border(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.border_colour = colour.into();
-        self.border_width = width;
-        self
-    }
-
-    /// Set where the border sits relative to the shape edge.
-    pub fn with_border_mode(mut self, mode: BorderMode) -> Self {
-        self.border_mode = mode;
+    /// Add a border: a band of `width` logical pixels on the shape edge,
+    /// placed by `mode`. A width of `0.0` adds nothing.
+    ///
+    /// A border is a shadow layer with no blur, so this pushes one (or two, for
+    /// [`BorderMode::Center`]) onto [`OverlayStyle::shadows`] and
+    /// [`OverlayStyle::inner_shadows`]. That is the whole implementation: there
+    /// is no separate border in the renderer, and the band draws through the
+    /// same code as every other layer, on every coverage backend.
+    ///
+    /// It costs a layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list, so a
+    /// shape with four drop shadows cannot also take a border.
+    ///
+    /// Calling this twice adds two bands rather than replacing the first.
+    ///
+    /// [`OverlayStyle::shadows`]: crate::overlay::OverlayStyle::shadows
+    /// [`OverlayStyle::inner_shadows`]: crate::overlay::OverlayStyle::inner_shadows
+    pub fn with_border(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        width: f32,
+        mode: BorderMode,
+    ) -> Self {
+        if width <= 0.0 {
+            return self;
+        }
+        let colour = colour.into();
+        let band = |spread: f32| ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread);
+        match mode {
+            BorderMode::Inset => self.style.inner_shadows.push(band(width)),
+            BorderMode::Outer => self.style.shadows.push(band(width)),
+            BorderMode::Center => {
+                self.style.inner_shadows.push(band(width * 0.5));
+                self.style.shadows.push(band(width * 0.5));
+            }
+        }
         self
     }
 
@@ -820,8 +836,7 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Set the stacked inner (inset) shadow layers (drawn on top of the fill,
-    /// under the border).
+    /// Set the stacked inner (inset) shadow layers, drawn on top of the fill.
     pub fn with_inner_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
         self.style.inner_shadows = shadows;
         self

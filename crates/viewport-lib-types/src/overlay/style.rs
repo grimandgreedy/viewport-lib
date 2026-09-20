@@ -74,15 +74,18 @@ impl BackdropEffects {
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct OverlayStyle {
-    /// Area fill: solid or gradient. `None` draws no fill, leaving the border,
-    /// the stroke, or the glyphs on their own.
+    /// Area fill: solid or gradient. `None` draws no fill, leaving the shadow
+    /// layers, the stroke, or the glyphs on their own.
     pub fill: Option<OverlayFill>,
     /// Stacked drop shadows and contours drawn behind the item, first entry
     /// furthest back. Up to
     /// [`OVERLAY_MAX_SHADOW_LAYERS`](crate::overlay::OVERLAY_MAX_SHADOW_LAYERS)
     /// are honoured.
     pub shadows: Vec<ShadowLayer>,
-    /// Stacked inset shadows drawn on top of the fill, under the border.
+    /// Stacked inset shadows drawn on top of the fill, eroding inward from the
+    /// item's boundary. Up to
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`](crate::overlay::OVERLAY_MAX_SHADOW_LAYERS)
+    /// are honoured.
     pub inner_shadows: Vec<ShadowLayer>,
     /// Texture fill. When set, the item samples the image uploaded through
     /// `upload_overlay_texture`, clipped to the item's coverage, and `fill`

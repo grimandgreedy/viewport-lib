@@ -109,21 +109,21 @@ impl GradientStop {
 /// if a consumer needs more.
 pub const OVERLAY_MAX_GRADIENT_STOPS: usize = 4;
 
-/// Border placement relative to the shape edge.
+/// Where a border band sits relative to the shape edge.
 ///
-/// Controls whether the border band sits inside, outside, or centred on the
-/// SDF zero-crossing. `Inset` is the default.
+/// The argument to
+/// [`OverlayShapeItem::with_border`](crate::overlay::OverlayShapeItem::with_border),
+/// which lowers the band to shadow layers: `Inset` is one inner layer, `Outer`
+/// one outer layer, and `Center` one of each at half the width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BorderMode {
-    /// Border sits inside the fill edge (default). The fill area shrinks by
-    /// `border_width`.
+    /// Inside the edge (default): the band eats into the fill.
     #[default]
     Inset,
-    /// Border sits outside the fill edge. The fill area is unaffected; the
-    /// border extends outward.
+    /// Outside the edge: the fill is untouched and the band extends outward.
     Outer,
-    /// Border is centred on the fill edge (half inside, half outside).
+    /// Centred on the edge, half inside and half outside.
     Center,
 }
 

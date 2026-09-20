@@ -12,18 +12,17 @@ struct VertexInput {
     @location(0) position:      vec2<f32>,  // NDC xy
     @location(1) local_pos:     vec2<f32>,  // pixels from shape centre
     @location(2) fill_colour:   vec4<f32>,  // tint (multiplied with texture sample)
-    @location(3) border_colour: vec4<f32>,
-    @location(4) half_size:     vec2<f32>,  // shape half-extents in pixels
-    @location(5) radii:         vec4<f32>,  // shape-specific params
-    @location(6) shape_meta:    vec3<f32>,  // x=border_width, y=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), z=clip_index (or -1)
-    @location(7) clip_rect:     vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(8) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
-    @location(9) shadow_index:  vec4<f32>,  // base_index, outer_count, inner_count, border_mode
-    @location(10) extras:        vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
-    @location(11) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
-    @location(12) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
-    @location(13) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
-    @location(14) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
+    @location(3) half_size:     vec2<f32>,  // shape half-extents in pixels
+    @location(4) radii:         vec4<f32>,  // shape-specific params
+    @location(5) shape_meta:    vec2<f32>,  // x=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), y=clip_index (or -1)
+    @location(6) clip_rect:     vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(7) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
+    @location(8) shadow_index:  vec3<f32>,  // base_index, outer_count, inner_count
+    @location(9) extras:         vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
+    @location(10) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
+    @location(11) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
+    @location(12) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
+    @location(13) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
 }
 
 // One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
@@ -92,20 +91,18 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) local_pos:     vec2<f32>,
     @location(1) fill_colour:   vec4<f32>,
-    @location(2) border_colour: vec4<f32>,
-    @location(3) half_size:     vec2<f32>,
-    @location(4) radii:         vec4<f32>,
-    @location(5) border_width:  f32,
-    @location(6) shape_type:    f32,
-    @location(7) uv:            vec2<f32>,
-    @location(8) @interpolate(flat) shadow_index: vec4<f32>,
-    @location(9) extras:       vec4<f32>,
-    @location(10) @interpolate(flat) nine_slice_uv:   vec4<f32>,
-    @location(11) @interpolate(flat) nine_slice_frac: vec4<f32>,
-    @location(12) @interpolate(flat) texture_transform_a: vec4<f32>,
-    @location(13) @interpolate(flat) texture_transform_b: vec4<f32>,
-    @location(14) @interpolate(flat) clip_rect:  vec4<f32>,
-    @location(15) @interpolate(flat) clip_index: f32,
+    @location(2) half_size:     vec2<f32>,
+    @location(3) radii:         vec4<f32>,
+    @location(4) shape_type:    f32,
+    @location(5) uv:            vec2<f32>,
+    @location(6) @interpolate(flat) shadow_index: vec3<f32>,
+    @location(7) extras:       vec4<f32>,
+    @location(8) @interpolate(flat) nine_slice_uv:   vec4<f32>,
+    @location(9) @interpolate(flat) nine_slice_frac: vec4<f32>,
+    @location(10) @interpolate(flat) texture_transform_a: vec4<f32>,
+    @location(11) @interpolate(flat) texture_transform_b: vec4<f32>,
+    @location(12) @interpolate(flat) clip_rect:  vec4<f32>,
+    @location(13) @interpolate(flat) clip_index: f32,
 };
 
 @vertex
@@ -114,11 +111,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = vec4<f32>(px_to_ndc(in.position), 0.0, 1.0);
     out.local_pos     = in.local_pos;
     out.fill_colour   = in.fill_colour;
-    out.border_colour = in.border_colour;
     out.half_size     = in.half_size;
     out.radii         = in.radii;
-    out.border_width  = in.shape_meta.x;
-    out.shape_type    = in.shape_meta.y;
+    out.shape_type    = in.shape_meta.x;
     out.uv            = in.uv;
     out.shadow_index = in.shadow_index;
     out.extras        = in.extras;
@@ -127,7 +122,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.texture_transform_a = in.texture_transform_a;
     out.texture_transform_b = in.texture_transform_b;
     out.clip_rect  = in.clip_rect;
-    out.clip_index = in.shape_meta.z;
+    out.clip_index = in.shape_meta.y;
     return out;
 }
 
@@ -377,11 +372,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let aa = 1.0;
 
-    // shadow_index: (base_index, outer_count, inner_count, border_mode).
+    // shadow_index: (base_index, outer_count, inner_count).
     let base_index = i32(in.shadow_index.x + 0.5);
     let outer_count = i32(in.shadow_index.y + 0.5);
     let inner_count = i32(in.shadow_index.z + 0.5);
-    let border_mode = i32(in.shadow_index.w + 0.5);
 
     // Stacked outer layers behind the fill, first layer furthest back.
     var shadow_col = vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -512,7 +506,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = vec4<f32>(select(fc.rgb, rgb, out_a > 0.0), out_a);
     }
 
-    // Stacked inner layers over the textured fill, under the border.
+    // Stacked inner layers over the textured fill.
     if (d < 0.0) {
         for (var j = 0; j < inner_count; j = j + 1) {
             let layer = shadow_layers[base_index + outer_count + j];
@@ -533,28 +527,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 }
             }
         }
-    }
-
-    // Border: blend border colour in a band near d = 0.
-    // border_mode (shadow_index.w): 0=inset, 1=outer, 2=center.
-    if (in.border_width > 0.0) {
-        let bw = in.border_width;
-        let bm = border_mode;
-        var lo: f32;
-        var hi: f32;
-        if (bm == 1) {
-            lo = 0.0;
-            hi = bw;
-        } else if (bm == 2) {
-            lo = -bw * 0.5;
-            hi = bw * 0.5;
-        } else {
-            lo = -bw;
-            hi = 0.0;
-        }
-        let border_alpha = (1.0 - smoothstep(hi, hi + aa, d)) * smoothstep(lo - aa, lo, d);
-        let border_ref_alpha = 1.0 - smoothstep(-aa, 0.0, d - hi);
-        colour = mix(colour, vec4<f32>(in.border_colour.rgb, in.border_colour.a * border_ref_alpha), border_alpha);
     }
 
     return colour;

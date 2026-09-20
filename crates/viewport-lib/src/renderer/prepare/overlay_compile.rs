@@ -522,9 +522,7 @@ fn emit_sdf_shape(
     out_verts: &mut Vec<crate::resources::OverlayShapeVertex>,
     out_shadows: &mut Vec<crate::resources::OverlayShadowLayerGpu>,
 ) {
-    use crate::renderer::types::{
-        BorderMode, LineCap, OverlayFill, OverlayShape, TriangleDirection,
-    };
+    use crate::renderer::types::{LineCap, OverlayFill, OverlayShape, TriangleDirection};
     if matches!(shape.shape, OverlayShape::Vector { .. })
         || shape.clip_mask_id.is_some()
         || shape.style.texture.is_some()
@@ -547,8 +545,8 @@ fn emit_sdf_shape(
         OverlayShape::Line { thickness, .. } => thickness * 0.5,
         _ => 0.0,
     };
-    let bx = hw + shape.border_width + extra_expand;
-    let by = hh + shape.border_width + extra_expand;
+    let bx = hw + extra_expand;
+    let by = hh + extra_expand;
     let (rx, ry) = if shape.transform.rotation != 0.0 {
         let c = shape.transform.rotation.cos();
         let s = shape.transform.rotation.sin();
@@ -709,16 +707,6 @@ fn emit_sdf_shape(
     }
     let fc = stop_colours[0];
     let fc2 = stop_colours[1];
-    let mut bc = shape.border_colour.to_linear_rgba();
-    bc[3] *= op;
-    for (c, t) in bc.iter_mut().zip(shape.tint) {
-        *c *= t;
-    }
-    let border_mode_f = match shape.border_mode {
-        BorderMode::Inset => 0.0,
-        BorderMode::Outer => 1.0,
-        BorderMode::Center => 2.0,
-    };
     let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
 
     let base_index = out_shadows.len();
@@ -748,12 +736,7 @@ fn emit_sdf_shape(
             inner_count += 1;
         }
     }
-    let shadow_index = [
-        base_index as f32,
-        outer_count as f32,
-        inner_count as f32,
-        border_mode_f,
-    ];
+    let shadow_index = [base_index as f32, outer_count as f32, inner_count as f32];
     let rotation_pivot = [
         shape.transform.rotation,
         shape.transform.pivot[0],
@@ -790,10 +773,8 @@ fn emit_sdf_shape(
             position: [px, py],
             local_pos: [lx, ly],
             fill_colour: fc,
-            border_colour: bc,
             half_size,
             radii,
-            border_width: shape.border_width,
             shape_type,
             fill_colour2: fc2,
             gradient_params: gp4,
@@ -840,7 +821,7 @@ impl ViewportRenderer {
     /// retained overlay-geometry handle.
     ///
     /// The items are tessellated once (polyline fills and strokes, vector-path
-    /// fills and borders, SDF shapes, glyph quads, and each label's laid-out text,
+    /// fills, SDF shapes, glyph quads, and each label's laid-out text,
     /// background box, and glyph quads) into local logical-pixel geometry and
     /// uploaded to a buffer that lives until the group is freed. Each frame, submit
     /// the returned id through `OverlayFrame::retained` as a [`RetainedOverlay`]

@@ -15,6 +15,7 @@
 use std::sync::Arc;
 use viewport_lib as vpl;
 
+use vpl::wgpu;
 use vpl::{
     ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, LightingSettings, Material, MeshId,
     OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem, PostProcessSettings,
@@ -26,7 +27,6 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
-use vpl::wgpu;
 
 #[derive(Default)]
 struct App {
@@ -334,7 +334,7 @@ impl ApplicationHandler for App {
                         [200.0, 200.0],
                     )
                     .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1].into()))
-                    .with_border([1.0, 1.0, 1.0, 0.4], 1.5)
+                    .with_border([1.0, 1.0, 1.0, 0.4], 1.5, vpl::BorderMode::Inset)
                     .with_backdrop_blur(20.0),
                 );
 

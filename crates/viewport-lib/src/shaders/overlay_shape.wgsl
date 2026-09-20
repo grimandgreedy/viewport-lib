@@ -1,26 +1,25 @@
 // Screen-space SDF overlay shape shader.
 //
 // Each shape is a bounding quad whose vertices carry the shape parameters.
-// The fragment shader evaluates a signed-distance function to produce
-// anti-aliased fill and border regions, with an optional outer shadow/glow.
+// The fragment shader evaluates a signed-distance function to produce an
+// anti-aliased fill, with stacked outer and inner shadow layers around it.
 
 struct VertexInput {
     @location(0) position:        vec2<f32>,  // NDC xy
     @location(1) local_pos:       vec2<f32>,  // pixels from shape centre
     @location(2) fill_colour:     vec4<f32>,  // start colour (or solid colour)
-    @location(3) border_colour:   vec4<f32>,
-    @location(4) half_size:       vec2<f32>,  // shape half-extents in pixels
-    @location(5) radii:           vec4<f32>,  // shape-specific params
-    @location(6) shape_meta:      vec2<f32>, // x=border_width, y=shape_type
-    @location(7) stop_positions:  vec4<f32>, // positions in [0,1] for stops a..d
-    @location(8) fill_colour2:    vec4<f32>,  // 2nd colour stop (equals fill_colour for solid)
-    @location(9) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
-    @location(10) shadow_index:   vec4<f32>,  // base_index, outer_ct, inner_ct, border_mode
-    @location(11) rotation_pivot: vec4<f32>,  // rotation, pivot_x, pivot_y, pad
-    @location(12) clip_rect:      vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(13) clip_index:     f32,        // clip-shape index, or -1 for none
-    @location(14) stop_colour_c:  vec4<f32>,  // 3rd colour stop (multi-stop gradients)
-    @location(15) stop_colour_d:  vec4<f32>,  // 4th colour stop
+    @location(3) half_size:       vec2<f32>,  // shape half-extents in pixels
+    @location(4) radii:           vec4<f32>,  // shape-specific params
+    @location(5) shape_type:      f32,
+    @location(6) fill_colour2:    vec4<f32>,  // 2nd colour stop (equals fill_colour for solid)
+    @location(7) gradient_params: vec4<f32>,  // x=type, y=angle/offset, z=stop_count, w=pad
+    @location(8) shadow_index:    vec3<f32>,  // base_index, outer_ct, inner_ct
+    @location(9) rotation_pivot:  vec4<f32>,  // rotation, pivot_x, pivot_y, pad
+    @location(10) clip_rect:      vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(11) clip_index:     f32,        // clip-shape index, or -1 for none
+    @location(12) stop_colour_c:  vec4<f32>,  // 3rd colour stop (multi-stop gradients)
+    @location(13) stop_colour_d:  vec4<f32>,  // 4th colour stop
+    @location(14) stop_positions: vec4<f32>,  // positions in [0,1] for stops a..d
     @builtin(instance_index) instance_index: u32,
 };
 
@@ -140,20 +139,18 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) local_pos:       vec2<f32>,
     @location(1) fill_colour:     vec4<f32>,
-    @location(2) border_colour:   vec4<f32>,
-    @location(3) half_size:       vec2<f32>,
-    @location(4) radii:           vec4<f32>,
-    @location(5) border_width:    f32,
-    @location(6) shape_type:      f32,
-    @location(7) fill_colour2:    vec4<f32>,
-    @location(8) gradient_params: vec4<f32>,
-    @location(9) @interpolate(flat) shadow_index:   vec4<f32>,
-    @location(10) @interpolate(flat) rotation_pivot: vec4<f32>,
-    @location(11) @interpolate(flat) clip_rect: vec4<f32>,
-    @location(12) @interpolate(flat) clip_index: f32,
-    @location(13) @interpolate(flat) stop_colour_c:  vec4<f32>,
-    @location(14) @interpolate(flat) stop_colour_d:  vec4<f32>,
-    @location(15) @interpolate(flat) stop_positions: vec4<f32>,
+    @location(2) half_size:       vec2<f32>,
+    @location(3) radii:           vec4<f32>,
+    @location(4) shape_type:      f32,
+    @location(5) fill_colour2:    vec4<f32>,
+    @location(6) gradient_params: vec4<f32>,
+    @location(7) @interpolate(flat) shadow_index:   vec3<f32>,
+    @location(8) @interpolate(flat) rotation_pivot: vec4<f32>,
+    @location(9) @interpolate(flat) clip_rect: vec4<f32>,
+    @location(10) @interpolate(flat) clip_index: f32,
+    @location(11) @interpolate(flat) stop_colour_c:  vec4<f32>,
+    @location(12) @interpolate(flat) stop_colour_d:  vec4<f32>,
+    @location(13) @interpolate(flat) stop_positions: vec4<f32>,
 };
 
 @vertex
@@ -176,11 +173,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // The tint does not reach the SDF shadow layers (a separate storage buffer), so
     // a tinted shape keeps its authored shadow colour.
     out.fill_colour     = vec4<f32>(in.fill_colour.rgb * t.rgb, in.fill_colour.a * a * t.a);
-    out.border_colour   = vec4<f32>(in.border_colour.rgb * t.rgb, in.border_colour.a * a * t.a);
     out.half_size       = in.half_size;
     out.radii           = in.radii;
-    out.border_width    = in.shape_meta.x;
-    out.shape_type      = in.shape_meta.y;
+    out.shape_type      = in.shape_type;
     out.fill_colour2    = vec4<f32>(in.fill_colour2.rgb * t.rgb, in.fill_colour2.a * a * t.a);
     out.gradient_params = in.gradient_params;
     out.shadow_index    = in.shadow_index;
@@ -521,11 +516,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Anti-aliasing: 1 pixel smoothstep at the boundary.
     let aa = 1.0;
 
-    // shadow_index: (base_index, outer_count, inner_count, border_mode).
+    // shadow_index: (base_index, outer_count, inner_count).
     let base_index = i32(in.shadow_index.x + 0.5);
     let outer_count = i32(in.shadow_index.y + 0.5);
     let inner_count = i32(in.shadow_index.z + 0.5);
-    let border_mode = i32(in.shadow_index.w + 0.5);
 
     // Accumulate the stacked outer shadow layers (drawn behind the fill).
     // Each layer is composited src-over the previous, first layer furthest
@@ -560,23 +554,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // composited separately below.
     shadow_col = vec4<f32>(shadow_col.rgb, shadow_col.a * (1.0 - fill_alpha));
 
-    // How far outside the edge the border band reaches, so those fragments
-    // survive the discard below. `Inset` stays inside the shape and needs
-    // none; `Outer` reaches a full width and `Center` half of one. Without
-    // this an outer border is invisible: every fragment past the edge is
-    // discarded before the band is ever evaluated.
-    var border_reach = 0.0;
-    if (in.border_width > 0.0) {
-        if (border_mode == 1) {
-            border_reach = in.border_width;
-        } else if (border_mode == 2) {
-            border_reach = in.border_width * 0.5;
-        }
-    }
-
-    // If neither the fill, an outer shadow, nor the border band reaches this
-    // fragment, there is nothing to draw.
-    if (fill_alpha <= 0.0 && shadow_col.a <= 0.0 && d > border_reach + aa) {
+    // Nothing to draw where neither the fill nor an outer layer reaches.
+    if (fill_alpha <= 0.0 && shadow_col.a <= 0.0) {
         discard;
     }
 
@@ -656,8 +635,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         colour = vec4<f32>(select(fc.rgb, rgb, out_a > 0.0), out_a);
     }
 
-    // Inner shadow layers: composite on top of the fill (so they tint the
-    // body) but under the border. Sample the SDF at (p - offset) in the
+    // Inner shadow layers: composite on top of the fill, so they tint the
+    // body. Sample the SDF at (p - offset) in the
     // rotated frame; positive sd means the offset point lies outside the
     // shape, so the current fragment is in the shadow band, fading over the
     // layer radius. Only contributes where the fragment is inside the shape.
@@ -687,31 +666,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 }
             }
         }
-    }
-
-    // Border: blend border colour in a band near d = 0.
-    // border_mode (shadow_index.w): 0=inset, 1=outer, 2=center.
-    if (in.border_width > 0.0) {
-        let bw = in.border_width;
-        let bm = border_mode;
-        var lo: f32;
-        var hi: f32;
-        if (bm == 1) {
-            // Outer: band [0, bw]
-            lo = 0.0;
-            hi = bw;
-        } else if (bm == 2) {
-            // Center: band [-bw/2, bw/2]
-            lo = -bw * 0.5;
-            hi = bw * 0.5;
-        } else {
-            // Inset: band [-bw, 0]
-            lo = -bw;
-            hi = 0.0;
-        }
-        let border_alpha = (1.0 - smoothstep(hi, hi + aa, d)) * smoothstep(lo - aa, lo, d);
-        let border_ref_alpha = 1.0 - smoothstep(-aa, 0.0, d - hi);
-        colour = mix(colour, vec4<f32>(in.border_colour.rgb, in.border_colour.a * border_ref_alpha), border_alpha);
     }
 
     return colour;

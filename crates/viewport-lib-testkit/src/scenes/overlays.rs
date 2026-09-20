@@ -248,7 +248,7 @@ fn build_shapes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [80.0, 50.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.85, 0.35, 0.25, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.8, 0.6, 1.0), 2.0),
+        .with_border(Colour::srgb(1.0, 0.8, 0.6, 1.0), 2.0, BorderMode::Inset),
         OverlayShapeItem::new(
             OverlayShape::Rect {
                 corner_radius: 12.0,
@@ -261,13 +261,12 @@ fn build_shapes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             end_colour: Colour::srgb(0.9, 0.2, 0.6, 1.0),
             angle: 0.6,
         })
-        .with_border_mode(BorderMode::Outer)
-        .with_border(Colour::srgb(0.95, 0.95, 1.0, 0.9), 2.0),
+        .with_border(Colour::srgb(0.95, 0.95, 1.0, 0.9), 2.0, BorderMode::Outer),
         OverlayShapeItem::new(OverlayShape::Circle, [215.0, 20.0], [50.0, 50.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.8, 0.45, 0.95))),
         OverlayShapeItem::new(OverlayShape::Ellipse, [285.0, 20.0], [90.0, 50.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.75, 0.2, 0.9)))
-            .with_border(Colour::srgb(0.3, 0.2, 0.0, 1.0), 3.0),
+            .with_border(Colour::srgb(0.3, 0.2, 0.0, 1.0), 3.0, BorderMode::Inset),
         OverlayShapeItem::new(OverlayShape::Capsule, [20.0, 95.0], [110.0, 36.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.55, 0.3, 0.85, 0.95))),
         OverlayShapeItem::new(
@@ -330,7 +329,7 @@ fn build_vector(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [90.0, 70.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.75, 0.9, 1.0)))
-        .with_border(Colour::srgb(0.05, 0.2, 0.3, 1.0), 2.5),
+        .with_border(Colour::srgb(0.05, 0.2, 0.3, 1.0), 2.5, BorderMode::Inset),
     ];
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();

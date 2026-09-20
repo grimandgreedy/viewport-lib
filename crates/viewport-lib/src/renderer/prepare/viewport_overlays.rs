@@ -91,10 +91,6 @@ fn encode_overlay_shape(
 /// Curve-flattening tolerance for vector-shape fills, in logical pixels.
 const VECTOR_FILL_TOLERANCE: f32 = 0.2;
 
-/// Mitre limit for a vector shape's outline stroke (it has no per-item value,
-/// unlike `OverlayPolylineItem`).
-const VECTOR_BORDER_MITRE_LIMIT: f32 = 4.0;
-
 /// Map a vector shape's path-local points into screen-space logical pixels,
 /// applying the item's position and rotation about its centre plus pivot. This
 /// is the inverse of the frame `OverlayShapeItem::distance` evaluates in, so
@@ -133,8 +129,8 @@ fn transform_vector_positions(
         .collect()
 }
 
-/// Tessellate and emit a vector shape's fill, plus its outline border when set,
-/// as `OverlayTextVertex`s into `batch`.
+/// Tessellate and emit a vector shape's fill and its shadow layers as
+/// `OverlayTextVertex`s into `batch`.
 pub(super) fn emit_vector_shape(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
@@ -177,9 +173,9 @@ pub(super) fn emit_vector_shape(
     // are shadow geometry, and a tint never reaches a shadow layer.
     tint_vertices_from(batch, content_start, shape.tint);
 
-    // Inner shadow layers, over the fill and under the border, matching the
-    // order the SDF path composites in. A band runs inward from each contour,
-    // which is the erosion an inset layer describes.
+    // Inner shadow layers, over the fill, matching the order the SDF path
+    // composites in. A band runs inward from each contour, which is the
+    // erosion an inset layer describes.
     for layer in shape
         .style
         .inner_shadows
@@ -189,40 +185,6 @@ pub(super) fn emit_vector_shape(
     {
         emit_vector_inner_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
     }
-    let border_start = batch.len();
-
-    // Border: a vector outline stroke, not an SDF band. Stroke each flattened
-    // contour through the same tessellator polylines use, honouring the subpath's
-    // `closed` flag: an open subpath strokes as an open line (a wireframe edge, a
-    // bare polyline), a closed one strokes its whole boundary. An open contour
-    // takes round caps so its ends read cleanly.
-    if shape.border_width > 0.0 && shape.border_colour.alpha() > 0.0 {
-        let mut colour = shape.border_colour.to_linear_rgba();
-        colour[3] *= shape.opacity;
-        for (contour, closed) in crate::renderer::types::flatten_contours(subpaths) {
-            if contour.len() < 2 {
-                continue;
-            }
-            let pts = transform_vector_positions(&contour, shape);
-            let cap = if closed {
-                crate::renderer::types::PolylineCap::Butt
-            } else {
-                crate::renderer::types::PolylineCap::Round
-            };
-            batch.extend(tessellate_polyline(
-                &pts,
-                shape.border_width,
-                closed,
-                crate::renderer::types::LineJoin::Mitre,
-                VECTOR_BORDER_MITRE_LIMIT,
-                cap,
-                colour,
-                vp_w,
-                vp_h,
-            ));
-        }
-    }
-    tint_vertices_from(batch, border_start, shape.tint);
 }
 
 /// Intersect two clip boxes in framebuffer pixels. An all-zero box means "no
@@ -829,9 +791,9 @@ impl ViewportRenderer {
                 // --- Vector shapes (tessellated fills + outline strokes) ---
                 // A vector shape has no SDF, so it draws here through the same
                 // triangle-fill pipeline as filled polylines rather than the
-                // SDF shape pass. Fill, gradient, opacity, clip, and the border
-                // outline carry over; SDF-derived effects (soft shadows, the
-                // distance-band border) do not apply.
+                // SDF shape pass. Fill, gradient, opacity, clip and the shadow
+                // layers carry over; the effects that need a distance field
+                // (texture, backdrop, nine-slice) do not apply.
                 for shape in &frame.overlays.shapes {
                     let crate::renderer::types::OverlayShape::Vector {
                         subpaths,
@@ -1788,13 +1750,13 @@ impl ViewportRenderer {
                         _ => 0.0,
                     };
 
-                    // Base half-extents including the border, before rotation.
-                    let bx = hw + shape.border_width + extra_expand;
-                    let by = hh + shape.border_width + extra_expand;
+                    // Base half-extents before rotation.
+                    let bx = hw + extra_expand;
+                    let by = hh + extra_expand;
 
                     // Rotation about the pivot moves the shape's corners out of
                     // the axis-aligned box, so grow the quad to the AABB of the
-                    // rotated border box (matching how the fragment shader maps
+                    // rotated bounding box (matching how the fragment shader maps
                     // the rotated shape into the quad). Without this a rotated
                     // rect, capsule, or off-centre pivot clips against its own
                     // quad. A zero rotation with a zero pivot leaves bx/by
@@ -1970,9 +1932,9 @@ impl ViewportRenderer {
                     for colour in &mut stop_colours {
                         colour[3] *= resolved_opacity;
                     }
-                    // Fold the item tint into the fill, gradient, and border
-                    // colours. It stops there: a tint never reaches a shadow
-                    // layer, matching the group tint the shaders apply.
+                    // Fold the item tint into the fill and gradient colours. It
+                    // stops there: a tint never reaches a shadow layer,
+                    // matching the group tint the shaders apply.
                     let tint = shape.tint;
                     for colour in &mut stop_colours {
                         for (c, t) in colour.iter_mut().zip(tint) {
@@ -1982,19 +1944,9 @@ impl ViewportRenderer {
                     let fc = stop_colours[0];
                     let fc2 = stop_colours[1];
                     let _ = (start_colour, end_colour);
-                    let mut bc = shape.border_colour.to_linear_rgba();
-                    bc[3] *= resolved_opacity;
-                    for (c, t) in bc.iter_mut().zip(tint) {
-                        *c *= t;
-                    }
 
                     let half_size = [hw, hh];
 
-                    let border_mode_f = match shape.border_mode {
-                        crate::renderer::types::BorderMode::Inset => 0.0,
-                        crate::renderer::types::BorderMode::Outer => 1.0,
-                        crate::renderer::types::BorderMode::Center => 2.0,
-                    };
                     // Build the stacked shadow layers for this shape: outer
                     // layers first, then inner, appended to the shared frame
                     // buffer. The solid, textured and backdrop-blur pipelines
@@ -2024,12 +1976,7 @@ impl ViewportRenderer {
                         });
                         inner_count += 1;
                     }
-                    let shadow_index = [
-                        base_index as f32,
-                        outer_count as f32,
-                        inner_count as f32,
-                        border_mode_f,
-                    ];
+                    let shadow_index = [base_index as f32, outer_count as f32, inner_count as f32];
 
                     // Emit 6 vertices (two triangles) for the bounding quad.
                     // Scale the quad about the pivot while `local_pos`,
@@ -2154,10 +2101,8 @@ impl ViewportRenderer {
                                 position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
-                                border_colour: bc,
                                 half_size,
                                 radii,
-                                border_width: shape.border_width,
                                 shape_type,
                                 uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
                                 shadow_index,
@@ -2189,10 +2134,8 @@ impl ViewportRenderer {
                                 position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
-                                border_colour: bc,
                                 half_size,
                                 radii,
-                                border_width: shape.border_width,
                                 shape_type,
                                 uv: [px / vp_w, py / vp_h],
                                 shadow_index,
@@ -2231,10 +2174,8 @@ impl ViewportRenderer {
                                 position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
-                                border_colour: bc,
                                 half_size,
                                 radii,
-                                border_width: shape.border_width,
                                 shape_type,
                                 fill_colour2: fc2,
                                 gradient_params: gp4,
@@ -2347,13 +2288,11 @@ impl ViewportRenderer {
                                 position: overlay_local_px(p[0], p[1], vp_w, vp_h),
                                 local_pos: local,
                                 fill_colour: tint,
-                                border_colour: [0.0; 4],
                                 half_size,
                                 radii: [0.0; 4],
-                                border_width: 0.0,
                                 shape_type: 0.0,
                                 uv,
-                                shadow_index: [0.0; 4],
+                                shadow_index: [0.0; 3],
                                 extras: [0.0; 4],
                                 nine_slice_uv: [0.0; 4],
                                 nine_slice_frac: [0.0; 4],
