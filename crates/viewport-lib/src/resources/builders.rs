@@ -935,16 +935,27 @@ pub(crate) fn capture_validation<T>(
     device: &crate::gpu::Device,
     f: impl FnOnce() -> T,
 ) -> (T, Option<crate::gpu::Error>) {
+    // WebGPU resolves `pop_error_scope` through a JavaScript promise, which only
+    // settles when the browser event loop turns. A synchronous spin never lets
+    // it turn, so waiting here would hang the tab rather than return an error.
+    // Run the work and report nothing captured; a validation failure still
+    // reaches the browser console through WebGPU's own uncaptured-error event.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = device;
+        return (f(), None);
+    }
+
     // 27 pops the scope through a `Device::pop_error_scope` future; 29 and 30's
     // `push_error_scope` returns a guard whose `pop()` is the future.
-    #[cfg(wgpu27)]
+    #[cfg(all(wgpu27, not(target_arch = "wasm32")))]
     {
         device.push_error_scope(crate::gpu::ErrorFilter::Validation);
         let value = f();
         let captured = block_on_simple(device.pop_error_scope());
         (value, captured)
     }
-    #[cfg(any(wgpu29, wgpu30))]
+    #[cfg(all(any(wgpu29, wgpu30), not(target_arch = "wasm32")))]
     {
         let guard = device.push_error_scope(crate::gpu::ErrorFilter::Validation);
         let value = f();
@@ -957,6 +968,7 @@ pub(crate) fn capture_validation<T>(
 /// `pop_error_scope` resolves on the next driver poll, which the device itself
 /// drives; spinning here is fine because validation completes without going
 /// through the device's command queue.
+#[cfg(not(target_arch = "wasm32"))]
 fn block_on_simple<F: std::future::Future>(mut fut: F) -> F::Output {
     use std::pin::Pin;
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};

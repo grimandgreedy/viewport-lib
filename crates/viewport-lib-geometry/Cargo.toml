@@ -16,4 +16,3 @@ publish = true
 [dependencies]
 viewport-lib-types = { path = "../viewport-lib-types", version = "0.2.0" }
 glam = { workspace = true }
-rayon = "1"

@@ -78,8 +78,19 @@ ash = "0.38"
 # On wasm the only usable wgpu backend is WebGPU. This unions the `webgpu`
 # feature into the same optional `wgpu` dep the `wgpu27` feature activates; the
 # native `metal`/`vulkan` features compile to nothing on this target.
+#
+# `fragile-send-sync-non-atomic-wasm` makes wgpu's handles `Send + Sync` here.
+# The WebGPU backend holds `RefCell`s, because the browser API it wraps is
+# single-threaded, so without it `wgpu::Buffer` and friends are `!Sync` and
+# every `ItemTypePlugin` impl fails the `Send + Sync` bound on that trait. What
+# the feature asks in return is that the target really is single-threaded, which
+# holds for `wasm32-unknown-unknown` without the `atomics` target feature. Real
+# wasm threads would mean revisiting this, not just leaving the flag on.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { version = "27.0", features = ["webgpu"], optional = true }
+wgpu = { version = "27.0", features = [
+    "webgpu",
+    "fragile-send-sync-non-atomic-wasm",
+], optional = true }
 
 [features]
 default = ["serde", "wgpu27"]
