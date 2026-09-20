@@ -552,8 +552,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
 
-    // If neither fill nor any outer shadow contributes, discard.
-    if (fill_alpha <= 0.0 && shadow_col.a <= 0.0) {
+    // Clip the outer shadow to outside the silhouette, the way CSS clips an
+    // outer box-shadow to outside the border box. Without this a translucent
+    // shape shows its own shadow through itself: the layers are drawn behind
+    // the fill, and a dilated silhouette covers the whole interior, not just
+    // the ring outside it. Inner shadows are the inside counterpart and are
+    // composited separately below.
+    shadow_col = vec4<f32>(shadow_col.rgb, shadow_col.a * (1.0 - fill_alpha));
+
+    // How far outside the edge the border band reaches, so those fragments
+    // survive the discard below. `Inset` stays inside the shape and needs
+    // none; `Outer` reaches a full width and `Center` half of one. Without
+    // this an outer border is invisible: every fragment past the edge is
+    // discarded before the band is ever evaluated.
+    var border_reach = 0.0;
+    if (in.border_width > 0.0) {
+        if (border_mode == 1) {
+            border_reach = in.border_width;
+        } else if (border_mode == 2) {
+            border_reach = in.border_width * 0.5;
+        }
+    }
+
+    // If neither the fill, an outer shadow, nor the border band reaches this
+    // fragment, there is nothing to draw.
+    if (fill_alpha <= 0.0 && shadow_col.a <= 0.0 && d > border_reach + aa) {
         discard;
     }
 
@@ -620,13 +643,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Start with the accumulated outer shadow layers.
     var colour = shadow_col;
 
-    // Composite fill on top of shadow.
+    // Composite fill on top of shadow, as a proper source-over on
+    // un-premultiplied colours. `mix(dst.rgb, src.rgb, src.a)` is only correct
+    // when the destination is opaque: with a cleared or clipped shadow behind
+    // it, the destination's colour still leaks through at full strength even
+    // though its alpha is zero. That is what made a translucent shape look
+    // tinted by its own clipped-away shadow.
     if (fill_alpha > 0.0) {
         let fc = vec4<f32>(fill_col.rgb, fill_col.a * fill_alpha);
-        colour = vec4<f32>(
-            mix(colour.rgb, fc.rgb, fc.a),
-            fc.a + colour.a * (1.0 - fc.a),
-        );
+        let out_a = fc.a + colour.a * (1.0 - fc.a);
+        let rgb = (fc.rgb * fc.a + colour.rgb * colour.a * (1.0 - fc.a)) / max(out_a, 1.0e-5);
+        colour = vec4<f32>(select(fc.rgb, rgb, out_a > 0.0), out_a);
     }
 
     // Inner shadow layers: composite on top of the fill (so they tint the
