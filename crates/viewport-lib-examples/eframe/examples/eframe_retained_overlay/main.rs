@@ -254,16 +254,36 @@ impl App {
                         .with_screen_anchor([PANEL_X, PANEL_TOP - 8.0])
                         .with_align_y(AnchorY::Bottom)
                         .with_font_size(16.0)
-                        .with_colour([0.95, 0.97, 1.0, 1.0])
-                        .with_background(true)
-                        .with_background_colour([0.2, 0.24, 0.34, 1.0])
-                        .with_padding(5.0)
-                        .with_border_radius(4.0);
+                        .with_colour([0.95, 0.97, 1.0, 1.0]);
+                    // The title's own panel is a shape in the same compiled
+                    // group: measure the text, pad it, and place it behind the
+                    // label. Shapes draw under text at the same `z_order`.
+                    let title_pad = 5.0;
+                    let title_size = self
+                        .session
+                        .renderer_mut()
+                        .resources()
+                        .measure_overlay_text("Layers", 16.0, None);
+                    let mut chrome = panel_background();
+                    chrome.push(
+                        OverlayShapeItem::new(
+                            OverlayShape::RoundedRect { radii: [4.0; 4] },
+                            [
+                                PANEL_X - title_pad,
+                                PANEL_TOP - 8.0 - title_size.height - title_pad,
+                            ],
+                            [
+                                title_size.width + title_pad * 2.0,
+                                title_size.height + title_pad * 2.0,
+                            ],
+                        )
+                        .with_fill(OverlayFill::Solid([0.2, 0.24, 0.34, 1.0].into())),
+                    );
                     let bg = self.session.renderer_mut().compile_overlay_geometry(
                         &rs.device,
                         &rs.queue,
                         &[],
-                        &panel_background(),
+                        &chrome,
                         &[],
                         std::slice::from_ref(&title),
                         ppp,
@@ -278,13 +298,11 @@ impl App {
                         ppp,
                     );
                     // A world-anchored label, laid out once. The renderer resolves
-                    // its anchor each frame so it tracks the cube; the "cube" text,
-                    // background, and leader line are never re-tessellated.
+                    // its anchor each frame so it tracks the cube; the glyphs and
+                    // their contour are never re-laid-out.
                     let tag = LabelItem::new("cube")
                         .with_world_anchor([0.0, 0.0, 0.7])
-                        .with_leader_line(true)
-                        .with_background(true)
-                        .with_border_radius(4.0)
+                        .with_outline([0.0, 0.0, 0.0, 0.85], 2.0)
                         .with_align_y(AnchorY::Bottom)
                         .with_font_size(15.0);
                     let label = self

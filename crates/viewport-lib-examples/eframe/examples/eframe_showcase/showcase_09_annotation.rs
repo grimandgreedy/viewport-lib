@@ -7,7 +7,10 @@ use crate::App;
 use crate::eframe::egui;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
-use vpl::{Camera, LabelItem, Material, ViewportRenderer, scene::Scene};
+use vpl::{
+    Camera, LabelItem, Material, OverlayFill, OverlayShape, OverlayShapeItem, ViewportRenderer,
+    scene::Scene,
+};
 
 // ---------------------------------------------------------------------------
 // State
@@ -17,6 +20,9 @@ pub(crate) struct AnnotationState {
     pub built: bool,
     pub scene: Scene,
     pub labels: Vec<LabelItem>,
+    /// One backing panel per label: a shape sized to the measured text, sharing
+    /// the label's world anchor so the two resolve and cull together.
+    pub backings: Vec<OverlayShapeItem>,
 }
 
 impl Default for AnnotationState {
@@ -25,6 +31,7 @@ impl Default for AnnotationState {
             built: false,
             scene: Scene::new(),
             labels: Vec::new(),
+            backings: Vec::new(),
         }
     }
 }
@@ -61,22 +68,27 @@ impl App {
         self.ann_state.labels = vec![
             LabelItem::new("Origin (0,0,0)")
                 .with_world_anchor([0.0, 0.0, 0.0])
-                .with_colour([1.0, 1.0, 1.0, 1.0])
-                .with_background(true),
+                .with_colour([1.0, 1.0, 1.0, 1.0]),
             LabelItem::new("Peak Pressure: 101.3 kPa")
                 .with_world_anchor([2.0, 3.0, 0.0])
-                .with_colour([1.0, 0.9, 0.1, 1.0])
-                .with_leader_line(true)
-                .with_background(true),
+                .with_colour([1.0, 0.9, 0.1, 1.0]),
             LabelItem::new("Outlet")
                 .with_world_anchor([-3.0, 2.0, 0.0])
-                .with_colour([0.4, 0.8, 1.0, 1.0])
-                .with_background(true),
+                .with_colour([0.4, 0.8, 1.0, 1.0]),
             LabelItem::new("Behind camera (clipped)")
                 .with_world_anchor([0.0, 300.0, 0.0])
-                .with_colour([1.0, 0.0, 0.0, 1.0])
-                .with_background(true),
+                .with_colour([1.0, 0.0, 0.0, 1.0]),
         ];
+
+        // A panel behind each label: measure the text, pad it, and give the
+        // shape the label's anchoring and position so the pair moves, culls and
+        // turns as one. Shapes draw under text at the same `z_order`.
+        self.ann_state.backings = self
+            .ann_state
+            .labels
+            .iter()
+            .map(|label| label_backing(renderer, label, 4.0))
+            .collect();
 
         self.ann_state.built = true;
     }
@@ -90,6 +102,44 @@ impl App {
             ..Camera::default()
         };
     }
+}
+
+/// A rounded panel behind `label`, sized to its measured text plus `pad` on
+/// every side.
+///
+/// The panel copies the label's anchoring and position, so both resolve against
+/// the same origin each frame and a world anchor behind the camera culls both.
+/// The padding correction re-centres the padded box on the text box: an
+/// alignment shift is taken against the larger box, so it overshoots by the
+/// padding at whichever edge the item is aligned to.
+fn label_backing(renderer: &ViewportRenderer, label: &LabelItem, pad: f32) -> OverlayShapeItem {
+    let m = renderer.resources().measure_overlay_text(
+        &label.text,
+        label.text_style.size,
+        label.text_style.font,
+    );
+    let shift = |a: vpl::AnchorX| match a {
+        vpl::AnchorX::Left => -pad,
+        vpl::AnchorX::Middle => 0.0,
+        vpl::AnchorX::Right => pad,
+    };
+    let shift_y = |a: vpl::AnchorY| match a {
+        vpl::AnchorY::Top => -pad,
+        vpl::AnchorY::Middle => 0.0,
+        vpl::AnchorY::Bottom => pad,
+    };
+    let t = label.transform.translate;
+    OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 4.0 },
+        [
+            t[0] + shift(label.anchoring.align.x),
+            t[1] + shift_y(label.anchoring.align.y),
+        ],
+        [m.width + pad * 2.0, m.height + pad * 2.0],
+    )
+    .with_anchor(label.anchoring.origin)
+    .with_align(label.anchoring.align)
+    .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.55].into()))
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +229,7 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // Overlay labels (Showcase 9 and 34): populate OverlayFrame.
     if app.ann_state.built {
         fd.overlays.labels = app.ann_state.labels.clone();
+        fd.overlays.shapes = app.ann_state.backings.clone();
     }
 }
 

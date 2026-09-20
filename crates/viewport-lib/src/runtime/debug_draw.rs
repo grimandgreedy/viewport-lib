@@ -696,7 +696,6 @@ impl DebugDraw {
                 label.anchoring.origin = crate::renderer::OverlayOrigin::World((*position).into());
                 label.text = text.clone();
                 label.style.fill = crate::renderer::OverlayFill::Solid((*colour).into());
-                label.leader_line = true;
                 label.text_style.size = 12.0;
                 out.push(label);
             }

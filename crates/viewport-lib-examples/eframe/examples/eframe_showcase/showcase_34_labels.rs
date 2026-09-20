@@ -1,8 +1,8 @@
 //! Showcase 34: Labels : exploded gearbox assembly with annotated parts
 //! and feature demonstration rows showcasing every LabelItem capability.
 
-use crate::eframe;
 use crate::App;
+use crate::eframe;
 use crate::geometry::make_box_with_uvs;
 use viewport_lib as vpl;
 use vpl::{LabelAnchor, LabelItem, Material, ViewportRenderer};
@@ -181,15 +181,10 @@ impl App {
                     .with_world_anchor(exploded_pos)
                     .with_colour(part.label_colour)
                     .with_font_size(12.0)
-                    .with_leader_line(true)
-                    .with_background(true)
-                    .with_background_colour([0.05, 0.05, 0.1, 0.75])
-                    .with_leader_colour([
-                        part.label_colour[0],
-                        part.label_colour[1],
-                        part.label_colour[2],
-                        0.35,
-                    ])
+                    // A contour keeps the text legible over the model without a
+                    // panel behind it; `build_label_backings` puts panels behind
+                    // the screen-anchored ones.
+                    .with_outline([0.05, 0.05, 0.1, 0.9], 2.0)
                     .with_z_order(0),
             );
         }
@@ -201,7 +196,6 @@ impl App {
     /// the actual viewport dimensions.  Called each frame from `build_frame_data`.
     pub(crate) fn build_label_screen_overlays(&self, vp_w: f32, vp_h: f32) -> Vec<LabelItem> {
         let mut out = Vec::new();
-        let demo_bg = [0.08, 0.08, 0.15, 0.7];
         let cx = vp_w * 0.5; // viewport centre X
 
         // -- Title (centered at top) --
@@ -211,9 +205,7 @@ impl App {
                     .with_screen_anchor([cx, 36.0])
                     .with_colour([1.0, 1.0, 1.0, 1.0])
                     .with_font_size(48.0)
-                    .with_background(true)
-                    .with_background_colour([0.1, 0.1, 0.2, 0.0])
-                    .with_border_radius(4.0)
+                    .with_outline([0.0, 0.0, 0.0, 0.8], 3.0)
                     .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
@@ -224,9 +216,7 @@ impl App {
                     .with_screen_anchor([cx, vp_h - 24.0])
                     .with_colour([0.8, 0.8, 0.8, 1.0])
                     .with_font_size(11.0)
-                    .with_background(true)
-                    .with_background_colour([0.0, 0.0, 0.0, 0.65])
-                    .with_border_radius(3.0)
+                    .with_outline([0.0, 0.0, 0.0, 0.8], 2.0)
                     .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
@@ -270,8 +260,6 @@ impl App {
                     .with_screen_anchor([col + 90.0, y + i as f32 * 20.0])
                     .with_colour([0.9, 0.95, 1.0, 1.0])
                     .with_font_size(12.0)
-                    .with_background(true)
-                    .with_background_colour(demo_bg)
                     .with_align_x(*align)
                     .with_z_order(100),
             );
@@ -287,8 +275,6 @@ impl App {
                     .with_screen_anchor([col + i as f32 * 65.0, y])
                     .with_colour([1.0, 0.8, 0.3, 1.0])
                     .with_font_size(13.0)
-                    .with_background(true)
-                    .with_background_colour(demo_bg)
                     .with_opacity(*opacity)
                     .with_z_order(100),
             );
@@ -312,8 +298,6 @@ impl App {
                     .with_screen_anchor([col + i as f32 * 65.0, y])
                     .with_colour([0.6, 1.0, 0.7, 1.0])
                     .with_font_size(11.0)
-                    .with_background(true)
-                    .with_background_colour(demo_bg)
                     .with_position(*off)
                     .with_z_order(100),
             );
@@ -333,8 +317,6 @@ impl App {
                 .with_screen_anchor([col, y + i as f32 * 55.0])
                 .with_colour([1.0, 0.7, 0.9, 1.0])
                 .with_font_size(11.0)
-                .with_background(true)
-                .with_background_colour(demo_bg)
                 .with_z_order(100);
             if let Some(w) = *max_w {
                 label = label.with_max_width(w);
@@ -342,36 +324,32 @@ impl App {
             out.push(label);
         }
 
-        // -- Row 5: Border radius --
+        // -- Row 5: Outline width (a shadow layer with no blur) --
         y += 170.0;
-        out.push(heading(y, "border_radius:"));
+        out.push(heading(y, "outline:"));
         y += 16.0;
-        for (i, radius) in [0.0f32, 3.0, 6.0, 12.0].iter().enumerate() {
+        for (i, width) in [0.0f32, 1.0, 2.0, 3.0].iter().enumerate() {
             out.push(
-                LabelItem::new(format!("{:.0}px", radius))
+                LabelItem::new(format!("{:.0}px", width))
                     .with_screen_anchor([col + i as f32 * 65.0, y])
                     .with_colour([0.8, 0.85, 1.0, 1.0])
                     .with_font_size(12.0)
-                    .with_background(true)
-                    .with_background_colour([0.15, 0.15, 0.3, 0.8])
-                    .with_border_radius(*radius)
+                    .with_outline([0.0, 0.0, 0.0, 0.9], *width)
                     .with_z_order(100),
             );
         }
 
-        // -- Row 6: Padding --
+        // -- Row 6: Opacity --
         y += 34.0;
-        out.push(heading(y, "padding:"));
+        out.push(heading(y, "opacity:"));
         y += 16.0;
-        for (i, pad) in [0.0f32, 3.0, 8.0, 16.0].iter().enumerate() {
+        for (i, opacity) in [1.0f32, 0.7, 0.4, 0.2].iter().enumerate() {
             out.push(
-                LabelItem::new(format!("{:.0}px", pad))
+                LabelItem::new(format!("{:.1}", opacity))
                     .with_screen_anchor([col + i as f32 * 72.0, y])
                     .with_colour([0.9, 1.0, 0.8, 1.0])
                     .with_font_size(12.0)
-                    .with_background(true)
-                    .with_background_colour([0.15, 0.3, 0.15, 0.8])
-                    .with_padding(*pad)
+                    .with_opacity(*opacity)
                     .with_z_order(100),
             );
         }
@@ -386,8 +364,6 @@ impl App {
                     .with_screen_anchor([col + i as f32 * 65.0, y])
                     .with_colour([1.0, 1.0, 1.0, 1.0])
                     .with_font_size(*size)
-                    .with_background(true)
-                    .with_background_colour(demo_bg)
                     .with_z_order(100),
             );
         }
@@ -401,9 +377,6 @@ impl App {
                 .with_screen_anchor([col, y])
                 .with_colour([1.0, 1.0, 1.0, 1.0])
                 .with_font_size(12.0)
-                .with_background(true)
-                .with_background_colour([0.6, 0.15, 0.15, 0.9])
-                .with_border_radius(3.0)
                 .with_z_order(98),
         );
         out.push(
@@ -411,9 +384,6 @@ impl App {
                 .with_screen_anchor([col + 45.0, y + 6.0])
                 .with_colour([1.0, 1.0, 1.0, 1.0])
                 .with_font_size(12.0)
-                .with_background(true)
-                .with_background_colour([0.15, 0.5, 0.15, 0.9])
-                .with_border_radius(3.0)
                 .with_z_order(99),
         );
         out.push(
@@ -421,9 +391,6 @@ impl App {
                 .with_screen_anchor([col + 90.0, y + 12.0])
                 .with_colour([1.0, 1.0, 1.0, 1.0])
                 .with_font_size(12.0)
-                .with_background(true)
-                .with_background_colour([0.15, 0.15, 0.6, 0.9])
-                .with_border_radius(3.0)
                 .with_z_order(100),
         );
 
@@ -477,8 +444,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::new(0.0, 0.0, 0.0),
         distance: 20.0,
-        orientation: glam::Quat::from_rotation_z(0.5)
-            * glam::Quat::from_rotation_x(1.1),
+        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()
     };
 }
@@ -495,7 +461,10 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let items = app.lbl_state.scene.collect_render_items(&vpl::Selection::new());
+        let items = app
+            .lbl_state
+            .scene
+            .collect_render_items(&vpl::Selection::new());
         let sg = app.lbl_state.scene.version();
         let lighting = {
             let mut _t = vpl::LightingSettings::default();
@@ -522,11 +491,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
     if app.lbl_state.built {
         // World-anchored part labels (built once, filtered by toggle).
         if app.lbl_state.show_part_labels {
@@ -548,30 +513,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -612,13 +569,23 @@ impl crate::Showcase for ScLabels {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -627,7 +594,12 @@ impl crate::Showcase for ScLabels {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_labels(app, ui)
     }
 }

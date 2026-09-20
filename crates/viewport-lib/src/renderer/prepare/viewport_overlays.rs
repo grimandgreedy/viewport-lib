@@ -919,29 +919,16 @@ impl ViewportRenderer {
                         .glyph_atlas
                         .font_ascent(font_index, label.text_style.size);
 
-                    let align_offset = match label.anchoring.align.x {
-                        crate::renderer::types::AnchorX::Left => label.anchor_padding,
-                        crate::renderer::types::AnchorX::Middle => -layout.total_width * 0.5,
-                        crate::renderer::types::AnchorX::Right => {
-                            -layout.total_width - label.anchor_padding
-                        }
-                    };
-
-                    let align_offset_y = match label.anchoring.align.y {
-                        crate::renderer::types::AnchorY::Top => 0.0,
-                        crate::renderer::types::AnchorY::Middle => -layout.height * 0.5,
-                        crate::renderer::types::AnchorY::Bottom => -layout.height,
-                    };
+                    let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
+                    let align_offset_y = label.anchoring.align.y.align_shift(layout.height);
 
                     let text_x = anchor_px[0] + align_offset + label.transform.translate[0];
                     let text_y = anchor_px[1] + align_offset_y + label.transform.translate[1];
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
-                    // A turned label turns its plate and its shadows with its
-                    // glyphs, but not its leader line: that runs to the projected
-                    // world anchor and must keep pointing at it. So the plate and
-                    // the text are rotated as two ranges with the leader between.
+                    // A label is one range: its glyphs and their shadow layers,
+                    // turned together about the laid-out box.
                     let rot = OverlayRotation::new(
                         label.transform.rotation,
                         label.transform.scale,
@@ -951,56 +938,6 @@ impl ViewportRenderer {
                             label.transform.pivot,
                         ),
                     );
-                    let bg_start = batch.len();
-
-                    if label.background {
-                        let pad = label.padding;
-                        let bx0 = text_x - pad;
-                        let by0 = text_y - pad;
-                        let bx1 = text_x + layout.total_width + pad;
-                        let by1 = text_y + layout.height + pad;
-                        let bg_colour =
-                            apply_opacity(label.background_colour.to_linear_rgba(), opacity);
-                        if label.border_radius > 0.0 {
-                            emit_rounded_quad(
-                                &mut batch,
-                                bx0,
-                                by0,
-                                bx1,
-                                by1,
-                                label.border_radius,
-                                bg_colour,
-                                vp_w,
-                                vp_h,
-                            );
-                        } else {
-                            emit_solid_quad(&mut batch, bx0, by0, bx1, by1, bg_colour, vp_w, vp_h);
-                        }
-                    }
-
-                    tint_vertices_from(&mut batch, bg_start, label.style.tint);
-                    rotate_vertices_from(&mut batch, bg_start, rot);
-
-                    if label.leader_line {
-                        if let crate::renderer::types::OverlayOrigin::World(wa) =
-                            label.anchoring.origin
-                        {
-                            let world_px = project_to_screen(wa, view, proj, vp_w, vp_h);
-                            if let Some(wp) = world_px {
-                                emit_line_quad(
-                                    &mut batch,
-                                    wp[0],
-                                    wp[1],
-                                    text_x,
-                                    text_y + layout.height * 0.5,
-                                    1.5,
-                                    apply_opacity(label.leader_colour.to_linear_rgba(), opacity),
-                                    vp_w,
-                                    vp_h,
-                                );
-                            }
-                        }
-                    }
 
                     let text_start = batch.len();
 

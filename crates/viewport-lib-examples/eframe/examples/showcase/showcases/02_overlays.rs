@@ -210,12 +210,10 @@ impl OverlaysShowcase {
                 LabelItem::new(text)
                     .with_world_anchor(pos)
                     .with_colour(Colour::srgb(colour[0], colour[1], colour[2], colour[3]))
-                    .with_leader_line(true)
-                    .with_leader_colour(Colour::srgb(colour[0], colour[1], colour[2], 0.7))
-                    .with_background(true)
-                    .with_background_colour(Colour::srgb(0.0, 0.0, 0.0, 0.5))
-                    .with_border_radius(4.0)
-                    .with_padding(4.0)
+                    // A label draws text only: a contour keeps it readable over the
+                    // scene. For a real panel behind it, submit an OverlayShapeItem
+                    // with the same anchoring and the measured text plus padding.
+                    .with_outline(Colour::srgb(0.0, 0.0, 0.0, 0.8), 2.0)
                     .with_align_x(LabelAnchor::Left),
             );
         }

@@ -397,12 +397,14 @@ fn label_rotation_pivot_moves_the_centre_of_rotation() {
     );
 }
 
-/// A rotated label turns its background plate with its glyphs. Turning only the
-/// text inside a level plate is the bug this feature exists to avoid, so the
-/// plate's own pixels have to move.
+/// A label and the shape backing it turn together: both take the same rotation
+/// about their own centres, and with the backing sized to the measured text plus
+/// uniform padding those centres coincide. Turning only the text inside a level
+/// panel is the bug this checks against, now that a backing is a shape rather
+/// than a plate inside the text stream.
 #[test]
-fn label_rotation_turns_the_background_plate() {
-    use viewport_lib::LabelItem;
+fn a_label_and_its_backing_shape_turn_together() {
+    use viewport_lib::{LabelItem, OverlayFill, OverlayShape, OverlayShapeItem};
 
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -410,25 +412,56 @@ fn label_rotation_turns_the_background_plate() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    // Plate only: transparent text, so every differing pixel belongs to the plate.
-    let render = |rotation: f32, r: &mut ViewportRenderer| {
+    let text = "Hg";
+    let pad = 6.0;
+    let metrics = renderer.resources().measure_overlay_text(text, 32.0, None);
+    let pos = [20.0_f32, 30.0];
+
+    let render = |panel_rotation: f32, text_rotation: f32, r: &mut ViewportRenderer| {
         let mut frame = base_frame();
+        frame.overlays.shapes = vec![
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 4.0 },
+                [pos[0] - pad, pos[1] - pad],
+                [metrics.width + pad * 2.0, metrics.height + pad * 2.0],
+            )
+            .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 1.0].into()))
+            .with_rotation(panel_rotation),
+        ];
         frame.overlays.labels = vec![
-            LabelItem::new("Hg")
-                .with_position([20.0, 30.0])
+            LabelItem::new(text)
+                .with_position(pos)
                 .with_font_size(32.0)
-                .with_colour([0.0, 0.0, 0.0, 0.0])
-                .with_background(true)
-                .with_background_colour([0.0, 0.0, 0.0, 1.0])
-                .with_rotation(rotation),
+                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_rotation(text_rotation),
         ];
         r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
     };
 
+    let white = |px: &[u8]| {
+        px.chunks_exact(4)
+            .filter(|p| p[0] > 200 && p[1] > 200 && p[2] > 200)
+            .count()
+    };
+
+    let level = render(0.0, 0.0, &mut renderer);
+    let turned = render(0.6, 0.6, &mut renderer);
+    assert_ne!(level, turned, "the pair must turn");
+
+    // Turning the panel and leaving the text level is a different picture, which
+    // is what says the text actually rode the panel rather than the panel simply
+    // growing to cover it.
+    let panel_only = render(0.6, 0.0, &mut renderer);
     assert_ne!(
-        render(0.0, &mut renderer),
-        render(0.6, &mut renderer),
-        "the background plate must turn with the label"
+        turned, panel_only,
+        "the label must turn with its backing, not sit level on a turned panel"
+    );
+
+    // And the glyphs survive the turn rather than being swallowed by the panel.
+    let (level_text, turned_text) = (white(&level), white(&turned));
+    assert!(
+        turned_text > level_text / 2,
+        "the turned label should still draw its glyphs: {turned_text} vs {level_text}"
     );
 }
 

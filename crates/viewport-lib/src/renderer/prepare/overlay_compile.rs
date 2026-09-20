@@ -333,7 +333,6 @@ fn emit_label(
     emit_leader: bool,
     ppp: f32,
 ) {
-    use crate::renderer::types::{AnchorX, AnchorY, OverlayOrigin};
     if label.text.is_empty()
         || label.style.opacity <= 0.0
         || names_unusable_mask(&label.clip, "label")
@@ -365,18 +364,10 @@ fn emit_label(
     let font_index = label.text_style.font.map_or(0, |h| h.0);
     let ascent = atlas.font_ascent(font_index, label.text_style.size);
 
-    // Alignment folds in anchor_padding on X (Left pushes right, Right pulls
-    // left, Middle unaffected); position nudges last. The anchor origin is [0, 0].
-    let align_offset = match label.anchoring.align.x {
-        AnchorX::Left => label.anchor_padding,
-        AnchorX::Middle => -layout.total_width * 0.5,
-        AnchorX::Right => -layout.total_width - label.anchor_padding,
-    };
-    let align_offset_y = match label.anchoring.align.y {
-        AnchorY::Top => 0.0,
-        AnchorY::Middle => -layout.height * 0.5,
-        AnchorY::Bottom => -layout.height,
-    };
+    // Alignment places the laid-out box on the origin, which is [0, 0] here;
+    // position nudges last.
+    let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
+    let align_offset_y = label.anchoring.align.y.align_shift(layout.height);
     let text_x = align_offset + label.transform.translate[0];
     let text_y = align_offset_y + label.transform.translate[1];
 
@@ -389,50 +380,6 @@ fn emit_label(
             label.transform.pivot,
         ),
     );
-    let bg_start = verts.len();
-
-    if label.background {
-        let pad = label.padding;
-        let (bx0, by0) = (text_x - pad, text_y - pad);
-        let (bx1, by1) = (
-            text_x + layout.total_width + pad,
-            text_y + layout.height + pad,
-        );
-        let bg = overlay_geometry::apply_opacity(label.background_colour.to_linear_rgba(), opacity);
-        if label.border_radius > 0.0 {
-            overlay_geometry::emit_rounded_quad(
-                verts,
-                bx0,
-                by0,
-                bx1,
-                by1,
-                label.border_radius,
-                bg,
-                0.0,
-                0.0,
-            );
-        } else {
-            overlay_geometry::emit_solid_quad(verts, bx0, by0, bx1, by1, bg, 0.0, 0.0);
-        }
-    }
-
-    viewport_overlays::tint_vertices_from(verts, bg_start, label.style.tint);
-    overlay_geometry::rotate_vertices_from(verts, bg_start, rot);
-
-    if emit_leader && label.leader_line && matches!(label.anchoring.origin, OverlayOrigin::World(_))
-    {
-        overlay_geometry::emit_line_quad(
-            verts,
-            0.0,
-            0.0,
-            text_x,
-            text_y + layout.height * 0.5,
-            1.5,
-            overlay_geometry::apply_opacity(label.leader_colour.to_linear_rgba(), opacity),
-            0.0,
-            0.0,
-        );
-    }
 
     let text_start = verts.len();
 

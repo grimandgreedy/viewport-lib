@@ -90,8 +90,7 @@ fn a_measured_wrapped_label_lands_in_its_resolved_box() {
             .with_font_size(FONT_SIZE)
             .with_max_width(MAX_WIDTH)
             .with_align_x(ax)
-            .with_align_y(ay)
-            .with_anchor_padding(0.0);
+            .with_align_y(ay);
 
         let tl = label
             .resolve_top_left(

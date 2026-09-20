@@ -379,6 +379,25 @@ fn build_polylines(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 }
 
 fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    // A label draws text and nothing else, so its backing is a shape: measured
+    // text plus padding, the same placement, and the same `z_order`, which puts
+    // it under the text by family rank.
+    let backed_text = "Backed and padded";
+    let backed_pad = 6.0;
+    let backed_size = ctx
+        .renderer
+        .resources()
+        .measure_overlay_text(backed_text, 14.0, None);
+    let backing = OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 4.0 },
+        [20.0 - backed_pad, 55.0 - backed_pad],
+        [
+            backed_size.width + backed_pad * 2.0,
+            backed_size.height + backed_pad * 2.0,
+        ],
+    )
+    .with_fill(OverlayFill::Solid(Colour::srgb(0.05, 0.05, 0.1, 0.8)));
+
     let labels = vec![
         LabelItem::new("Overlay label")
             .with_position([20.0, 20.0])
@@ -387,10 +406,7 @@ fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         LabelItem::new("Backed and padded")
             .with_position([20.0, 55.0])
             .with_font_size(14.0)
-            .with_background(true)
-            .with_background_colour(Colour::srgb(0.05, 0.05, 0.1, 0.8))
-            .with_padding(6.0)
-            .with_border_radius(4.0),
+            .with_colour(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
         LabelItem::new("Wrapped text that runs past the maximum width it was given")
             .with_position([20.0, 100.0])
             .with_font_size(13.0)
@@ -410,6 +426,7 @@ fn build_labels(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
         ovl.labels = labels;
+        ovl.shapes = vec![backing];
         ovl
     })
 }

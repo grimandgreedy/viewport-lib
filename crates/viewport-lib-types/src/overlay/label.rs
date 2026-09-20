@@ -9,9 +9,16 @@ use super::transform::OverlayTransform;
 
 /// A text label rendered as a screen-space overlay.
 ///
-/// Anchored to a viewport corner or a projected world point with an optional
-/// leader line and background box. The text colour is `style.fill`, which can
-/// be a gradient across the text box as well as a flat colour.
+/// Anchored to a viewport corner or a projected world point. The text colour is
+/// `style.fill`, which can be a gradient across the text box as well as a flat
+/// colour.
+///
+/// A label draws text and nothing else. A backing panel behind it is an
+/// [`OverlayShapeItem`](crate::overlay::OverlayShapeItem) with the same
+/// anchoring and the measured text plus padding for its size, which gets the
+/// SDF pipeline's rounded corners, gradients, textures and shadow layers
+/// instead of a flat quad in the text stream. Shapes draw under text at equal
+/// `z_order`, so the two need no ordering work.
 ///
 /// # Anchoring
 ///
@@ -21,8 +28,7 @@ use super::transform::OverlayTransform;
 /// that is reprojected each frame.  `position` nudges the text from that origin in
 /// logical pixels, and `anchoring.align` places the text box on it.  A
 /// world-anchored label is frustum-culled: it is not drawn when the point is
-/// behind the camera or outside the viewport, and it draws a leader line when
-/// `leader_line` is set.
+/// behind the camera or outside the viewport.
 ///
 /// # Examples
 ///
@@ -30,7 +36,7 @@ use super::transform::OverlayTransform;
 /// # use viewport_lib_types::overlay::LabelItem;
 /// let label = LabelItem::new("Peak Pressure: 101.3 kPa")
 ///     .with_world_anchor([2.0, 3.0, 0.0])
-///     .with_leader_line(true);
+///     .with_colour([1.0, 0.9, 0.4, 1.0]);
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -73,37 +79,9 @@ pub struct LabelItem {
     /// Which font to draw the text in, and at what size.
     pub text_style: crate::overlay::TextStyle,
 
-    /// Draw a filled rectangle behind the text.
-    pub background: bool,
-
-    /// RGBA colour of the background rectangle.
-    pub background_colour: crate::colour::Colour,
-
-    /// Padding between the text and the background rectangle edge in logical
-    /// pixels.  Only used when `background` is `true`.  Default: `3.0`.
-    pub padding: f32,
-
-    /// Draw a line from the projected `world_anchor` to the label text origin.
-    /// Only drawn when `world_anchor` is set.
-    pub leader_line: bool,
-
-    /// RGBA colour of the leader line.
-    pub leader_colour: crate::colour::Colour,
-
-    /// Gap in logical pixels between the anchor and the near edge of the text,
-    /// applied in the anchor-facing direction: `Left` text is pushed this far
-    /// right of the anchor, `Right` text this far left. `Middle` is
-    /// unaffected. Default: `6.0`, which keeps text clear of a leader line.
-    /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
-    pub anchor_padding: f32,
-
     /// Maximum text width in logical pixels.  When set, text that exceeds
     /// this width is wrapped to multiple lines.  `None` disables wrapping.
     pub max_width: Option<f32>,
-
-    /// Corner radius of the background rectangle in logical pixels.
-    /// Only used when `background` is `true`.  Default: `0.0` (sharp corners).
-    pub border_radius: f32,
 
     /// Explicit draw order.  Labels with lower values are drawn first
     /// (further back).  Labels with equal `z_order` are drawn in list order.
@@ -118,18 +96,11 @@ impl Default for LabelItem {
             ),
             text: String::new(),
             text_style: crate::overlay::TextStyle::default(),
-            background: false,
-            background_colour: [0.0, 0.0, 0.0, 0.55].into(),
-            padding: 3.0,
-            leader_line: false,
-            leader_colour: [1.0, 1.0, 1.0, 0.6].into(),
-            anchor_padding: 6.0,
             transform: OverlayTransform::IDENTITY,
             style: crate::overlay::OverlayStyle::default(),
             animations: None,
             clip: OverlayClip::default(),
             max_width: None,
-            border_radius: 0.0,
             z_order: 0,
         }
     }
@@ -199,36 +170,6 @@ impl LabelItem {
         self
     }
 
-    /// Draw a filled rectangle behind the text.
-    pub fn with_background(mut self, background: bool) -> Self {
-        self.background = background;
-        self
-    }
-
-    /// Set the background rectangle colour.
-    pub fn with_background_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
-        self.background_colour = colour.into();
-        self
-    }
-
-    /// Set the padding between the text and the background rectangle edge.
-    pub fn with_padding(mut self, padding: f32) -> Self {
-        self.padding = padding;
-        self
-    }
-
-    /// Draw a leader line from the projected world anchor to the text origin.
-    pub fn with_leader_line(mut self, leader_line: bool) -> Self {
-        self.leader_line = leader_line;
-        self
-    }
-
-    /// Set the leader line colour.
-    pub fn with_leader_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
-        self.leader_colour = colour.into();
-        self
-    }
-
     /// Set the horizontal alignment of the text relative to its anchor.
     pub fn with_align_x(mut self, align_x: AnchorX) -> Self {
         self.anchoring.align.x = align_x;
@@ -249,24 +190,16 @@ impl LabelItem {
         self
     }
 
-    /// Set the gap between the anchor and the near edge of the text. Defaults to
-    /// `6.0`; pass `0.0` for anchor-exact placement in screen-space UI.
-    pub fn with_anchor_padding(mut self, anchor_padding: f32) -> Self {
-        self.anchor_padding = anchor_padding;
-        self
-    }
-
     /// Resolve the top-left pixel of the laid-out text for a frame: the
     /// origin, plus `position`, shifted by `anchoring.align` for a
-    /// text box of `size`, plus `anchor_padding` on the horizontal edge the
-    /// text is aligned to. Returns `None` when a `World` anchor projects behind
+    /// text box of `size`. Returns `None` when a `World` anchor projects behind
     /// the camera or off-screen, which is the frame the label is skipped on.
     ///
     /// `size` is the measured text, in logical pixels: `[width, height]` from
     /// `DeviceResources::measure_overlay_text`, or from the wrapped measure
     /// when `max_width` is set. The renderer lays the text out and then places
-    /// it the same way, so a backing shape or a leader line built on this lands
-    /// where the text does.
+    /// it the same way, so a backing shape built on this lands where the text
+    /// does.
     ///
     /// The box returned is the unrotated one. `transform.rotation` turns the
     /// text inside it about the pivot, so a rotated label's glyphs leave this
@@ -279,15 +212,8 @@ impl LabelItem {
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
         let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
-        // The horizontal rule is the shared align shift plus the anchor gap,
-        // which pushes the text away from the anchor on whichever side it sits.
-        let shift_x = match self.anchoring.align.x {
-            AnchorX::Left => self.anchor_padding,
-            AnchorX::Middle => -size[0] * 0.5,
-            AnchorX::Right => -size[0] - self.anchor_padding,
-        };
         Some([
-            origin[0] + self.transform.translate[0] + shift_x,
+            origin[0] + self.transform.translate[0] + self.anchoring.align.x.align_shift(size[0]),
             origin[1] + self.transform.translate[1] + self.anchoring.align.y.align_shift(size[1]),
         ])
     }
@@ -309,12 +235,6 @@ impl LabelItem {
     /// to multiple lines.
     pub fn with_max_width(mut self, max_width: f32) -> Self {
         self.max_width = Some(max_width);
-        self
-    }
-
-    /// Set the corner radius of the background rectangle in logical pixels.
-    pub fn with_border_radius(mut self, border_radius: f32) -> Self {
-        self.border_radius = border_radius;
         self
     }
 
@@ -411,8 +331,7 @@ mod tests {
         let label = LabelItem::new("hello")
             .with_screen_anchor([40.0, 25.0])
             .with_align_x(AnchorX::Left)
-            .with_align_y(AnchorY::Top)
-            .with_anchor_padding(0.0);
+            .with_align_y(AnchorY::Top);
         let tl = label
             .resolve_top_left(
                 [60.0, 14.0],
@@ -427,7 +346,7 @@ mod tests {
     /// Alignment shifts the measured box onto the anchor, and the anchor gap
     /// pushes the text away from the anchor on the side it is aligned to.
     #[test]
-    fn resolve_top_left_shifts_by_alignment_and_anchor_padding() {
+    fn resolve_top_left_shifts_by_alignment() {
         let base = LabelItem::new("hello").with_anchor(OverlayOrigin::Viewport(Alignment::new(
             AnchorX::Right,
             AnchorY::Bottom,
@@ -438,7 +357,6 @@ mod tests {
             .clone()
             .with_align_x(AnchorX::Right)
             .with_align_y(AnchorY::Bottom)
-            .with_anchor_padding(6.0)
             .resolve_top_left(
                 size,
                 [800.0, 600.0],
@@ -446,12 +364,11 @@ mod tests {
                 &glam::Mat4::IDENTITY,
             )
             .unwrap();
-        assert_eq!(right, [800.0 - 60.0 - 6.0, 600.0 - 14.0]);
+        assert_eq!(right, [800.0 - 60.0, 600.0 - 14.0]);
 
         let centred = base
             .with_align_x(AnchorX::Middle)
             .with_align_y(AnchorY::Middle)
-            .with_anchor_padding(6.0)
             .resolve_top_left(
                 size,
                 [800.0, 600.0],
@@ -459,8 +376,7 @@ mod tests {
                 &glam::Mat4::IDENTITY,
             )
             .unwrap();
-        // Middle alignment centres the box on the anchor and ignores the gap,
-        // which has no side to push away from.
+        // Middle alignment centres the box on the origin.
         assert_eq!(centred, [800.0 - 30.0, 600.0 - 7.0]);
     }
 
