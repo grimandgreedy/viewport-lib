@@ -54,8 +54,8 @@ use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
-    BorderMode, BuiltinColourmap, Colour, FontHandle, GlyphRunItem, LabelAnchor, LabelItem,
-    LineCap, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph, TriangleDirection,
+    BuiltinColourmap, Colour, FontHandle, GlyphRunItem, LabelAnchor, LabelItem, LineCap,
+    OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph, TriangleDirection,
 };
 
 /// System color-emoji fonts to try, in order. First one found is used.
@@ -453,7 +453,11 @@ pub(crate) fn build_overlay_frame(
                     // A label draws text only: a contour keeps it readable over the
                     // scene. For a real panel behind it, submit an OverlayShapeItem
                     // with the same anchoring and the measured text plus padding.
-                    .with_outline(Colour::srgb(0.0, 0.0, 0.0, 0.8), 2.0)
+                    .with_outline(
+                        Colour::srgb(0.0, 0.0, 0.0, 0.8),
+                        2.0,
+                        vpl::OutlineMode::Outer,
+                    )
                     .with_align_x(LabelAnchor::Left),
             );
         }
@@ -607,7 +611,7 @@ fn row_solid_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) -> 
                 .with_fill(OverlayFill::Solid(Colour::srgb(
                     colour[0], colour[1], colour[2], colour[3],
                 )))
-                .with_border(
+                .with_outline(
                     Colour::srgb(
                         border_colour[0],
                         border_colour[1],
@@ -615,7 +619,7 @@ fn row_solid_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) -> 
                         border_colour[3],
                     ),
                     bw,
-                    BorderMode::Inset,
+                    OutlineMode::Inset,
                 )
                 .with_z_order(0),
         );
@@ -644,7 +648,7 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         shapes.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x2, y2_mid - sz * 0.5], [sz, sz])
                 .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-                .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, BorderMode::Inset)
+                .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, OutlineMode::Inset)
                 .with_texture(tid),
         );
         x2 += sz + gap;
@@ -659,7 +663,7 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 [140.0, row2_h],
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_border(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw2, BorderMode::Inset)
+            .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw2, OutlineMode::Inset)
             .with_texture(tid),
         );
         x2 += 140.0 + gap;
@@ -672,10 +676,10 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         let t = app.ovl_state.start_time.elapsed().as_secs_f32();
         shapes.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x2, y2_mid - sz * 0.5], [sz, sz])
-                .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-                .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, BorderMode::Inset)
-                .with_texture(tid)
-                .with_texture_transform(vpl::TextureTransform::default().with_rotation(t * 0.5)),
+                .with_fill(OverlayFill::texture(tid).with_texture_transform(
+                    vpl::TextureTransform::default().with_rotation(t * 0.5),
+                ))
+                .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, OutlineMode::Inset),
         );
         x2 += sz + gap;
     }
@@ -689,14 +693,14 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 [x2, y2_mid - row2_h * 0.5],
                 [180.0, row2_h],
             )
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, BorderMode::Inset)
-            .with_texture(tid)
-            .with_texture_transform(
-                vpl::TextureTransform::default()
-                    .with_scale([3.0, 3.0])
-                    .with_tile_mode(vpl::TileMode::Tile),
-            ),
+            .with_fill(
+                OverlayFill::texture(tid).with_texture_transform(
+                    vpl::TextureTransform::default()
+                        .with_scale([3.0, 3.0])
+                        .with_tile_mode(vpl::TileMode::Tile),
+                ),
+            )
+            .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, OutlineMode::Inset),
         );
     }
 }
@@ -723,7 +727,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.05, 0.65, 0.65, 0.9),
             angle: 0.0,
         })
-        .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -741,7 +745,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(1.0, 0.6, 0.1, 0.9),
             angle: PI / 4.0,
         })
-        .with_border(Colour::srgb(1.0, 0.5, 0.2, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.5, 0.2, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -757,7 +761,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.5, 1.0, 0.3, 0.9),
             angle: PI / 2.0,
         })
-        .with_border(Colour::srgb(0.4, 1.0, 0.3, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.4, 1.0, 0.3, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -769,7 +773,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 end_colour: Colour::srgb(0.9, 0.3, 0.6, 0.9),
                 angle: 0.0,
             })
-            .with_border(Colour::srgb(0.8, 0.4, 1.0, 0.8), bw, BorderMode::Inset),
+            .with_outline(Colour::srgb(0.8, 0.4, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -781,7 +785,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 end_colour: Colour::srgb(0.85, 0.85, 0.85, 0.9),
                 angle: 0.0,
             })
-            .with_border(Colour::srgb(0.6, 0.6, 0.6, 0.8), bw, BorderMode::Inset),
+            .with_outline(Colour::srgb(0.6, 0.6, 0.6, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -799,7 +803,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.7, 0.9, 1.0, 0.9),
             angle: -PI / 4.0,
         })
-        .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -817,7 +821,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(1.0, 0.9, 0.1, 0.9),
             angle: PI / 2.0,
         })
-        .with_border(Colour::srgb(1.0, 0.6, 0.2, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.6, 0.2, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 60.0 + gap;
 
@@ -832,7 +836,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             centre_colour: Colour::srgb(1.0, 0.95, 0.7, 1.0),
             edge_colour: Colour::srgb(0.2, 0.05, 0.0, 0.9),
         })
-        .with_border(Colour::srgb(1.0, 0.8, 0.4, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.8, 0.4, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -848,7 +852,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.2, 0.6, 1.0, 1.0),
             offset_angle: 0.0,
         })
-        .with_border(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -870,7 +874,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             ],
             angle: 0.0,
         })
-        .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.85, 0.4, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -891,7 +895,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             ],
             offset_angle: 0.0,
         })
-        .with_border(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
     );
     let _ = x3;
 }
@@ -913,7 +917,7 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, row4_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.95)))
-        .with_border(Colour::srgb(0.5, 0.5, 0.6, 0.8), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(0.5, 0.5, 0.6, 0.8), bw, OutlineMode::Inset)
         .with_shadows(vec![vpl::ShadowLayer::new(
             [0.0, 0.0, 0.0, 0.5],
             12.0,
@@ -927,7 +931,7 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Circle, [x4, y4_mid - sz * 0.5], [sz, sz])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.15, 0.35, 0.95)))
-            .with_border(Colour::srgb(0.3, 0.5, 1.0, 0.9), bw, BorderMode::Inset)
+            .with_outline(Colour::srgb(0.3, 0.5, 1.0, 0.9), bw, OutlineMode::Inset)
             .with_shadows(vec![vpl::ShadowLayer::new(
                 [0.2, 0.4, 1.0, 0.6],
                 16.0,
@@ -940,7 +944,7 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Capsule, [x4, y4_mid - 20.0], [120.0, 40.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.15, 0.05, 0.95)))
-            .with_border(Colour::srgb(1.0, 0.6, 0.2, 0.9), bw, BorderMode::Inset)
+            .with_outline(Colour::srgb(1.0, 0.6, 0.2, 0.9), bw, OutlineMode::Inset)
             .with_shadows(vec![vpl::ShadowLayer::new(
                 [1.0, 0.5, 0.1, 0.45],
                 14.0,
@@ -953,7 +957,7 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Ellipse, [x4, y4_mid - 30.0], [120.0, 60.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.3, 0.15, 0.95)))
-            .with_border(Colour::srgb(0.5, 0.9, 0.3, 0.9), bw, BorderMode::Inset)
+            .with_outline(Colour::srgb(0.5, 0.9, 0.3, 0.9), bw, OutlineMode::Inset)
             .with_shadows(vec![vpl::ShadowLayer::new(
                 [0.0, 0.0, 0.0, 0.45],
                 10.0,
@@ -972,7 +976,7 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [60.0, row4_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.05, 0.25, 0.1, 0.95)))
-        .with_border(Colour::srgb(0.3, 1.0, 0.4, 0.9), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(0.3, 1.0, 0.4, 0.9), bw, OutlineMode::Inset)
         .with_shadows(vec![vpl::ShadowLayer::new(
             [0.1, 0.8, 0.2, 0.5],
             14.0,
@@ -990,7 +994,7 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, row4_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.22, 0.24, 0.30, 1.0)))
-        .with_border(Colour::srgb(0.05, 0.07, 0.12, 0.9), 1.0, BorderMode::Inset)
+        .with_outline(Colour::srgb(0.05, 0.07, 0.12, 0.9), 1.0, OutlineMode::Inset)
         .with_inner_shadows(vec![vpl::ShadowLayer::new(
             [0.0, 0.0, 0.0, 0.7],
             14.0,
@@ -1023,7 +1027,7 @@ fn row_anim(
             [100.0, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
-        .with_border(Colour::srgb(0.9, 0.9, 0.3, 1.0), 3.0, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.9, 0.9, 0.3, 1.0), 3.0, OutlineMode::Inset),
     );
     x5 += 100.0 + gap;
 
@@ -1035,7 +1039,7 @@ fn row_anim(
             [100.0, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
-        .with_border(Colour::srgb(0.3, 0.9, 0.5, 1.0), 3.0, BorderMode::Outer),
+        .with_outline(Colour::srgb(0.3, 0.9, 0.5, 1.0), 3.0, OutlineMode::Outer),
     );
     x5 += 100.0 + gap;
 
@@ -1047,7 +1051,7 @@ fn row_anim(
             [row5_h, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
-        .with_border(Colour::srgb(0.5, 0.5, 1.0, 1.0), 3.0, BorderMode::Center),
+        .with_outline(Colour::srgb(0.5, 0.5, 1.0, 1.0), 3.0, OutlineMode::Centre),
     );
     x5 += row5_h + gap;
 
@@ -1059,7 +1063,7 @@ fn row_anim(
             [row5_h, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 1.0, 0.9)))
-        .with_border(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw, OutlineMode::Inset)
         .with_animations(
             vpl::OverlayAnimations::default().with_opacity(
                 vpl::AnimTrack::new(0.0, 2.0, 0.0, 0.9)
@@ -1077,7 +1081,7 @@ fn row_anim(
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Capsule, [x5, y5_mid - 20.0], [120.0, 40.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.6, 0.2, 0.1, 0.9)))
-            .with_border(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw, BorderMode::Inset)
+            .with_outline(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw, OutlineMode::Inset)
             .with_animations(
                 vpl::OverlayAnimations::default()
                     .with_opacity(vpl::AnimTrack::new(fade_start, 3.0, 0.0, 0.9)),
@@ -1106,7 +1110,7 @@ fn row_anim(
             offset_angle: 0.0,
         })
         .with_rotation(t * 0.8)
-        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw, OutlineMode::Inset),
     );
     x5 += row5_h + gap;
 
@@ -1121,7 +1125,7 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.8, 0.5, 0.9)))
         .with_rotation(-t * 1.2)
-        .with_border(Colour::srgb(0.5, 1.0, 0.7, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.5, 1.0, 0.7, 0.9), bw, OutlineMode::Inset),
     );
     x5 += row5_h + gap;
 
@@ -1138,7 +1142,7 @@ fn row_anim(
             [44.0, 28.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.65, 0.25, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw, OutlineMode::Inset)
         .with_animations(
             vpl::OverlayAnimations::default().with_translate(
                 vpl::AnimTrack::new(
@@ -1164,7 +1168,7 @@ fn row_anim(
             [44.0, 44.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.45, 0.85, 1.0, 0.95)))
-        .with_border(Colour::srgb(0.7, 0.95, 1.0, 0.9), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(0.7, 0.95, 1.0, 0.9), bw, OutlineMode::Inset)
         // Scale, not size: a scale rides the per-draw instance, so the same
         // track animates a compiled group without re-tessellating it, and it
         // pulses about the pivot so nothing has to recentre it.
@@ -1187,7 +1191,7 @@ fn row_anim(
             [70.0, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.25, 0.5, 0.95)))
-        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw, OutlineMode::Inset)
         // Tint, not fill: a tint is a per-draw multiplier, so a colour cycle
         // costs nothing on a compiled group. The authored fill is white here so
         // the tint reads as the colour.
@@ -1213,7 +1217,7 @@ fn row_anim(
             [row5_h, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.9, 0.3, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.95, 0.5, 0.9), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(1.0, 0.95, 0.5, 0.9), bw, OutlineMode::Inset)
         .with_animations(
             vpl::OverlayAnimations::default().with_rotation(
                 vpl::AnimTrack::new(0.0, 4.0, 0.0, std::f32::consts::TAU)
@@ -1255,7 +1259,7 @@ fn row_anim(
                 [dot_size, dot_size],
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.45, 0.85, 1.0)))
-            .with_border(Colour::srgb(1.0, 0.7, 0.95, 0.9), bw, BorderMode::Inset)
+            .with_outline(Colour::srgb(1.0, 0.7, 0.95, 0.9), bw, OutlineMode::Inset)
             .with_position([dot[0] - dot_size * 0.5, dot[1] - dot_size * 0.5]),
         );
         x5 += 260.0 + gap;
@@ -1282,7 +1286,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [100.0, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.7, 1.0, 0.9)))
-        .with_border(Colour::srgb(0.5, 0.9, 1.0, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.5, 0.9, 1.0, 0.9), bw, OutlineMode::Inset),
     );
     x6 += 100.0 + gap;
 
@@ -1297,7 +1301,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, 4.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 0.6, 0.2, 0.9)))
-        .with_border(Colour::srgb(1.0, 0.8, 0.4, 0.9), 0.0, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.8, 0.4, 0.9), 0.0, OutlineMode::Inset),
     );
     x6 += 120.0 + gap;
 
@@ -1312,7 +1316,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 0.85, 0.1, 0.9)))
-        .with_border(Colour::srgb(1.0, 1.0, 0.5, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 1.0, 0.5, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1327,7 +1331,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.3, 0.9, 0.9)))
-        .with_border(Colour::srgb(1.0, 0.6, 1.0, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.6, 1.0, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1339,7 +1343,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.8, 0.4, 0.9)))
-        .with_border(Colour::srgb(0.4, 1.0, 0.6, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.4, 1.0, 0.6, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1351,7 +1355,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.5, 0.9, 0.9)))
-        .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1365,7 +1369,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.2, 0.2, 0.9)))
-        .with_border(Colour::srgb(1.0, 0.5, 0.5, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.5, 0.5, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1383,7 +1387,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.1, 0.3, 1.0, 0.9),
             angle: std::f32::consts::PI * 0.25,
         })
-        .with_border(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, OutlineMode::Inset),
     );
     let _ = x6;
 }
@@ -1412,7 +1416,7 @@ fn row_masks_and_polylines(
                 [px, py],
                 [poly_size * 0.5, poly_size],
             )
-            .with_clip_mask(7),
+            .provides_mask(7),
         );
         // Outline so the clip edge is visible.
         shapes.push(
@@ -1422,7 +1426,7 @@ fn row_masks_and_polylines(
                 [poly_size * 0.5, poly_size],
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.0, 0.0, 0.0, 0.0)))
-            .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.5), 1.0, BorderMode::Outer),
+            .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.5), 1.0, OutlineMode::Outer),
         );
         // The rotating decagon, sized to the full square. Only the
         // left half passes the clip.
@@ -1435,7 +1439,7 @@ fn row_masks_and_polylines(
             )
             .with_rotation(t * 0.6)
             .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.55, 0.2, 0.95)))
-            .with_border(Colour::srgb(1.0, 0.8, 0.3, 0.9), bw, BorderMode::Inset)
+            .with_outline(Colour::srgb(1.0, 0.8, 0.3, 0.9), bw, OutlineMode::Inset)
             .with_clip(7),
         );
     }
@@ -1460,8 +1464,7 @@ fn row_masks_and_polylines(
                 [x_left, py],
                 [panel_w, panel_h],
             )
-            .with_texture(tid)
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0))),
+            .with_texture(tid),
         );
         // Right: same source, same size, 9-slice on.
         shapes.push(
@@ -1470,9 +1473,10 @@ fn row_masks_and_polylines(
                 [x_right, py],
                 [panel_w, panel_h],
             )
-            .with_texture(tid)
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_nine_slice(vpl::NineSlice::new([10.0, 10.0, 10.0, 10.0])),
+            .with_fill(
+                OverlayFill::texture(tid)
+                    .with_nine_slice(vpl::NineSlice::new([10.0, 10.0, 10.0, 10.0])),
+            ),
         );
     }
 
@@ -1682,7 +1686,7 @@ fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, row7_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.16, 0.17, 0.22, 1.0)))
-        .with_border(Colour::srgb(0.7, 0.72, 0.8, 0.9), 1.0, BorderMode::Inset)
+        .with_outline(Colour::srgb(0.7, 0.72, 0.8, 0.9), 1.0, OutlineMode::Inset)
         .with_shadows(vec![
             vpl::ShadowLayer::new([0.95, 0.25, 0.2, 0.85], 20.0, [16.0, 14.0]),
             vpl::ShadowLayer::new([0.2, 0.5, 1.0, 0.85], 20.0, [-16.0, -14.0]),
@@ -1706,7 +1710,7 @@ fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [16.0, hand_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.75, 0.2, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.9, 0.5, 0.9), bw, BorderMode::Inset)
+        .with_outline(Colour::srgb(1.0, 0.9, 0.5, 0.9), bw, OutlineMode::Inset)
         .with_rotation((t * 2.0).sin() * 0.7)
         .with_rotation_pivot([0.0, hand_h * 0.5]),
     );
@@ -1721,10 +1725,12 @@ fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 [x7, y7_mid - row7_h * 0.5],
                 [110.0, row7_h],
             )
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_border(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, BorderMode::Inset)
-            .with_texture(tid)
-            .with_texture_flip(false, true),
+            .with_fill(
+                OverlayFill::texture(tid).with_texture_transform(
+                    vpl::TextureTransform::default().with_flip(false, true),
+                ),
+            )
+            .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, OutlineMode::Inset),
         );
     }
 }
@@ -1740,7 +1746,7 @@ fn row_backdrop(app: &App, shapes: &mut Vec<OverlayShapeItem>, row1_right: f32) 
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Circle, [x + gap, 20.0], [140.0, 140.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.12)))
-            .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.3), 1.0, BorderMode::Inset)
+            .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.3), 1.0, OutlineMode::Inset)
             .with_backdrop_blur(app.ovl_state.backdrop_blur_radius),
     );
     // Second frosted panel with backdrop colour filters: desaturated,
@@ -1756,7 +1762,7 @@ fn row_backdrop(app: &App, shapes: &mut Vec<OverlayShapeItem>, row1_right: f32) 
             [140.0, 96.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.4, 0.5, 0.7, 0.14)))
-        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.25), 1.0, BorderMode::Inset)
+        .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.25), 1.0, OutlineMode::Inset)
         .with_backdrop_blur(app.ovl_state.backdrop_blur_radius)
         .with_backdrop_filters(0.35, 0.9, 0.6 * t.sin()),
     );

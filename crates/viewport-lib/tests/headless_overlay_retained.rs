@@ -216,7 +216,7 @@ fn retained_sdf_shape_draws_and_translates() {
     );
 
     let mut frame = overlay_frame(size);
-    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_position([16.0, 0.0])];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
         is_red(rgb_at(&px, size, 56, 32)),
@@ -265,7 +265,7 @@ fn retained_shape_per_frame_clip() {
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![
         RetainedOverlay::new(id)
-            .with_translate([-20.0, 0.0])
+            .with_position([-20.0, 0.0])
             .with_clip_rect(clip),
     ];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
@@ -281,7 +281,7 @@ fn retained_shape_per_frame_clip() {
 fn circle_mask() -> OverlayShapeItem {
     OverlayShapeItem::new(OverlayShape::Circle, [16.0, 16.0], [32.0, 32.0])
         .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
-        .with_clip_mask(7)
+        .provides_mask(7)
 }
 
 /// A retained group clips to an SDF mask referenced by `clip_id` (P8), for both
@@ -307,7 +307,7 @@ fn retained_group_clips_to_sdf_mask() {
     for id in [shape_id, text_id] {
         let mut frame = overlay_frame(size);
         frame.overlays.shapes = vec![circle_mask()]; // register mask 7 this frame
-        frame.overlays.retained = vec![RetainedOverlay::new(id).with_clip_mask(7)];
+        frame.overlays.retained = vec![RetainedOverlay::new(id).with_clip(7)];
         let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
         assert!(
             is_red(rgb_at(&px, size, 32, 32)),
@@ -538,7 +538,7 @@ fn retained_mixed_group_shape_and_label() {
 
     // One translate moves the whole group: the square vacates its old centre.
     let mut frame = overlay_frame(size);
-    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_position([16.0, 0.0])];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
         is_red(rgb_at(&px, size, 56, 32)),
@@ -578,7 +578,7 @@ fn retained_draws_and_translates() {
     // Translate +16 in x with the SAME compiled id: the square now covers 32..64,
     // so the old centre reads background and a point at x=56 reads red.
     let mut frame = overlay_frame(size);
-    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_position([16.0, 0.0])];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
         is_background(rgb_at(&px, size, 24, 32)),

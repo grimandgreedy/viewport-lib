@@ -125,7 +125,7 @@ fn a_compiled_clip_mask_is_rejected_rather_than_ignored() {
             [0.0, 0.0],
             [32.0, 64.0],
         )
-        .with_clip_mask(7),
+        .provides_mask(7),
     ];
     frame.overlays.retained = vec![RetainedOverlay::new(id)];
     let px = renderer.render_offscreen(&device, &queue, &frame, SIZE, SIZE);

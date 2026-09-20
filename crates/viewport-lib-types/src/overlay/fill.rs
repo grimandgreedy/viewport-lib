@@ -146,22 +146,21 @@ impl GradientStop {
 /// if a consumer needs more.
 pub const OVERLAY_MAX_GRADIENT_STOPS: usize = 4;
 
-/// Where a border band sits relative to the shape edge.
+/// Where an outline band sits relative to the item's edge.
 ///
-/// The argument to
-/// [`OverlayShapeItem::with_border`](crate::overlay::OverlayShapeItem::with_border),
-/// which lowers the band to shadow layers: `Inset` is one inner layer, `Outer`
-/// one outer layer, and `Center` one of each at half the width.
+/// The third argument to `with_outline`, which lowers the band to shadow
+/// layers: `Inset` is one inner layer, `Outer` one outer layer, and `Centre`
+/// one of each at half the width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum BorderMode {
+pub enum OutlineMode {
     /// Inside the edge (default): the band eats into the fill.
     #[default]
     Inset,
     /// Outside the edge: the fill is untouched and the band extends outward.
     Outer,
     /// Centred on the edge, half inside and half outside.
-    Center,
+    Centre,
 }
 
 impl OverlayFill {

@@ -11,7 +11,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use vpl::{BorderMode, FillRule, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
+use vpl::{FillRule, OutlineMode, OverlayFill, OverlayShapeItem, PathSegment, SubPath};
 
 use crate::App;
 
@@ -146,7 +146,7 @@ fn place_art(
             None => item.with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into())),
         };
         if outline || shape.fill.is_none() {
-            item = item.with_border([0.08, 0.08, 0.08, 0.9], 1.0, BorderMode::Inset);
+            item = item.with_outline([0.08, 0.08, 0.08, 0.9], 1.0, OutlineMode::Inset);
         }
         out.push(item);
     }

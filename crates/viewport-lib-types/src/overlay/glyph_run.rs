@@ -161,6 +161,37 @@ impl GlyphRunItem {
         self
     }
 
+    /// Set the whole baked appearance at once: fill, shadow layers, backdrop,
+    /// tint and opacity. The escape hatch for any cell without a dedicated
+    /// builder.
+    pub fn with_style(mut self, style: crate::overlay::OverlayStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers, drawn over the item and
+    /// eroding inward from its boundary.
+    pub fn with_inner_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
+        self.style.inner_shadows = shadows;
+        self
+    }
+
+    /// Add one inner shadow layer, over any already set.
+    pub fn with_inner_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
+        self.style.inner_shadows.push(shadow);
+        self
+    }
+
+    /// Pin the item to a fixed screen position in logical pixels from the
+    /// top-left. Sugar for the default viewport origin with `position` set to
+    /// `pos`.
+    pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
+        self.anchoring =
+            crate::overlay::OverlayAnchoring::default().with_align(self.anchoring.align);
+        self.transform.translate = pos;
+        self
+    }
+
     /// Set the whole text style: the font and its size.
     pub fn with_text_style(mut self, text_style: crate::overlay::TextStyle) -> Self {
         self.text_style = text_style;
@@ -241,14 +272,36 @@ impl GlyphRunItem {
         self
     }
 
-    /// Add a contour of `width` logical pixels in `colour` behind this item.
-    /// Shorthand for pushing a [`ShadowLayer::outline`].
+    /// Add an outline: a band of `width` logical pixels on the item's edge,
+    /// placed by `mode`. A width of `0.0` adds nothing.
     ///
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.style
-            .shadows
-            .push(crate::overlay::ShadowLayer::outline(colour, width));
+    /// An outline is a shadow layer with no blur, so this pushes one (or two,
+    /// for [`OutlineMode::Centre`]) onto the style's shadow lists, and costs a
+    /// layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list.
+    ///
+    /// [`OutlineMode::Centre`]: crate::overlay::OutlineMode::Centre
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
+    pub fn with_outline(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        width: f32,
+        mode: crate::overlay::OutlineMode,
+    ) -> Self {
+        if width <= 0.0 {
+            return self;
+        }
+        let colour = colour.into();
+        let band = |spread: f32| {
+            crate::overlay::ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread)
+        };
+        match mode {
+            crate::overlay::OutlineMode::Inset => self.style.inner_shadows.push(band(width)),
+            crate::overlay::OutlineMode::Outer => self.style.shadows.push(band(width)),
+            crate::overlay::OutlineMode::Centre => {
+                self.style.inner_shadows.push(band(width * 0.5));
+                self.style.shadows.push(band(width * 0.5));
+            }
+        }
         self
     }
 
@@ -261,6 +314,88 @@ impl GlyphRunItem {
     /// Set the point to rotate about, in logical pixels from the text-box centre.
     pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
         self.transform.pivot = pivot;
+        self
+    }
+
+    /// The extent box of the authored glyph positions, as `[min_x, min_y]` and
+    /// `[width, height]` in logical pixels. This is the box alignment shifts and
+    /// the box the run turns inside, measured from the pen positions rather than
+    /// from the rasterised glyph bitmaps, so it matches what the renderer uses.
+    /// An empty run has no extent and returns `None`.
+    pub fn extent(&self) -> Option<([f32; 2], [f32; 2])> {
+        let (first, rest) = self.glyphs.split_first()?;
+        let (mut min_x, mut min_y) = (first.x, first.y);
+        let (mut max_x, mut max_y) = (first.x, first.y);
+        for g in rest {
+            min_x = min_x.min(g.x);
+            min_y = min_y.min(g.y);
+            max_x = max_x.max(g.x);
+            max_y = max_y.max(g.y);
+        }
+        Some(([min_x, min_y], [max_x - min_x, max_y - min_y]))
+    }
+
+    /// Resolve the top-left pixel of the run's extent box for a frame: the
+    /// origin, plus `position`, shifted by `anchoring.align` for
+    /// that box. Returns `None` when a `World` anchor projects behind the camera
+    /// or off-screen, which is the frame the run is skipped on, and for a run
+    /// with no glyphs.
+    ///
+    /// Glyph positions are authored relative to the run origin, which is this
+    /// value minus the extent box's own `[min_x, min_y]` from [`Self::extent`].
+    /// The box returned is the unrotated one, as with the other overlay items.
+    pub fn resolve_top_left(
+        &self,
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+    ) -> Option<[f32; 2]> {
+        let origin = crate::overlay::resolve_anchor_origin(
+            &self.anchoring.origin,
+            viewport_size,
+            view,
+            proj,
+        )?;
+        let (min, size) = self.extent()?;
+        Some([
+            origin[0]
+                + self.transform.translate[0]
+                + self.anchoring.align.x.align_shift(size[0])
+                + min[0],
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(size[1])
+                + min[1],
+        ])
+    }
+
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: crate::overlay::OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.style.tint = tint;
+        self
+    }
+
+    /// Set the animation tracks.
+    pub fn with_animations(mut self, animations: crate::overlay::OverlayAnimations) -> Self {
+        self.animations = Some(Box::new(animations));
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip.rect = Some(clip_rect);
         self
     }
 }
@@ -352,89 +487,5 @@ mod tests {
             .resolve_top_left([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
             .unwrap();
         assert_eq!(tl, [800.0 - 20.0 + 10.0, 600.0 - 10.0]);
-    }
-}
-
-impl GlyphRunItem {
-    /// The extent box of the authored glyph positions, as `[min_x, min_y]` and
-    /// `[width, height]` in logical pixels. This is the box alignment shifts and
-    /// the box the run turns inside, measured from the pen positions rather than
-    /// from the rasterised glyph bitmaps, so it matches what the renderer uses.
-    /// An empty run has no extent and returns `None`.
-    pub fn extent(&self) -> Option<([f32; 2], [f32; 2])> {
-        let (first, rest) = self.glyphs.split_first()?;
-        let (mut min_x, mut min_y) = (first.x, first.y);
-        let (mut max_x, mut max_y) = (first.x, first.y);
-        for g in rest {
-            min_x = min_x.min(g.x);
-            min_y = min_y.min(g.y);
-            max_x = max_x.max(g.x);
-            max_y = max_y.max(g.y);
-        }
-        Some(([min_x, min_y], [max_x - min_x, max_y - min_y]))
-    }
-
-    /// Resolve the top-left pixel of the run's extent box for a frame: the
-    /// origin, plus `position`, shifted by `anchoring.align` for
-    /// that box. Returns `None` when a `World` anchor projects behind the camera
-    /// or off-screen, which is the frame the run is skipped on, and for a run
-    /// with no glyphs.
-    ///
-    /// Glyph positions are authored relative to the run origin, which is this
-    /// value minus the extent box's own `[min_x, min_y]` from [`Self::extent`].
-    /// The box returned is the unrotated one, as with the other overlay items.
-    pub fn resolve_top_left(
-        &self,
-        viewport_size: [f32; 2],
-        view: &glam::Mat4,
-        proj: &glam::Mat4,
-    ) -> Option<[f32; 2]> {
-        let origin = crate::overlay::resolve_anchor_origin(
-            &self.anchoring.origin,
-            viewport_size,
-            view,
-            proj,
-        )?;
-        let (min, size) = self.extent()?;
-        Some([
-            origin[0]
-                + self.transform.translate[0]
-                + self.anchoring.align.x.align_shift(size[0])
-                + min[0],
-            origin[1]
-                + self.transform.translate[1]
-                + self.anchoring.align.y.align_shift(size[1])
-                + min[1],
-        ])
-    }
-
-    /// Set the transform: translate, rotate, scale, and pivot at once.
-    pub fn with_transform(mut self, transform: crate::overlay::OverlayTransform) -> Self {
-        self.transform = transform;
-        self
-    }
-
-    /// Set the uniform scale about the transform pivot.
-    pub fn with_scale(mut self, scale: f32) -> Self {
-        self.transform.scale = scale;
-        self
-    }
-
-    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
-    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
-        self.style.tint = tint;
-        self
-    }
-
-    /// Set the animation tracks.
-    pub fn with_animations(mut self, animations: crate::overlay::OverlayAnimations) -> Self {
-        self.animations = Some(Box::new(animations));
-        self
-    }
-
-    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
-    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip.rect = Some(clip_rect);
-        self
     }
 }

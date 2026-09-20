@@ -13,8 +13,8 @@
 
 use glam::Vec3;
 use viewport_lib::{
-    Alignment, AnchorX, AnchorY, BorderMode, Colour, FillRule, GlyphRunItem, LabelItem, LineCap,
-    LineJoin, Material, OverlayFill, OverlayFrame, OverlayOrigin, OverlayPolylineItem,
+    Alignment, AnchorX, AnchorY, Colour, FillRule, GlyphRunItem, LabelItem, LineCap, LineJoin,
+    Material, OutlineMode, OverlayFill, OverlayFrame, OverlayOrigin, OverlayPolylineItem,
     OverlayShape, OverlayShapeItem, PolylineCap, PositionedGlyph, RetainedOverlay, ShadowLayer,
     SubPath, TriangleDirection, primitives,
 };
@@ -247,7 +247,7 @@ fn build_shapes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [80.0, 50.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.85, 0.35, 0.25, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.8, 0.6, 1.0), 2.0, BorderMode::Inset),
+        .with_outline(Colour::srgb(1.0, 0.8, 0.6, 1.0), 2.0, OutlineMode::Inset),
         OverlayShapeItem::new(
             OverlayShape::Rect {
                 corner_radius: 12.0,
@@ -260,12 +260,12 @@ fn build_shapes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             end_colour: Colour::srgb(0.9, 0.2, 0.6, 1.0),
             angle: 0.6,
         })
-        .with_border(Colour::srgb(0.95, 0.95, 1.0, 0.9), 2.0, BorderMode::Outer),
+        .with_outline(Colour::srgb(0.95, 0.95, 1.0, 0.9), 2.0, OutlineMode::Outer),
         OverlayShapeItem::new(OverlayShape::Circle, [215.0, 20.0], [50.0, 50.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.8, 0.45, 0.95))),
         OverlayShapeItem::new(OverlayShape::Ellipse, [285.0, 20.0], [90.0, 50.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.75, 0.2, 0.9)))
-            .with_border(Colour::srgb(0.3, 0.2, 0.0, 1.0), 3.0, BorderMode::Inset),
+            .with_outline(Colour::srgb(0.3, 0.2, 0.0, 1.0), 3.0, OutlineMode::Inset),
         OverlayShapeItem::new(OverlayShape::Capsule, [20.0, 95.0], [110.0, 36.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.55, 0.3, 0.85, 0.95))),
         OverlayShapeItem::new(
@@ -328,7 +328,7 @@ fn build_vector(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [90.0, 70.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.75, 0.9, 1.0)))
-        .with_border(Colour::srgb(0.05, 0.2, 0.3, 1.0), 2.5, BorderMode::Inset),
+        .with_outline(Colour::srgb(0.05, 0.2, 0.3, 1.0), 2.5, OutlineMode::Inset),
     ];
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();
@@ -470,14 +470,14 @@ fn build_group_anchor(ctx: &mut BuildCtx<'_>) -> BuiltScene {
                 AnchorX::Left,
                 AnchorY::Top,
             )))
-            .with_translate([8.0, 8.0]),
+            .with_position([8.0, 8.0]),
         RetainedOverlay::new(id)
             .with_anchor(OverlayOrigin::Viewport(Alignment::new(
                 AnchorX::Right,
                 AnchorY::Bottom,
             )))
             .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom))
-            .with_translate([-8.0, -8.0])
+            .with_position([-8.0, -8.0])
             .with_tint([0.6, 1.0, 0.7, 1.0]),
         RetainedOverlay::new(id)
             .with_anchor(OverlayOrigin::World([0.0, 0.0, -1.9]))
@@ -705,9 +705,9 @@ fn build_clipping(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [20.0, 20.0],
             [160.0, 120.0],
         )
-        .with_clip_mask(1),
+        .provides_mask(1),
         OverlayShapeItem::new(OverlayShape::Circle, [60.0, 40.0], [90.0, 90.0])
-            .with_clip_mask(2)
+            .provides_mask(2)
             .with_clip(1),
         // Content clipped to the rounded rect only.
         OverlayShapeItem::new(
@@ -805,15 +805,15 @@ fn build_retained(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // Nothing here recompiles, so a per-frame field that quietly stopped being
     // honoured shows as four identical copies.
     let retained = vec![
-        RetainedOverlay::new(id).with_translate([20.0, 20.0]),
+        RetainedOverlay::new(id).with_position([20.0, 20.0]),
         RetainedOverlay::new(id)
-            .with_translate([180.0, 20.0])
+            .with_position([180.0, 20.0])
             .with_opacity(0.45),
         RetainedOverlay::new(id)
-            .with_translate([20.0, 120.0])
+            .with_position([20.0, 120.0])
             .with_tint([1.0, 0.5, 0.5, 1.0]),
         RetainedOverlay::new(id)
-            .with_translate([180.0, 120.0])
+            .with_position([180.0, 120.0])
             .with_scale(1.35),
     ];
     backdrop(ctx, {
@@ -834,12 +834,12 @@ fn build_composition(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let id = compile_group(ctx);
     let retained = vec![
         RetainedOverlay::new(id)
-            .with_translate([200.0, 150.0])
+            .with_position([200.0, 150.0])
             .with_rotation(0.35)
             .with_rotation_pivot([60.0, 30.0])
             .with_scale(0.9),
         RetainedOverlay::new(id)
-            .with_translate([30.0, 30.0])
+            .with_position([30.0, 30.0])
             .with_rotation(-0.25)
             .with_opacity(0.6),
     ];
@@ -854,7 +854,7 @@ fn build_composition(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [200.0, 10.0],
             [160.0, 120.0],
         )
-        .with_clip_mask(7),
+        .provides_mask(7),
         // A rotated item clipped by that mask: the item transform and the clip
         // have to agree about which space they are in.
         OverlayShapeItem::new(

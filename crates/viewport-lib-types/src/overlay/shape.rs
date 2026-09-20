@@ -297,7 +297,7 @@ impl Default for OverlayShape {
 /// # Examples
 ///
 /// ```rust
-/// # use viewport_lib_types::overlay::{BorderMode, OverlayShapeItem, OverlayShape, OverlayFill};
+/// # use viewport_lib_types::overlay::{OutlineMode, OverlayShapeItem, OverlayShape, OverlayFill};
 /// // Rounded-rect panel background.
 /// let panel = OverlayShapeItem::new(
 ///     OverlayShape::Rect { corner_radius: 8.0 },
@@ -305,7 +305,7 @@ impl Default for OverlayShape {
 ///     [300.0, 200.0],
 /// )
 /// .with_fill(OverlayFill::Solid([0.1, 0.1, 0.1, 0.85].into()))
-/// .with_border([0.4, 0.4, 0.4, 1.0], 1.0, BorderMode::Inset);
+/// .with_outline([0.4, 0.4, 0.4, 1.0], 1.0, OutlineMode::Inset);
 ///
 /// // Circle with a left-to-right gradient.
 /// let grad_dot = OverlayShapeItem::new(OverlayShape::Circle, [100.0, 100.0], [60.0, 60.0])
@@ -701,27 +701,27 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Add a border: a band of `width` logical pixels on the shape edge,
+    /// Add an outline: a band of `width` logical pixels on the item's edge,
     /// placed by `mode`. A width of `0.0` adds nothing.
     ///
-    /// A border is a shadow layer with no blur, so this pushes one (or two, for
-    /// [`BorderMode::Center`]) onto [`OverlayStyle::shadows`] and
+    /// An outline is a shadow layer with no blur, so this pushes one (or two, for
+    /// [`OutlineMode::Centre`]) onto [`OverlayStyle::shadows`] and
     /// [`OverlayStyle::inner_shadows`]. That is the whole implementation: there
     /// is no separate border in the renderer, and the band draws through the
     /// same code as every other layer, on every coverage backend.
     ///
     /// It costs a layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list, so a
-    /// shape with four drop shadows cannot also take a border.
+    /// shape with four drop shadows cannot also take an outline.
     ///
     /// Calling this twice adds two bands rather than replacing the first.
     ///
     /// [`OverlayStyle::shadows`]: crate::overlay::OverlayStyle::shadows
     /// [`OverlayStyle::inner_shadows`]: crate::overlay::OverlayStyle::inner_shadows
-    pub fn with_border(
+    pub fn with_outline(
         mut self,
         colour: impl Into<crate::colour::Colour>,
         width: f32,
-        mode: BorderMode,
+        mode: OutlineMode,
     ) -> Self {
         if width <= 0.0 {
             return self;
@@ -729,9 +729,9 @@ impl OverlayShapeItem {
         let colour = colour.into();
         let band = |spread: f32| ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread);
         match mode {
-            BorderMode::Inset => self.style.inner_shadows.push(band(width)),
-            BorderMode::Outer => self.style.shadows.push(band(width)),
-            BorderMode::Center => {
+            OutlineMode::Inset => self.style.inner_shadows.push(band(width)),
+            OutlineMode::Outer => self.style.shadows.push(band(width)),
+            OutlineMode::Centre => {
                 self.style.inner_shadows.push(band(width * 0.5));
                 self.style.shadows.push(band(width * 0.5));
             }
@@ -750,13 +750,6 @@ impl OverlayShapeItem {
     pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
         self.style.fill = OverlayFill::texture(texture);
         self
-    }
-
-    /// The shape's texture fill, for the builders that set one of its fields.
-    /// Turns a colour or gradient fill into a texture fill would be wrong, so
-    /// those callers get `None` and leave the fill alone.
-    fn texture_fill_mut(&mut self) -> Option<&mut OverlayFill> {
-        matches!(self.style.fill, OverlayFill::Texture { .. }).then_some(&mut self.style.fill)
     }
 
     /// Set the backdrop blur radius (frosted-glass effect) in logical pixels.
@@ -800,28 +793,32 @@ impl OverlayShapeItem {
         self
     }
 
+    /// Add one outer shadow layer, in front of any already set.
+    pub fn with_shadow(mut self, shadow: ShadowLayer) -> Self {
+        self.style.shadows.push(shadow);
+        self
+    }
+
+    /// Add one inner shadow layer, over any already set.
+    pub fn with_inner_shadow(mut self, shadow: ShadowLayer) -> Self {
+        self.style.inner_shadows.push(shadow);
+        self
+    }
+
     /// Set the stacked inner (inset) shadow layers, drawn on top of the fill.
     pub fn with_inner_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
         self.style.inner_shadows = shadows;
         self
     }
 
-    /// Flip the texture fill horizontally and/or vertically. Convenience over
-    /// [`TextureTransform::flip_x`] / [`TextureTransform::flip_y`]; sets those
-    /// fields on the fill's texture transform. Call it after
-    /// [`with_texture`](Self::with_texture): a shape with no texture fill has
-    /// nothing to flip and is left alone.
-    pub fn with_texture_flip(mut self, flip_x: bool, flip_y: bool) -> Self {
-        if let Some(OverlayFill::Texture { transform, .. }) = self.texture_fill_mut() {
-            transform.flip_x = flip_x;
-            transform.flip_y = flip_y;
-        }
-        self
-    }
-
-    /// Mark this shape as a clip mask with the given id. Other shapes whose
-    /// clip id matches are clipped to this shape's bounding box.
-    pub fn with_clip_mask(mut self, mask_id: u32) -> Self {
+    /// Mark this shape as a clip mask under `mask_id`. Items whose `clip.mask`
+    /// matches are clipped to it, and the mask itself is not drawn.
+    ///
+    /// The clip follows the mask's distance field, not its bounding box, so a
+    /// `Circle` mask clips to a circle; the bounding box is only a cheap reject
+    /// ahead of the field. Masks nest, and a fragment must be inside the whole
+    /// parent chain to survive.
+    pub fn provides_mask(mut self, mask_id: u32) -> Self {
         self.provides_mask = Some(mask_id);
         self
     }
@@ -830,26 +827,6 @@ impl OverlayShapeItem {
     /// its bounding box) is used, and masks may nest.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
         self.clip.mask = Some(clip_id);
-        self
-    }
-
-    /// Set 9-slice sampling for the texture fill. Call it after
-    /// [`with_texture`](Self::with_texture): a shape with no texture fill has
-    /// nothing to slice and is left alone.
-    pub fn with_nine_slice(mut self, nine_slice: NineSlice) -> Self {
-        if let Some(OverlayFill::Texture { nine_slice: ns, .. }) = self.texture_fill_mut() {
-            *ns = Some(nine_slice);
-        }
-        self
-    }
-
-    /// Set the affine transform applied to the texture sample before lookup.
-    /// Call it after [`with_texture`](Self::with_texture): a shape with no
-    /// texture fill has nothing to sample and is left alone.
-    pub fn with_texture_transform(mut self, transform: TextureTransform) -> Self {
-        if let Some(OverlayFill::Texture { transform: t, .. }) = self.texture_fill_mut() {
-            *t = transform;
-        }
         self
     }
 
@@ -869,6 +846,16 @@ impl OverlayShapeItem {
     /// Sugar for `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
         self.anchoring.origin = OverlayOrigin::World(pos);
+        self
+    }
+
+    /// Pin the item to a fixed screen position in logical pixels from the
+    /// top-left. Sugar for the default viewport origin with `position` set to
+    /// `pos`.
+    pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
+        self.anchoring =
+            crate::overlay::OverlayAnchoring::default().with_align(self.anchoring.align);
+        self.transform.translate = pos;
         self
     }
 
@@ -1019,6 +1006,36 @@ impl OverlayShapeItem {
     /// Equivalent to `self.distance(point) <= 0.0`.
     pub fn contains(&self, point: [f32; 2]) -> bool {
         self.distance(point) <= 0.0
+    }
+
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the translation in logical pixels from the resolved anchor origin.
+    pub fn with_position(mut self, position: [f32; 2]) -> Self {
+        self.transform.translate = position;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.style.tint = tint;
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip.rect = Some(clip_rect);
+        self
     }
 }
 
@@ -1623,37 +1640,5 @@ mod size_tests {
             item <= 512,
             "OverlayShapeItem grew to {item} bytes (budget 512)"
         );
-    }
-}
-
-impl OverlayShapeItem {
-    /// Set the transform: translate, rotate, scale, and pivot at once.
-    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
-        self.transform = transform;
-        self
-    }
-
-    /// Set the translation in logical pixels from the resolved anchor origin.
-    pub fn with_position(mut self, position: [f32; 2]) -> Self {
-        self.transform.translate = position;
-        self
-    }
-
-    /// Set the uniform scale about the transform pivot.
-    pub fn with_scale(mut self, scale: f32) -> Self {
-        self.transform.scale = scale;
-        self
-    }
-
-    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
-    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
-        self.style.tint = tint;
-        self
-    }
-
-    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
-    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip.rect = Some(clip_rect);
-        self
     }
 }

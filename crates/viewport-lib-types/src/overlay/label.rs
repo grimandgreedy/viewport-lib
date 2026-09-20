@@ -152,6 +152,27 @@ impl LabelItem {
         self
     }
 
+    /// Set the whole baked appearance at once: fill, shadow layers, backdrop,
+    /// tint and opacity. The escape hatch for any cell without a dedicated
+    /// builder.
+    pub fn with_style(mut self, style: crate::overlay::OverlayStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers, drawn over the item and
+    /// eroding inward from its boundary.
+    pub fn with_inner_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
+        self.style.inner_shadows = shadows;
+        self
+    }
+
+    /// Add one inner shadow layer, over any already set.
+    pub fn with_inner_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
+        self.style.inner_shadows.push(shadow);
+        self
+    }
+
     /// Set the whole text style: the font and its size.
     pub fn with_text_style(mut self, text_style: crate::overlay::TextStyle) -> Self {
         self.text_style = text_style;
@@ -264,14 +285,36 @@ impl LabelItem {
         self
     }
 
-    /// Add a contour of `width` logical pixels in `colour` behind this item.
-    /// Shorthand for pushing a [`ShadowLayer::outline`].
+    /// Add an outline: a band of `width` logical pixels on the item's edge,
+    /// placed by `mode`. A width of `0.0` adds nothing.
     ///
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.style
-            .shadows
-            .push(crate::overlay::ShadowLayer::outline(colour, width));
+    /// An outline is a shadow layer with no blur, so this pushes one (or two,
+    /// for [`OutlineMode::Centre`]) onto the style's shadow lists, and costs a
+    /// layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list.
+    ///
+    /// [`OutlineMode::Centre`]: crate::overlay::OutlineMode::Centre
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
+    pub fn with_outline(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        width: f32,
+        mode: crate::overlay::OutlineMode,
+    ) -> Self {
+        if width <= 0.0 {
+            return self;
+        }
+        let colour = colour.into();
+        let band = |spread: f32| {
+            crate::overlay::ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread)
+        };
+        match mode {
+            crate::overlay::OutlineMode::Inset => self.style.inner_shadows.push(band(width)),
+            crate::overlay::OutlineMode::Outer => self.style.shadows.push(band(width)),
+            crate::overlay::OutlineMode::Centre => {
+                self.style.inner_shadows.push(band(width * 0.5));
+                self.style.shadows.push(band(width * 0.5));
+            }
+        }
         self
     }
 
@@ -286,9 +329,7 @@ impl LabelItem {
         self.transform.pivot = pivot;
         self
     }
-}
 
-impl LabelItem {
     /// Set the transform: translate, rotate, scale, and pivot at once.
     pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
         self.transform = transform;

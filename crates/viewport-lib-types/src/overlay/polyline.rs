@@ -295,6 +295,37 @@ impl OverlayPolylineItem {
         ])
     }
 
+    /// Set the whole baked appearance at once: fill, shadow layers, backdrop,
+    /// tint and opacity. The escape hatch for any cell without a dedicated
+    /// builder.
+    pub fn with_style(mut self, style: crate::overlay::OverlayStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers, drawn over the item and
+    /// eroding inward from its boundary.
+    pub fn with_inner_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
+        self.style.inner_shadows = shadows;
+        self
+    }
+
+    /// Add one inner shadow layer, over any already set.
+    pub fn with_inner_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
+        self.style.inner_shadows.push(shadow);
+        self
+    }
+
+    /// Pin the item to a fixed screen position in logical pixels from the
+    /// top-left. Sugar for the default viewport origin with `position` set to
+    /// `pos`.
+    pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
+        self.anchoring =
+            crate::overlay::OverlayAnchoring::default().with_align(self.anchoring.align);
+        self.transform.translate = pos;
+        self
+    }
+
     /// Set the whole stroke at once.
     pub fn with_stroke(mut self, stroke: OverlayStroke) -> Self {
         self.stroke = Some(stroke);
@@ -372,16 +403,6 @@ impl OverlayPolylineItem {
     /// Set per-point UVs for a textured interior. Must have one entry per point.
     pub fn with_uvs(mut self, uvs: Vec<[f32; 2]>) -> Self {
         self.uvs = Some(uvs);
-        self
-    }
-
-    /// Set the affine transform applied to texture UVs before sampling. Call
-    /// it after [`with_texture`](Self::with_texture): a polyline with no
-    /// texture fill has nothing to sample and is left alone.
-    pub fn with_texture_transform(mut self, texture_transform: TextureTransform) -> Self {
-        if let OverlayFill::Texture { transform, .. } = &mut self.style.fill {
-            *transform = texture_transform;
-        }
         self
     }
 
@@ -480,14 +501,83 @@ impl OverlayPolylineItem {
         self
     }
 
-    /// Add a contour of `width` logical pixels in `colour` behind this item.
-    /// Shorthand for pushing a [`ShadowLayer::outline`].
+    /// Add an outline: a band of `width` logical pixels on the item's edge,
+    /// placed by `mode`. A width of `0.0` adds nothing.
     ///
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.style
-            .shadows
-            .push(crate::overlay::ShadowLayer::outline(colour, width));
+    /// An outline is a shadow layer with no blur, so this pushes one (or two,
+    /// for [`OutlineMode::Centre`]) onto the style's shadow lists, and costs a
+    /// layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list.
+    ///
+    /// [`OutlineMode::Centre`]: crate::overlay::OutlineMode::Centre
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
+    pub fn with_outline(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        width: f32,
+        mode: crate::overlay::OutlineMode,
+    ) -> Self {
+        if width <= 0.0 {
+            return self;
+        }
+        let colour = colour.into();
+        let band = |spread: f32| {
+            crate::overlay::ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread)
+        };
+        match mode {
+            crate::overlay::OutlineMode::Inset => self.style.inner_shadows.push(band(width)),
+            crate::overlay::OutlineMode::Outer => self.style.shadows.push(band(width)),
+            crate::overlay::OutlineMode::Centre => {
+                self.style.inner_shadows.push(band(width * 0.5));
+                self.style.shadows.push(band(width * 0.5));
+            }
+        }
+        self
+    }
+
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the rotation in radians about the pivot.
+    ///
+    /// The points are the caller's, so a consumer drawing immediately could
+    /// always rotate them itself. Under retention it could not: the points are
+    /// baked into the compiled buffer, and turning them means re-compiling.
+    pub fn with_rotation(mut self, radians: f32) -> Self {
+        self.transform.rotation = radians;
+        self
+    }
+
+    /// Set the point to rotate and scale around, in logical pixels from the
+    /// centre of the path's bounding box.
+    pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
+        self.transform.pivot = pivot;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.style.tint = tint;
+        self
+    }
+
+    /// Set the animation tracks.
+    pub fn with_animations(mut self, animations: OverlayAnimations) -> Self {
+        self.animations = Some(Box::new(animations));
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip.rect = Some(clip_rect);
         self
     }
 }
@@ -596,54 +686,5 @@ mod path_sample_tests {
         };
         closed.set_points_from_path(circle, 4);
         assert!((closed.points[0][0] - closed.points[4][0]).abs() > 1e-3);
-    }
-}
-
-impl OverlayPolylineItem {
-    /// Set the transform: translate, rotate, scale, and pivot at once.
-    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
-        self.transform = transform;
-        self
-    }
-
-    /// Set the rotation in radians about the pivot.
-    ///
-    /// The points are the caller's, so a consumer drawing immediately could
-    /// always rotate them itself. Under retention it could not: the points are
-    /// baked into the compiled buffer, and turning them means re-compiling.
-    pub fn with_rotation(mut self, radians: f32) -> Self {
-        self.transform.rotation = radians;
-        self
-    }
-
-    /// Set the point to rotate and scale around, in logical pixels from the
-    /// centre of the path's bounding box.
-    pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
-        self.transform.pivot = pivot;
-        self
-    }
-
-    /// Set the uniform scale about the transform pivot.
-    pub fn with_scale(mut self, scale: f32) -> Self {
-        self.transform.scale = scale;
-        self
-    }
-
-    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
-    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
-        self.style.tint = tint;
-        self
-    }
-
-    /// Set the animation tracks.
-    pub fn with_animations(mut self, animations: OverlayAnimations) -> Self {
-        self.animations = Some(Box::new(animations));
-        self
-    }
-
-    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
-    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
-        self.clip.rect = Some(clip_rect);
-        self
     }
 }

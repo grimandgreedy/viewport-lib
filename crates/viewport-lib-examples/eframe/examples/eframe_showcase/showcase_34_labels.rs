@@ -184,7 +184,7 @@ impl App {
                     // A contour keeps the text legible over the model without a
                     // panel behind it; `build_label_backings` puts panels behind
                     // the screen-anchored ones.
-                    .with_outline([0.05, 0.05, 0.1, 0.9], 2.0)
+                    .with_outline([0.05, 0.05, 0.1, 0.9], 2.0, vpl::OutlineMode::Outer)
                     .with_z_order(0),
             );
         }
@@ -205,7 +205,7 @@ impl App {
                     .with_screen_anchor([cx, 36.0])
                     .with_colour([1.0, 1.0, 1.0, 1.0])
                     .with_font_size(48.0)
-                    .with_outline([0.0, 0.0, 0.0, 0.8], 3.0)
+                    .with_outline([0.0, 0.0, 0.0, 0.8], 3.0, vpl::OutlineMode::Outer)
                     .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
@@ -216,7 +216,7 @@ impl App {
                     .with_screen_anchor([cx, vp_h - 24.0])
                     .with_colour([0.8, 0.8, 0.8, 1.0])
                     .with_font_size(11.0)
-                    .with_outline([0.0, 0.0, 0.0, 0.8], 2.0)
+                    .with_outline([0.0, 0.0, 0.0, 0.8], 2.0, vpl::OutlineMode::Outer)
                     .with_align_x(LabelAnchor::Middle)
                     .with_z_order(200),
             );
@@ -334,7 +334,7 @@ impl App {
                     .with_screen_anchor([col + i as f32 * 65.0, y])
                     .with_colour([0.8, 0.85, 1.0, 1.0])
                     .with_font_size(12.0)
-                    .with_outline([0.0, 0.0, 0.0, 0.9], *width)
+                    .with_outline([0.0, 0.0, 0.0, 0.9], *width, vpl::OutlineMode::Outer)
                     .with_z_order(100),
             );
         }

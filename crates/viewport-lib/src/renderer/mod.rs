@@ -69,7 +69,7 @@ pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
-    BloomSettings, BorderMode, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem,
+    BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem,
     ComputeFilterKind, ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity,
     DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings,
     DofSettings, EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode,
@@ -80,10 +80,10 @@ pub use self::types::{
     ImplicitPrimitive, IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem,
     LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap,
     LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OverlayAnchoring, OverlayAnimations,
-    OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE,
+    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
+    OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId,
+    OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
+    OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE,
     ParticleMeshAlign, PathSegment, PathTrack, PipelineMode, PointCloudItem, PointCloudRefItem,
     PointRenderMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
     PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem,

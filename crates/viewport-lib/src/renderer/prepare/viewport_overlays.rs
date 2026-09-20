@@ -2518,9 +2518,9 @@ mod clip_registry_tests {
             [100.0, 50.0],
             [200.0, 100.0],
         )
-        .with_clip_mask(10);
+        .provides_mask(10);
         let child = OverlayShapeItem::new(OverlayShape::Circle, [110.0, 60.0], [80.0, 80.0])
-            .with_clip_mask(20)
+            .provides_mask(20)
             .with_clip(10);
         let (gpu, map, bboxes) = build_clip_shapes(
             &[parent, child],
@@ -2562,13 +2562,13 @@ mod clip_registry_tests {
             [0.0, 0.0],
             [100.0, 100.0],
         )
-        .with_clip_mask(5);
+        .provides_mask(5);
         let second = OverlayShapeItem::new(
             OverlayShape::Rect { corner_radius: 0.0 },
             [500.0, 500.0],
             [50.0, 50.0],
         )
-        .with_clip_mask(5);
+        .provides_mask(5);
         let (gpu, map, bboxes) = build_clip_shapes(
             &[first, second],
             1.0,

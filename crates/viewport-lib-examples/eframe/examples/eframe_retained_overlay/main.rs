@@ -302,7 +302,7 @@ impl App {
                     // their contour are never re-laid-out.
                     let tag = LabelItem::new("cube")
                         .with_world_anchor([0.0, 0.0, 0.7])
-                        .with_outline([0.0, 0.0, 0.0, 0.85], 2.0)
+                        .with_outline([0.0, 0.0, 0.0, 0.85], 2.0, vpl::OutlineMode::Outer)
                         .with_align_y(AnchorY::Bottom)
                         .with_font_size(15.0);
                     let label = self
@@ -332,7 +332,7 @@ impl App {
                     [PANEL_W, PANEL_H],
                 )
                 .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
-                .with_clip_mask(CLIP_MASK_ID);
+                .with_clip(CLIP_MASK_ID);
                 self.session.frame_data_mut().overlays.shapes = vec![mask];
 
                 // Set the retained submissions (assembly clears overlays, so this
@@ -343,8 +343,8 @@ impl App {
                     // Scrolling content (text + shape streams), clipped to the
                     // rounded panel mask; only the translate changes per frame.
                     RetainedOverlay::new(self.content.unwrap())
-                        .with_translate([0.0, -scroll])
-                        .with_clip_mask(CLIP_MASK_ID)
+                        .with_position([0.0, -scroll])
+                        .with_clip(CLIP_MASK_ID)
                         .with_z_order(1),
                     // World-anchored label: no translate here. The renderer
                     // resolves its baked anchor to the cube's projected position

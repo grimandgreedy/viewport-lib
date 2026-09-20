@@ -493,3 +493,105 @@ fn glyph_run_rotation_turns_the_run() {
     let plain = render(0.0, &mut renderer);
     assert_ne!(plain, render(0.7, &mut renderer), "a rotated run must move");
 }
+
+/// `with_inner_shadow` exists on every family and draws on every family.
+///
+/// Inner shadows landed on the tessellated and glyph backends before the
+/// builder did, so for a while the capability was reachable only by editing
+/// `style` directly on three of the four families. This is the assertion that
+/// would have caught that: set one through the builder, and the pixels move.
+#[test]
+fn every_family_has_a_working_inner_shadow_builder() {
+    use viewport_lib::{
+        GlyphRunItem, LabelItem, OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+        PositionedGlyph, ShadowLayer,
+    };
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // An inset layer needs a spread: without one the band starts at the edge
+    // and the whole interior is outside it.
+    let inset = || ShadowLayer::new([0.0_f32, 0.0, 0.0, 1.0], 6.0, [0.0, 0.0]).with_spread(8.0);
+    let white = OverlayFill::Solid([1.0_f32, 1.0, 1.0, 1.0].into());
+
+    let shape = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item = OverlayShapeItem::new(OverlayShape::Circle, [20.0, 20.0], [56.0, 56.0])
+            .with_fill(white.clone());
+        ovl.shapes = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+    let polyline = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item =
+            OverlayPolylineItem::new(vec![[20.0, 20.0], [70.0, 20.0], [70.0, 70.0], [20.0, 70.0]])
+                .with_closed(true)
+                .with_fill(white.clone());
+        ovl.polylines = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+    let label = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item = LabelItem::new("Mg")
+            .with_position([20.0, 20.0])
+            .with_font_size(48.0)
+            .with_colour([1.0, 1.0, 1.0, 1.0]);
+        ovl.labels = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+    let run = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item = GlyphRunItem::new(vec![
+            PositionedGlyph::new(55, 0.0, 0.0),
+            PositionedGlyph::new(82, 30.0, 0.0),
+        ])
+        .with_font_size(48.0)
+        .with_position([20.0, 60.0])
+        .with_colour([1.0, 1.0, 1.0, 1.0]);
+        ovl.glyph_runs = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+
+    for (name, build) in [
+        (
+            "shape",
+            &shape as &dyn Fn(bool) -> viewport_lib::OverlayFrame,
+        ),
+        ("polyline", &polyline),
+        ("label", &label),
+        ("glyph run", &run),
+    ] {
+        let mut plain = base_frame();
+        plain.overlays = build(false);
+        let plain = renderer.render_offscreen(&device, &queue, &plain, SIZE, SIZE);
+
+        let mut inset_frame = base_frame();
+        inset_frame.overlays = build(true);
+        let with_inset = renderer.render_offscreen(&device, &queue, &inset_frame, SIZE, SIZE);
+
+        assert_ne!(
+            plain, with_inset,
+            "{name}: with_inner_shadow changed nothing, so the builder does not reach the backend"
+        );
+    }
+}

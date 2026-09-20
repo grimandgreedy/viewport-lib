@@ -112,8 +112,8 @@ impl RetainedOverlay {
     }
 
     /// Set the per-frame translate in logical pixels.
-    pub fn with_translate(mut self, translate: [f32; 2]) -> Self {
-        self.transform.translate = translate;
+    pub fn with_position(mut self, position: [f32; 2]) -> Self {
+        self.transform.translate = position;
         self
     }
 
@@ -151,7 +151,7 @@ impl RetainedOverlay {
     /// Clip the group to the mask shape whose `provides_mask` matches `clip_id`
     /// (registered by an overlay shape submitted in the same frame), for shaped
     /// clipping such as a rounded-rect scroll viewport.
-    pub fn with_clip_mask(mut self, clip_id: u32) -> Self {
+    pub fn with_clip(mut self, clip_id: u32) -> Self {
         self.clip.mask = Some(clip_id);
         self
     }

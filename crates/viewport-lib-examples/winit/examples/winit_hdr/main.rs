@@ -334,7 +334,7 @@ impl ApplicationHandler for App {
                         [200.0, 200.0],
                     )
                     .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 0.1].into()))
-                    .with_border([1.0, 1.0, 1.0, 0.4], 1.5, vpl::BorderMode::Inset)
+                    .with_outline([1.0, 1.0, 1.0, 0.4], 1.5, vpl::OutlineMode::Inset)
                     .with_backdrop_blur(20.0),
                 );
 
