@@ -41,6 +41,7 @@ pub fn scenes() -> Vec<NamedScene> {
         // glyph-bearing scene in the middle of the list re-blesses everything
         // after it for no behavioural reason.
         scene("overlay_text_fill", build_text_fill),
+        scene("overlay_shadow_parity", build_shadow_parity),
         NamedScene {
             name: "overlay_group_anchor",
             // A second viewpoint for the catalogue viewer: a world anchor
@@ -73,6 +74,133 @@ fn scene(name: &'static str, build: fn(&mut BuildCtx<'_>) -> BuiltScene) -> Name
         }],
         build,
     }
+}
+
+/// The same outer and inner layer on every family at once.
+///
+/// A shadow layer is meant to mean one thing everywhere: an outer layer dilates
+/// what the item covers and is clipped to outside it, an inner layer erodes it
+/// inward from the boundary. The families reach that through three different
+/// coverage backends, so the gate is one image with all of them side by side:
+/// a backend that drifts shows up as a mismatch here rather than as a support
+/// flag quietly flipping.
+///
+/// The fills are translucent on purpose. That is what makes the clipping
+/// visible: an unclipped outer layer paints its dilated silhouette behind the
+/// fill and tints the interior.
+fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let red = Colour::srgb(1.0, 0.25, 0.2, 1.0);
+    let outer = ShadowLayer::outline(red, 4.0);
+    // Narrower than the outer layer so the glyph families keep a visible core:
+    // an inset band as wide as a stem swallows the letterform whole, which
+    // draws but pins very little.
+    let inner = ShadowLayer::new(red, 0.0, [0.0, 0.0]).with_spread(2.0);
+    let fill = OverlayFill::Solid(Colour::srgb(0.95, 0.95, 0.98, 0.6));
+    let cell = [86.0, 54.0];
+
+    let mut style = viewport_lib::OverlayStyle::default();
+    style.shadows = vec![outer.clone()];
+    style.inner_shadows = vec![inner.clone()];
+
+    let mut analytic = OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 8.0 },
+        [24.0, 24.0],
+        cell,
+    );
+    analytic.style = style.clone();
+    analytic.style.fill = Some(fill.clone());
+
+    let mut vector = OverlayShapeItem::new(
+        OverlayShape::Vector {
+            subpaths: vec![SubPath::polygon(&[
+                [0.0, 0.0],
+                [cell[0], 0.0],
+                [cell[0], cell[1]],
+                [0.0, cell[1]],
+            ])],
+            fill_rule: FillRule::NonZero,
+        },
+        [140.0, 24.0],
+        cell,
+    );
+    vector.style = style.clone();
+    vector.style.fill = Some(fill.clone());
+
+    // A flat image, so what the cell pins is the shadow rather than the texel
+    // filtering: this path reads the shadow layers through its own binding.
+    let texture = ctx.renderer.resources_mut().upload_overlay_texture(
+        ctx.device,
+        ctx.queue,
+        2,
+        2,
+        &[200u8, 205, 240, 153].repeat(4),
+    );
+    let mut textured = OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 8.0 },
+        [256.0, 24.0],
+        cell,
+    );
+    textured.style = style.clone();
+    textured.style.fill = Some(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)));
+    textured.style.texture = Some(texture);
+
+    let mut filled = OverlayPolylineItem::new(vec![
+        [24.0, 110.0],
+        [24.0 + cell[0], 110.0],
+        [24.0 + cell[0], 110.0 + cell[1]],
+        [24.0, 110.0 + cell[1]],
+    ])
+    .with_closed(true)
+    .with_thickness(0.0);
+    filled.style = style.clone();
+    filled.style.fill = Some(fill.clone());
+
+    let mut stroke = OverlayPolylineItem::new(vec![
+        [150.0, 118.0],
+        [200.0, 150.0],
+        [250.0, 118.0],
+        [310.0, 152.0],
+    ])
+    .with_thickness(10.0)
+    .with_colour(Colour::srgb(0.95, 0.95, 0.98, 0.6));
+    stroke.style = style.clone();
+
+    let mut label = LabelItem::new("Parity")
+        .with_position([24.0, 196.0])
+        .with_font_size(34.0)
+        .with_colour(Colour::srgb(0.95, 0.95, 0.98, 0.6));
+    label.style = style.clone();
+
+    let mut run = GlyphRunItem::new(run_glyphs(16.0));
+    run.font_size = 26.0;
+    run.transform.translate = [190.0, 210.0];
+    run.colour = Colour::srgb(0.95, 0.95, 0.98, 0.6);
+    run.style = style.clone();
+
+    let mut retained_label = LabelItem::new("Group")
+        .with_position([24.0, 246.0])
+        .with_font_size(26.0)
+        .with_colour(Colour::srgb(0.95, 0.95, 0.98, 0.6));
+    retained_label.style = style;
+    let id = ctx.renderer.compile_overlay_geometry(
+        ctx.device,
+        ctx.queue,
+        &[],
+        &[],
+        &[],
+        std::slice::from_ref(&retained_label),
+        1.0,
+    );
+
+    backdrop(ctx, {
+        let mut ovl = OverlayFrame::default();
+        ovl.shapes = vec![analytic, vector, textured];
+        ovl.polylines = vec![filled, stroke];
+        ovl.labels = vec![label];
+        ovl.glyph_runs = vec![run];
+        ovl.retained = vec![RetainedOverlay::new(id)];
+        ovl
+    })
 }
 
 /// A plain lit backdrop, so overlays are composited over geometry rather than

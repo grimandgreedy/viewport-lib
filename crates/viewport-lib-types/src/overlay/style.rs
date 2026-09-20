@@ -165,21 +165,18 @@ impl OverlayStyle {
 ///
 /// # The fields are the contract; the curve is not
 ///
-/// A `ShadowLayer` means the same thing everywhere, but the three backends
-/// compute its falloff differently: the SDF path smoothsteps the distance
-/// field, the glyph path runs two box passes over the coverage bitmap, and the
-/// tessellated path draws five banded steps. Identical values are close but not
-/// identical across families. That is deliberate and is not reported here:
-/// `shadows` is supported by all of them.
+/// A `ShadowLayer` means the same thing everywhere, so `shadows` and
+/// `inner_shadows` are not variables here: an outer layer dilates what the
+/// item covers and is clipped to outside it, an inner layer erodes it inward
+/// from the boundary, and both draw on every family. What does differ is the
+/// falloff: the SDF path smoothsteps the distance field, the glyph path runs
+/// two box passes over the coverage bitmap, and the tessellated path draws five
+/// banded steps. Identical values are close but not identical across families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct OverlayStyleSupport {
     /// `fill` is drawn, gradients included.
     pub fill: bool,
-    /// `shadows` is drawn.
-    pub shadows: bool,
-    /// `inner_shadows` is drawn.
-    pub inner_shadows: bool,
     /// `texture` and `texture_transform` are sampled.
     pub texture: bool,
     /// `backdrop` is composited.
@@ -190,8 +187,6 @@ impl OverlayStyleSupport {
     /// Everything drawn.
     pub const ALL: Self = Self {
         fill: true,
-        shadows: true,
-        inner_shadows: true,
         texture: true,
         backdrop: true,
     };
@@ -199,8 +194,6 @@ impl OverlayStyleSupport {
     /// Nothing drawn.
     pub const NONE: Self = Self {
         fill: false,
-        shadows: false,
-        inner_shadows: false,
         texture: false,
         backdrop: false,
     };
@@ -219,8 +212,6 @@ impl OverlayStyleSupport {
         match shape {
             crate::overlay::OverlayShape::Vector { .. } => Self {
                 fill: true,
-                shadows: true,
-                inner_shadows: true,
                 texture: false,
                 backdrop: false,
             },
@@ -229,22 +220,17 @@ impl OverlayStyleSupport {
     }
 
     /// What an `OverlayPolylineItem` draws. A closed polyline with a fill is a
-    /// tessellated area, which is why `fill` and `texture` are drawn; an open
-    /// one covers only its stroke, and an inset shadow eats into that.
+    /// tessellated area, which is why `fill` and `texture` are drawn.
     pub const fn for_polyline() -> Self {
         Self {
             fill: true,
-            shadows: true,
-            inner_shadows: true,
             texture: true,
             backdrop: false,
         }
     }
 
     /// What a `LabelItem` or a `GlyphRunItem` draws. Both rasterise through the
-    /// glyph atlas, where a shadow is a dilated and blurred coverage cell, an
-    /// inset shadow is an eroded one, and a fill is a per-vertex tint over the
-    /// coverage.
+    /// glyph atlas, where a fill is a per-vertex tint over the coverage.
     ///
     /// `texture` is the one gap left: the text pass binds the glyph atlas and
     /// issues a single batched draw, so sampling a second image means grouping
@@ -253,8 +239,6 @@ impl OverlayStyleSupport {
     pub const fn for_glyphs() -> Self {
         Self {
             fill: true,
-            shadows: true,
-            inner_shadows: true,
             texture: false,
             backdrop: false,
         }
@@ -270,12 +254,6 @@ impl OverlayStyleSupport {
         let mut out = Vec::new();
         if !self.fill && style.fill.is_some() {
             out.push("fill");
-        }
-        if !self.shadows && !style.shadows.is_empty() {
-            out.push("shadows");
-        }
-        if !self.inner_shadows && !style.inner_shadows.is_empty() {
-            out.push("inner_shadows");
         }
         if !self.texture && style.texture.is_some() {
             out.push("texture");

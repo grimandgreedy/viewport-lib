@@ -5,6 +5,10 @@
 //! drifts from the renderer is worse than no table, so every cell is checked
 //! the only way that cannot drift: set the field, render, and see whether the
 //! pixels moved.
+//!
+//! `shadows` and `inner_shadows` are not cells in that table: a shadow layer
+//! means the same thing on every family, so the check for them is that setting
+//! one always moves the pixels, whichever family it lands on.
 
 #[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
@@ -35,24 +39,26 @@ fn base_frame() -> FrameData {
     frame
 }
 
-/// The four style fields the table reports on, each as "the non-default value
-/// to try". `texture_transform` rides `texture` and is not separately queryable.
+/// The style fields the table reports on, each as "the non-default value to
+/// try". `texture_transform` rides `texture` and is not separately queryable.
 fn probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
+    vec![("fill", |s: &mut OverlayStyle| {
+        s.fill = Some(OverlayFill::LinearGradient {
+            start_colour: Colour::srgb(1.0, 0.0, 0.0, 1.0),
+            end_colour: Colour::srgb(0.0, 0.0, 1.0, 1.0),
+            angle: 0.0,
+        });
+    })]
+}
+
+/// The two shadow lists, which every family draws. An inner layer needs a
+/// spread: without one the band starts at the edge and the whole interior is
+/// outside it, so a blur-only inset layer is invisible by construction.
+fn shadow_probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
     vec![
-        ("fill", |s: &mut OverlayStyle| {
-            s.fill = Some(OverlayFill::LinearGradient {
-                start_colour: Colour::srgb(1.0, 0.0, 0.0, 1.0),
-                end_colour: Colour::srgb(0.0, 0.0, 1.0, 1.0),
-                angle: 0.0,
-            });
-        }),
         ("shadows", |s: &mut OverlayStyle| {
             s.shadows = vec![ShadowLayer::outline(Colour::srgb(0.0, 0.0, 0.0, 1.0), 3.0)];
         }),
-        // An inner shadow needs a spread (or an offset): without one the band
-        // starts at the edge and the whole interior is outside it, so a
-        // blur-only inset layer is invisible by construction rather than by
-        // the family not supporting it.
         ("inner_shadows", |s: &mut OverlayStyle| {
             s.inner_shadows = vec![
                 ShadowLayer::new(Colour::srgb(0.0, 0.0, 0.0, 1.0), 6.0, [0.0, 0.0])
@@ -65,8 +71,6 @@ fn probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
 fn supported(support: &OverlayStyleSupport, field: &str) -> bool {
     match field {
         "fill" => support.fill,
-        "shadows" => support.shadows,
-        "inner_shadows" => support.inner_shadows,
         other => panic!("unknown probe field {other}"),
     }
 }
@@ -96,6 +100,13 @@ fn reported_support_matches_what_the_renderer_draws() {
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // A flat two-by-two image, enough to make the textured shape pipeline the
+    // one that draws: it reads the shadow layers through its own binding.
+    let texture =
+        renderer
+            .resources_mut()
+            .upload_overlay_texture(&device, &queue, 2, 2, &[255u8; 16]);
 
     let analytic = OverlayShape::Circle;
     let vector = OverlayShape::Vector {
@@ -142,6 +153,19 @@ fn reported_support_matches_what_the_renderer_draws() {
                     [40.0, 40.0],
                 );
                 item.style = style;
+                ovl.shapes = vec![item];
+                ovl
+            }),
+        ),
+        (
+            "textured shape",
+            OverlayStyleSupport::for_shape(&analytic),
+            Box::new(move |style| {
+                let mut ovl = OverlayFrame::default();
+                let mut item =
+                    OverlayShapeItem::new(OverlayShape::Circle, [20.0, 20.0], [56.0, 56.0]);
+                item.style = style;
+                item.style.texture = Some(texture);
                 ovl.shapes = vec![item];
                 ovl
             }),
@@ -218,6 +242,19 @@ fn reported_support_matches_what_the_renderer_draws() {
                     "inert"
                 },
                 if changed { "changed" } else { "did not change" },
+            );
+        }
+        // Shadow parity: both lists draw on every family, so there is no cell
+        // to consult. A backend that quietly stops drawing one fails here.
+        for (field, apply) in shadow_probes() {
+            let mut style = base_style(name);
+            apply(&mut style);
+            let with = render(&mut renderer, &device, &queue, build(style));
+            assert!(
+                differs(&plain, &with),
+                "{name}: setting style.{field} changed nothing. A shadow layer \
+                 means the same thing on every family, so every one of them \
+                 has to draw it.",
             );
         }
     }
