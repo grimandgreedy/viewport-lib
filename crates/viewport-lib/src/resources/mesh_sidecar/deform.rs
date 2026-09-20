@@ -208,43 +208,50 @@ pub(crate) struct DeformationState {
     pub external_source_count: usize,
 }
 
+/// The `@group(2)` layout: a header uniform plus the per-mesh and per-instance
+/// slot-data storage buffers, all vertex-stage. Named rather than inlined so
+/// `ViewportGpuResources::new` can count the storage buffers it costs and check
+/// them against `ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE`, which
+/// gates whether this group is bound at all.
+pub(crate) const BGL_ENTRIES: [crate::gpu::BindGroupLayoutEntry; 3] = [
+    crate::gpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: crate::gpu::ShaderStages::VERTEX,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    crate::gpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: crate::gpu::ShaderStages::VERTEX,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    crate::gpu::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: crate::gpu::ShaderStages::VERTEX,
+        ty: crate::gpu::BindingType::Buffer {
+            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
+
 impl DeformationState {
     pub fn new(device: &crate::gpu::Device) -> Self {
         let bind_group_layout =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("deform_bgl"),
-                entries: &[
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    crate::gpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: crate::gpu::ShaderStages::VERTEX,
-                        ty: crate::gpu::BindingType::Buffer {
-                            ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                entries: &BGL_ENTRIES,
             });
 
         let header_cpu = DeformHeader::zeroed();

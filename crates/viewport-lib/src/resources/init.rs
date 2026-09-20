@@ -2,6 +2,26 @@ use super::*;
 use crate::gpu::util::DeviceExt;
 use crate::resources::VertexBufferLayoutExt;
 
+/// Count the storage buffers a set of bind group layout entries costs in the
+/// vertex stage. Used to check the layouts built here against the constants
+/// that describe them.
+#[cfg(debug_assertions)]
+fn vertex_storage_buffers(entries: &[crate::gpu::BindGroupLayoutEntry]) -> u32 {
+    entries
+        .iter()
+        .filter(|e| {
+            e.visibility.contains(crate::gpu::ShaderStages::VERTEX)
+                && matches!(
+                    e.ty,
+                    crate::gpu::BindingType::Buffer {
+                        ty: crate::gpu::BufferBindingType::Storage { .. },
+                        ..
+                    }
+                )
+        })
+        .count() as u32
+}
+
 impl DeviceResources {
     /// Create all GPU resources for the viewport.
     ///
@@ -107,266 +127,263 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Bind group layouts
         // ------------------------------------------------------------------
+        let camera_bgl_entries = [
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Depth,
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Comparison),
+                count: None,
+            },
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 3,
+                // Lights are read only in the fragment stage. Kept FRAGMENT-only
+                // so it does not consume one of Metal's per-stage vertex buffer
+                // slots (the per-object mesh pipeline binds many vertex-stage
+                // storage buffers and is slot-sensitive).
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 4: clip planes uniform (section view clipping).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 5: shadow atlas uniform (CSM matrices, splits, PCSS params).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 6: clip volume uniform (box/sphere/plane extended clip region).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 6,
+                // Clip-volume tests run only in the fragment stage (discard), so
+                // keep this FRAGMENT-only to free a Metal vertex buffer slot.
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 7: IBL irradiance equirect array (one layer per environment).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 8: IBL prefiltered specular equirect array (one layer per environment).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 9: BRDF integration LUT texture.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 10: IBL sampler (linear, clamp-to-edge).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 10,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Binding 11: Skybox/environment equirect texture (full-res for skybox).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 11,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Binding 13: read-only storage buffer of `SingleLightUniform`
+            // entries. Indexed against the `count` field of the lights
+            // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 13,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 14: clustered-shading grid uniform (dimensions,
+            // near/far, screen size, fallback flag). FRAGMENT only: the
+            // cluster helpers are fragment-stage, and the vertex-stage
+            // Metal buffer table is at capacity (the object group's
+            // binding 15 took the last slot).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 14,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 15: cluster cell storage (offset + count per cell),
+            // read-only in the fragment stage.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 16: global cluster light index list, read-only in
+            // the fragment stage.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 16,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Binding 17: point-light shadow depth array.
+            // iOS Metal does not support cube array textures, so on that
+            // target the shader uses texture_depth_2d_array and we bind a
+            // D2Array view instead.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 17,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Depth,
+                    view_dimension: if cfg!(target_os = "ios") {
+                        crate::gpu::TextureViewDimension::D2Array
+                    } else {
+                        crate::gpu::TextureViewDimension::CubeArray
+                    },
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 18: indirect-lighting storage buffer (FRAGMENT,
+            // read-only). Holds per-object light-probe SH blocks then the
+            // environment-selection zones in a second region (see
+            // indirect_light_data / load_env_zone in scene_lighting.wgsl).
+            // Binding 19 is intentionally free: env zones used to live there
+            // before they were folded into this buffer.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 18,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 20: adaptive probe volume (FRAGMENT, read-only). A
+            // 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid
+            // cell, trilinearly sampled per fragment when the object's
+            // light_probe_index is the volume sentinel.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 20,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 21: per-material UV transform buffer (FRAGMENT,
+            // read-only). Array of `MaterialGpu` transform blocks, indexed by
+            // the per-draw `material_id`. Scene-global, so it lives in group 0.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 21,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 22: per-instance custom-data buffer (FRAGMENT,
+            // read-only). Array of `InstanceCustomData` payloads, indexed by
+            // the per-instance `custom_data_id`. Scene-global, group 0.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 22,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
         let camera_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("camera_bgl"),
-            entries: &[
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::Comparison,
-                    ),
-                    count: None,
-                },
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    // Lights are read only in the fragment stage. Kept FRAGMENT-only
-                    // so it does not consume one of Metal's per-stage vertex buffer
-                    // slots (the per-object mesh pipeline binds many vertex-stage
-                    // storage buffers and is slot-sensitive).
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 4: clip planes uniform (section view clipping).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 5: shadow atlas uniform (CSM matrices, splits, PCSS params).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 6: clip volume uniform (box/sphere/plane extended clip region).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    // Clip-volume tests run only in the fragment stage (discard), so
-                    // keep this FRAGMENT-only to free a Metal vertex buffer slot.
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 7: IBL irradiance equirect array (one layer per environment).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 8: IBL prefiltered specular equirect array (one layer per environment).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 9: BRDF integration LUT texture.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 10: IBL sampler (linear, clamp-to-edge).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Binding 11: Skybox/environment equirect texture (full-res for skybox).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Binding 13: read-only storage buffer of `SingleLightUniform`
-                // entries. Indexed against the `count` field of the lights
-                // header uniform (binding 3). Capacity = `MAX_SCENE_LIGHTS`.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 14: clustered-shading grid uniform (dimensions,
-                // near/far, screen size, fallback flag). FRAGMENT only: the
-                // cluster helpers are fragment-stage, and the vertex-stage
-                // Metal buffer table is at capacity (the object group's
-                // binding 15 took the last slot).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 14,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 15: cluster cell storage (offset + count per cell),
-                // read-only in the fragment stage.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 15,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 16: global cluster light index list, read-only in
-                // the fragment stage.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 16,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Binding 17: point-light shadow depth array.
-                // iOS Metal does not support cube array textures, so on that
-                // target the shader uses texture_depth_2d_array and we bind a
-                // D2Array view instead.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 17,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: if cfg!(target_os = "ios") {
-                            crate::gpu::TextureViewDimension::D2Array
-                        } else {
-                            crate::gpu::TextureViewDimension::CubeArray
-                        },
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 18: indirect-lighting storage buffer (FRAGMENT,
-                // read-only). Holds per-object light-probe SH blocks then the
-                // environment-selection zones in a second region (see
-                // indirect_light_data / load_env_zone in scene_lighting.wgsl).
-                // Binding 19 is intentionally free: env zones used to live there
-                // before they were folded into this buffer.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 18,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 20: adaptive probe volume (FRAGMENT, read-only). A
-                // 3-vec4 header (grid box + dims) then 9 vec4 of SH per grid
-                // cell, trilinearly sampled per fragment when the object's
-                // light_probe_index is the volume sentinel.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 20,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 21: per-material UV transform buffer (FRAGMENT,
-                // read-only). Array of `MaterialGpu` transform blocks, indexed by
-                // the per-draw `material_id`. Scene-global, so it lives in group 0.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 21,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 22: per-instance custom-data buffer (FRAGMENT,
-                // read-only). Array of `InstanceCustomData` payloads, indexed by
-                // the per-instance `custom_data_id`. Scene-global, group 0.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 22,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &camera_bgl_entries,
         });
 
         // Object bind group layout (group 1 for non-instanced pipelines).
@@ -379,241 +396,241 @@ impl DeviceResources {
         // Textures are co-located in group 1 (rather than a separate group 2) so that
         // the total bind group count stays at 2, compatible with iced's wgpu device
         // which hardcodes max_bind_groups = 2 in its DeviceDescriptor.
+        let object_bgl_entries = [
+            // binding 0: per-object data as a read-only storage array.
+            // Every per-object mesh draw binds the same buffer here and
+            // selects its element with @builtin(instance_index), so group 1
+            // stops changing per draw. Single-item paths (shadow casters,
+            // normal lines, LIC) bind a one-element buffer and draw at
+            // instance 0.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 1: albedo texture (filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 2: shared filtering sampler
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // binding 3: normal map texture (filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 4: AO map texture (filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 5: LUT (colourmap) texture (256x1 Rgba8UnormSrgb, FRAGMENT, filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 6: scalar attribute storage buffer (VERTEX, read-only).
+            // Read only in vs_main; the fragment stage receives the value as
+            // the interpolated `scalar_val` varying, so it does not need the
+            // buffer visible. Keeping it vertex-only also keeps this buffer off
+            // the fragment stage's storage-buffer count.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 6,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 7: matcap texture (FRAGMENT, filterable 2D)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 8: per-face colour storage buffer (VERTEX, read-only).
+            // Like binding 6, read only in vs_main; the fragment stage gets it
+            // as the interpolated `face_colour` varying, so it stays vertex-only
+            // and off the fragment stage's storage-buffer count.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 9: warp vector storage buffer (VERTEX, read-only)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 10: LUT clamp sampler (FRAGMENT, filtering)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 10,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // binding 11: metallic-roughness ORM texture (FRAGMENT, filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 11,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 12: emissive texture (FRAGMENT, filterable)
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 12,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 13: position override storage buffer (VERTEX, read-only).
+            // Fallback sentinel (1x vec3<f32>) is bound when no override is set.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 13,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 14: normal override storage buffer (VERTEX, read-only).
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 14,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 15: per-vertex extension attribute storage buffer
+            // (VERTEX, read-only). One vec4<f32> per vertex; declared and
+            // read only by material-plugin modules whose hook sets
+            // reads_vertex_attribute. Fallback sentinel (one zero vec4)
+            // is bound for meshes without the channel.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 17: baked lightmap texture array (FRAGMENT, filterable).
+            // Sampled with the binding-2 material sampler. A lightmap can
+            // spill across several atlas pages, so this is a texture_2d_array
+            // and the shader selects a layer per vertex from UV1.z. Single-page
+            // lightmaps (and the 1x1 fallback for meshes without one) bind a
+            // one-layer array.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 17,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 18: dominant-direction atlas array for directional
+            // lightmaps (FRAGMENT, filterable). Same page layout as binding 17.
+            // The 1x1 fallback is bound and ignored unless
+            // object.lightmap_directional is set.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 18,
+                visibility: crate::gpu::ShaderStages::FRAGMENT,
+                ty: crate::gpu::BindingType::Texture {
+                    sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: crate::gpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // binding 19: second UV set (uv1) storage stream (VERTEX). The
+            // per-chunk parallel buffer for meshes with `MeshData::uvs1`, or
+            // the one-entry zero fallback otherwise. A material texture slot
+            // samples it instead of the interleaved uv0 when its
+            // `UvTransform::uv_set` is 1.
+            crate::gpu::BindGroupLayoutEntry {
+                binding: 19,
+                visibility: crate::gpu::ShaderStages::VERTEX,
+                ty: crate::gpu::BindingType::Buffer {
+                    ty: crate::gpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
         let object_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
             label: Some("object_bgl"),
-            entries: &[
-                // binding 0: per-object data as a read-only storage array.
-                // Every per-object mesh draw binds the same buffer here and
-                // selects its element with @builtin(instance_index), so group 1
-                // stops changing per draw. Single-item paths (shadow casters,
-                // normal lines, LIC) bind a one-element buffer and draw at
-                // instance 0.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: crate::gpu::ShaderStages::VERTEX
-                        | crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 1: albedo texture (filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 2: shared filtering sampler
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 3: normal map texture (filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 4: AO map texture (filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 5: LUT (colourmap) texture (256x1 Rgba8UnormSrgb, FRAGMENT, filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 6: scalar attribute storage buffer (VERTEX, read-only).
-                // Read only in vs_main; the fragment stage receives the value as
-                // the interpolated `scalar_val` varying, so it does not need the
-                // buffer visible. Keeping it vertex-only also keeps this buffer off
-                // the fragment stage's storage-buffer count.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 7: matcap texture (FRAGMENT, filterable 2D)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 8: per-face colour storage buffer (VERTEX, read-only).
-                // Like binding 6, read only in vs_main; the fragment stage gets it
-                // as the interpolated `face_colour` varying, so it stays vertex-only
-                // and off the fragment stage's storage-buffer count.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 9: warp vector storage buffer (VERTEX, read-only)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 10: LUT clamp sampler (FRAGMENT, filtering)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // binding 11: metallic-roughness ORM texture (FRAGMENT, filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 12: emissive texture (FRAGMENT, filterable)
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 13: position override storage buffer (VERTEX, read-only).
-                // Fallback sentinel (1x vec3<f32>) is bound when no override is set.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 14: normal override storage buffer (VERTEX, read-only).
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 14,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 15: per-vertex extension attribute storage buffer
-                // (VERTEX, read-only). One vec4<f32> per vertex; declared and
-                // read only by material-plugin modules whose hook sets
-                // reads_vertex_attribute. Fallback sentinel (one zero vec4)
-                // is bound for meshes without the channel.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 15,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // binding 17: baked lightmap texture array (FRAGMENT, filterable).
-                // Sampled with the binding-2 material sampler. A lightmap can
-                // spill across several atlas pages, so this is a texture_2d_array
-                // and the shader selects a layer per vertex from UV1.z. Single-page
-                // lightmaps (and the 1x1 fallback for meshes without one) bind a
-                // one-layer array.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 17,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 18: dominant-direction atlas array for directional
-                // lightmaps (FRAGMENT, filterable). Same page layout as binding 17.
-                // The 1x1 fallback is bound and ignored unless
-                // object.lightmap_directional is set.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 18,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // binding 19: second UV set (uv1) storage stream (VERTEX). The
-                // per-chunk parallel buffer for meshes with `MeshData::uvs1`, or
-                // the one-entry zero fallback otherwise. A material texture slot
-                // samples it instead of the interleaved uv0 when its
-                // `UvTransform::uv_set` is 1.
-                crate::gpu::BindGroupLayoutEntry {
-                    binding: 19,
-                    visibility: crate::gpu::ShaderStages::VERTEX,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &object_bgl_entries,
         });
 
         // Texture-only bind group layout : kept for the instanced pipeline (group 1 bindings
@@ -678,6 +695,39 @@ impl DeviceResources {
             crate::resources::mesh_sidecar::deform::DeformationState::new_disabled(device)
         };
         let deform_bgl = deform.enabled.then_some(&deform.bind_group_layout);
+
+        // wgpu counts max_storage_buffers_per_shader_stage per stage across
+        // every group in a pipeline layout, so the mesh pipelines pay the sum of
+        // the groups they bind. The constants describing that sum live in
+        // ViewportRenderer and drift silently when a vertex-stage binding is
+        // added here: a deform gate one short of what the layout binds turns
+        // deformers on and then fails every pipeline layout that includes the
+        // deform group, which renders nothing at all. Derive the counts from the
+        // entries just used rather than trusting the constants.
+        #[cfg(debug_assertions)]
+        {
+            let base = vertex_storage_buffers(&camera_bgl_entries)
+                + vertex_storage_buffers(&object_bgl_entries);
+            let default_limit = crate::gpu::Limits::default().max_storage_buffers_per_shader_stage;
+            debug_assert!(
+                base <= default_limit,
+                "the base mesh path binds {base} vertex-stage storage buffers, over wgpu's \
+                 default limit of {default_limit}; a consumer creating a device with default \
+                 limits could no longer render at all"
+            );
+            let with_deform =
+                base + vertex_storage_buffers(&crate::resources::mesh_sidecar::deform::BGL_ENTRIES);
+            debug_assert_eq!(
+                with_deform,
+                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
+                "the deform-enabled mesh pipeline layout binds {} vertex-stage storage buffers \
+                 but DEFORM_STORAGE_BUFFERS_PER_STAGE gates deformers at {}; a device granted \
+                 exactly the gate value would enable the deform group and then fail every \
+                 pipeline layout that includes it",
+                with_deform,
+                crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
+            );
+        }
 
         // ------------------------------------------------------------------
         // Pipeline layout (shared between solid and transparent pipelines)
