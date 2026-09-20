@@ -48,6 +48,12 @@ pub(crate) struct GlyphStyle {
     /// inset layer. The cell is the glyph's own coverage with its interior
     /// eaten away, so it draws over the glyph rather than behind it.
     inner: bool,
+    /// Where the glyph sits relative to this cell once the layer offset has
+    /// moved it, in whole physical pixels. An outer cell is cut back to outside
+    /// the letterform, and the cut has to land where the letterform actually
+    /// is, so the offset is part of what makes a cell distinct.
+    clip_dx: i32,
+    clip_dy: i32,
 }
 
 /// Largest dilation or blur honoured on a glyph cell, in physical pixels.
@@ -61,12 +67,26 @@ impl GlyphStyle {
         blur_tenths: 0,
         falloff_tenths: 0,
         inner: false,
+        clip_dx: 0,
+        clip_dy: 0,
     };
 
-    /// Build a style from a shadow layer's physical-pixel spread and blur.
-    /// Returns [`GlyphStyle::PLAIN`] when the layer would not change the cell.
-    pub(crate) fn from_shadow(spread_px: f32, blur_px: f32, falloff: f32) -> Self {
-        Self::from_layer(spread_px, blur_px, falloff, false)
+    /// Build a style from a shadow layer's physical-pixel spread, blur and
+    /// offset. Returns [`GlyphStyle::PLAIN`] when the layer would not change
+    /// the cell.
+    pub(crate) fn from_shadow(
+        spread_px: f32,
+        blur_px: f32,
+        falloff: f32,
+        offset_px: [f32; 2],
+    ) -> Self {
+        let mut s = Self::from_layer(spread_px, blur_px, falloff, false);
+        if !s.is_plain() {
+            let clamp = |v: f32| v.clamp(-MAX_GLYPH_STYLE_PX, MAX_GLYPH_STYLE_PX).round() as i32;
+            s.clip_dx = clamp(offset_px[0]);
+            s.clip_dy = clamp(offset_px[1]);
+        }
+        s
     }
 
     /// The inset counterpart: the cell is the glyph with a band eaten inward
@@ -86,6 +106,8 @@ impl GlyphStyle {
             blur_tenths: (blur * 10.0).round() as u32,
             falloff_tenths: ((falloff.clamp(0.05, 16.0)) * 10.0).round().max(1.0) as u32,
             inner,
+            clip_dx: 0,
+            clip_dy: 0,
         }
     }
 
@@ -1037,8 +1059,10 @@ fn style_coverage(
         }
     }
 
-    // Kept for the inset case, which needs the glyph's own coverage back.
-    let src = if style.inner { a.clone() } else { Vec::new() };
+    // Kept for the cases that need the glyph's own coverage back: the inset
+    // band is what an erosion ate, and an outer layer is cut back to outside
+    // the letterform.
+    let src = a.clone();
 
     let spread = style.spread();
     if spread > 0.0 {
@@ -1065,6 +1089,24 @@ fn style_coverage(
         for (v, &s) in a.iter_mut().zip(src.iter()) {
             *v = 255 - *v;
             *v = ((*v as u32 * s as u32) / 255) as u8;
+        }
+    } else {
+        // Cut the cell back to outside the letterform, the way an outer
+        // box-shadow is clipped to outside the border box. The layer offset
+        // moves the cell, so the letterform is sampled at that offset: the
+        // hole then lands on the glyph once the cell is drawn. Each glyph is
+        // cut against its own coverage, so a neighbour's shadow can still show
+        // through a translucent letterform where the two overlap.
+        for y in 0..oh as i32 {
+            for x in 0..ow as i32 {
+                let (sx, sy) = (x + style.clip_dx, y + style.clip_dy);
+                if sx < 0 || sy < 0 || sx >= ow as i32 || sy >= oh as i32 {
+                    continue;
+                }
+                let g = src[(sy * ow as i32 + sx) as usize] as u32;
+                let i = (y * ow as i32 + x) as usize;
+                a[i] = ((a[i] as u32 * (255 - g)) / 255) as u8;
+            }
         }
     }
 

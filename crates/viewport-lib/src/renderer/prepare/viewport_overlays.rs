@@ -156,7 +156,7 @@ pub(super) fn emit_vector_shape(
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
         .filter(|l| l.is_visible())
     {
-        emit_vector_shadow(batch, shape, subpaths, &mesh, layer, vp_w, vp_h);
+        emit_vector_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
     }
 
     let content_start = batch.len();
@@ -349,15 +349,18 @@ fn emit_vector_inner_shadow(
     }
 }
 
-/// Emit one shadow layer of a vector path: the filled silhouette plus its
-/// contours re-stroked at `2 * (spread + d)` for each blur band, all offset by
-/// the layer offset and drawn flat in the layer colour.
-#[allow(clippy::too_many_arguments)]
+/// Emit one outer shadow layer of a vector path: a band running outward from
+/// each contour, `spread + d` wide for each blur band, in the layer colour.
+///
+/// The band stops at the contour instead of painting the dilated silhouette
+/// behind the fill, which is how the distance-field path clips an outer layer
+/// and is what keeps a translucent path from tinting itself through its own
+/// shadow. The layer offset widens the band where it points and narrows it
+/// where it points away, which is the region an offset dilation covers.
 fn emit_vector_shadow(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
     subpaths: &[crate::renderer::types::SubPath],
-    mesh: &super::overlay_vector::VectorMesh,
     layer: &crate::renderer::types::ShadowLayer,
     vp_w: f32,
     vp_h: f32,
@@ -367,44 +370,25 @@ fn emit_vector_shadow(
     for (d, band_alpha) in overlay_geometry::shadow_bands(layer) {
         let mut colour = base;
         colour[3] *= shape.opacity * band_alpha;
-        if colour[3] <= 0.0 {
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
             continue;
         }
-        let shift = |p: &[[f32; 2]]| -> Vec<[f32; 2]> {
-            transform_vector_positions(p, shape)
-                .into_iter()
-                .map(|q| [q[0] + layer.offset[0], q[1] + layer.offset[1]])
-                .collect()
-        };
-        if !mesh.indices.is_empty() {
-            let positions = shift(&mesh.positions);
-            overlay_geometry::emit_flat_mesh(batch, &positions, &mesh.indices, colour, vp_w, vp_h);
-        }
-        let width = 2.0 * (layer.spread + d);
-        if width <= 0.0 {
-            continue;
-        }
-        for (contour, closed) in &contours {
-            if contour.len() < 2 {
-                continue;
-            }
-            let pts = shift(contour);
-            let cap = if *closed {
-                crate::renderer::types::PolylineCap::Butt
-            } else {
-                crate::renderer::types::PolylineCap::Round
-            };
-            batch.extend(tessellate_polyline(
+        for (contour, _closed) in &contours {
+            // A contour bounds the fill whether or not its subpath was closed,
+            // so the band follows it as a loop either way.
+            let pts = transform_vector_positions(contour, shape);
+            let side = overlay_geometry::contour_outward_sign(&pts);
+            overlay_geometry::emit_contour_band(
+                batch,
                 &pts,
+                side,
                 width,
-                *closed,
-                crate::renderer::types::LineJoin::Mitre,
-                VECTOR_BORDER_MITRE_LIMIT,
-                cap,
+                layer.offset,
                 colour,
                 vp_w,
                 vp_h,
-            ));
+            );
         }
     }
 }
@@ -1061,6 +1045,7 @@ impl ViewportRenderer {
                             layer.spread * ppp,
                             layer.blur * ppp,
                             layer.falloff,
+                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
                         );
                         let sl = if let Some(max_w) = label.max_width {
                             self.resources.content.glyph_atlas.layout_text_wrapped(
@@ -1278,6 +1263,7 @@ impl ViewportRenderer {
                             layer.spread * ppp,
                             layer.blur * ppp,
                             layer.falloff,
+                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
                         );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
                         let sq = self.resources.content.glyph_atlas.layout_glyph_run(

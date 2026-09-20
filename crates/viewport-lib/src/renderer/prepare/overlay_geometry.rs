@@ -1234,12 +1234,14 @@ pub(super) fn emit_contour_band(
     ));
 }
 
-/// Emit a stroked path's shadow: the same path re-stroked wider, once per band.
+/// Emit one outer shadow layer of a polyline: a band running outward from the
+/// edge of what the item covers, once per blur band.
 ///
-/// A contour (no blur) is a single wider stroke. A blurred shadow is a stack of
-/// them stepping inward. The path is not offset geometrically, so a very large
-/// spread on a sharply concave path reads softer at the concavity than a true
-/// dilation would; at the widths overlays use the difference is not visible.
+/// The band stops at that edge rather than painting the dilated silhouette
+/// behind the item, so a translucent path never tints itself through its own
+/// shadow. What counts as the edge depends on the item: a closed path with a
+/// fill is bounded by its contour, and anything else is bounded by both sides
+/// of its stroke, ends included.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_polyline_shadow(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
@@ -1250,24 +1252,294 @@ pub(super) fn emit_polyline_shadow(
     vp_h: f32,
 ) {
     let base = layer.colour.to_linear_rgba();
+    let filled = poly.closed && poly.style.fill.is_some();
     for (d, band_alpha) in shadow_bands(layer) {
-        let mut shadow_poly = poly.clone();
-        shadow_poly.thickness = poly.thickness + 2.0 * (layer.spread + d);
-        shadow_poly.points = poly
-            .points
-            .iter()
-            .map(|p| [p[0] + layer.offset[0], p[1] + layer.offset[1]])
-            .collect();
-        // The shadow is one silhouette, so it never carries the item's fill or
-        // texture; only the stroke shape matters.
-        shadow_poly.style.fill = None;
-        shadow_poly.style.texture = None;
         let colour = apply_opacity(base, opacity * band_alpha);
-        emit_polyline_stroke(verts, &shadow_poly, colour, vp_w, vp_h);
-        if poly.closed && poly.style.fill.is_some() {
-            // A filled closed path casts its interior too, not just its edge.
-            emit_closed_fill_shadow(verts, &shadow_poly.points, colour, vp_w, vp_h);
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
+            continue;
         }
+        if filled {
+            let side = contour_outward_sign(&poly.points);
+            emit_contour_band(
+                verts,
+                &poly.points,
+                side,
+                width,
+                layer.offset,
+                colour,
+                vp_w,
+                vp_h,
+            );
+        } else {
+            emit_stroke_outer_shadow(verts, poly, width, layer.offset, colour, vp_w, vp_h);
+        }
+    }
+}
+
+/// Emit the band outside a stroke: one ribbon alongside each of its two edges,
+/// plus the piece that wraps each open end.
+///
+/// A dash pattern is followed dash by dash, and a dotted pattern becomes a ring
+/// around each dot, so the shadow keeps the shape of the stroke it belongs to.
+#[allow(clippy::too_many_arguments)]
+fn emit_stroke_outer_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    poly: &crate::renderer::types::OverlayPolylineItem,
+    width: f32,
+    shift: [f32; 2],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    use crate::renderer::types::StrokePattern;
+    let half = (poly.thickness * 0.5).max(0.0);
+    let mut sides = |points: &[[f32; 2]], closed: bool| {
+        for (lo, hi) in [(half, half + width), (-half - width, -half)] {
+            verts.extend(tessellate_ribbon(
+                points,
+                lo,
+                hi,
+                shift,
+                closed,
+                poly.join,
+                poly.mitre_limit,
+                crate::renderer::types::PolylineCap::Butt,
+                colour,
+                vp_w,
+                vp_h,
+            ));
+        }
+        if !closed {
+            emit_stroke_end_shadow(verts, points, half, width, poly.cap, colour, vp_w, vp_h);
+        }
+    };
+    match poly.stroke_pattern {
+        StrokePattern::Solid => sides(&poly.points, poly.closed),
+        StrokePattern::Dashed {
+            dash_length,
+            gap_length,
+            offset,
+        } => {
+            if dash_length <= 0.0 || gap_length <= 0.0 {
+                sides(&poly.points, poly.closed);
+                return;
+            }
+            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
+            for sub in dash_subpaths(
+                &pts,
+                &cum,
+                dash_length.max(0.25),
+                gap_length.max(0.25),
+                offset,
+                poly.closed,
+            ) {
+                sides(&sub, false);
+            }
+        }
+        StrokePattern::Dotted { spacing, offset } => {
+            let (pts, cum) = polyline_arc_table(&poly.points, poly.closed);
+            if pts.len() < 2 {
+                return;
+            }
+            let total = *cum.last().unwrap();
+            let spacing = spacing.max(0.5);
+            let mut s = offset.rem_euclid(spacing);
+            let limit = if poly.closed {
+                total - 1e-3
+            } else {
+                total + 1e-3
+            };
+            while s < limit {
+                let c = point_at_arc(&pts, &cum, s);
+                emit_ring(verts, c, half, half + width, colour, vp_w, vp_h);
+                s += spacing;
+            }
+        }
+    }
+}
+
+/// Emit the shadow that wraps each open end of a stroke: the points outside the
+/// stroke, within `width` of it, past where it stops.
+///
+/// A round cap ends in a half-disc, so its wrap is a half-annulus. A butt or
+/// square cap ends flat, so its wrap is a rectangle across the end with a
+/// quarter-disc at each corner.
+#[allow(clippy::too_many_arguments)]
+fn emit_stroke_end_shadow(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    points: &[[f32; 2]],
+    half: f32,
+    width: f32,
+    cap: crate::renderer::types::PolylineCap,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    use crate::renderer::types::PolylineCap;
+    let n = points.len();
+    if n < 2 {
+        return;
+    }
+    let unit = |v: [f32; 2]| {
+        let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
+        if len < 1e-6 {
+            [0.0, 0.0]
+        } else {
+            [v[0] / len, v[1] / len]
+        }
+    };
+    let ends = [
+        (
+            points[0],
+            unit([points[0][0] - points[1][0], points[0][1] - points[1][1]]),
+        ),
+        (
+            points[n - 1],
+            unit([
+                points[n - 1][0] - points[n - 2][0],
+                points[n - 1][1] - points[n - 2][1],
+            ]),
+        ),
+    ];
+    for (p, out) in ends {
+        if out == [0.0, 0.0] {
+            continue;
+        }
+        let nrm = [-out[1], out[0]];
+        match cap {
+            PolylineCap::Round => {
+                emit_half_ring(verts, p, out, half, half + width, colour, vp_w, vp_h);
+            }
+            PolylineCap::Butt | PolylineCap::Square => {
+                // A square cap puts the flat end half a thickness further on.
+                let e = if cap == PolylineCap::Square {
+                    [p[0] + out[0] * half, p[1] + out[1] * half]
+                } else {
+                    p
+                };
+                let corner = |s: f32| [e[0] + nrm[0] * half * s, e[1] + nrm[1] * half * s];
+                let (c0, c1) = (corner(1.0), corner(-1.0));
+                let push = |q: [f32; 2]| [q[0] + out[0] * width, q[1] + out[1] * width];
+                emit_quad(verts, c0, c1, push(c1), push(c0), colour, vp_w, vp_h);
+                for (c, from) in [(c0, nrm), (c1, [-nrm[0], -nrm[1]])] {
+                    emit_fan(verts, c, from, out, width, colour, vp_w, vp_h);
+                }
+            }
+        }
+    }
+}
+
+/// Emit a flat quad as two triangles, in screen pixel coordinates.
+#[allow(clippy::too_many_arguments)]
+fn emit_quad(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    a: [f32; 2],
+    b: [f32; 2],
+    c: [f32; 2],
+    d: [f32; 2],
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let v = |p: [f32; 2]| crate::resources::OverlayTextVertex {
+        position: overlay_local_px(p[0], p[1], vp_w, vp_h),
+        uv: [0.0, 0.0],
+        colour,
+        use_texture: 0.0,
+        clip_index: -1.0,
+        clip_rect: [0.0; 4],
+    };
+    verts.extend_from_slice(&[v(a), v(b), v(c), v(a), v(c), v(d)]);
+}
+
+/// Emit a fan sweeping from direction `from` to direction `to` (the short way),
+/// at `radius` about `centre`.
+#[allow(clippy::too_many_arguments)]
+fn emit_fan(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    from: [f32; 2],
+    to: [f32; 2],
+    radius: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let a0 = from[1].atan2(from[0]);
+    let mut sweep = to[1].atan2(to[0]) - a0;
+    while sweep > std::f32::consts::PI {
+        sweep -= std::f32::consts::TAU;
+    }
+    while sweep < -std::f32::consts::PI {
+        sweep += std::f32::consts::TAU;
+    }
+    let segs = 4;
+    let at = |a: f32| [centre[0] + a.cos() * radius, centre[1] + a.sin() * radius];
+    for i in 0..segs {
+        let t0 = a0 + sweep * i as f32 / segs as f32;
+        let t1 = a0 + sweep * (i + 1) as f32 / segs as f32;
+        emit_quad(verts, centre, at(t0), at(t1), centre, colour, vp_w, vp_h);
+    }
+}
+
+/// Emit an annulus between two radii about `centre`.
+#[allow(clippy::too_many_arguments)]
+fn emit_ring(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    r_inner: f32,
+    r_outer: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let segs = 16;
+    let at = |a: f32, r: f32| [centre[0] + a.cos() * r, centre[1] + a.sin() * r];
+    for i in 0..segs {
+        let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
+        let a1 = std::f32::consts::TAU * (i + 1) as f32 / segs as f32;
+        emit_quad(
+            verts,
+            at(a0, r_inner),
+            at(a0, r_outer),
+            at(a1, r_outer),
+            at(a1, r_inner),
+            colour,
+            vp_w,
+            vp_h,
+        );
+    }
+}
+
+/// Emit half an annulus about `centre`, on the side `outward` points to.
+#[allow(clippy::too_many_arguments)]
+fn emit_half_ring(
+    verts: &mut Vec<crate::resources::OverlayTextVertex>,
+    centre: [f32; 2],
+    outward: [f32; 2],
+    r_inner: f32,
+    r_outer: f32,
+    colour: [f32; 4],
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let segs = 8;
+    let base = outward[1].atan2(outward[0]) - std::f32::consts::FRAC_PI_2;
+    let at = |a: f32, r: f32| [centre[0] + a.cos() * r, centre[1] + a.sin() * r];
+    for i in 0..segs {
+        let a0 = base + std::f32::consts::PI * i as f32 / segs as f32;
+        let a1 = base + std::f32::consts::PI * (i + 1) as f32 / segs as f32;
+        emit_quad(
+            verts,
+            at(a0, r_inner),
+            at(a0, r_outer),
+            at(a1, r_outer),
+            at(a1, r_inner),
+            colour,
+            vp_w,
+            vp_h,
+        );
     }
 }
 
@@ -1326,58 +1598,6 @@ pub(super) fn emit_polyline_inner_shadow(
                 ));
             }
         }
-    }
-}
-
-/// Emit the interior of a closed path as flat shadow-coloured triangles.
-fn emit_closed_fill_shadow(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    points: &[[f32; 2]],
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    if points.len() < 3 {
-        return;
-    }
-    let v = |p: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-        uv: [0.0, 0.0],
-        colour,
-        use_texture: 0.0,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-    };
-    // Fan from the first vertex. Exact for convex paths and close enough for the
-    // soft silhouette a shadow is; the surrounding stroke bands cover the rest.
-    for i in 1..points.len() - 1 {
-        verts.extend_from_slice(&[v(points[0]), v(points[i]), v(points[i + 1])]);
-    }
-}
-
-/// Emit an indexed triangle mesh as flat, single-colour geometry.
-pub(super) fn emit_flat_mesh(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    positions: &[[f32; 2]],
-    indices: &[u32],
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    let v = |p: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: overlay_local_px(p[0], p[1], vp_w, vp_h),
-        uv: [0.0, 0.0],
-        colour,
-        use_texture: 0.0,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-    };
-    for tri in indices.chunks_exact(3) {
-        verts.extend_from_slice(&[
-            v(positions[tri[0] as usize]),
-            v(positions[tri[1] as usize]),
-            v(positions[tri[2] as usize]),
-        ]);
     }
 }
 

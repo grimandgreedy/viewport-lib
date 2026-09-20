@@ -176,7 +176,12 @@ fn emit_glyph_run(
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
         .filter(|l| l.is_visible())
     {
-        let style = GlyphStyle::from_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        let style = GlyphStyle::from_shadow(
+            layer.spread * ppp,
+            layer.blur * ppp,
+            layer.falloff,
+            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+        );
         let col = overlay_geometry::apply_opacity(layer.colour.to_linear_rgba(), opacity);
         let sq = atlas.layout_glyph_run(
             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
@@ -360,7 +365,12 @@ fn emit_label(
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
         .filter(|l| l.is_visible())
     {
-        let style = GlyphStyle::from_shadow(layer.spread * ppp, layer.blur * ppp, layer.falloff);
+        let style = GlyphStyle::from_shadow(
+            layer.spread * ppp,
+            layer.blur * ppp,
+            layer.falloff,
+            [layer.offset[0] * ppp, layer.offset[1] * ppp],
+        );
         let sl = if let Some(max_w) = label.max_width {
             atlas.layout_text_wrapped(
                 &label.text,
