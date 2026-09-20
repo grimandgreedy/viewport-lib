@@ -69,7 +69,7 @@ pub struct GlyphRunItem {
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: crate::overlay::OverlayTransform,
-    /// Baked appearance: fill, shadow layers, texture, and backdrop effects.
+    /// Baked appearance: fill, shadow layers, and backdrop effects.
     ///
     /// Shared across the overlay item types, so a field can be present and
     /// inert here. Ask
@@ -342,9 +342,94 @@ mod tests {
         assert_eq!(run.z_order, 3);
         assert_eq!(run.clip_id, Some(7));
     }
+
+    #[test]
+    fn extent_spans_the_authored_pen_positions() {
+        let run = GlyphRunItem::new(vec![
+            PositionedGlyph::new(4, 10.0, -4.0),
+            PositionedGlyph::new(9, 30.0, 6.0),
+        ]);
+        let (min, size) = run.extent().unwrap();
+        assert_eq!(min, [10.0, -4.0]);
+        assert_eq!(size, [20.0, 10.0]);
+        assert!(GlyphRunItem::default().extent().is_none());
+    }
+
+    #[test]
+    fn resolve_top_left_places_the_extent_box() {
+        let glyphs = vec![
+            PositionedGlyph::new(4, 10.0, 0.0),
+            PositionedGlyph::new(9, 30.0, 10.0),
+        ];
+        // Default anchor and alignment: the box stays where it was authored,
+        // offset by the position, and needs no camera.
+        let run = GlyphRunItem::new(glyphs.clone()).with_position([5.0, 7.0]);
+        let tl = run
+            .resolve_top_left([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
+            .unwrap();
+        assert_eq!(tl, [15.0, 7.0]);
+
+        // Anchored and aligned bottom-right: the box's bottom-right corner sits
+        // on the viewport's, so its top-left is back by the extent.
+        let run = GlyphRunItem::new(glyphs)
+            .with_anchor(crate::overlay::OverlayAnchor::Viewport {
+                x: crate::overlay::AnchorX::Right,
+                y: crate::overlay::AnchorY::Bottom,
+            })
+            .with_align(
+                crate::overlay::AnchorX::Right,
+                crate::overlay::AnchorY::Bottom,
+            );
+        let tl = run
+            .resolve_top_left([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
+            .unwrap();
+        assert_eq!(tl, [800.0 - 20.0 + 10.0, 600.0 - 10.0]);
+    }
 }
 
 impl GlyphRunItem {
+    /// The extent box of the authored glyph positions, as `[min_x, min_y]` and
+    /// `[width, height]` in logical pixels. This is the box alignment shifts and
+    /// the box the run turns inside, measured from the pen positions rather than
+    /// from the rasterised glyph bitmaps, so it matches what the renderer uses.
+    /// An empty run has no extent and returns `None`.
+    pub fn extent(&self) -> Option<([f32; 2], [f32; 2])> {
+        let (first, rest) = self.glyphs.split_first()?;
+        let (mut min_x, mut min_y) = (first.x, first.y);
+        let (mut max_x, mut max_y) = (first.x, first.y);
+        for g in rest {
+            min_x = min_x.min(g.x);
+            min_y = min_y.min(g.y);
+            max_x = max_x.max(g.x);
+            max_y = max_y.max(g.y);
+        }
+        Some(([min_x, min_y], [max_x - min_x, max_y - min_y]))
+    }
+
+    /// Resolve the top-left pixel of the run's extent box for a frame: the
+    /// `anchor` origin, plus `position`, shifted by `align_x` / `align_y` for
+    /// that box. Returns `None` when a `World` anchor projects behind the camera
+    /// or off-screen, which is the frame the run is skipped on, and for a run
+    /// with no glyphs.
+    ///
+    /// Glyph positions are authored relative to the run origin, which is this
+    /// value minus the extent box's own `[min_x, min_y]` from [`Self::extent`].
+    /// The box returned is the unrotated one, as with the other overlay items.
+    pub fn resolve_top_left(
+        &self,
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+    ) -> Option<[f32; 2]> {
+        let origin =
+            crate::overlay::resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let (min, size) = self.extent()?;
+        Some([
+            origin[0] + self.transform.translate[0] + self.align_x.align_shift(size[0]) + min[0],
+            origin[1] + self.transform.translate[1] + self.align_y.align_shift(size[1]) + min[1],
+        ])
+    }
+
     /// Set the transform: translate, rotate, scale, and pivot at once.
     pub fn with_transform(mut self, transform: crate::overlay::OverlayTransform) -> Self {
         self.transform = transform;

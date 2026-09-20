@@ -1,10 +1,16 @@
-//! Fill styles for overlay shapes (solid colour and gradients).
+//! Fill styles for overlay items: solid colour, gradients, and textures.
 
-/// Fill style for an [`OverlayShapeItem`](crate::overlay::OverlayShapeItem).
+use crate::overlay::{NineSlice, OverlayTextureId, TextureTransform};
+
+/// What an overlay item is filled with.
 ///
-/// `Solid` is the default, a single flat colour.
-/// `LinearGradient`, `RadialGradient`, and `ConicalGradient` interpolate
-/// between two colours across the shape's bounding box.
+/// `Solid` is a single flat colour. `LinearGradient`, `RadialGradient`, and
+/// `ConicalGradient` interpolate between two colours across the item's
+/// bounding box, and the `Multi` variants do the same with three or more
+/// stops. `Texture` samples an uploaded image instead.
+///
+/// One fill at a time, which is what the renderer can draw: the textured
+/// pipeline has no gradient code and the gradient pipeline samples no texture.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum OverlayFill {
@@ -74,6 +80,37 @@ pub enum OverlayFill {
         /// Rotation offset in radians.
         offset_angle: f32,
     },
+    /// An uploaded image, sampled across the item's coverage.
+    ///
+    /// The image is uploaded with
+    /// `DeviceResources::upload_overlay_texture` and named by `id`.
+    Texture {
+        /// The uploaded image to sample.
+        id: OverlayTextureId,
+        /// Affine transform applied to the sample before lookup: pan, scale,
+        /// rotate, tile, and flip independently of the item it fills.
+        transform: TextureTransform,
+        /// Nine-patch parameters, which keep the corners of a resizable panel
+        /// at their authored size. Honoured on an analytic overlay shape; a
+        /// tessellated item samples the image straight through.
+        nine_slice: Option<NineSlice>,
+        /// Multiplied into every sample, white by default. This is where a
+        /// textured item's colour comes from: a mid-grey tint darkens the
+        /// image, and an alpha below one fades it.
+        tint: crate::colour::Colour,
+    },
+}
+
+/// Which kind of fill an [`OverlayFill`] is, for asking a family what it can
+/// draw without naming a specific gradient or image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OverlayFillKind {
+    /// A flat colour.
+    Solid,
+    /// Any of the gradient variants, two-stop or multi-stop.
+    Gradient,
+    /// An uploaded image.
+    Texture,
 }
 
 impl Default for OverlayFill {
@@ -128,6 +165,71 @@ pub enum BorderMode {
 }
 
 impl OverlayFill {
+    /// A texture fill with the default transform, no nine-patch, and no tint.
+    pub fn texture(id: OverlayTextureId) -> Self {
+        OverlayFill::Texture {
+            id,
+            transform: TextureTransform::default(),
+            nine_slice: None,
+            tint: crate::colour::Colour::linear(1.0, 1.0, 1.0, 1.0),
+        }
+    }
+
+    /// A fully transparent solid, which is what "no fill" means once it
+    /// reaches a shader. The default for an item that has not asked for one.
+    pub fn none() -> Self {
+        OverlayFill::Solid(crate::colour::Colour::linear(0.0, 0.0, 0.0, 0.0))
+    }
+
+    /// Whether this fill draws anything. A fully transparent solid, which is
+    /// what [`OverlayFill::none`] is and what an item defaults to, draws
+    /// nothing and reports `false`.
+    pub fn is_set(&self) -> bool {
+        *self != OverlayFill::none()
+    }
+
+    /// Which kind of fill this is.
+    pub fn kind(&self) -> OverlayFillKind {
+        match self {
+            OverlayFill::Solid(_) => OverlayFillKind::Solid,
+            OverlayFill::Texture { .. } => OverlayFillKind::Texture,
+            _ => OverlayFillKind::Gradient,
+        }
+    }
+
+    /// The image this fill samples, or `None` for a colour or gradient fill.
+    pub fn texture_id(&self) -> Option<OverlayTextureId> {
+        match self {
+            OverlayFill::Texture { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Set the sampling transform on a texture fill. Does nothing to any other
+    /// fill, which has nothing to sample.
+    pub fn with_texture_transform(mut self, tt: TextureTransform) -> Self {
+        if let OverlayFill::Texture { transform, .. } = &mut self {
+            *transform = tt;
+        }
+        self
+    }
+
+    /// Set the nine-patch parameters on a texture fill.
+    pub fn with_nine_slice(mut self, ns: NineSlice) -> Self {
+        if let OverlayFill::Texture { nine_slice, .. } = &mut self {
+            *nine_slice = Some(ns);
+        }
+        self
+    }
+
+    /// Set the tint multiplied into every sample of a texture fill.
+    pub fn with_tint(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        if let OverlayFill::Texture { tint, .. } = &mut self {
+            *tint = colour.into();
+        }
+        self
+    }
+
     /// Sample the fill at `p`, given in logical pixels relative to the centre
     /// of a box of half-extents `half_size`. Returns linear RGBA.
     ///
@@ -189,6 +291,10 @@ impl OverlayFill {
 
         match self {
             OverlayFill::Solid(c) => c.to_linear_rgba(),
+            // A texture is not sampled here: the image lookup happens in the
+            // shader, and the tint is what the rest of the pipeline multiplies
+            // into it.
+            OverlayFill::Texture { tint, .. } => tint.to_linear_rgba(),
             OverlayFill::LinearGradient {
                 start_colour,
                 end_colour,

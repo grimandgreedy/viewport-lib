@@ -77,7 +77,12 @@ impl Default for OverlayAnchor {
 /// the viewport rect; `World` origins project through `view` / `proj` and return
 /// `None` when behind the camera or outside the frustum, which skips the item
 /// for the frame.
-#[doc(hidden)]
+///
+/// This is the same call the renderer makes when it places an anchored item, so
+/// a consumer working out where an item will land (to size a backing, hit test
+/// it, or place something beside it) gets the renderer's answer rather than an
+/// approximation of it, including the behind-camera cull and the y flip out of
+/// NDC. Pass the camera's `view_matrix()` and `proj_matrix()`.
 pub fn resolve_anchor_origin(
     anchor: &OverlayAnchor,
     viewport: [f32; 2],

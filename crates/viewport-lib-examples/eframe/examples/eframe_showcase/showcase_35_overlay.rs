@@ -1626,10 +1626,10 @@ fn row_masks_and_polylines(
             let mut blob = vpl::OverlayPolylineItem::closed_from_path(
                 blob_path,
                 64,
-                Some(OverlayFill::RadialGradient {
+                OverlayFill::RadialGradient {
                     centre_colour: Colour::srgb(0.9, 0.7, 0.2, 0.85),
                     edge_colour: Colour::srgb(0.7, 0.2, 0.5, 0.85),
-                }),
+                },
                 [1.0, 1.0, 1.0, 0.85],
                 2.0,
             );
@@ -1650,12 +1650,11 @@ fn row_masks_and_polylines(
                         [x_tex + a.cos() * (r + a5), y_poly + a.sin() * (r + a5)]
                     },
                     60,
-                    Some(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.95))),
+                    OverlayFill::texture(tid).with_tint(Colour::srgb(1.0, 1.0, 1.0, 0.95)),
                     [1.0, 0.9, 0.7, 0.9],
                     2.0,
                 );
                 // Leaving uvs None maps the path bounds to [0, 1] UVs.
-                textured.style.texture = Some(tid);
                 textured.z_order = 1;
                 polylines.push(textured);
             }

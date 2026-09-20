@@ -68,13 +68,15 @@ mod tests {
     fn each_inert_field_is_reported_once() {
         let style = OverlayStyle::default()
             .with_inner_shadows(vec![ShadowLayer::default()])
-            .with_texture(crate::renderer::types::OverlayTextureId::INVALID);
+            .with_fill(crate::renderer::types::OverlayFill::texture(
+                crate::renderer::types::OverlayTextureId::INVALID,
+            ));
         let support = OverlayStyleSupport::for_glyphs();
 
         // A name of this test's own, so the process-wide set is not shared with
         // whatever the renderer reported in another test.
         let first = take_unreported("TestFamily", support, &style);
-        assert_eq!(first, ["texture"]);
+        assert_eq!(first, ["fill"]);
         for _ in 0..1000 {
             assert!(take_unreported("TestFamily", support, &style).is_empty());
         }

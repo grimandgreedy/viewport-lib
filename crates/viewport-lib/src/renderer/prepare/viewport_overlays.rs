@@ -162,7 +162,7 @@ pub(super) fn emit_vector_shape(
             batch,
             &positions,
             &mesh.indices,
-            &shape.style.resolved_fill(),
+            &shape.style.fill,
             shape.opacity,
             vp_w,
             vp_h,
@@ -702,7 +702,7 @@ impl ViewportRenderer {
                     };
                     super::overlay_style_check::warn_inert_style(
                         "OverlayPolylineItem",
-                        crate::renderer::types::OverlayStyleSupport::for_polyline(),
+                        crate::renderer::types::OverlayStyleSupport::for_polyline(poly.closed),
                         &poly.style,
                     );
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
@@ -717,17 +717,15 @@ impl ViewportRenderer {
                         emit_polyline_shadow(&mut batch, poly, layer, poly.opacity, vp_w, vp_h);
                     }
                     let content_start = batch.len();
-                    if poly.closed && poly.style.texture.is_none() {
-                        if let Some(fill) = &poly.style.fill {
-                            emit_filled_polyline(
-                                &mut batch,
-                                &poly.points,
-                                fill,
-                                poly.opacity,
-                                vp_w,
-                                vp_h,
-                            );
-                        }
+                    if poly.closed && poly.style.fill.texture_id().is_none() {
+                        emit_filled_polyline(
+                            &mut batch,
+                            &poly.points,
+                            &poly.style.fill,
+                            poly.opacity,
+                            vp_w,
+                            vp_h,
+                        );
                     }
                     // Tint the fill before the inner shadows go over it: a tint
                     // never reaches a shadow layer.
@@ -736,7 +734,7 @@ impl ViewportRenderer {
                     // edge of it: over the fill and under the stroke for a
                     // filled path, over the stroke when the stroke is all the
                     // item covers.
-                    let filled = poly.closed && poly.style.fill.is_some();
+                    let filled = poly.closed && poly.style.fill.is_set();
                     let mut inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
                         for layer in poly
                             .style
@@ -759,10 +757,10 @@ impl ViewportRenderer {
                         inner(&mut batch);
                     }
                     let stroke_start = batch.len();
-                    if poly.thickness > 0.0 {
-                        let mut colour = poly.colour.to_linear_rgba();
+                    if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
+                        let mut colour = stroke.colour.to_linear_rgba();
                         colour[3] *= poly.opacity;
-                        emit_polyline_stroke(&mut batch, poly, colour, vp_w, vp_h);
+                        emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
                     }
                     tint_vertices_from(&mut batch, stroke_start, poly.tint);
                     if !filled {
@@ -1054,11 +1052,11 @@ impl ViewportRenderer {
                         vp_w,
                         vp_h,
                     );
-                    if let Some(fill) = &label.style.fill {
+                    if label.style.fill.is_set() {
                         fill_vertices_from(
                             &mut batch,
                             glyph_start,
-                            fill,
+                            &label.style.fill,
                             [text_x, text_y],
                             [layout.total_width, layout.height],
                         );
@@ -1159,20 +1157,13 @@ impl ViewportRenderer {
                     ) else {
                         continue;
                     };
-                    let (mut min_x, mut min_y, mut max_x, mut max_y) =
-                        (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                    for g in &run.glyphs {
-                        min_x = min_x.min(g.x);
-                        min_y = min_y.min(g.y);
-                        max_x = max_x.max(g.x);
-                        max_y = max_y.max(g.y);
-                    }
-                    let run_x = origin[0]
-                        + run.transform.translate[0]
-                        + run.align_x.align_shift(max_x - min_x);
-                    let run_y = origin[1]
-                        + run.transform.translate[1]
-                        + run.align_y.align_shift(max_y - min_y);
+                    let Some(([min_x, min_y], [ext_w, ext_h])) = run.extent() else {
+                        continue;
+                    };
+                    let run_x =
+                        origin[0] + run.transform.translate[0] + run.align_x.align_shift(ext_w);
+                    let run_y =
+                        origin[1] + run.transform.translate[1] + run.align_y.align_shift(ext_h);
 
                     let opacity = run.opacity.clamp(0.0, 1.0);
                     // Each glyph carries its tint through layout so per-glyph
@@ -1205,7 +1196,7 @@ impl ViewportRenderer {
                         run.transform.scale,
                         OverlayRotation::pivot_point(
                             [run_x + min_x, run_y + min_y],
-                            [max_x - min_x, max_y - min_y],
+                            [ext_w, ext_h],
                             run.transform.pivot,
                         ),
                     );
@@ -1251,13 +1242,13 @@ impl ViewportRenderer {
                     // labels.
                     let glyph_start = batch.len();
                     emit_glyph_quads_colored(&mut batch, &quads, run_x, run_y, vp_w, vp_h);
-                    if let Some(fill) = &run.style.fill {
+                    if run.style.fill.is_set() {
                         fill_vertices_from(
                             &mut batch,
                             glyph_start,
-                            fill,
+                            &run.style.fill,
                             [run_x + min_x, run_y + min_y],
-                            [max_x - min_x, max_y - min_y],
+                            [ext_w, ext_h],
                         );
                     }
                     tint_vertices_from(&mut batch, glyph_start, run.tint);
@@ -1597,7 +1588,10 @@ impl ViewportRenderer {
         // The bottom-left orientation indicator draws as overlay shapes too.
         let axes_shapes = self.axes_overlay_items(frame);
         let has_textured_polyline_fill = frame.overlays.polylines.iter().any(|p| {
-            p.closed && p.style.texture.is_some() && p.opacity > 0.0 && p.points.len() >= 3
+            p.closed
+                && p.style.fill.texture_id().is_some()
+                && p.opacity > 0.0
+                && p.points.len() >= 3
         });
         if !frame.overlays.shapes.is_empty()
             || !gizmo_shapes.is_empty()
@@ -1620,12 +1614,12 @@ impl ViewportRenderer {
 
                 let has_solid = sorted
                     .iter()
-                    .any(|s| s.style.texture.is_none() && s.style.backdrop.blur <= 0.0);
-                let has_tex =
-                    sorted.iter().any(|s| s.style.texture.is_some()) || has_textured_polyline_fill;
+                    .any(|s| s.style.fill.texture_id().is_none() && s.style.backdrop.blur <= 0.0);
+                let has_tex = sorted.iter().any(|s| s.style.fill.texture_id().is_some())
+                    || has_textured_polyline_fill;
                 let has_blur = sorted
                     .iter()
-                    .any(|s| s.style.backdrop.blur > 0.0 && s.style.texture.is_none());
+                    .any(|s| s.style.backdrop.blur > 0.0 && s.style.fill.texture_id().is_none());
                 if has_solid {
                     self.resources.ensure_overlay_shape_pipeline(device);
                 }
@@ -1865,7 +1859,7 @@ impl ViewportRenderer {
                     let mut stop_colours = [[0.0f32; 4]; 4];
                     let mut stop_positions = [0.0_f32, 1.0, 1.0, 1.0];
                     let stop_count: f32;
-                    let gradient_params = match &shape.style.resolved_fill() {
+                    let gradient_params = match &shape.style.fill {
                         crate::renderer::types::OverlayFill::Solid(c) => {
                             stop_colours[0] = c.to_linear_rgba();
                             stop_colours[1] = c.to_linear_rgba();
@@ -1918,6 +1912,14 @@ impl ViewportRenderer {
                         } => {
                             stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
                             [3.0_f32, *offset_angle]
+                        }
+                        // A texture fill has no gradient: its tint is the
+                        // colour the sample is multiplied by.
+                        crate::renderer::types::OverlayFill::Texture { tint, .. } => {
+                            stop_colours[0] = tint.to_linear_rgba();
+                            stop_colours[1] = stop_colours[0];
+                            stop_count = 0.0;
+                            [0.0_f32, 0.0]
                         }
                         // OverlayFill is non_exhaustive; render unknown fills as a flat no-op gradient.
                         _ => {
@@ -2034,7 +2036,14 @@ impl ViewportRenderer {
                     };
                     let clip_index = clip_index_i as f32;
 
-                    if let Some(tex_id) = shape.style.texture {
+                    if let crate::renderer::types::OverlayFill::Texture {
+                        id: tex_id,
+                        transform: tex_transform,
+                        nine_slice: tex_nine_slice,
+                        ..
+                    } = &shape.style.fill
+                    {
+                        let tex_id = *tex_id;
                         // Find or create a group for this texture ID.
                         let group_idx = tex_groups
                             .iter()
@@ -2057,7 +2066,7 @@ impl ViewportRenderer {
                         // (using the bound texture's size) and to shape-fraction
                         // ratios for the shader's piecewise UV remap.
                         let (nine_uv, nine_frac, nine_extras_yzw) =
-                            if let Some(ns) = shape.nine_slice {
+                            if let Some(ns) = *tex_nine_slice {
                                 let tex_size = self
                                     .resources
                                     .content
@@ -2088,7 +2097,7 @@ impl ViewportRenderer {
                                 ([0.0; 4], [0.0; 4], [0.0, 0.0, 0.0])
                             };
 
-                        let tt = shape.style.texture_transform;
+                        let tt = *tex_transform;
                         let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
                         let tt_b = [
                             tt.rotation,
@@ -2200,9 +2209,16 @@ impl ViewportRenderer {
                 }
 
                 for poly in &frame.overlays.polylines {
-                    let Some(tex_id) = poly.style.texture else {
+                    let crate::renderer::types::OverlayFill::Texture {
+                        id: tex_id,
+                        transform: tex_transform,
+                        tint: tex_tint,
+                        ..
+                    } = &poly.style.fill
+                    else {
                         continue;
                     };
+                    let tex_id = *tex_id;
                     if !poly.closed || poly.opacity <= 0.0 || poly.points.len() < 3 {
                         continue;
                     }
@@ -2259,16 +2275,13 @@ impl ViewportRenderer {
                     let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
                     let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
                     let half_size = [size[0] * 0.5, size[1] * 0.5];
-                    let mut tint = match &poly.style.fill {
-                        Some(crate::renderer::types::OverlayFill::Solid(c)) => c.to_linear_rgba(),
-                        _ => [1.0, 1.0, 1.0, 1.0],
-                    };
+                    let mut tint = tex_tint.to_linear_rgba();
                     tint[3] *= poly.opacity;
                     let explicit_uvs = poly
                         .uvs
                         .as_ref()
                         .filter(|uvs| uvs.len() == poly.points.len());
-                    let tt = poly.style.texture_transform;
+                    let tt = *tex_transform;
                     let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
                     let tt_b = [
                         tt.rotation,

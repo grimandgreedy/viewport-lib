@@ -103,8 +103,8 @@ pub enum OverlayShape {
     /// Fields that depend on the distance field or the bounding quad have no
     /// effect on a vector shape and are ignored: `shadows` / `inner_shadows` /
     /// the legacy `shadow_*` (no distance field to fall off), `backdrop_blur`
-    /// and its filters, `texture` / `nine_slice` / `texture_transform` (the
-    /// fill still draws).
+    /// and its filters, and an `OverlayFill::Texture` fill (a colour or
+    /// gradient fill still draws).
     Vector {
         /// The contours that make up the shape.
         subpaths: Vec<SubPath>,
@@ -276,22 +276,23 @@ impl Default for OverlayShape {
 ///
 /// The item hides which backend runs, but it cannot hide that they differ in
 /// what they can express: the options that need a distance field
-/// (`style.backdrop`, `style.texture`, `nine_slice`) do nothing on a vector
-/// path. Ask
+/// (`style.backdrop`, and a texture fill with or without its nine-patch) do
+/// nothing on a vector path. Ask
 /// [`OverlayStyleSupport::for_shape`](crate::overlay::OverlayStyleSupport::for_shape)
 /// rather than memorising that, and see the per-variant note on
 /// [`OverlayShape::Vector`].
 ///
 /// # Fill
 ///
-/// `style.fill` controls the interior colour: `OverlayFill::Solid` for a flat
-/// colour, or one of the gradient variants. `None` draws no fill, leaving the
-/// shadow layers on their own.
+/// `style.fill` is what the interior is filled with: `OverlayFill::Solid` for
+/// a flat colour, one of the gradient variants, or `OverlayFill::Texture` for
+/// an uploaded image. A fully transparent solid, which is the default, draws no
+/// fill and leaves the shadow layers on their own.
 ///
-/// When `style.texture` is set the shape samples the uploaded image as its
-/// fill, and a solid `style.fill` acts as a tint multiplied with each texel
-/// (`[1, 1, 1, 1]` for no tint). The boundary, the shadow layers, and
-/// anti-aliasing apply the same way regardless of fill mode.
+/// A texture fill samples the image across the shape, with the variant's `tint`
+/// multiplied into each texel (white for no tint) and its `nine_slice` holding
+/// the corners at their authored size. The boundary, the shadow layers, and
+/// anti-aliasing apply the same way whichever fill is set.
 ///
 /// # Examples
 ///
@@ -343,7 +344,7 @@ pub struct OverlayShapeItem {
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: OverlayTransform,
-    /// Baked appearance: fill, shadow layers, texture, and backdrop effects.
+    /// Baked appearance: fill, shadow layers, and backdrop effects.
     ///
     /// Shared across the overlay item types, so a field can be present and
     /// inert here. Ask
@@ -406,9 +407,6 @@ pub struct OverlayShapeItem {
     /// unclipped, as does a missing mask. Composes with `clip_rect`, so both
     /// apply when both are set.
     pub clip_id: Option<u32>,
-    /// 9-slice texture sampling for the shape's `texture` fill. When `None`
-    /// the texture stretches to fill the bounding box (default).
-    pub nine_slice: Option<NineSlice>,
     /// Animation tracks resolved each frame against `OverlayFrame::time`. Each
     /// `Some` track replaces the matching field on the item for the frame. See
     /// [`OverlayAnimations`] for why the channel list is what it is.
@@ -425,7 +423,7 @@ impl Default for OverlayShapeItem {
             anchor: OverlayAnchor::default(),
             transform: OverlayTransform::IDENTITY,
             style: OverlayStyle {
-                fill: Some(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into())),
+                fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()),
                 ..Default::default()
             },
             tint: [1.0, 1.0, 1.0, 1.0],
@@ -438,7 +436,6 @@ impl Default for OverlayShapeItem {
             z_order: 0,
             clip_mask_id: None,
             clip_id: None,
-            nine_slice: None,
             animations: None,
         }
     }
@@ -682,9 +679,9 @@ impl OverlayShapeItem {
     /// `anchor_y` pin the image to a viewport edge or centre (e.g. `Right` /
     /// `Bottom` for the bottom-right corner). Pair `texture` with a streaming
     /// `OverlayTextureId` updated each frame for a live image, or a static
-    /// uploaded one for a fixed image. The fill is left as a white tint, so the
-    /// texture is drawn unmodified; set `opacity` or a non-white fill afterwards
-    /// to tint or fade it.
+    /// uploaded one for a fixed image. The fill's tint is left white, so the
+    /// texture is drawn unmodified; set `opacity`, or the fill's tint, to fade
+    /// or colour it.
     pub fn textured_image(
         texture: OverlayTextureId,
         natural_size: [f32; 2],
@@ -696,9 +693,7 @@ impl OverlayShapeItem {
         let size = [natural_size[0] * scale, natural_size[1] * scale];
         let position =
             super::anchor::viewport_anchored_top_left(anchor_x, anchor_y, size, viewport_size);
-        Self::new(OverlayShape::Rect { corner_radius: 0.0 }, position, size)
-            .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
-            .with_texture(texture)
+        Self::new(OverlayShape::Rect { corner_radius: 0.0 }, position, size).with_texture(texture)
     }
 
     /// Build an arbitrary vector shape from `subpaths` combined under
@@ -735,7 +730,7 @@ impl OverlayShapeItem {
 
     /// Set the area fill.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
-        self.style.fill = Some(fill);
+        self.style.fill = fill;
         self
     }
 
@@ -790,9 +785,17 @@ impl OverlayShapeItem {
     }
 
     /// Fill the shape with an uploaded overlay texture, clipped by the SDF.
+    /// Replaces any colour or gradient fill: an item has one fill.
     pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
-        self.style.texture = Some(texture);
+        self.style.fill = OverlayFill::texture(texture);
         self
+    }
+
+    /// The shape's texture fill, for the builders that set one of its fields.
+    /// Turns a colour or gradient fill into a texture fill would be wrong, so
+    /// those callers get `None` and leave the fill alone.
+    fn texture_fill_mut(&mut self) -> Option<&mut OverlayFill> {
+        matches!(self.style.fill, OverlayFill::Texture { .. }).then_some(&mut self.style.fill)
     }
 
     /// Set the backdrop blur radius (frosted-glass effect) in logical pixels.
@@ -844,10 +847,14 @@ impl OverlayShapeItem {
 
     /// Flip the texture fill horizontally and/or vertically. Convenience over
     /// [`TextureTransform::flip_x`] / [`TextureTransform::flip_y`]; sets those
-    /// fields on the shape's texture transform.
+    /// fields on the fill's texture transform. Call it after
+    /// [`with_texture`](Self::with_texture): a shape with no texture fill has
+    /// nothing to flip and is left alone.
     pub fn with_texture_flip(mut self, flip_x: bool, flip_y: bool) -> Self {
-        self.style.texture_transform.flip_x = flip_x;
-        self.style.texture_transform.flip_y = flip_y;
+        if let Some(OverlayFill::Texture { transform, .. }) = self.texture_fill_mut() {
+            transform.flip_x = flip_x;
+            transform.flip_y = flip_y;
+        }
         self
     }
 
@@ -865,15 +872,23 @@ impl OverlayShapeItem {
         self
     }
 
-    /// Set 9-slice sampling for the texture fill.
+    /// Set 9-slice sampling for the texture fill. Call it after
+    /// [`with_texture`](Self::with_texture): a shape with no texture fill has
+    /// nothing to slice and is left alone.
     pub fn with_nine_slice(mut self, nine_slice: NineSlice) -> Self {
-        self.nine_slice = Some(nine_slice);
+        if let Some(OverlayFill::Texture { nine_slice: ns, .. }) = self.texture_fill_mut() {
+            *ns = Some(nine_slice);
+        }
         self
     }
 
     /// Set the affine transform applied to the texture sample before lookup.
+    /// Call it after [`with_texture`](Self::with_texture): a shape with no
+    /// texture fill has nothing to sample and is left alone.
     pub fn with_texture_transform(mut self, transform: TextureTransform) -> Self {
-        self.style.texture_transform = transform;
+        if let Some(OverlayFill::Texture { transform: t, .. }) = self.texture_fill_mut() {
+            *t = transform;
+        }
         self
     }
 

@@ -28,18 +28,16 @@ fn emit_base(
             overlay_geometry::emit_polyline_shadow(verts, poly, layer, poly.opacity, 0.0, 0.0);
         }
         let content_start = verts.len();
-        let filled = poly.closed && poly.style.fill.is_some();
-        if filled && poly.style.texture.is_none() {
-            if let Some(fill) = &poly.style.fill {
-                overlay_geometry::emit_filled_polyline(
-                    verts,
-                    &poly.points,
-                    fill,
-                    poly.opacity,
-                    0.0,
-                    0.0,
-                );
-            }
+        let filled = poly.closed && poly.style.fill.is_set();
+        if filled && poly.style.fill.texture_id().is_none() {
+            overlay_geometry::emit_filled_polyline(
+                verts,
+                &poly.points,
+                &poly.style.fill,
+                poly.opacity,
+                0.0,
+                0.0,
+            );
         }
         viewport_overlays::tint_vertices_from(verts, content_start, poly.tint);
         // An inset layer goes over what it erodes and under the edge of it:
@@ -67,10 +65,10 @@ fn emit_base(
             inner(verts);
         }
         let stroke_start = verts.len();
-        if poly.thickness > 0.0 {
-            let mut colour = poly.colour.to_linear_rgba();
+        if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
+            let mut colour = stroke.colour.to_linear_rgba();
             colour[3] *= poly.opacity;
-            overlay_geometry::emit_polyline_stroke(verts, poly, colour, 0.0, 0.0);
+            overlay_geometry::emit_polyline_stroke(verts, poly, stroke, colour, 0.0, 0.0);
         }
         viewport_overlays::tint_vertices_from(verts, stroke_start, poly.tint);
         if !filled {
@@ -125,15 +123,11 @@ fn emit_glyph_run(
     if run.glyphs.is_empty() || run.opacity <= 0.0 {
         return;
     }
-    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for g in &run.glyphs {
-        min_x = min_x.min(g.x);
-        min_y = min_y.min(g.y);
-        max_x = max_x.max(g.x);
-        max_y = max_y.max(g.y);
-    }
-    let run_x = run.transform.translate[0] + run.align_x.align_shift(max_x - min_x);
-    let run_y = run.transform.translate[1] + run.align_y.align_shift(max_y - min_y);
+    let Some(([min_x, min_y], [ext_w, ext_h])) = run.extent() else {
+        return;
+    };
+    let run_x = run.transform.translate[0] + run.align_x.align_shift(ext_w);
+    let run_y = run.transform.translate[1] + run.align_y.align_shift(ext_h);
     let opacity = run.opacity.clamp(0.0, 1.0);
     let rot_start = verts.len();
     let rot = overlay_geometry::OverlayRotation::new(
@@ -141,7 +135,7 @@ fn emit_glyph_run(
         run.transform.scale,
         overlay_geometry::OverlayRotation::pivot_point(
             [run_x + min_x, run_y + min_y],
-            [max_x - min_x, max_y - min_y],
+            [ext_w, ext_h],
             run.transform.pivot,
         ),
     );
@@ -202,13 +196,13 @@ fn emit_glyph_run(
     }
     let glyph_start = verts.len();
     overlay_geometry::emit_glyph_quads_colored(verts, &quads, run_x, run_y, 0.0, 0.0);
-    if let Some(fill) = &run.style.fill {
+    if run.style.fill.is_set() {
         viewport_overlays::fill_vertices_from(
             verts,
             glyph_start,
-            fill,
+            &run.style.fill,
             [run_x + min_x, run_y + min_y],
-            [max_x - min_x, max_y - min_y],
+            [ext_w, ext_h],
         );
     }
     viewport_overlays::tint_vertices_from(verts, glyph_start, run.tint);
@@ -409,11 +403,11 @@ fn emit_label(
         0.0,
         0.0,
     );
-    if let Some(fill) = &label.style.fill {
+    if label.style.fill.is_set() {
         viewport_overlays::fill_vertices_from(
             verts,
             glyph_start,
-            fill,
+            &label.style.fill,
             [text_x, text_y],
             [layout.total_width, layout.height],
         );
@@ -525,7 +519,7 @@ fn emit_sdf_shape(
     use crate::renderer::types::{LineCap, OverlayFill, OverlayShape, TriangleDirection};
     if matches!(shape.shape, OverlayShape::Vector { .. })
         || shape.clip_mask_id.is_some()
-        || shape.style.texture.is_some()
+        || shape.style.fill.texture_id().is_some()
         || shape.style.backdrop.blur > 0.0
         || shape.opacity <= 0.0
     {
@@ -638,7 +632,7 @@ fn emit_sdf_shape(
     let mut stop_colours = [[0.0f32; 4]; 4];
     let mut stop_positions = [0.0f32, 1.0, 1.0, 1.0];
     let stop_count: f32;
-    let gradient_params = match &shape.style.resolved_fill() {
+    let gradient_params = match &shape.style.fill {
         OverlayFill::Solid(c) => {
             stop_colours[0] = c.to_linear_rgba();
             stop_colours[1] = c.to_linear_rgba();
@@ -691,6 +685,14 @@ fn emit_sdf_shape(
             stop_count =
                 overlay_geometry::pack_stops(stops, &mut stop_colours, &mut stop_positions);
             [3.0f32, *offset_angle]
+        }
+        // A texture fill has no gradient: its tint is the colour the sample is
+        // multiplied by.
+        OverlayFill::Texture { tint, .. } => {
+            stop_colours[0] = tint.to_linear_rgba();
+            stop_colours[1] = stop_colours[0];
+            stop_count = 0.0;
+            [0.0f32, 0.0]
         }
         _ => {
             stop_count = 0.0;

@@ -43,11 +43,11 @@ fn base_frame() -> FrameData {
 /// try". `texture_transform` rides `texture` and is not separately queryable.
 fn probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
     vec![("fill", |s: &mut OverlayStyle| {
-        s.fill = Some(OverlayFill::LinearGradient {
+        s.fill = OverlayFill::LinearGradient {
             start_colour: Colour::srgb(1.0, 0.0, 0.0, 1.0),
             end_colour: Colour::srgb(0.0, 0.0, 1.0, 1.0),
             angle: 0.0,
-        });
+        };
     })]
 }
 
@@ -68,9 +68,9 @@ fn shadow_probes() -> Vec<(&'static str, fn(&mut OverlayStyle))> {
     ]
 }
 
-fn supported(support: &OverlayStyleSupport, field: &str) -> bool {
+fn supported(support: &OverlayStyleSupport, field: &str, style: &OverlayStyle) -> bool {
     match field {
-        "fill" => support.fill,
+        "fill" => support.draws_fill(&style.fill),
         other => panic!("unknown probe field {other}"),
     }
 }
@@ -165,14 +165,13 @@ fn reported_support_matches_what_the_renderer_draws() {
                 let mut item =
                     OverlayShapeItem::new(OverlayShape::Circle, [20.0, 20.0], [56.0, 56.0]);
                 item.style = style;
-                item.style.texture = Some(texture);
                 ovl.shapes = vec![item];
                 ovl
             }),
         ),
         (
             "polyline",
-            OverlayStyleSupport::for_polyline(),
+            OverlayStyleSupport::for_polyline(true),
             Box::new(|style| {
                 let mut ovl = OverlayFrame::default();
                 let mut item = OverlayPolylineItem::new(vec![
@@ -225,29 +224,31 @@ fn reported_support_matches_what_the_renderer_draws() {
     ];
 
     for (name, support, build) in &families {
-        let plain = render(&mut renderer, &device, &queue, build(base_style(name)));
+        let plain = render(
+            &mut renderer,
+            &device,
+            &queue,
+            build(base_style(name, texture)),
+        );
         for (field, apply) in probes() {
-            let mut style = base_style(name);
+            let mut style = base_style(name, texture);
             apply(&mut style);
+            let drawn = supported(support, field, &style);
             let with = render(&mut renderer, &device, &queue, build(style));
             let changed = differs(&plain, &with);
             assert_eq!(
                 changed,
-                supported(support, field),
+                drawn,
                 "{name}: style.{field} reported as {} but the render {} \
                  (the support table and the renderer disagree)",
-                if supported(support, field) {
-                    "drawn"
-                } else {
-                    "inert"
-                },
+                if drawn { "drawn" } else { "inert" },
                 if changed { "changed" } else { "did not change" },
             );
         }
         // Shadow parity: both lists draw on every family, so there is no cell
         // to consult. A backend that quietly stops drawing one fails here.
         for (field, apply) in shadow_probes() {
-            let mut style = base_style(name);
+            let mut style = base_style(name, texture);
             apply(&mut style);
             let with = render(&mut renderer, &device, &queue, build(style));
             assert!(
@@ -262,13 +263,49 @@ fn reported_support_matches_what_the_renderer_draws() {
 
 /// Each family needs a visible baseline, or "the pixels did not change" would
 /// be true for every probe.
-fn base_style(family: &str) -> OverlayStyle {
+fn base_style(family: &str, texture: viewport_lib::OverlayTextureId) -> OverlayStyle {
     match family {
         // The glyph families draw from `colour`, not `fill`, until gradient
         // text lands; a fill here would be the very thing under test.
         "label" | "glyph run" => OverlayStyle::default(),
+        // The textured pipeline is reached by the fill being a texture, so
+        // that is this family's baseline: the fill probe then replaces it with
+        // a gradient, which is exactly the swap the table has to predict.
+        "textured shape" => OverlayStyle::default().with_fill(OverlayFill::texture(texture)),
         _ => OverlayStyle::solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)),
     }
+}
+
+/// Only a closed polyline has an interior, so a texture fill on an open one is
+/// reported as inert instead of being silently dropped at draw time.
+#[test]
+fn an_open_polyline_reports_a_texture_fill_as_inert() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let tex = renderer
+        .resources_mut()
+        .upload_overlay_texture(&device, &queue, 1, 1, &[255u8; 4]);
+    let style = OverlayStyle::default().with_fill(OverlayFill::texture(tex));
+
+    assert_eq!(
+        OverlayStyleSupport::for_polyline(false).inert_fields(&style),
+        ["fill"],
+        "an open polyline has no interior to fill"
+    );
+    assert!(
+        OverlayStyleSupport::for_polyline(true)
+            .inert_fields(&style)
+            .is_empty(),
+        "a closed polyline samples a texture across its interior"
+    );
+    // The glyph families are the other family that cannot sample an image.
+    assert_eq!(
+        OverlayStyleSupport::for_glyphs().inert_fields(&style),
+        ["fill"]
+    );
 }
 
 /// A gradient fill on a shape is not the same pixels as a solid one, so the

@@ -41,8 +41,8 @@ fn red_square() -> OverlayPolylineItem {
     let mut p = OverlayPolylineItem::default();
     p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
     p.closed = true;
-    p.thickness = 0.0;
-    p.style.fill = Some(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()));
+    p.stroke = None;
+    p.style.fill = OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into());
     p.opacity = 1.0;
     p
 }
@@ -90,8 +90,8 @@ fn white_square() -> OverlayPolylineItem {
     let mut p = OverlayPolylineItem::default();
     p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
     p.closed = true;
-    p.thickness = 0.0;
-    p.style.fill = Some(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()));
+    p.stroke = None;
+    p.style.fill = OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into());
     p.opacity = 1.0;
     p
 }

@@ -33,7 +33,7 @@ use vpl::input::adapters::from_egui;
 use vpl::{
     AnchorY, LabelItem, Material, Modifiers, OffscreenViewportTarget, OrbitCameraController,
     OverlayFill, OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    RetainedOverlay, ViewportContext, ViewportEvent, ViewportInstance, primitives,
+    OverlayStroke, RetainedOverlay, ViewportContext, ViewportEvent, ViewportInstance, primitives,
 };
 
 /// Panel geometry, in the panel's own logical-pixel space (top-left origin near
@@ -72,8 +72,7 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + ROW_STEP - 8.0],
             [PANEL_X + PANEL_W - 20.0, y + ROW_STEP - 8.0],
         ];
-        sep.thickness = 1.5;
-        sep.colour = [0.4, 0.45, 0.6, 0.7].into();
+        sep.stroke = Some(OverlayStroke::new(1.5, [0.4, 0.45, 0.6, 0.7]));
         lines.push(sep);
         // A small filled swatch, hue cycling down the list.
         let t = i as f32 / ROW_COUNT as f32;
@@ -85,9 +84,8 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + 24.0],
         ];
         swatch.closed = true;
-        swatch.style.fill = Some(OverlayFill::Solid(
-            [0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0].into(),
-        ));
+        swatch.style.fill =
+            OverlayFill::Solid([0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0].into());
         lines.push(swatch);
     }
     lines

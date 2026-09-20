@@ -64,6 +64,84 @@ pub enum StrokePattern {
     },
 }
 
+/// The stroke of an [`OverlayPolylineItem`]: everything about the line itself.
+///
+/// This is the item's own geometry, not a band drawn around some other shape,
+/// so it lives here rather than on [`OverlayStyle`]. An overlay shape has no
+/// stroke: an edge band on a shape is a [`ShadowLayer`] with no blur and a
+/// spread.
+///
+/// [`OverlayStyle`]: crate::overlay::OverlayStyle
+/// [`ShadowLayer`]: crate::overlay::ShadowLayer
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct OverlayStroke {
+    /// Stroke width in logical pixels.
+    pub width: f32,
+    /// RGBA colour in linear float format.
+    pub colour: crate::colour::Colour,
+    /// Solid, dashed, or dotted.
+    pub pattern: StrokePattern,
+    /// How segment joints are drawn.
+    pub join: LineJoin,
+    /// Mitre limit: when the mitre extension exceeds this multiple of `width`,
+    /// the joint auto-falls back to a bevel.
+    pub mitre_limit: f32,
+    /// End-cap style for open polylines and dash ends. Closed solid polylines
+    /// have no free ends, so caps are ignored there.
+    pub cap: PolylineCap,
+}
+
+impl Default for OverlayStroke {
+    fn default() -> Self {
+        Self {
+            width: 2.0,
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            pattern: StrokePattern::Solid,
+            join: LineJoin::Mitre,
+            mitre_limit: 4.0,
+            cap: PolylineCap::Butt,
+        }
+    }
+}
+
+impl OverlayStroke {
+    /// A solid stroke of `width` logical pixels in `colour`, with the default
+    /// join, mitre limit, and cap.
+    pub fn new(width: f32, colour: impl Into<crate::colour::Colour>) -> Self {
+        Self {
+            width,
+            colour: colour.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the dash or dot pattern.
+    pub fn with_pattern(mut self, pattern: StrokePattern) -> Self {
+        self.pattern = pattern;
+        self
+    }
+
+    /// Set how segment joints are drawn.
+    pub fn with_join(mut self, join: LineJoin) -> Self {
+        self.join = join;
+        self
+    }
+
+    /// Set the mitre limit as a multiple of `width`.
+    pub fn with_mitre_limit(mut self, mitre_limit: f32) -> Self {
+        self.mitre_limit = mitre_limit;
+        self
+    }
+
+    /// Set the end-cap style.
+    pub fn with_cap(mut self, cap: PolylineCap) -> Self {
+        self.cap = cap;
+        self
+    }
+}
+
 /// A stroked polyline rendered as a screen-space overlay.
 ///
 /// Constructed from a list of waypoints in logical pixels. Tessellated on
@@ -92,7 +170,7 @@ pub struct OverlayPolylineItem {
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: OverlayTransform,
-    /// Baked appearance: fill, shadow layers, texture, and backdrop effects.
+    /// Baked appearance: fill, shadow layers, and backdrop effects.
     ///
     /// Shared across the overlay item types, so a field can be present and
     /// inert here. Ask
@@ -130,20 +208,11 @@ pub struct OverlayPolylineItem {
     /// How the path's bounding box sits vertically on `anchor` + `position`.
     /// Default `Top` leaves the points as authored.
     pub align_y: AnchorY,
-    /// Stroke thickness in logical pixels.
-    pub thickness: f32,
-    /// RGBA colour in linear float format.
-    pub colour: crate::colour::Colour,
-    /// How segment joints are drawn.
-    pub join: LineJoin,
-    /// Mitre limit: when the mitre extension exceeds this multiple of
-    /// `thickness`, the joint auto-falls back to a bevel.
-    pub mitre_limit: f32,
-    /// End-cap style for open polylines and dash ends. Closed solid
-    /// polylines have no free ends, so caps are ignored there.
-    pub cap: PolylineCap,
-    /// Solid, dashed, or dotted stroke.
-    pub stroke_pattern: StrokePattern,
+    /// The line itself: width, colour, pattern, joins and caps.
+    ///
+    /// `None` draws no line at all, which is what a closed polyline with a
+    /// fill and no outline wants.
+    pub stroke: Option<OverlayStroke>,
     /// When `true`, the last point connects back to the first.
     pub closed: bool,
     /// Optional per-point UVs for textured interiors.
@@ -177,12 +246,7 @@ impl Default for OverlayPolylineItem {
             clip_rect: None,
             align_x: AnchorX::Left,
             align_y: AnchorY::Top,
-            thickness: 2.0,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
-            join: LineJoin::Mitre,
-            mitre_limit: 4.0,
-            cap: PolylineCap::Butt,
-            stroke_pattern: StrokePattern::Solid,
+            stroke: Some(OverlayStroke::default()),
             closed: false,
             uvs: None,
             opacity: 1.0,
@@ -262,40 +326,58 @@ impl OverlayPolylineItem {
         ])
     }
 
-    /// Set the stroke thickness in logical pixels.
+    /// Set the whole stroke at once.
+    pub fn with_stroke(mut self, stroke: OverlayStroke) -> Self {
+        self.stroke = Some(stroke);
+        self
+    }
+
+    /// Draw no line, leaving only the interior fill of a closed polyline.
+    pub fn without_stroke(mut self) -> Self {
+        self.stroke = None;
+        self
+    }
+
+    /// The stroke, inserting the default one if the item currently has none, so
+    /// a single-field setter can be called on a bare item.
+    fn stroke_mut(&mut self) -> &mut OverlayStroke {
+        self.stroke.get_or_insert_with(OverlayStroke::default)
+    }
+
+    /// Set the stroke width in logical pixels.
     pub fn with_thickness(mut self, thickness: f32) -> Self {
-        self.thickness = thickness;
+        self.stroke_mut().width = thickness;
         self
     }
 
     /// Set the stroke colour.
     pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
-        self.colour = colour.into();
+        self.stroke_mut().colour = colour.into();
         self
     }
 
     /// Set how segment joints are drawn.
     pub fn with_join(mut self, join: LineJoin) -> Self {
-        self.join = join;
+        self.stroke_mut().join = join;
         self
     }
 
-    /// Set the mitre limit as a multiple of `thickness` before a mitre joint
-    /// falls back to a bevel.
+    /// Set the mitre limit as a multiple of the stroke width before a mitre
+    /// joint falls back to a bevel.
     pub fn with_mitre_limit(mut self, mitre_limit: f32) -> Self {
-        self.mitre_limit = mitre_limit;
+        self.stroke_mut().mitre_limit = mitre_limit;
         self
     }
 
     /// Set the end-cap style for open polylines and dash ends.
     pub fn with_cap(mut self, cap: PolylineCap) -> Self {
-        self.cap = cap;
+        self.stroke_mut().cap = cap;
         self
     }
 
     /// Set the stroke pattern (solid, dashed, or dotted).
     pub fn with_stroke_pattern(mut self, stroke_pattern: StrokePattern) -> Self {
-        self.stroke_pattern = stroke_pattern;
+        self.stroke_mut().pattern = stroke_pattern;
         self
     }
 
@@ -307,13 +389,14 @@ impl OverlayPolylineItem {
 
     /// Set the interior fill. Only used when the polyline is closed.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
-        self.style.fill = Some(fill);
+        self.style.fill = fill;
         self
     }
 
     /// Set the interior texture fill. Only used when the polyline is closed.
+    /// Replaces any colour or gradient fill: an item has one fill.
     pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
-        self.style.texture = Some(texture);
+        self.style.fill = OverlayFill::texture(texture);
         self
     }
 
@@ -323,9 +406,13 @@ impl OverlayPolylineItem {
         self
     }
 
-    /// Set the affine transform applied to texture UVs before sampling.
+    /// Set the affine transform applied to texture UVs before sampling. Call
+    /// it after [`with_texture`](Self::with_texture): a polyline with no
+    /// texture fill has nothing to sample and is left alone.
     pub fn with_texture_transform(mut self, texture_transform: TextureTransform) -> Self {
-        self.style.texture_transform = texture_transform;
+        if let OverlayFill::Texture { transform, .. } = &mut self.style.fill {
+            *transform = texture_transform;
+        }
         self
     }
 
@@ -366,8 +453,7 @@ impl OverlayPolylineItem {
     ) -> Self {
         Self {
             points: sample_open_path(path, samples),
-            thickness,
-            colour: colour.into(),
+            stroke: Some(OverlayStroke::new(thickness, colour)),
             ..Default::default()
         }
     }
@@ -378,18 +464,17 @@ impl OverlayPolylineItem {
     /// double up the start point.
     ///
     /// Sets `closed = true` and applies the given fill and stroke. Pass
-    /// `None` for `fill` to draw the outline only.
+    /// [`OverlayFill::none`] to draw the outline only.
     pub fn closed_from_path(
         path: impl Fn(f32) -> [f32; 2],
         samples: u32,
-        fill: Option<OverlayFill>,
+        fill: OverlayFill,
         stroke_colour: impl Into<crate::colour::Colour>,
         thickness: f32,
     ) -> Self {
         Self {
             points: sample_closed_path(path, samples),
-            thickness,
-            colour: stroke_colour.into(),
+            stroke: Some(OverlayStroke::new(thickness, stroke_colour)),
             closed: true,
             style: OverlayStyle {
                 fill,
@@ -487,11 +572,11 @@ mod path_sample_tests {
 
     #[test]
     fn closed_from_path_skips_duplicate_endpoint() {
-        let fill = Some(OverlayFill::Solid([0.2, 0.4, 0.6, 1.0].into()));
+        let fill = OverlayFill::Solid([0.2, 0.4, 0.6, 1.0].into());
         let item = OverlayPolylineItem::closed_from_path(circle, 4, fill.clone(), [1.0; 4], 3.0);
         assert!(item.closed);
         assert_eq!(item.style.fill, fill);
-        assert_eq!(item.thickness, 3.0);
+        assert_eq!(item.stroke.as_ref().unwrap().width, 3.0);
         // 5 points spanning [0, 1); the last is at 4/5, not back at the start.
         assert_eq!(item.points.len(), 5);
         assert!((item.points[0][0] - item.points[4][0]).abs() > 1e-3);

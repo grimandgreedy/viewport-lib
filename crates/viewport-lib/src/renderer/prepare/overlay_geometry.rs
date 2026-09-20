@@ -617,25 +617,38 @@ pub(super) fn emit_disc(
     }
 }
 
+/// The stroke a polyline draws with, standing an absent one in as a stroke of
+/// no width. The bands a shadow layer puts around a path are measured from the
+/// stroke edges, so a path with no line keeps the geometry it has for a line of
+/// zero width rather than losing its shadow.
+pub(super) fn resolved_stroke(
+    poly: &crate::renderer::types::OverlayPolylineItem,
+) -> crate::renderer::types::OverlayStroke {
+    poly.stroke
+        .clone()
+        .unwrap_or_else(|| crate::renderer::types::OverlayStroke::new(0.0, [1.0, 1.0, 1.0, 1.0]))
+}
+
 /// Emit the stroke geometry for a polyline item, honouring its cap style and
 /// stroke pattern. `colour` must already have opacity applied.
 pub(super) fn emit_polyline_stroke(
     verts: &mut Vec<crate::resources::OverlayTextVertex>,
     poly: &crate::renderer::types::OverlayPolylineItem,
+    stroke: &crate::renderer::types::OverlayStroke,
     colour: [f32; 4],
     vp_w: f32,
     vp_h: f32,
 ) {
     use crate::renderer::types::StrokePattern;
-    match poly.stroke_pattern {
+    match stroke.pattern {
         StrokePattern::Solid => {
             verts.extend(tessellate_polyline(
                 &poly.points,
-                poly.thickness,
+                stroke.width,
                 poly.closed,
-                poly.join,
-                poly.mitre_limit,
-                poly.cap,
+                stroke.join,
+                stroke.mitre_limit,
+                stroke.cap,
                 colour,
                 vp_w,
                 vp_h,
@@ -650,9 +663,8 @@ pub(super) fn emit_polyline_stroke(
             // disappearing or looping forever. The 0.25 px floor bounds the
             // sub-path count on long paths.
             if dash_length <= 0.0 || gap_length <= 0.0 {
-                let mut solid = poly.clone();
-                solid.stroke_pattern = StrokePattern::Solid;
-                emit_polyline_stroke(verts, &solid, colour, vp_w, vp_h);
+                let solid = stroke.clone().with_pattern(StrokePattern::Solid);
+                emit_polyline_stroke(verts, poly, &solid, colour, vp_w, vp_h);
                 return;
             }
             let dash = dash_length.max(0.25);
@@ -661,11 +673,11 @@ pub(super) fn emit_polyline_stroke(
             for sub in dash_subpaths(&pts, &cum, dash, gap, offset, poly.closed) {
                 verts.extend(tessellate_polyline(
                     &sub,
-                    poly.thickness,
+                    stroke.width,
                     false,
-                    poly.join,
-                    poly.mitre_limit,
-                    poly.cap,
+                    stroke.join,
+                    stroke.mitre_limit,
+                    stroke.cap,
                     colour,
                     vp_w,
                     vp_h,
@@ -689,7 +701,7 @@ pub(super) fn emit_polyline_stroke(
             };
             while s < limit {
                 let c = point_at_arc(&pts, &cum, s);
-                emit_disc(verts, c, poly.thickness * 0.5, colour, vp_w, vp_h);
+                emit_disc(verts, c, stroke.width * 0.5, colour, vp_w, vp_h);
                 s += spacing;
             }
         }
@@ -926,16 +938,20 @@ pub(super) fn apply_opacity(colour: [f32; 4], opacity: f32) -> [f32; 4] {
 #[cfg(test)]
 mod stroke_tests {
     use super::*;
-    use crate::renderer::types::{LineJoin, OverlayPolylineItem, PolylineCap, StrokePattern};
+    use crate::renderer::types::{
+        LineJoin, OverlayPolylineItem, OverlayStroke, PolylineCap, StrokePattern,
+    };
 
     const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
     fn line_item(pattern: StrokePattern, cap: PolylineCap) -> OverlayPolylineItem {
         let mut item = OverlayPolylineItem::default();
         item.points = vec![[0.0, 0.0], [100.0, 0.0]];
-        item.thickness = 4.0;
-        item.stroke_pattern = pattern;
-        item.cap = cap;
+        item.stroke = Some(
+            OverlayStroke::new(4.0, [1.0, 1.0, 1.0, 1.0])
+                .with_pattern(pattern)
+                .with_cap(cap),
+        );
         item
     }
 
@@ -1013,7 +1029,8 @@ mod stroke_tests {
             },
             PolylineCap::Butt,
         );
-        emit_polyline_stroke(&mut verts, &item, WHITE, 100.0, 100.0);
+        let stroke = item.stroke.clone().unwrap();
+        emit_polyline_stroke(&mut verts, &item, &stroke, WHITE, 100.0, 100.0);
         // Dots at 0, 10, .., 100 = 11 discs of 10 fan triangles each.
         assert_eq!(verts.len(), 11 * 10 * 3);
     }
@@ -1021,28 +1038,27 @@ mod stroke_tests {
     #[test]
     fn degenerate_dash_pattern_falls_back_to_solid() {
         let mut dashed = Vec::new();
+        let dashed_item = line_item(
+            StrokePattern::Dashed {
+                dash_length: 10.0,
+                gap_length: 0.0,
+                offset: 0.0,
+            },
+            PolylineCap::Butt,
+        );
+        let dashed_stroke = dashed_item.stroke.clone().unwrap();
         emit_polyline_stroke(
             &mut dashed,
-            &line_item(
-                StrokePattern::Dashed {
-                    dash_length: 10.0,
-                    gap_length: 0.0,
-                    offset: 0.0,
-                },
-                PolylineCap::Butt,
-            ),
+            &dashed_item,
+            &dashed_stroke,
             WHITE,
             100.0,
             100.0,
         );
         let mut solid = Vec::new();
-        emit_polyline_stroke(
-            &mut solid,
-            &line_item(StrokePattern::Solid, PolylineCap::Butt),
-            WHITE,
-            100.0,
-            100.0,
-        );
+        let solid_item = line_item(StrokePattern::Solid, PolylineCap::Butt);
+        let solid_stroke = solid_item.stroke.clone().unwrap();
+        emit_polyline_stroke(&mut solid, &solid_item, &solid_stroke, WHITE, 100.0, 100.0);
         assert_eq!(dashed.len(), solid.len());
     }
 }
@@ -1252,7 +1268,7 @@ pub(super) fn emit_polyline_shadow(
     vp_h: f32,
 ) {
     let base = layer.colour.to_linear_rgba();
-    let filled = poly.closed && poly.style.fill.is_some();
+    let filled = poly.closed && poly.style.fill.is_set();
     for (d, band_alpha) in shadow_bands(layer) {
         let colour = apply_opacity(base, opacity * band_alpha);
         let width = layer.spread + d;
@@ -1293,7 +1309,8 @@ fn emit_stroke_outer_shadow(
     vp_h: f32,
 ) {
     use crate::renderer::types::StrokePattern;
-    let half = (poly.thickness * 0.5).max(0.0);
+    let stroke = resolved_stroke(poly);
+    let half = (stroke.width * 0.5).max(0.0);
     let mut sides = |points: &[[f32; 2]], closed: bool| {
         for (lo, hi) in [(half, half + width), (-half - width, -half)] {
             verts.extend(tessellate_ribbon(
@@ -1302,8 +1319,8 @@ fn emit_stroke_outer_shadow(
                 hi,
                 shift,
                 closed,
-                poly.join,
-                poly.mitre_limit,
+                stroke.join,
+                stroke.mitre_limit,
                 crate::renderer::types::PolylineCap::Butt,
                 colour,
                 vp_w,
@@ -1311,10 +1328,10 @@ fn emit_stroke_outer_shadow(
             ));
         }
         if !closed {
-            emit_stroke_end_shadow(verts, points, half, width, poly.cap, colour, vp_w, vp_h);
+            emit_stroke_end_shadow(verts, points, half, width, stroke.cap, colour, vp_w, vp_h);
         }
     };
-    match poly.stroke_pattern {
+    match stroke.pattern {
         StrokePattern::Solid => sides(&poly.points, poly.closed),
         StrokePattern::Dashed {
             dash_length,
@@ -1560,7 +1577,8 @@ pub(super) fn emit_polyline_inner_shadow(
     vp_h: f32,
 ) {
     let base = layer.colour.to_linear_rgba();
-    let area = poly.closed && poly.style.fill.is_some();
+    let area = poly.closed && poly.style.fill.is_set();
+    let stroke_width = resolved_stroke(poly).width;
     for (d, band_alpha) in shadow_bands(layer) {
         let colour = apply_opacity(base, opacity * band_alpha);
         let width = layer.spread + d;
@@ -1579,8 +1597,8 @@ pub(super) fn emit_polyline_inner_shadow(
                 vp_w,
                 vp_h,
             );
-        } else if poly.thickness > 0.0 {
-            let half = poly.thickness * 0.5;
+        } else if stroke_width > 0.0 {
+            let half = stroke_width * 0.5;
             let w = width.min(half);
             for (lo, hi) in [(half - w, half), (-half, w - half)] {
                 verts.extend(tessellate_ribbon(

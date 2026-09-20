@@ -466,7 +466,7 @@ mod tests {
         );
         // Three plane quads + one centre handle are closed, filled polylines.
         assert_eq!(polys.len(), 4, "expected 3 plane handles + 1 centre quad");
-        assert!(polys.iter().all(|p| p.closed && p.style.fill.is_some()));
+        assert!(polys.iter().all(|p| p.closed && p.style.fill.is_set()));
     }
 
     #[test]
@@ -536,7 +536,7 @@ mod tests {
                 &mut polys,
             );
             // First shape is the X-axis shaft; its gradient start encodes the colour.
-            match &shapes[0].style.resolved_fill() {
+            match &shapes[0].style.fill {
                 OverlayFill::LinearGradient { start_colour, .. } => *start_colour,
                 _ => panic!("shaft should use a linear gradient"),
             }

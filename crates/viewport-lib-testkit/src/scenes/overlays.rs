@@ -108,7 +108,7 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         cell,
     );
     analytic.style = style.clone();
-    analytic.style.fill = Some(fill.clone());
+    analytic.style.fill = fill.clone();
 
     let mut vector = OverlayShapeItem::new(
         OverlayShape::Vector {
@@ -124,7 +124,7 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         cell,
     );
     vector.style = style.clone();
-    vector.style.fill = Some(fill.clone());
+    vector.style.fill = fill.clone();
 
     // A flat image, so what the cell pins is the shadow rather than the texel
     // filtering: this path reads the shadow layers through its own binding.
@@ -141,8 +141,7 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         cell,
     );
     textured.style = style.clone();
-    textured.style.fill = Some(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)));
-    textured.style.texture = Some(texture);
+    textured.style.fill = OverlayFill::texture(texture).with_tint(Colour::srgb(1.0, 1.0, 1.0, 1.0));
 
     let mut filled = OverlayPolylineItem::new(vec![
         [24.0, 110.0],
@@ -151,9 +150,9 @@ fn build_shadow_parity(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         [24.0, 110.0 + cell[1]],
     ])
     .with_closed(true)
-    .with_thickness(0.0);
+    .without_stroke();
     filled.style = style.clone();
-    filled.style.fill = Some(fill.clone());
+    filled.style.fill = fill.clone();
 
     let mut stroke = OverlayPolylineItem::new(vec![
         [150.0, 118.0],
@@ -492,13 +491,13 @@ fn build_text_fill(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let mut wide = LabelItem::new("Gradient")
         .with_position([20.0, 20.0])
         .with_font_size(44.0);
-    wide.style.fill = Some(linear.clone());
+    wide.style.fill = linear.clone();
 
     let mut wrapped = LabelItem::new("A gradient across wrapped lines")
         .with_position([20.0, 90.0])
         .with_font_size(20.0)
         .with_max_width(180.0);
-    wrapped.style.fill = Some(radial);
+    wrapped.style.fill = radial;
 
     // Per-glyph colours multiply into the fill, so the run shows both.
     let mut run = GlyphRunItem::new(run_glyphs(20.0));
@@ -512,7 +511,7 @@ fn build_text_fill(ctx: &mut BuildCtx<'_>) -> BuiltScene {
             Colour::srgb(1.0, 1.0 - t * 0.6, 1.0, 1.0)
         })
         .collect();
-    run.style.fill = Some(linear);
+    run.style.fill = linear;
 
     backdrop(ctx, {
         let mut ovl = OverlayFrame::default();

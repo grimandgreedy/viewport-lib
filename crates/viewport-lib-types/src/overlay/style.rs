@@ -1,7 +1,7 @@
 //! The baked appearance every overlay item shares, and what each family can
 //! actually draw of it.
 
-use crate::overlay::{OverlayFill, OverlayTextureId, ShadowLayer, TextureTransform};
+use crate::overlay::{OverlayFill, OverlayFillKind, ShadowLayer};
 
 /// Colour filters applied to the blurred scene behind a shape.
 ///
@@ -71,12 +71,14 @@ impl BackdropEffects {
 /// be present and inert. Ask [`OverlayStyleSupport`] rather than guessing, and
 /// see its docs for the per-family table. In debug builds the renderer logs
 /// once when a non-default value lands in a cell that family does not draw.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct OverlayStyle {
-    /// Area fill: solid or gradient. `None` draws no fill, leaving the shadow
-    /// layers, the stroke, or the glyphs on their own.
-    pub fill: Option<OverlayFill>,
+    /// What the item is filled with: a colour, a gradient, or a texture.
+    ///
+    /// Defaults to a fully transparent solid, which draws no fill and leaves
+    /// the shadow layers, the stroke, or the glyphs on their own.
+    pub fill: OverlayFill,
     /// Stacked drop shadows and contours drawn behind the item, first entry
     /// furthest back. Up to
     /// [`OVERLAY_MAX_SHADOW_LAYERS`](crate::overlay::OVERLAY_MAX_SHADOW_LAYERS)
@@ -87,39 +89,33 @@ pub struct OverlayStyle {
     /// [`OVERLAY_MAX_SHADOW_LAYERS`](crate::overlay::OVERLAY_MAX_SHADOW_LAYERS)
     /// are honoured.
     pub inner_shadows: Vec<ShadowLayer>,
-    /// Texture fill. When set, the item samples the image uploaded through
-    /// `upload_overlay_texture`, clipped to the item's coverage, and `fill`
-    /// acts as a tint.
-    pub texture: Option<OverlayTextureId>,
-    /// Affine transform applied to the texture sample before lookup: pan,
-    /// scale, rotate, tile, and flip independently of the item it fills.
-    pub texture_transform: TextureTransform,
     /// Blur and colour filters applied to the scene behind the item.
     pub backdrop: BackdropEffects,
+}
+
+impl Default for OverlayStyle {
+    fn default() -> Self {
+        Self {
+            fill: OverlayFill::none(),
+            shadows: Vec::new(),
+            inner_shadows: Vec::new(),
+            backdrop: BackdropEffects::default(),
+        }
+    }
 }
 
 impl OverlayStyle {
     /// A solid fill and nothing else.
     pub fn solid(colour: impl Into<crate::colour::Colour>) -> Self {
         Self {
-            fill: Some(OverlayFill::Solid(colour.into())),
+            fill: OverlayFill::Solid(colour.into()),
             ..Default::default()
         }
     }
 
-    /// The fill to rasterise. A `None` fill resolves to a fully transparent
-    /// solid, which is what "no fill" means once it reaches a shader.
-    pub fn resolved_fill(&self) -> OverlayFill {
-        self.fill
-            .clone()
-            .unwrap_or(OverlayFill::Solid(crate::colour::Colour::linear(
-                0.0, 0.0, 0.0, 0.0,
-            )))
-    }
-
-    /// Set the area fill.
+    /// Set the fill.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
-        self.fill = Some(fill);
+        self.fill = fill;
         self
     }
 
@@ -132,18 +128,6 @@ impl OverlayStyle {
     /// Set the stacked inner (inset) shadow layers.
     pub fn with_inner_shadows(mut self, shadows: Vec<ShadowLayer>) -> Self {
         self.inner_shadows = shadows;
-        self
-    }
-
-    /// Set the texture fill.
-    pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
-        self.texture = Some(texture);
-        self
-    }
-
-    /// Set the texture sampling transform.
-    pub fn with_texture_transform(mut self, transform: TextureTransform) -> Self {
-        self.texture_transform = transform;
         self
     }
 
@@ -178,33 +162,39 @@ impl OverlayStyle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct OverlayStyleSupport {
-    /// `fill` is drawn, gradients included.
-    pub fill: bool,
-    /// `texture` and `texture_transform` are sampled.
-    pub texture: bool,
+    /// The [`OverlayFill`] kinds this family draws. A fill of a kind not
+    /// listed here is inert.
+    pub fill: &'static [OverlayFillKind],
     /// `backdrop` is composited.
     pub backdrop: bool,
 }
 
+/// Colours and gradients, but no image.
+const COLOUR_FILLS: &[OverlayFillKind] = &[OverlayFillKind::Solid, OverlayFillKind::Gradient];
+/// Every fill kind.
+const ALL_FILLS: &[OverlayFillKind] = &[
+    OverlayFillKind::Solid,
+    OverlayFillKind::Gradient,
+    OverlayFillKind::Texture,
+];
+
 impl OverlayStyleSupport {
     /// Everything drawn.
     pub const ALL: Self = Self {
-        fill: true,
-        texture: true,
+        fill: ALL_FILLS,
         backdrop: true,
     };
 
     /// Nothing drawn.
     pub const NONE: Self = Self {
-        fill: false,
-        texture: false,
+        fill: &[],
         backdrop: false,
     };
 
     /// What an [`OverlayShapeItem`] draws, which depends on its variant:
     /// analytic variants have a distance field and draw everything, while
-    /// `OverlayShape::Vector` is tessellated triangles and has no distance
-    /// field to run a backdrop mask off.
+    /// `OverlayShape::Vector` is tessellated triangles, with no image sampling
+    /// and no distance field to run a backdrop mask off.
     ///
     /// This is why the query takes the shape rather than being a constant per
     /// type: the variant is known where the item is built, which is where a
@@ -214,20 +204,19 @@ impl OverlayStyleSupport {
     pub const fn for_shape(shape: &crate::overlay::OverlayShape) -> Self {
         match shape {
             crate::overlay::OverlayShape::Vector { .. } => Self {
-                fill: true,
-                texture: false,
+                fill: COLOUR_FILLS,
                 backdrop: false,
             },
             _ => Self::ALL,
         }
     }
 
-    /// What an `OverlayPolylineItem` draws. A closed polyline with a fill is a
-    /// tessellated area, which is why `fill` and `texture` are drawn.
-    pub const fn for_polyline() -> Self {
+    /// What an `OverlayPolylineItem` draws. Only a closed polyline has an
+    /// interior to fill, so an open one draws no fill at all: pass the item's
+    /// `closed` flag.
+    pub const fn for_polyline(closed: bool) -> Self {
         Self {
-            fill: true,
-            texture: true,
+            fill: if closed { ALL_FILLS } else { &[] },
             backdrop: false,
         }
     }
@@ -235,16 +224,22 @@ impl OverlayStyleSupport {
     /// What a `LabelItem` or a `GlyphRunItem` draws. Both rasterise through the
     /// glyph atlas, where a fill is a per-vertex tint over the coverage.
     ///
-    /// `texture` is the one gap left: the text pass binds the glyph atlas and
-    /// issues a single batched draw, so sampling a second image means grouping
-    /// the text by texture the way the shape pass does. Until then a textured
-    /// glyph fill reports as unsupported rather than silently dropping.
+    /// A texture fill is the one gap left: the text pass binds the glyph atlas
+    /// and issues a single batched draw, so sampling a second image means
+    /// grouping the text by texture the way the shape pass does. Until then a
+    /// textured glyph fill reports as unsupported rather than silently
+    /// dropping.
     pub const fn for_glyphs() -> Self {
         Self {
-            fill: true,
-            texture: false,
+            fill: COLOUR_FILLS,
             backdrop: false,
         }
+    }
+
+    /// Whether this family draws `fill`.
+    pub fn draws_fill(&self, fill: &OverlayFill) -> bool {
+        let kind = fill.kind();
+        self.fill.iter().any(|k| *k == kind)
     }
 
     /// The style fields that are set to something other than their default and
@@ -255,11 +250,10 @@ impl OverlayStyleSupport {
     /// assert that a lowering layer never emits an inert field.
     pub fn inert_fields(&self, style: &OverlayStyle) -> Vec<&'static str> {
         let mut out = Vec::new();
-        if !self.fill && style.fill.is_some() {
+        // An untouched fill is nothing to report: it draws the same as not
+        // being drawn.
+        if style.fill != OverlayFill::none() && !self.draws_fill(&style.fill) {
             out.push("fill");
-        }
-        if !self.texture && style.texture.is_some() {
-            out.push("texture");
         }
         if !self.backdrop && style.backdrop.is_active() {
             out.push("backdrop");

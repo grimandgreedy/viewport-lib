@@ -1,6 +1,6 @@
 //! Text label overlay items.
 
-use super::anchor::{AnchorX, AnchorY, OverlayAnchor};
+use super::anchor::{AnchorX, AnchorY, OverlayAnchor, resolve_anchor_origin};
 use super::animation::OverlayAnimations;
 use super::transform::OverlayTransform;
 
@@ -44,7 +44,7 @@ pub struct LabelItem {
     /// transform composes with the transform of a retained group containing
     /// it.
     pub transform: OverlayTransform,
-    /// Baked appearance: fill, shadow layers, texture, and backdrop effects.
+    /// Baked appearance: fill, shadow layers, and backdrop effects.
     ///
     /// Shared across the overlay item types, so a field can be present and
     /// inert here. Ask
@@ -278,6 +278,42 @@ impl LabelItem {
         self
     }
 
+    /// Resolve the top-left pixel of the laid-out text for a frame: the
+    /// `anchor` origin, plus `position`, shifted by `align_x` / `align_y` for a
+    /// text box of `size`, plus `anchor_padding` on the horizontal edge the
+    /// text is aligned to. Returns `None` when a `World` anchor projects behind
+    /// the camera or off-screen, which is the frame the label is skipped on.
+    ///
+    /// `size` is the measured text, in logical pixels: `[width, height]` from
+    /// `DeviceResources::measure_overlay_text`, or from the wrapped measure
+    /// when `max_width` is set. The renderer lays the text out and then places
+    /// it the same way, so a backing shape or a leader line built on this lands
+    /// where the text does.
+    ///
+    /// The box returned is the unrotated one. `transform.rotation` turns the
+    /// text inside it about the pivot, so a rotated label's glyphs leave this
+    /// box while its placement does not.
+    pub fn resolve_top_left(
+        &self,
+        size: [f32; 2],
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+    ) -> Option<[f32; 2]> {
+        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        // The horizontal rule is the shared align shift plus the anchor gap,
+        // which pushes the text away from the anchor on whichever side it sits.
+        let shift_x = match self.align_x {
+            AnchorX::Left => self.anchor_padding,
+            AnchorX::Middle => -size[0] * 0.5,
+            AnchorX::Right => -size[0] - self.anchor_padding,
+        };
+        Some([
+            origin[0] + self.transform.translate[0] + shift_x,
+            origin[1] + self.transform.translate[1] + self.align_y.align_shift(size[1]),
+        ])
+    }
+
     /// Set the placement relative to the anchor, applied after anchor resolution
     /// and alignment.
     pub fn with_position(mut self, position: [f32; 2]) -> Self {
@@ -383,5 +419,89 @@ impl LabelItem {
     pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
         self.clip_rect = Some(clip_rect);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A screen-space label with the anchor gap zeroed resolves to its position,
+    /// with no camera involved, so plain UI placement is exact.
+    #[test]
+    fn resolve_top_left_default_is_the_position() {
+        let label = LabelItem::new("hello")
+            .with_screen_anchor([40.0, 25.0])
+            .with_align_x(AnchorX::Left)
+            .with_align_y(AnchorY::Top)
+            .with_anchor_padding(0.0);
+        let tl = label
+            .resolve_top_left(
+                [60.0, 14.0],
+                [800.0, 600.0],
+                &glam::Mat4::IDENTITY,
+                &glam::Mat4::IDENTITY,
+            )
+            .unwrap();
+        assert_eq!(tl, [40.0, 25.0]);
+    }
+
+    /// Alignment shifts the measured box onto the anchor, and the anchor gap
+    /// pushes the text away from the anchor on the side it is aligned to.
+    #[test]
+    fn resolve_top_left_shifts_by_alignment_and_anchor_padding() {
+        let base = LabelItem::new("hello").with_anchor(OverlayAnchor::Viewport {
+            x: AnchorX::Right,
+            y: AnchorY::Bottom,
+        });
+        let size = [60.0, 14.0];
+
+        let right = base
+            .clone()
+            .with_align_x(AnchorX::Right)
+            .with_align_y(AnchorY::Bottom)
+            .with_anchor_padding(6.0)
+            .resolve_top_left(
+                size,
+                [800.0, 600.0],
+                &glam::Mat4::IDENTITY,
+                &glam::Mat4::IDENTITY,
+            )
+            .unwrap();
+        assert_eq!(right, [800.0 - 60.0 - 6.0, 600.0 - 14.0]);
+
+        let centred = base
+            .with_align_x(AnchorX::Middle)
+            .with_align_y(AnchorY::Middle)
+            .with_anchor_padding(6.0)
+            .resolve_top_left(
+                size,
+                [800.0, 600.0],
+                &glam::Mat4::IDENTITY,
+                &glam::Mat4::IDENTITY,
+            )
+            .unwrap();
+        // Middle alignment centres the box on the anchor and ignores the gap,
+        // which has no side to push away from.
+        assert_eq!(centred, [800.0 - 30.0, 600.0 - 7.0]);
+    }
+
+    /// A world anchor behind the camera resolves to nothing, which is the frame
+    /// the label is skipped on.
+    #[test]
+    fn resolve_top_left_culls_behind_the_camera() {
+        let label = LabelItem::new("hello").with_world_anchor([0.0, 0.0, 10.0]);
+        // A projection that sends everything to a negative w: nothing survives.
+        let behind = glam::Mat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, -1.0, //
+            0.0, 0.0, 0.0, 0.0,
+        ]);
+        assert!(
+            label
+                .resolve_top_left([60.0, 14.0], [800.0, 600.0], &glam::Mat4::IDENTITY, &behind)
+                .is_none()
+        );
     }
 }
