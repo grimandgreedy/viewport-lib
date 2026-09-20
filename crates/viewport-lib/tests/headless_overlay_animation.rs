@@ -177,3 +177,59 @@ fn the_epoch_shifts_a_whole_track() {
         "after the delay plus the duration the item should be at its end value"
     );
 }
+
+/// Labels and glyph runs animate too. Wiring each family separately is exactly
+/// how the paths drifted apart before, so each one gets a check rather than an
+/// assumption that it was hooked up the same way.
+#[test]
+fn labels_and_glyph_runs_animate() {
+    use viewport_lib::{GlyphRunItem, LabelItem, PositionedGlyph};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    let slide = || {
+        OverlayAnimations::default().with_translate(AnimTrack {
+            start_time: 0.0,
+            duration: 1.0,
+            from: [0.0, 0.0],
+            to: [24.0, 0.0],
+            ..Default::default()
+        })
+    };
+
+    let mut at_start = frame_at(0.0);
+    let mut at_end = frame_at(1.0);
+    let label = LabelItem::new("Mg")
+        .with_position([4.0, 20.0])
+        .with_font_size(28.0)
+        .with_colour(Colour::linear(1.0, 1.0, 1.0, 1.0))
+        .with_animations(slide());
+    at_start.overlays.labels = vec![label.clone()];
+    at_end.overlays.labels = vec![label];
+    let a = renderer.render_offscreen(&device, &queue, &at_start, SIZE, SIZE);
+    let b = renderer.render_offscreen(&device, &queue, &at_end, SIZE, SIZE);
+    assert!(
+        a != b,
+        "a label with a translate track should draw differently at t=0 and t=1"
+    );
+
+    let mut at_start = frame_at(0.0);
+    let mut at_end = frame_at(1.0);
+    let mut run = GlyphRunItem::new(vec![PositionedGlyph::new(55, 0.0, 0.0)]);
+    run.font_size = 28.0;
+    run.transform.translate = [4.0, 40.0];
+    run.colour = Colour::linear(1.0, 1.0, 1.0, 1.0);
+    run.animations = Some(Box::new(slide()));
+    at_start.overlays.glyph_runs = vec![run.clone()];
+    at_end.overlays.glyph_runs = vec![run];
+    let a = renderer.render_offscreen(&device, &queue, &at_start, SIZE, SIZE);
+    let b = renderer.render_offscreen(&device, &queue, &at_end, SIZE, SIZE);
+    assert!(
+        a != b,
+        "a glyph run with a translate track should draw differently at t=0 and t=1"
+    );
+}
