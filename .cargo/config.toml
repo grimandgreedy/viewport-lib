@@ -10,3 +10,10 @@ bevy-example = "run --release --manifest-path crates/viewport-lib-examples/bevy/
 # The build-check halves of the same two, for the post-API-change sweep.
 check-slint-example = "check --manifest-path crates/viewport-lib-examples/slint/Cargo.toml --all-targets"
 check-bevy-example = "check --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml --all-targets"
+# The mobile example sits outside the workspace too, because cargo-mobile2's
+# generated projects expect its target directory to be its own. This runs it in
+# a desktop window; `cargo android run` and `cargo apple run` from the crate
+# directory build for a device, and scripts/check_mobile.sh compile-checks both
+# mobile targets.
+mobile-example = "run --release --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --bin mobile-desktop"
+check-mobile-example = "check --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --all-targets"

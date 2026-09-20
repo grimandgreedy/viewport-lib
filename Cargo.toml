@@ -30,10 +30,16 @@ default-members = [
 # The slint and bevy example crates are excluded for a different reason: their
 # frameworks pin wgpu 29, and features unify across a workspace build, so as
 # members they would turn the 29 leg on for every crate defaulting to 27.
+#
+# The mobile example is excluded for a third: the Xcode and Gradle projects
+# cargo-mobile2 generates for it build the Rust side by running cargo from that
+# directory and looking for the library under `./target`, which a member's
+# workspace-root target directory does not satisfy.
 exclude = [
     "crates/viewport-lib-testkit",
     "crates/viewport-lib-examples/slint",
     "crates/viewport-lib-examples/bevy",
+    "crates/viewport-lib-examples/mobile",
 ]
 
 # Shared dependency pins. Both crates take `glam` from here so the version can

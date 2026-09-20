@@ -9,6 +9,20 @@ crates/viewport-lib-examples/*/Cargo.lock
 book/build/
 book/
 
+## Mobile example: cargo-mobile2 output and machine-specific config
+# `gen/` is the generated Xcode and Gradle projects. Regenerate with
+# `cargo mobile init`; it is build output that bakes in absolute paths and an
+# Apple development team id.
+crates/viewport-lib-examples/mobile/gen/
+# The NDK linker paths are per-machine. `.cargo/config.toml.example` is tracked.
+crates/viewport-lib-examples/mobile/.cargo/config.toml
+crates/viewport-lib-examples/mobile/local.properties
+
+# Android Studio / IntelliJ / Gradle noise
+.idea/
+*.iml
+.gradle/
+
 # IDE/OS noise
 .DS_Store
 .vscode/

@@ -1,0 +1,49 @@
+# Not a member of the parent workspace. cargo-mobile2 generates an Xcode project
+# and a Gradle project under `gen/` that both build the Rust side by invoking
+# cargo from this directory and looking for the staticlib under `./target`; a
+# workspace member writes to the workspace root's target directory instead, and
+# the generated projects do not find it there. An empty `[workspace]` table
+# detaches this crate into its own workspace root, exactly like the slint and
+# bevy example crates.
+[workspace]
+
+[package]
+name = "viewport-lib-examples-mobile"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+description = "Android and iOS viewport-lib example: winit plus wgpu, driven by touch"
+publish = false
+
+# `staticlib` is what Xcode links, `cdylib` is what the Android NDK loads, and
+# `rlib` lets the desktop binary below depend on the same code.
+[lib]
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Runs the example in a desktop window, for work that does not need a device.
+[[bin]]
+name = "mobile-desktop"
+path = "src/main.rs"
+
+[dependencies]
+viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["wgpu27"] }
+glam = { version = "=0.30.10", features = ["bytemuck"] }
+wgpu = "27.0"
+winit = "0.30"
+pollster = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+
+[package.metadata.android]
+package = "com.viewport.mobile"
+build_targets = ["aarch64-linux-android"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 23
+target_sdk_version = 33
+
+[package.metadata.android.application]
+label = "Viewport Mobile"
