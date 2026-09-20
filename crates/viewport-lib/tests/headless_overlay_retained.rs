@@ -43,7 +43,7 @@ fn red_square() -> OverlayPolylineItem {
     p.closed = true;
     p.stroke = None;
     p.style.fill = OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into());
-    p.opacity = 1.0;
+    p.style.opacity = 1.0;
     p
 }
 
@@ -92,7 +92,7 @@ fn white_square() -> OverlayPolylineItem {
     p.closed = true;
     p.stroke = None;
     p.style.fill = OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into());
-    p.opacity = 1.0;
+    p.style.opacity = 1.0;
     p
 }
 

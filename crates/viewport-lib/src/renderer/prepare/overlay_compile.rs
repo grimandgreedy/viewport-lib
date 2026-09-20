@@ -75,7 +75,7 @@ fn emit_base(
 ) {
     for poly in polylines {
         if poly.points.len() < 2
-            || poly.opacity <= 0.0
+            || poly.style.opacity <= 0.0
             || names_unusable_mask(&poly.clip, "polyline")
         {
             continue;
@@ -88,7 +88,14 @@ fn emit_base(
             .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
             .filter(|l| l.is_visible())
         {
-            overlay_geometry::emit_polyline_shadow(verts, poly, layer, poly.opacity, 0.0, 0.0);
+            overlay_geometry::emit_polyline_shadow(
+                verts,
+                poly,
+                layer,
+                poly.style.opacity,
+                0.0,
+                0.0,
+            );
         }
         let content_start = verts.len();
         let filled = poly.closed && poly.style.fill.is_set();
@@ -97,12 +104,12 @@ fn emit_base(
                 verts,
                 &poly.points,
                 &poly.style.fill,
-                poly.opacity,
+                poly.style.opacity,
                 0.0,
                 0.0,
             );
         }
-        viewport_overlays::tint_vertices_from(verts, content_start, poly.tint);
+        viewport_overlays::tint_vertices_from(verts, content_start, poly.style.tint);
         // An inset layer goes over what it erodes and under the edge of it:
         // over the fill and under the stroke for a filled path, over the stroke
         // when the stroke is all the item covers.
@@ -118,7 +125,7 @@ fn emit_base(
                     verts,
                     poly,
                     layer,
-                    poly.opacity,
+                    poly.style.opacity,
                     0.0,
                     0.0,
                 );
@@ -130,10 +137,10 @@ fn emit_base(
         let stroke_start = verts.len();
         if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
             let mut colour = stroke.colour.to_linear_rgba();
-            colour[3] *= poly.opacity;
+            colour[3] *= poly.style.opacity;
             overlay_geometry::emit_polyline_stroke(verts, poly, stroke, colour, 0.0, 0.0);
         }
-        viewport_overlays::tint_vertices_from(verts, stroke_start, poly.tint);
+        viewport_overlays::tint_vertices_from(verts, stroke_start, poly.style.tint);
         if !filled {
             inner(verts);
         }
@@ -161,7 +168,7 @@ fn emit_base(
         bake_clip_rect(verts, &poly.clip, item_start, ppp);
     }
     for shape in vector_shapes {
-        if shape.opacity <= 0.0 || names_unusable_mask(&shape.clip, "vector shape") {
+        if shape.style.opacity <= 0.0 || names_unusable_mask(&shape.clip, "vector shape") {
             continue;
         }
         if let crate::renderer::types::OverlayShape::Vector {
@@ -186,7 +193,10 @@ fn emit_glyph_run(
     run: &crate::renderer::types::GlyphRunItem,
     ppp: f32,
 ) {
-    if run.glyphs.is_empty() || run.opacity <= 0.0 || names_unusable_mask(&run.clip, "glyph run") {
+    if run.glyphs.is_empty()
+        || run.style.opacity <= 0.0
+        || names_unusable_mask(&run.clip, "glyph run")
+    {
         return;
     }
     let Some(([min_x, min_y], [ext_w, ext_h])) = run.extent() else {
@@ -195,7 +205,7 @@ fn emit_glyph_run(
     let item_start = verts.len();
     let run_x = run.transform.translate[0] + run.anchoring.align.x.align_shift(ext_w);
     let run_y = run.transform.translate[1] + run.anchoring.align.y.align_shift(ext_h);
-    let opacity = run.opacity.clamp(0.0, 1.0);
+    let opacity = run.style.opacity.clamp(0.0, 1.0);
     let rot_start = verts.len();
     let rot = overlay_geometry::OverlayRotation::new(
         run.transform.rotation,
@@ -272,7 +282,7 @@ fn emit_glyph_run(
             [ext_w, ext_h],
         );
     }
-    viewport_overlays::tint_vertices_from(verts, glyph_start, run.tint);
+    viewport_overlays::tint_vertices_from(verts, glyph_start, run.style.tint);
     for layer in run
         .style
         .inner_shadows
@@ -323,11 +333,14 @@ fn emit_label(
     ppp: f32,
 ) {
     use crate::renderer::types::{AnchorX, AnchorY, OverlayOrigin};
-    if label.text.is_empty() || label.opacity <= 0.0 || names_unusable_mask(&label.clip, "label") {
+    if label.text.is_empty()
+        || label.style.opacity <= 0.0
+        || names_unusable_mask(&label.clip, "label")
+    {
         return;
     }
     let item_start = verts.len();
-    let opacity = label.opacity.clamp(0.0, 1.0);
+    let opacity = label.style.opacity.clamp(0.0, 1.0);
     let layout = if let Some(max_w) = label.max_width {
         atlas.layout_text_wrapped(
             &label.text,
@@ -402,7 +415,7 @@ fn emit_label(
         }
     }
 
-    viewport_overlays::tint_vertices_from(verts, bg_start, label.tint);
+    viewport_overlays::tint_vertices_from(verts, bg_start, label.style.tint);
     overlay_geometry::rotate_vertices_from(verts, bg_start, rot);
 
     if emit_leader && label.leader_line && matches!(label.anchoring.origin, OverlayOrigin::World(_))
@@ -482,7 +495,7 @@ fn emit_label(
             [layout.total_width, layout.height],
         );
     }
-    viewport_overlays::tint_vertices_from(verts, glyph_start, label.tint);
+    viewport_overlays::tint_vertices_from(verts, glyph_start, label.style.tint);
     for layer in label
         .style
         .inner_shadows
@@ -550,8 +563,10 @@ pub(super) fn emit_group_verts(
     // Fast path: no glyph-bearing content (runs or labels), nothing grows the atlas.
     let has_glyphs = glyph_runs
         .iter()
-        .any(|r| !r.glyphs.is_empty() && r.opacity > 0.0)
-        || labels.iter().any(|l| !l.text.is_empty() && l.opacity > 0.0);
+        .any(|r| !r.glyphs.is_empty() && r.style.opacity > 0.0)
+        || labels
+            .iter()
+            .any(|l| !l.text.is_empty() && l.style.opacity > 0.0);
     if !has_glyphs {
         return (base, atlas.version());
     }
@@ -593,13 +608,13 @@ fn emit_sdf_shape(
         || shape.provides_mask.is_some()
         || shape.style.fill.texture_id().is_some()
         || shape.style.backdrop.blur > 0.0
-        || shape.opacity <= 0.0
+        || shape.style.opacity <= 0.0
         || names_unusable_mask(&shape.clip, "shape")
     {
         return;
     }
     let item_start = out_verts.len();
-    let op = shape.opacity;
+    let op = shape.style.opacity;
     let hw = shape.size[0] * 0.5;
     let hh = shape.size[1] * 0.5;
     let cx = shape.transform.translate[0] + hw;
@@ -777,7 +792,7 @@ fn emit_sdf_shape(
         colour[3] *= op;
     }
     for colour in &mut stop_colours {
-        for (c, t) in colour.iter_mut().zip(shape.tint) {
+        for (c, t) in colour.iter_mut().zip(shape.style.tint) {
             *c *= t;
         }
     }
@@ -949,8 +964,10 @@ impl ViewportRenderer {
     ) -> crate::renderer::OverlayGeometryId {
         let has_glyphs = glyph_runs
             .iter()
-            .any(|r| !r.glyphs.is_empty() && r.opacity > 0.0)
-            || labels.iter().any(|l| !l.text.is_empty() && l.opacity > 0.0);
+            .any(|r| !r.glyphs.is_empty() && r.style.opacity > 0.0)
+            || labels
+                .iter()
+                .any(|l| !l.text.is_empty() && l.style.opacity > 0.0);
 
         let (verts, baked_version) = emit_group_verts(
             &mut self.resources.content.glyph_atlas,

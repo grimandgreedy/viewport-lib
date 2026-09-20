@@ -163,7 +163,7 @@ pub(super) fn emit_vector_shape(
             &positions,
             &mesh.indices,
             &shape.style.fill,
-            shape.opacity,
+            shape.style.opacity,
             vp_w,
             vp_h,
         );
@@ -171,7 +171,7 @@ pub(super) fn emit_vector_shape(
 
     // Tint the fill now rather than at the end: the inner shadows that follow
     // are shadow geometry, and a tint never reaches a shadow layer.
-    tint_vertices_from(batch, content_start, shape.tint);
+    tint_vertices_from(batch, content_start, shape.style.tint);
 
     // Inner shadow layers, over the fill, matching the order the SDF path
     // composites in. A band runs inward from each contour, which is the
@@ -243,28 +243,33 @@ pub(super) fn fill_vertices_from(
     }
 }
 
-/// Multiply an item's `tint` into the colours of `batch[from..]`.
+/// Multiply an item's `tint` into the colours of `batch[from..]`, and mark that
+/// range as the item's content.
 ///
 /// Called per emitted range rather than over the whole batch so shadow ranges
 /// are skipped: a tint never reaches a shadow layer, on any path. A compiled
 /// group's shadow colours are baked, so retention could only ever honour that
 /// rule, and content that changed appearance when it moved between the
 /// immediate and retained paths is the defect this vocabulary exists to remove.
+///
+/// The same range is what a retained group's own per-frame tint applies to, so
+/// the mark is set whether or not the item has a tint of its own.
 pub(super) fn tint_vertices_from(
     batch: &mut [crate::resources::OverlayTextVertex],
     from: usize,
     tint: [f32; 4],
 ) {
-    if tint == [1.0, 1.0, 1.0, 1.0] {
-        return;
-    }
+    let identity = tint == [1.0, 1.0, 1.0, 1.0];
     for v in &mut batch[from..] {
-        v.colour = [
-            v.colour[0] * tint[0],
-            v.colour[1] * tint[1],
-            v.colour[2] * tint[2],
-            v.colour[3] * tint[3],
-        ];
+        v.group_tint = 1.0;
+        if !identity {
+            v.colour = [
+                v.colour[0] * tint[0],
+                v.colour[1] * tint[1],
+                v.colour[2] * tint[2],
+                v.colour[3] * tint[3],
+            ];
+        }
     }
 }
 
@@ -287,7 +292,7 @@ fn emit_vector_inner_shadow(
     let contours = crate::renderer::types::flatten_contours(subpaths);
     for (d, band_alpha) in overlay_geometry::shadow_bands(layer) {
         let mut colour = base;
-        colour[3] *= shape.opacity * band_alpha;
+        colour[3] *= shape.style.opacity * band_alpha;
         let width = layer.spread + d;
         if colour[3] <= 0.0 || width <= 0.0 {
             continue;
@@ -331,7 +336,7 @@ fn emit_vector_shadow(
     let contours = crate::renderer::types::flatten_contours(subpaths);
     for (d, band_alpha) in overlay_geometry::shadow_bands(layer) {
         let mut colour = base;
-        colour[3] *= shape.opacity * band_alpha;
+        colour[3] *= shape.style.opacity * band_alpha;
         let width = layer.spread + d;
         if colour[3] <= 0.0 || width <= 0.0 {
             continue;
@@ -656,7 +661,7 @@ impl ViewportRenderer {
                     .iter()
                     .chain(gizmo_polylines.iter())
                 {
-                    if poly.points.len() < 2 || poly.opacity <= 0.0 {
+                    if poly.points.len() < 2 || poly.style.opacity <= 0.0 {
                         continue;
                     }
                     // Resolve animation tracks first: a `translate` track drives
@@ -673,8 +678,8 @@ impl ViewportRenderer {
                                 anims.apply(
                                     overlay_time,
                                     &mut owned.transform,
-                                    &mut owned.opacity,
-                                    &mut owned.tint,
+                                    &mut owned.style.opacity,
+                                    &mut owned.style.tint,
                                 );
                             }
                             animated_storage = owned;
@@ -715,7 +720,14 @@ impl ViewportRenderer {
                         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
                         .filter(|l| l.is_visible())
                     {
-                        emit_polyline_shadow(&mut batch, poly, layer, poly.opacity, vp_w, vp_h);
+                        emit_polyline_shadow(
+                            &mut batch,
+                            poly,
+                            layer,
+                            poly.style.opacity,
+                            vp_w,
+                            vp_h,
+                        );
                     }
                     let content_start = batch.len();
                     if poly.closed && poly.style.fill.texture_id().is_none() {
@@ -723,14 +735,14 @@ impl ViewportRenderer {
                             &mut batch,
                             &poly.points,
                             &poly.style.fill,
-                            poly.opacity,
+                            poly.style.opacity,
                             vp_w,
                             vp_h,
                         );
                     }
                     // Tint the fill before the inner shadows go over it: a tint
                     // never reaches a shadow layer.
-                    tint_vertices_from(&mut batch, content_start, poly.tint);
+                    tint_vertices_from(&mut batch, content_start, poly.style.tint);
                     // An inset layer goes over what it erodes and under the
                     // edge of it: over the fill and under the stroke for a
                     // filled path, over the stroke when the stroke is all the
@@ -748,7 +760,7 @@ impl ViewportRenderer {
                                 batch,
                                 poly,
                                 layer,
-                                poly.opacity,
+                                poly.style.opacity,
                                 vp_w,
                                 vp_h,
                             );
@@ -760,10 +772,10 @@ impl ViewportRenderer {
                     let stroke_start = batch.len();
                     if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
                         let mut colour = stroke.colour.to_linear_rgba();
-                        colour[3] *= poly.opacity;
+                        colour[3] *= poly.style.opacity;
                         emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
                     }
-                    tint_vertices_from(&mut batch, stroke_start, poly.tint);
+                    tint_vertices_from(&mut batch, stroke_start, poly.style.tint);
                     if !filled {
                         inner(&mut batch);
                     }
@@ -805,7 +817,7 @@ impl ViewportRenderer {
                     // fully transparent ones. A `texture` set on a vector shape
                     // is ignored (documented on the variant): the fill still
                     // draws.
-                    if shape.provides_mask.is_some() || shape.opacity <= 0.0 {
+                    if shape.provides_mask.is_some() || shape.style.opacity <= 0.0 {
                         continue;
                     }
                     super::overlay_style_check::warn_inert_style(
@@ -818,8 +830,8 @@ impl ViewportRenderer {
                         anims.apply(
                             overlay_time,
                             &mut owned.transform,
-                            &mut owned.opacity,
-                            &mut owned.tint,
+                            &mut owned.style.opacity,
+                            &mut owned.style.tint,
                         );
                     }
                     // Resolve the anchor to an absolute top-left so anchored
@@ -841,7 +853,7 @@ impl ViewportRenderer {
 
                 // --- Labels ---
                 for label in &frame.overlays.labels {
-                    if label.text.is_empty() || label.opacity <= 0.0 {
+                    if label.text.is_empty() || label.style.opacity <= 0.0 {
                         continue;
                     }
 
@@ -865,14 +877,14 @@ impl ViewportRenderer {
                             anims.apply(
                                 overlay_time,
                                 &mut owned.transform,
-                                &mut owned.opacity,
-                                &mut owned.tint,
+                                &mut owned.style.opacity,
+                                &mut owned.style.tint,
                             );
                         }
                         animated_storage = owned;
                         &animated_storage
                     };
-                    let opacity = label.opacity.clamp(0.0, 1.0);
+                    let opacity = label.style.opacity.clamp(0.0, 1.0);
                     super::overlay_style_check::warn_inert_style(
                         "LabelItem",
                         crate::renderer::types::OverlayStyleSupport::for_glyphs(),
@@ -966,7 +978,7 @@ impl ViewportRenderer {
                         }
                     }
 
-                    tint_vertices_from(&mut batch, bg_start, label.tint);
+                    tint_vertices_from(&mut batch, bg_start, label.style.tint);
                     rotate_vertices_from(&mut batch, bg_start, rot);
 
                     if label.leader_line {
@@ -1064,7 +1076,7 @@ impl ViewportRenderer {
                             [layout.total_width, layout.height],
                         );
                     }
-                    tint_vertices_from(&mut batch, glyph_start, label.tint);
+                    tint_vertices_from(&mut batch, glyph_start, label.style.tint);
 
                     // Inner shadow layers, over the glyphs. The cell is the
                     // letterform with a band eaten in from its edge, so it lands
@@ -1124,7 +1136,7 @@ impl ViewportRenderer {
 
                 // --- Glyph runs (pre-positioned glyphs, drawn as given) ---
                 for run in &frame.overlays.glyph_runs {
-                    if run.glyphs.is_empty() || run.opacity <= 0.0 {
+                    if run.glyphs.is_empty() || run.style.opacity <= 0.0 {
                         continue;
                     }
                     let animated_storage;
@@ -1136,8 +1148,8 @@ impl ViewportRenderer {
                             anims.apply(
                                 overlay_time,
                                 &mut owned.transform,
-                                &mut owned.opacity,
-                                &mut owned.tint,
+                                &mut owned.style.opacity,
+                                &mut owned.style.tint,
                             );
                         }
                         animated_storage = owned;
@@ -1170,7 +1182,7 @@ impl ViewportRenderer {
                         + run.transform.translate[1]
                         + run.anchoring.align.y.align_shift(ext_h);
 
-                    let opacity = run.opacity.clamp(0.0, 1.0);
+                    let opacity = run.style.opacity.clamp(0.0, 1.0);
                     // Each glyph carries its tint through layout so per-glyph
                     // colours stay aligned with the quads after zero-area skips.
                     // Glyphs without a per-glyph entry fall back to the run colour.
@@ -1256,7 +1268,7 @@ impl ViewportRenderer {
                             [ext_w, ext_h],
                         );
                     }
-                    tint_vertices_from(&mut batch, glyph_start, run.tint);
+                    tint_vertices_from(&mut batch, glyph_start, run.style.tint);
 
                     // Inner shadow layers, over the run, on the same quads the
                     // plain pass used.
@@ -1596,7 +1608,7 @@ impl ViewportRenderer {
         let has_textured_polyline_fill = frame.overlays.polylines.iter().any(|p| {
             p.closed
                 && p.style.fill.texture_id().is_some()
-                && p.opacity > 0.0
+                && p.style.opacity > 0.0
                 && p.points.len() >= 3
         });
         if !frame.overlays.shapes.is_empty()
@@ -1704,8 +1716,8 @@ impl ViewportRenderer {
                         anims.apply(
                             overlay_time,
                             &mut owned.transform,
-                            &mut owned.opacity,
-                            &mut owned.tint,
+                            &mut owned.style.opacity,
+                            &mut owned.style.tint,
                         );
                     }
                     // Resolve the anchor origin + animated position + alignment
@@ -1721,7 +1733,7 @@ impl ViewportRenderer {
                     };
                     owned.transform.translate = resolved_tl;
                     let shape = &owned;
-                    let resolved_opacity = shape.opacity;
+                    let resolved_opacity = shape.style.opacity;
 
                     if resolved_opacity <= 0.0 {
                         continue;
@@ -1943,7 +1955,7 @@ impl ViewportRenderer {
                     // Fold the item tint into the fill and gradient colours. It
                     // stops there: a tint never reaches a shadow layer,
                     // matching the group tint the shaders apply.
-                    let tint = shape.tint;
+                    let tint = shape.style.tint;
                     for colour in &mut stop_colours {
                         for (c, t) in colour.iter_mut().zip(tint) {
                             *c *= t;
@@ -2226,7 +2238,7 @@ impl ViewportRenderer {
                         continue;
                     };
                     let tex_id = *tex_id;
-                    if !poly.closed || poly.opacity <= 0.0 || poly.points.len() < 3 {
+                    if !poly.closed || poly.style.opacity <= 0.0 || poly.points.len() < 3 {
                         continue;
                     }
                     // Resolve the anchor to a screen offset and translate the
@@ -2284,7 +2296,7 @@ impl ViewportRenderer {
                     let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
                     let half_size = [size[0] * 0.5, size[1] * 0.5];
                     let mut tint = tex_tint.to_linear_rgba();
-                    tint[3] *= poly.opacity;
+                    tint[3] *= poly.style.opacity;
                     let explicit_uvs = poly
                         .uvs
                         .as_ref()

@@ -136,3 +136,56 @@ fn a_compiled_clip_mask_is_rejected_rather_than_ignored() {
         "an item whose clip mask cannot be resolved must be skipped, not drawn unclipped"
     );
 }
+
+/// A retained group's `opacity` fades its shadow layers, not just its fill.
+///
+/// The layers live in a storage buffer the fragment stage reads directly, so
+/// the group's opacity has to reach them separately from the vertex colours it
+/// is folded into. Before that, fading a compiled panel left its drop shadow at
+/// full strength, and once a border band became a shadow layer that hit a field
+/// consumers set constantly.
+#[test]
+fn a_retained_group_fades_its_shadow_layers_with_its_opacity() {
+    use viewport_lib::{OverlayShape, OverlayShapeItem, ShadowLayer};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // A small opaque square with a wide black contour around it, compiled into a
+    // group so the shadow layers ride the SDF shape stream.
+    let panel = OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 0.0 },
+        [24.0, 24.0],
+        [16.0, 16.0],
+    )
+    .with_fill(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()))
+    .with_shadows(vec![ShadowLayer::outline([0.0, 0.0, 0.0, 1.0], 8.0)]);
+    let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[panel], &[], &[], 1.0);
+
+    // Sample just outside the square, where only the contour draws.
+    let probe = |px: &[u8]| {
+        let i = (((24u32 - 4) * SIZE) + 32) as usize * 4;
+        px[i] as i32
+    };
+
+    let mut opaque = overlay_frame();
+    opaque.overlays.retained = vec![RetainedOverlay::new(id)];
+    let opaque_px = renderer.render_offscreen(&device, &queue, &opaque, SIZE, SIZE);
+
+    let mut faded = overlay_frame();
+    faded.overlays.retained = vec![RetainedOverlay::new(id).with_opacity(0.0)];
+    let faded_px = renderer.render_offscreen(&device, &queue, &faded, SIZE, SIZE);
+
+    let (dark, gone) = (probe(&opaque_px), probe(&faded_px));
+    assert!(
+        dark < 60,
+        "the contour should darken the background under the probe, got {dark}"
+    );
+    assert!(
+        gone > 60,
+        "a fully faded group must take its shadow layers with it, got {gone}"
+    );
+}

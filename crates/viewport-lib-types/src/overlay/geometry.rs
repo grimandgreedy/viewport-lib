@@ -46,8 +46,14 @@ pub struct RetainedOverlay {
     ///
     /// [`OverlayTransform`]: crate::overlay::OverlayTransform
     pub transform: crate::overlay::OverlayTransform,
-    /// Opacity multiplier in `[0, 1]` applied to the group's alpha. `1.0` leaves
-    /// the compiled colours unchanged.
+    /// Opacity multiplier in `[0, 1]` applied to the group's alpha. `1.0`
+    /// leaves the compiled colours unchanged.
+    ///
+    /// This is a live multiplier over the compiled buffer, so a fade is a
+    /// per-frame value rather than a re-compile, and it composes with the
+    /// `opacity` each item baked in. It reaches the group's shadow layers as
+    /// well as its content: a fading panel takes its drop shadow and its border
+    /// band with it.
     pub opacity: f32,
     /// Cross-family draw order, low to high, matching the `z_order` on the
     /// immediate overlay items. Default `0`.
@@ -56,9 +62,13 @@ pub struct RetainedOverlay {
     /// both. The default clips nothing.
     pub clip: OverlayClip,
     /// Per-frame colour multiplier applied to the whole group, identity
-    /// `[1, 1, 1, 1]`. A colour flash, fade, or tint rides this instead of
-    /// re-compiling the group. On SDF shapes the tint reaches the fill, border, and
-    /// gradient colours but not the drop shadow (whose colour is baked).
+    /// `[1, 1, 1, 1]`. A colour flash or highlight rides this instead of
+    /// re-compiling the group, and it composes with the `tint` each item baked
+    /// in.
+    ///
+    /// Like an item's tint, it reaches the fill and gradient colours and not
+    /// the shadow layers, on either vertex stream: a tinted group keeps the
+    /// shadow colours it was authored with.
     pub tint: [f32; 4],
     /// Where the group hangs from and which point of its extent box lands
     /// there, resolved every frame: a viewport corner that follows a resize, or

@@ -185,13 +185,6 @@ pub struct OverlayPolylineItem {
     /// the size of the rest of the item, so only items that animate pay for
     /// it. See [`OverlayAnimations`] for why the channel list is what it is.
     pub animations: Option<Box<OverlayAnimations>>,
-    /// Per-frame colour multiplier applied to the whole item, identity
-    /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
-    /// and with the tint of a retained group containing it. Never reaches
-    /// shadow layers, on any path: a compiled group's shadow colours are
-    /// baked, so honouring it here would make the same content look different
-    /// on the two paths.
-    pub tint: [f32; 4],
     /// What this item is clipped to: an axis-aligned box, a mask shape, or
     /// both. The default clips nothing.
     pub clip: OverlayClip,
@@ -207,8 +200,6 @@ pub struct OverlayPolylineItem {
     /// When set, this must have the same length as `points`. Otherwise the
     /// renderer falls back to bounds-mapped UVs.
     pub uvs: Option<Vec<[f32; 2]>>,
-    /// Overall opacity multiplier in `[0, 1]`.
-    pub opacity: f32,
     /// Draw order relative to other overlay rects, polylines, and labels.
     /// Lower values render first (further back).
     pub z_order: i32,
@@ -222,12 +213,10 @@ impl Default for OverlayPolylineItem {
             transform: OverlayTransform::IDENTITY,
             style: OverlayStyle::default(),
             animations: None,
-            tint: [1.0, 1.0, 1.0, 1.0],
             clip: OverlayClip::default(),
             stroke: Some(OverlayStroke::default()),
             closed: false,
             uvs: None,
-            opacity: 1.0,
             z_order: 0,
         }
     }
@@ -398,7 +387,7 @@ impl OverlayPolylineItem {
 
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
-        self.opacity = opacity;
+        self.style.opacity = opacity;
         self
     }
 
@@ -642,7 +631,7 @@ impl OverlayPolylineItem {
 
     /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
-        self.tint = tint;
+        self.style.tint = tint;
         self
     }
 

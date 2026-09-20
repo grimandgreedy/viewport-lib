@@ -65,6 +65,7 @@ struct VertexInput {
     @location(3) use_texture: f32,        // 1.0 = sample atlas, 0.0 = solid
     @location(4) clip_index:  f32,        // clip-shape index, or -1 for none
     @location(5) clip_rect:   vec4<f32>,  // framebuffer clip bbox (x0,y0,x1,y1); all zero = none
+    @location(6) group_tint:  f32,        // 1 = the group tint applies here, 0 = shadow geometry
     @builtin(instance_index) instance_index: u32,
 };
 
@@ -103,7 +104,11 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_rect     = in.clip_rect;
     out.opacity       = inst.opacity;
     out.outer_clip    = inst.clip_rect;
-    out.tint          = inst.tint;
+    // A group's tint reaches its content and not its shadow layers, which are
+    // baked into this same stream, so the vertex says which it is. Opacity is
+    // the other way round and applies to both: a fading group takes its shadows
+    // with it.
+    out.tint          = mix(vec4<f32>(1.0, 1.0, 1.0, 1.0), inst.tint, in.group_tint);
     return out;
 }
 

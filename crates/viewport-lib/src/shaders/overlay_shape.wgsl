@@ -151,6 +151,10 @@ struct VertexOutput {
     @location(11) @interpolate(flat) stop_colour_c:  vec4<f32>,
     @location(12) @interpolate(flat) stop_colour_d:  vec4<f32>,
     @location(13) @interpolate(flat) stop_positions: vec4<f32>,
+    // The group's per-frame opacity, carried separately because the shadow
+    // layers are read from a storage buffer in the fragment stage and so cannot
+    // have it folded into a vertex colour the way the fill does.
+    @location(14) @interpolate(flat) group_opacity: f32,
 };
 
 @vertex
@@ -189,6 +193,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.stop_colour_c   = vec4<f32>(in.stop_colour_c.rgb * t.rgb, in.stop_colour_c.a * a * t.a);
     out.stop_colour_d   = vec4<f32>(in.stop_colour_d.rgb * t.rgb, in.stop_colour_d.a * a * t.a);
     out.stop_positions  = in.stop_positions;
+    // Opacity reaches the shadow layers; the tint does not. Fading a group out
+    // has to take its shadows and its border band with it, and a border band is
+    // a shadow layer.
+    out.group_opacity   = a;
     return out;
 }
 
@@ -535,7 +543,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let spd = (in.local_pos - soff) - pivot;
             let sp_r = vec2<f32>(_rc * spd.x - _rs * spd.y, _rs * spd.x + _rc * spd.y) + pivot;
             let sd = eval_sdf(sp_r, hs, in.shape_type, in.radii);
-            let a = layer.colour.a * shadow_coverage(sd, sspread, sr, sfall, aa);
+            let a = layer.colour.a
+                * in.group_opacity
+                * shadow_coverage(sd, sspread, sr, sfall, aa);
             let src = vec4<f32>(layer.colour.rgb, a);
             shadow_col = vec4<f32>(
                 mix(shadow_col.rgb, src.rgb, src.a),
@@ -655,8 +665,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 // point falls further outside the shape. Spread starts the band
                 // further in, blur is its fade width, falloff shapes the ramp
                 // the same way it does an outer layer.
-                let inner_alpha =
-                    layer.colour.a * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
+                let inner_alpha = layer.colour.a
+                    * in.group_opacity
+                    * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
                 if (inner_alpha > 0.0) {
                     let ic = vec4<f32>(layer.colour.rgb, inner_alpha);
                     colour = vec4<f32>(

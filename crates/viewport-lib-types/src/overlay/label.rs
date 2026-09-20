@@ -61,13 +61,6 @@ pub struct LabelItem {
     /// the size of the rest of the item, so only items that animate pay for
     /// it. See [`OverlayAnimations`] for why the channel list is what it is.
     pub animations: Option<Box<OverlayAnimations>>,
-    /// Per-frame colour multiplier applied to the whole item, identity
-    /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
-    /// and with the tint of a retained group containing it. Never reaches
-    /// shadow layers, on any path: a compiled group's shadow colours are
-    /// baked, so honouring it here would make the same content look different
-    /// on the two paths.
-    pub tint: [f32; 4],
     /// What this item is clipped to: an axis-aligned box, a mask shape, or
     /// both. The default clips nothing.
     pub clip: OverlayClip,
@@ -108,10 +101,6 @@ pub struct LabelItem {
     /// Set to `0.0` for anchor-exact placement when laying out screen-space UI.
     pub anchor_padding: f32,
 
-    /// Overall opacity multiplier applied to text, background, and leader
-    /// line colours.  Range 0.0 (invisible) to 1.0 (fully opaque).
-    pub opacity: f32,
-
     /// Maximum text width in logical pixels.  When set, text that exceeds
     /// this width is wrapped to multiple lines.  `None` disables wrapping.
     pub max_width: Option<f32>,
@@ -144,9 +133,7 @@ impl Default for LabelItem {
             transform: OverlayTransform::IDENTITY,
             style: crate::overlay::OverlayStyle::default(),
             animations: None,
-            tint: [1.0, 1.0, 1.0, 1.0],
             clip: OverlayClip::default(),
-            opacity: 1.0,
             max_width: None,
             border_radius: 0.0,
             z_order: 0,
@@ -307,7 +294,7 @@ impl LabelItem {
 
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
-        self.opacity = opacity;
+        self.style.opacity = opacity;
         self
     }
 
@@ -389,7 +376,7 @@ impl LabelItem {
 
     /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
-        self.tint = tint;
+        self.style.tint = tint;
         self
     }
 

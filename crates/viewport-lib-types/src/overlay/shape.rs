@@ -350,19 +350,9 @@ pub struct OverlayShapeItem {
     /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
     /// this family draws.
     pub style: OverlayStyle,
-    /// Per-frame colour multiplier applied to the whole item, identity
-    /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
-    /// and with the tint of a retained group containing it. Never reaches
-    /// shadow layers, on any path: a compiled group's shadow colours are
-    /// baked, so honouring it here would make the same content look different
-    /// on the two paths.
-    pub tint: [f32; 4],
     /// What this item is clipped to: an axis-aligned box, a mask shape, or
     /// both. The default clips nothing.
     pub clip: OverlayClip,
-    /// Overall opacity multiplier applied to the fill and every shadow layer.
-    /// Range 0.0-1.0.
-    pub opacity: f32,
     /// Draw order relative to other shapes. Lower values render first (further back).
     pub z_order: i32,
     /// Marks this shape as a clip mask under this id: other items whose
@@ -402,11 +392,9 @@ impl Default for OverlayShapeItem {
                 fill: OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()),
                 ..Default::default()
             },
-            tint: [1.0, 1.0, 1.0, 1.0],
             clip: OverlayClip::default(),
             size: [100.0, 100.0],
             shape: OverlayShape::default(),
-            opacity: 1.0,
             z_order: 0,
             provides_mask: None,
             animations: None,
@@ -709,7 +697,7 @@ impl OverlayShapeItem {
 
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
-        self.opacity = opacity;
+        self.style.opacity = opacity;
         self
     }
 
@@ -1659,7 +1647,7 @@ impl OverlayShapeItem {
 
     /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
-        self.tint = tint;
+        self.style.tint = tint;
         self
     }
 

@@ -200,6 +200,7 @@ pub(super) fn emit_filled_polyline(
                 use_texture: 0.0,
                 clip_index: -1.0,
                 clip_rect: [0.0; 4],
+                group_tint: 0.0,
             });
         }
     }
@@ -234,6 +235,7 @@ pub(super) fn emit_vector_fill(
             use_texture: 0.0,
             clip_index: -1.0,
             clip_rect: [0.0; 4],
+            group_tint: 0.0,
         });
     }
 }
@@ -449,6 +451,7 @@ pub(super) fn tessellate_ribbon(
             use_texture: 0.0,
             clip_index: -1.0,
             clip_rect: [0.0; 4],
+            group_tint: 0.0,
         });
     };
     for w in ribs.windows(2) {
@@ -601,6 +604,7 @@ pub(super) fn emit_disc(
         use_texture: 0.0,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     for i in 0..segs {
         let a0 = std::f32::consts::TAU * i as f32 / segs as f32;
@@ -778,6 +782,7 @@ pub(super) fn emit_solid_quad(
         use_texture: tex,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     verts.extend_from_slice(&[v(tl), v(bl), v(tr), v(tr), v(bl), v(br)]);
 }
@@ -808,6 +813,7 @@ pub(super) fn emit_textured_quad(
         use_texture: tex,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     // UV layout: top-left = uv_min, bottom-right = uv_max.
     verts.extend_from_slice(&[
@@ -925,6 +931,7 @@ pub(super) fn emit_line_quad(
         use_texture: tex,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     verts.extend_from_slice(&[v(p0), v(p1), v(p2), v(p2), v(p1), v(p3)]);
 }
@@ -1126,6 +1133,7 @@ pub(super) fn emit_rounded_quad(
         use_texture: tex,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     for (cx, cy, start, end) in corners {
         let center = overlay_local_px(cx, cy, vp_w, vp_h);
@@ -1466,6 +1474,7 @@ fn emit_quad(
         use_texture: 0.0,
         clip_index: -1.0,
         clip_rect: [0.0; 4],
+        group_tint: 0.0,
     };
     verts.extend_from_slice(&[v(a), v(b), v(c), v(a), v(c), v(d)]);
 }

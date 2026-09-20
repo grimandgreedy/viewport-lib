@@ -86,13 +86,6 @@ pub struct GlyphRunItem {
     /// the size of the rest of the item, so only items that animate pay for
     /// it. See [`crate::overlay::OverlayAnimations`] for why the channel list is what it is.
     pub animations: Option<Box<crate::overlay::OverlayAnimations>>,
-    /// Per-frame colour multiplier applied to the whole item, identity
-    /// `[1, 1, 1, 1]`. Composes multiplicatively with the item's own colours
-    /// and with the tint of a retained group containing it. Never reaches
-    /// shadow layers, on any path: a compiled group's shadow colours are
-    /// baked, so honouring it here would make the same content look different
-    /// on the two paths.
-    pub tint: [f32; 4],
     /// What this item is clipped to: an axis-aligned box, a mask shape, or
     /// both. The default clips nothing.
     pub clip: OverlayClip,
@@ -110,10 +103,6 @@ pub struct GlyphRunItem {
     /// colour, such as syntax highlighting.
     pub colours: Vec<crate::colour::Colour>,
 
-    /// Overall opacity multiplier applied to the run. Range 0.0 (invisible) to
-    /// 1.0 (fully opaque).
-    pub opacity: f32,
-
     /// Explicit draw order. Runs with lower values are drawn first (further
     /// back). Shares the cross-family z-order space with labels and shapes.
     pub z_order: i32,
@@ -128,12 +117,10 @@ impl Default for GlyphRunItem {
             transform: crate::overlay::OverlayTransform::IDENTITY,
             style: crate::overlay::OverlayStyle::default(),
             animations: None,
-            tint: [1.0, 1.0, 1.0, 1.0],
             clip: OverlayClip::default(),
             glyphs: Vec::new(),
             colour: [1.0, 1.0, 1.0, 1.0].into(),
             colours: Vec::new(),
-            opacity: 1.0,
             z_order: 0,
         }
     }
@@ -214,7 +201,7 @@ impl GlyphRunItem {
 
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
-        self.opacity = opacity;
+        self.style.opacity = opacity;
         self
     }
 
@@ -282,7 +269,7 @@ mod tests {
         assert_eq!(run.transform.translate, [0.0, 0.0]);
         assert!(run.glyphs.is_empty());
         assert!(run.colours.is_empty());
-        assert_eq!(run.opacity, 1.0);
+        assert_eq!(run.style.opacity, 1.0);
         assert_eq!(run.z_order, 0);
         assert!(run.clip.mask.is_none());
 
@@ -310,7 +297,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![[0.0, 1.0, 0.0, 1.0]]
         );
-        assert_eq!(run.opacity, 0.5);
+        assert_eq!(run.style.opacity, 0.5);
         assert_eq!(run.z_order, 3);
         assert_eq!(run.clip.mask, Some(7));
     }
@@ -428,7 +415,7 @@ impl GlyphRunItem {
 
     /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
     pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
-        self.tint = tint;
+        self.style.tint = tint;
         self
     }
 

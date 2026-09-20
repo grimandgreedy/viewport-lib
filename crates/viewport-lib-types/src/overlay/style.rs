@@ -65,6 +65,13 @@ impl BackdropEffects {
 /// opacity, or a tint can change from frame to frame without touching the
 /// compiled buffers, and a style cannot.
 ///
+/// # No `serde`
+///
+/// This is the one overlay type that cannot be serialised: an
+/// [`OverlayFill::Texture`] names an uploaded image by a runtime slot handle,
+/// which means nothing in a file or across a process. Authored content that
+/// wants a style stores the fill's parameters and resolves the image itself.
+///
 /// # Not every family draws every field
 ///
 /// The three coverage backends differ in what they can express, so a field can
@@ -91,6 +98,20 @@ pub struct OverlayStyle {
     pub inner_shadows: Vec<ShadowLayer>,
     /// Blur and colour filters applied to the scene behind the item.
     pub backdrop: BackdropEffects,
+    /// Colour multiplier applied to the whole item, identity `[1, 1, 1, 1]`.
+    ///
+    /// Composes multiplicatively with the item's own colours and with the tint
+    /// of a retained group containing it. **A tint never reaches a shadow
+    /// layer**, on any path: a compiled group's shadow colours are baked, so
+    /// honouring it there would make the same content look different on the
+    /// two paths.
+    pub tint: [f32; 4],
+    /// Overall opacity multiplier in `[0, 1]`, applied to the fill and to every
+    /// shadow layer.
+    ///
+    /// Unlike `tint`, this does reach the shadow layers: fading an item out has
+    /// to take its shadow with it or the shadow outlives the thing casting it.
+    pub opacity: f32,
 }
 
 impl Default for OverlayStyle {
@@ -100,6 +121,8 @@ impl Default for OverlayStyle {
             shadows: Vec::new(),
             inner_shadows: Vec::new(),
             backdrop: BackdropEffects::default(),
+            tint: [1.0, 1.0, 1.0, 1.0],
+            opacity: 1.0,
         }
     }
 }
@@ -134,6 +157,18 @@ impl OverlayStyle {
     /// Set the backdrop blur and filters.
     pub fn with_backdrop(mut self, backdrop: BackdropEffects) -> Self {
         self.backdrop = backdrop;
+        self
+    }
+
+    /// Set the colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.tint = tint;
+        self
+    }
+
+    /// Set the overall opacity multiplier (0.0 to 1.0).
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
         self
     }
 }
