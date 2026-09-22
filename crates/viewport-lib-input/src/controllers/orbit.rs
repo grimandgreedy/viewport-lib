@@ -10,7 +10,8 @@ use crate::input::action_frame::ActionFrame;
 use crate::input::context::ViewportContext;
 use crate::input::event::ViewportEvent;
 use crate::input::mode::NavigationMode;
-use crate::input::preset::{BindingPreset, viewport_all_bindings, viewport_primitives_bindings};
+use crate::input::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
+use crate::input::viewport_binding::ViewportBinding;
 use crate::input::viewport_input::ViewportInput;
 
 /// High-level orbit / pan / zoom camera controller.
@@ -78,12 +79,33 @@ impl OrbitCameraController {
     /// Default first-person fly speed: 0.1 world units per frame.
     pub const DEFAULT_FLY_SPEED: f32 = 0.1;
 
+    /// Create a controller that holds no bindings of its own.
+    ///
+    /// This is the one to use. The host (or a `ViewportInstance`) owns the
+    /// [`ViewportInput`] that holds the bindings and resolves the frame; the
+    /// controller just applies the resulting [`ActionFrame`] to a camera through
+    /// [`apply`](Self::apply). Sensitivities stay on the controller.
+    pub fn new_stateless() -> Self {
+        Self::from_bindings(Vec::new())
+    }
+
     /// Create a controller from the given binding preset.
+    ///
+    /// The preset seeds an internal resolver used only by the deprecated
+    /// event-driven methods ([`push_event`](Self::push_event) and
+    /// [`apply_to_camera`](Self::apply_to_camera)). **A session ignores it**:
+    /// `ViewportInstance` resolves with its own bindings and calls
+    /// [`apply`](Self::apply), so the preset chosen here has no effect there. Set the
+    /// scheme on the session instead, with `ViewportInstance::with_bindings`.
     pub fn new(preset: BindingPreset) -> Self {
         let bindings = match preset {
-            BindingPreset::ViewportPrimitives => viewport_primitives_bindings(),
-            BindingPreset::ViewportAll => viewport_all_bindings(),
+            BindingPreset::Default => viewport_default_bindings(),
+            BindingPreset::Viewer => viewer_bindings(),
         };
+        Self::from_bindings(bindings)
+    }
+
+    fn from_bindings(bindings: Vec<ViewportBinding>) -> Self {
         Self {
             input: ViewportInput::new(bindings),
             navigation_mode: NavigationMode::Arcball,
@@ -95,20 +117,25 @@ impl OrbitCameraController {
         }
     }
 
-    /// Create a controller with the [`BindingPreset::ViewportPrimitives`] preset.
+    /// Create a controller seeded with the [`BindingPreset::Viewer`] scheme.
     ///
-    /// This is the canonical control scheme the winit examples use.
-    pub fn viewport_primitives() -> Self {
-        Self::new(BindingPreset::ViewportPrimitives)
+    /// The scheme has changed: left drag still orbits, but right drag no longer pans.
+    /// See [`new`](Self::new) for why a session ignores this.
+    pub fn viewer() -> Self {
+        Self::new(BindingPreset::Viewer)
     }
 
-    /// Create a controller with the [`BindingPreset::ViewportAll`] preset.
+    /// Former name for [`viewer`](Self::viewer).
+    #[deprecated(note = "renamed: use OrbitCameraController::viewer, or new_stateless if the host owns the resolver")]
+    pub fn viewport_primitives() -> Self {
+        Self::new(BindingPreset::Viewer)
+    }
+
+    /// Create a controller seeded with the [`BindingPreset::Default`] scheme.
     ///
-    /// Includes all camera navigation bindings plus keyboard shortcuts for
-    /// normal mode, fly mode, and manipulation mode. Use this to replace
-    /// [`crate::InputSystem`] entirely.
+    /// See [`new`](Self::new) for why a session ignores this.
     pub fn viewport_all() -> Self {
-        Self::new(BindingPreset::ViewportAll)
+        Self::new(BindingPreset::Default)
     }
 
     /// Begin a new frame.
@@ -131,10 +158,15 @@ impl OrbitCameraController {
         self.viewport_size = viewport_size;
     }
 
-    /// Push a single viewport-scoped event into the accumulator.
+    /// Push a single viewport-scoped event into the controller's own accumulator.
     ///
-    /// Call this from the host's event handler whenever a relevant native event
-    /// arrives, after translating it to a [`ViewportEvent`].
+    /// Superseded: own a [`ViewportInput`] (or a `ViewportInstance`), push events
+    /// into that, and drive the camera with [`apply`](Self::apply). Bindings belong
+    /// to the resolver, and a controller holding a second one is how a session and a
+    /// controller end up disagreeing about the control scheme.
+    #[deprecated(
+        note = "own a ViewportInput and use OrbitCameraController::apply(&mut camera, &frame)"
+    )]
     pub fn push_event(&mut self, event: ViewportEvent) {
         self.input.push_event(event);
     }
@@ -160,7 +192,10 @@ impl OrbitCameraController {
     /// - [`NavigationMode::Turntable`]: yaw around world Z, pitch clamped to +/-89 deg.
     /// - [`NavigationMode::Planar`]: pan only, orbit input is ignored.
     /// - [`NavigationMode::Fly`]: mouselook + WASD translation. Requires
-    ///   the `ViewportAll` binding preset so that movement keys are resolved.
+    ///   the `Default` binding preset so that movement keys are resolved.
+    #[deprecated(
+        note = "own a ViewportInput and use OrbitCameraController::apply(&mut camera, &frame)"
+    )]
     pub fn apply_to_camera(&mut self, camera: &mut Camera) -> ActionFrame {
         let frame = self.input.resolve();
         self.apply(camera, &frame);

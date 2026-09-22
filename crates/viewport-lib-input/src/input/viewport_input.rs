@@ -10,7 +10,7 @@ use super::action_frame::{ActionFrame, NavigationActions, PointerFrame, Resolved
 use super::binding::{KeyCode, Modifiers, MouseButton};
 use super::context::ViewportContext;
 use super::event::{ButtonState, ScrollUnits, ViewportEvent};
-use super::preset::{BindingPreset, viewport_all_bindings, viewport_primitives_bindings};
+use super::preset::{BindingPreset, viewer_bindings, viewport_default_bindings};
 use super::viewport_binding::{ViewportBinding, ViewportGesture};
 
 /// Pixels-per-line conversion for scroll delta normalisation.
@@ -109,10 +109,54 @@ impl ViewportInput {
     /// Create a resolver for a named [`BindingPreset`].
     pub fn from_preset(preset: BindingPreset) -> Self {
         let bindings = match preset {
-            BindingPreset::ViewportPrimitives => viewport_primitives_bindings(),
-            BindingPreset::ViewportAll => viewport_all_bindings(),
+            BindingPreset::Default => viewport_default_bindings(),
+            BindingPreset::Viewer => viewer_bindings(),
         };
         Self::new(bindings)
+    }
+
+    /// Whether a pointer gesture of ours is in flight: a button is held and its
+    /// press landed while we were being fed events.
+    ///
+    /// A host uses this before taking the pointer for itself, so its own UI does not
+    /// steal a drag (or, once touch lands, a pinch) half-way through. The reverse
+    /// direction, telling the viewport an input is not its own, is simply not
+    /// forwarding it: see
+    /// [`forward_to_viewport`](crate::input::forward_to_viewport).
+    pub fn is_gesture_active(&self) -> bool {
+        self.button_held
+            .iter()
+            .zip(self.button_press_pos.iter())
+            .any(|(held, press)| *held && press.is_some())
+    }
+
+    /// End any gesture in flight without completing it.
+    ///
+    /// Releases every held button and forgets where each was pressed, so a drag
+    /// stops contributing and does not resume when the pointer next moves. Per-frame
+    /// deltas already accumulated are cleared too, so the frame this is called on
+    /// does not apply a partial drag.
+    ///
+    /// Call this when something outside the viewport invalidates the gesture and no
+    /// release will arrive: the host taking the pointer for its own UI, a mode change,
+    /// a tool switch, or a cancelled touch. Focus loss and the pointer leaving the
+    /// window do this already, through
+    /// [`ViewportEvent::FocusLost`](crate::input::ViewportEvent::FocusLost) and
+    /// [`PointerLeft`](crate::input::ViewportEvent::PointerLeft).
+    ///
+    /// Keyboard state is left alone: a cancelled pointer gesture says nothing about
+    /// which keys are held.
+    pub fn cancel_gesture(&mut self) {
+        for held in &mut self.button_held {
+            *held = false;
+        }
+        for pos in &mut self.button_press_pos {
+            *pos = None;
+        }
+        self.drag_delta = glam::Vec2::ZERO;
+        self.pointer_delta = glam::Vec2::ZERO;
+        self.left_drag_started = false;
+        self.left_clicked = false;
     }
 
     /// Begin a new frame.
@@ -396,7 +440,7 @@ impl ViewportInput {
 mod tests {
     use super::*;
     use crate::input::event::ButtonState;
-    use crate::input::preset::viewport_all_bindings;
+    use crate::input::preset::viewport_default_bindings;
 
     fn focused_ctx() -> ViewportContext {
         ViewportContext {
@@ -406,9 +450,113 @@ mod tests {
         }
     }
 
+    /// Drag a held left button from `from` to `to`, returning the resolved frame.
+    fn drag(input: &mut ViewportInput, from: glam::Vec2, to: glam::Vec2) -> ActionFrame {
+        input.push_event(ViewportEvent::PointerMoved { position: from });
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Left,
+            state: ButtonState::Pressed,
+        });
+        input.push_event(ViewportEvent::PointerMoved { position: to });
+        input.resolve()
+    }
+
+    #[test]
+    fn a_gesture_is_active_only_between_press_and_release() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(focused_ctx());
+        assert!(!input.is_gesture_active(), "nothing held to begin with");
+
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(10.0, 10.0),
+        });
+        assert!(!input.is_gesture_active(), "a bare move is not a gesture");
+
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Left,
+            state: ButtonState::Pressed,
+        });
+        assert!(input.is_gesture_active(), "the press starts one");
+
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Left,
+            state: ButtonState::Released,
+        });
+        assert!(!input.is_gesture_active(), "the release ends it");
+    }
+
+    #[test]
+    fn cancelling_stops_the_drag_on_the_frame_it_happens() {
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(10.0, 10.0),
+        });
+        input.push_event(ViewportEvent::MouseButton {
+            button: MouseButton::Left,
+            state: ButtonState::Pressed,
+        });
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(40.0, 10.0),
+        });
+
+        input.cancel_gesture();
+        assert!(!input.is_gesture_active());
+        let frame = input.resolve();
+        assert_eq!(
+            frame.navigation.orbit,
+            glam::Vec2::ZERO,
+            "the partial drag must not be applied on the frame it was cancelled",
+        );
+    }
+
+    #[test]
+    fn a_cancelled_drag_does_not_resume_when_the_pointer_moves_again() {
+        // The failure this guards: clearing the held flag but keeping the press position
+        // (or vice versa) lets the next move re-enter the drag as though nothing happened.
+        let mut input = ViewportInput::new(viewer_bindings());
+        input.begin_frame(focused_ctx());
+        drag(
+            &mut input,
+            glam::Vec2::new(10.0, 10.0),
+            glam::Vec2::new(40.0, 10.0),
+        );
+        input.cancel_gesture();
+
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(90.0, 10.0),
+        });
+        let frame = input.resolve();
+        assert_eq!(
+            frame.navigation.orbit,
+            glam::Vec2::ZERO,
+            "the button is no longer held, so moving must not orbit",
+        );
+        assert!(!input.is_gesture_active());
+    }
+
+    #[test]
+    fn cancelling_leaves_keyboard_state_alone() {
+        // A cancelled pointer gesture says nothing about which keys are held.
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::Key {
+            key: KeyCode::W,
+            state: ButtonState::Pressed,
+            repeat: false,
+        });
+        input.cancel_gesture();
+        let frame = input.resolve();
+        assert!(
+            frame.is_active(Action::FlyForward),
+            "W is still held after cancelling a pointer gesture",
+        );
+    }
+
     #[test]
     fn key_press_fires_once_then_clears() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Key {
             key: KeyCode::F,
@@ -432,7 +580,7 @@ mod tests {
 
     #[test]
     fn key_ignored_when_not_focused() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(ViewportContext {
             hovered: true,
             focused: false,
@@ -452,7 +600,7 @@ mod tests {
 
     #[test]
     fn resolve_no_events_is_zero() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         let frame = input.resolve();
         assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
@@ -464,7 +612,7 @@ mod tests {
 
     #[test]
     fn scroll_produces_zoom() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Wheel {
             delta: glam::Vec2::new(0.0, 3.0),
@@ -477,7 +625,7 @@ mod tests {
 
     #[test]
     fn scroll_pixel_units_no_scaling() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Wheel {
             delta: glam::Vec2::new(0.0, 10.0),
@@ -489,7 +637,7 @@ mod tests {
 
     #[test]
     fn scroll_ignored_when_not_hovered() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(ViewportContext {
             hovered: false,
             focused: true,
@@ -504,28 +652,83 @@ mod tests {
     }
 
     #[test]
-    fn right_drag_produces_pan() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+    fn neither_left_nor_right_drag_touches_the_camera() {
+        // Both belong to the application: selection, gizmo dragging, tools, context
+        // menus. A camera binding on either gives that gesture two claimants.
+        for button in [MouseButton::Left, MouseButton::Right] {
+            let mut input = ViewportInput::new(viewport_default_bindings());
+            input.begin_frame(focused_ctx());
+            input.push_event(ViewportEvent::PointerMoved {
+                position: glam::Vec2::new(100.0, 100.0),
+            });
+            input.push_event(ViewportEvent::MouseButton {
+                button,
+                state: ButtonState::Pressed,
+            });
+            input.push_event(ViewportEvent::PointerMoved {
+                position: glam::Vec2::new(110.0, 105.0),
+            });
+            let frame = input.resolve();
+            assert_eq!(frame.navigation.pan, glam::Vec2::ZERO, "{button:?} panned");
+            assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO, "{button:?} orbited");
+        }
+    }
+
+    #[test]
+    fn middle_drag_orbits_and_shift_middle_pans() {
+        // The drag half of the default scheme, and the rule that shift means pan.
+        let cases = [
+            (Modifiers::NONE, true, false),
+            (Modifiers::SHIFT, false, true),
+        ];
+        for (modifiers, want_orbit, want_pan) in cases {
+            let mut input = ViewportInput::new(viewport_default_bindings());
+            input.begin_frame(focused_ctx());
+            input.push_event(ViewportEvent::ModifiersChanged(modifiers));
+            input.push_event(ViewportEvent::PointerMoved {
+                position: glam::Vec2::new(100.0, 100.0),
+            });
+            input.push_event(ViewportEvent::MouseButton {
+                button: MouseButton::Middle,
+                state: ButtonState::Pressed,
+            });
+            input.push_event(ViewportEvent::PointerMoved {
+                position: glam::Vec2::new(110.0, 105.0),
+            });
+            let frame = input.resolve();
+            assert_eq!(
+                frame.navigation.orbit != glam::Vec2::ZERO,
+                want_orbit,
+                "orbit with {modifiers:?}"
+            );
+            assert_eq!(
+                frame.navigation.pan != glam::Vec2::ZERO,
+                want_pan,
+                "pan with {modifiers:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_viewer_preset_adds_left_drag_orbit() {
+        let mut input = ViewportInput::new(viewer_bindings());
         input.begin_frame(focused_ctx());
-        // Move pointer to a position, press right button, then move
         input.push_event(ViewportEvent::PointerMoved {
             position: glam::Vec2::new(100.0, 100.0),
         });
         input.push_event(ViewportEvent::MouseButton {
-            button: MouseButton::Right,
+            button: MouseButton::Left,
             state: ButtonState::Pressed,
         });
         input.push_event(ViewportEvent::PointerMoved {
             position: glam::Vec2::new(110.0, 105.0),
         });
-        let frame = input.resolve();
-        assert!((frame.navigation.pan.x - 10.0).abs() < 1e-3);
-        assert!((frame.navigation.pan.y - 5.0).abs() < 1e-3);
+        assert_ne!(input.resolve().navigation.orbit, glam::Vec2::ZERO);
     }
 
     #[test]
     fn pointer_move_without_button_no_drag() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::PointerMoved {
             position: glam::Vec2::new(100.0, 100.0),
@@ -540,7 +743,7 @@ mod tests {
 
     #[test]
     fn begin_frame_resets_accumulators() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Wheel {
             delta: glam::Vec2::new(0.0, 5.0),
@@ -557,7 +760,7 @@ mod tests {
 
     #[test]
     fn pointer_left_releases_buttons() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::PointerMoved {
             position: glam::Vec2::new(100.0, 100.0),
@@ -577,7 +780,7 @@ mod tests {
 
     #[test]
     fn focus_lost_clears_keys() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Key {
             key: KeyCode::W,
@@ -595,7 +798,7 @@ mod tests {
 
     #[test]
     fn character_event_populates_typed_chars() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Character('3'));
         input.push_event(ViewportEvent::Character('.'));
@@ -607,7 +810,7 @@ mod tests {
 
     #[test]
     fn trackpad_rotate_accumulates_twist() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::TrackpadRotate(0.1));
         input.push_event(ViewportEvent::TrackpadRotate(0.2));
@@ -624,7 +827,7 @@ mod tests {
         use crate::input::event::Theme;
         use std::path::PathBuf;
 
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::FileDropped(PathBuf::from("/x")));
         input.push_event(ViewportEvent::FileHovered(PathBuf::from("/x")));
@@ -651,7 +854,7 @@ mod tests {
 
     #[test]
     fn key_hold_active_every_frame() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Key {
             key: KeyCode::W,
@@ -671,7 +874,7 @@ mod tests {
 
     #[test]
     fn key_release_stops_hold() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Key {
             key: KeyCode::W,
@@ -695,7 +898,7 @@ mod tests {
 
     #[test]
     fn modifiers_changed_affects_bindings() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         // Press Shift modifier, then press X -> should fire ExcludeX (Shift+X)
         input.push_event(ViewportEvent::ModifiersChanged(Modifiers::SHIFT));
@@ -713,7 +916,7 @@ mod tests {
 
     #[test]
     fn repeat_key_does_not_fire_press() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::Key {
             key: KeyCode::G,
@@ -730,7 +933,7 @@ mod tests {
 
     #[test]
     fn middle_drag_shift_produces_pan() {
-        let mut input = ViewportInput::new(viewport_all_bindings());
+        let mut input = ViewportInput::new(viewport_default_bindings());
         input.begin_frame(focused_ctx());
         input.push_event(ViewportEvent::PointerMoved {
             position: glam::Vec2::new(50.0, 50.0),

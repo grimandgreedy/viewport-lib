@@ -72,6 +72,22 @@ pub enum ViewportEvent {
     /// Modifier key state changed.
     ModifiersChanged(Modifiers),
     /// The pointer left the viewport area.
+    ///
+    /// **This releases every held button.** It exists to avoid a button being left
+    /// stuck down when the pointer goes somewhere the viewport will never hear the
+    /// release, so it ends any drag in flight.
+    ///
+    /// Send it when the pointer leaves the *window*, not every time it crosses the
+    /// viewport's own edge. A drag whose press landed inside the viewport keeps
+    /// resolving after the pointer leaves the rect, which is what lets a fast orbit
+    /// run past the edge; forwarding this event at that boundary throws that away.
+    /// Lowering [`ViewportContext::hovered`](crate::input::ViewportContext::hovered)
+    /// is the way to say "the pointer is no longer over us" without ending the drag.
+    ///
+    /// Under a pointer grab it should never be sent at all: a grabbed pointer has no
+    /// rect to leave, and ending the gesture would end the look session.
+    /// [`forward_to_viewport`](crate::input::forward_to_viewport) drops it for you
+    /// under [`PointerOwnership::Grabbed`](crate::input::PointerOwnership::Grabbed).
     PointerLeft,
     /// The viewport lost keyboard focus.
     FocusLost,

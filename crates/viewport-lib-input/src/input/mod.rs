@@ -48,7 +48,9 @@ pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedAct
 pub use context::{PointerOwnership, ViewportContext, forward_to_viewport};
 pub use cursor::CursorShape;
 pub use event::{ButtonState, ScrollUnits, Theme, ViewportEvent};
-pub use preset::{BindingPreset, viewport_all_bindings};
+pub use preset::{
+    BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+};
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 pub use viewport_input::ViewportInput;
 

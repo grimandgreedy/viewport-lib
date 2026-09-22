@@ -33,7 +33,7 @@ impl CameraController for HalfSpeedOrbit {
 
 fn main() {
     // 1. RESOLVE: feed native-shaped events into ViewportInput for one frame.
-    let mut input = ViewportInput::from_preset(BindingPreset::ViewportPrimitives);
+    let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
     input.begin_frame(ViewportContext {
         hovered: true,
         focused: true,

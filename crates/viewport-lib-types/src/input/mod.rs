@@ -39,5 +39,7 @@ pub use cursor::CursorShape;
 pub use defaults::default_bindings;
 pub use event::{ButtonState, ScrollUnits, Theme, ViewportEvent};
 pub use mode::{InputMode, NavigationMode};
-pub use preset::{BindingPreset, viewport_all_bindings};
+pub use preset::{
+    BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+};
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
