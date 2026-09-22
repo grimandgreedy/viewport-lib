@@ -245,11 +245,93 @@ impl ViewportEvent {
                 | ViewportEvent::Touch { .. }
         )
     }
+
+    /// This event with any viewport-local position shifted by `-origin`, and
+    /// everything else unchanged.
+    ///
+    /// For a viewport embedded in a larger window: the adapters produce positions
+    /// relative to the window, and the viewport wants them relative to its own rect.
+    /// Subtract the rect's top-left corner, in the same logical pixels the positions
+    /// are already in.
+    ///
+    /// ```
+    /// # use viewport_lib_types::input::ViewportEvent;
+    /// let ev = ViewportEvent::PointerMoved { position: glam::Vec2::new(300.0, 120.0) };
+    /// let local = ev.offset_by(glam::Vec2::new(200.0, 100.0));
+    /// assert!(matches!(local, ViewportEvent::PointerMoved { position } if position == glam::Vec2::new(100.0, 20.0)));
+    /// ```
+    ///
+    /// Worth using rather than matching the position-carrying variants yourself:
+    /// that list grows (touch contacts joined it), and a host that enumerated it by
+    /// hand keeps compiling while quietly leaving the new ones in window space.
+    /// Deltas are not positions and are left alone: the wheel, the trackpad
+    /// gestures, and raw motion all mean the same thing wherever the rect is.
+    pub fn offset_by(&self, origin: glam::Vec2) -> ViewportEvent {
+        match self {
+            ViewportEvent::PointerMoved { position } => ViewportEvent::PointerMoved {
+                position: *position - origin,
+            },
+            ViewportEvent::Touch {
+                id,
+                phase,
+                position,
+            } => ViewportEvent::Touch {
+                id: *id,
+                phase: *phase,
+                position: *position - origin,
+            },
+            other => other.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod contested_tests {
     use super::*;
+
+    #[test]
+    fn only_positions_are_offset() {
+        let origin = glam::Vec2::new(200.0, 100.0);
+
+        let moved = ViewportEvent::PointerMoved {
+            position: glam::Vec2::new(300.0, 120.0),
+        }
+        .offset_by(origin);
+        assert!(
+            matches!(moved, ViewportEvent::PointerMoved { position } if position == glam::Vec2::new(100.0, 20.0))
+        );
+
+        let touch = ViewportEvent::Touch {
+            id: TouchId(3),
+            phase: TouchPhase::Moved,
+            position: glam::Vec2::new(300.0, 120.0),
+        }
+        .offset_by(origin);
+        match touch {
+            ViewportEvent::Touch {
+                id,
+                phase,
+                position,
+            } => {
+                assert_eq!(id, TouchId(3));
+                assert_eq!(phase, TouchPhase::Moved);
+                assert_eq!(position, glam::Vec2::new(100.0, 20.0));
+            }
+            other => panic!("expected Touch, got {other:?}"),
+        }
+
+        // A delta means the same thing wherever the rect is.
+        let wheel = ViewportEvent::Wheel {
+            delta: glam::Vec2::Y,
+            units: ScrollUnits::Lines,
+        }
+        .offset_by(origin);
+        assert!(matches!(wheel, ViewportEvent::Wheel { delta, .. } if delta == glam::Vec2::Y));
+        assert!(matches!(
+            ViewportEvent::PointerLeft.offset_by(origin),
+            ViewportEvent::PointerLeft
+        ));
+    }
 
     #[test]
     fn only_the_left_button_and_pointer_motion_are_contested() {
