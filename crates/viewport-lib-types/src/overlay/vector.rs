@@ -37,6 +37,7 @@ pub enum PathSegment {
 /// [`FillRule`], so the inner loop of a letter "O" becomes a hole.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct SubPath {
     /// Start point in path-local logical pixels.
     pub start: [f32; 2],
@@ -59,6 +60,17 @@ impl SubPath {
     }
 
     /// Append a straight line to `to`.
+    /// Build a subpath from parts. The builder methods below are nicer for
+    /// authoring a path by hand; this is for converting one from another
+    /// representation, where the segments already exist as a list.
+    pub fn from_segments(start: [f32; 2], segments: Vec<PathSegment>, closed: bool) -> Self {
+        Self {
+            start,
+            segments,
+            closed,
+        }
+    }
+
     pub fn line_to(mut self, to: [f32; 2]) -> Self {
         self.segments.push(PathSegment::Line { to });
         self

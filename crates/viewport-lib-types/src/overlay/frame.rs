@@ -10,7 +10,7 @@ use crate::overlay::*;
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct OverlayFrame {
-    /// Current time in seconds, used to resolve [`OverlayAnimation`] on
+    /// Current time in seconds, used to resolve animation tracks on
     /// shapes. Use the same epoch as the `start_time` values in your
     /// animations (e.g. seconds since app launch). Default: `0.0`.
     pub time: f64,

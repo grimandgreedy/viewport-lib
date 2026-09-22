@@ -116,6 +116,22 @@ fn expected(name: &str) -> Option<Expected> {
         // The same scene from below the projection plane, where the shader's
         // view-direction check currently removes the decal outright.
         "decal_from_below" => e(1, 1, 1, 0, 0, 960),
+        // The overlay scenes: one sphere backdrop each, so the scene-side
+        // counters are identical across all of them. They exist to gate overlay
+        // pixels, not scene structure; a change here means the backdrop moved.
+        "overlay_shapes" => e(1, 1, 1, 0, 0, 960),
+        "overlay_vector" => e(1, 1, 1, 0, 0, 960),
+        "overlay_polylines" => e(1, 1, 1, 0, 0, 960),
+        "overlay_labels" => e(1, 1, 1, 0, 0, 960),
+        "overlay_glyph_runs" => e(1, 1, 1, 0, 0, 960),
+        "overlay_shadows" => e(1, 1, 1, 0, 0, 960),
+        "overlay_rotation" => e(1, 1, 1, 0, 0, 960),
+        "overlay_clipping" => e(1, 1, 1, 0, 0, 960),
+        "overlay_retained" => e(1, 1, 1, 0, 0, 960),
+        "overlay_composition" => e(1, 1, 1, 0, 0, 960),
+        "overlay_text_fill" => e(1, 1, 1, 0, 0, 960),
+        "overlay_shadow_parity" => e(1, 1, 1, 0, 0, 960),
+        "overlay_group_anchor" => e(1, 1, 1, 0, 0, 960),
         _ => return None,
     })
 }

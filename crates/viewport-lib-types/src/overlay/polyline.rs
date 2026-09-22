@@ -64,6 +64,84 @@ pub enum StrokePattern {
     },
 }
 
+/// The stroke of an [`OverlayPolylineItem`]: everything about the line itself.
+///
+/// This is the item's own geometry, not a band drawn around some other shape,
+/// so it lives here rather than on [`OverlayStyle`]. An overlay shape has no
+/// stroke: an edge band on a shape is a [`ShadowLayer`] with no blur and a
+/// spread.
+///
+/// [`OverlayStyle`]: crate::overlay::OverlayStyle
+/// [`ShadowLayer`]: crate::overlay::ShadowLayer
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct OverlayStroke {
+    /// Stroke width in logical pixels.
+    pub width: f32,
+    /// RGBA colour in linear float format.
+    pub colour: crate::colour::Colour,
+    /// Solid, dashed, or dotted.
+    pub pattern: StrokePattern,
+    /// How segment joints are drawn.
+    pub join: LineJoin,
+    /// Mitre limit: when the mitre extension exceeds this multiple of `width`,
+    /// the joint auto-falls back to a bevel.
+    pub mitre_limit: f32,
+    /// End-cap style for open polylines and dash ends. Closed solid polylines
+    /// have no free ends, so caps are ignored there.
+    pub cap: PolylineCap,
+}
+
+impl Default for OverlayStroke {
+    fn default() -> Self {
+        Self {
+            width: 2.0,
+            colour: [1.0, 1.0, 1.0, 1.0].into(),
+            pattern: StrokePattern::Solid,
+            join: LineJoin::Mitre,
+            mitre_limit: 4.0,
+            cap: PolylineCap::Butt,
+        }
+    }
+}
+
+impl OverlayStroke {
+    /// A solid stroke of `width` logical pixels in `colour`, with the default
+    /// join, mitre limit, and cap.
+    pub fn new(width: f32, colour: impl Into<crate::colour::Colour>) -> Self {
+        Self {
+            width,
+            colour: colour.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the dash or dot pattern.
+    pub fn with_pattern(mut self, pattern: StrokePattern) -> Self {
+        self.pattern = pattern;
+        self
+    }
+
+    /// Set how segment joints are drawn.
+    pub fn with_join(mut self, join: LineJoin) -> Self {
+        self.join = join;
+        self
+    }
+
+    /// Set the mitre limit as a multiple of `width`.
+    pub fn with_mitre_limit(mut self, mitre_limit: f32) -> Self {
+        self.mitre_limit = mitre_limit;
+        self
+    }
+
+    /// Set the end-cap style.
+    pub fn with_cap(mut self, cap: PolylineCap) -> Self {
+        self.cap = cap;
+        self
+    }
+}
+
 /// A stroked polyline rendered as a screen-space overlay.
 ///
 /// Constructed from a list of waypoints in logical pixels. Tessellated on
@@ -79,99 +157,67 @@ pub struct OverlayPolylineItem {
     /// With the default anchor (viewport top-left) and a zero `position` these
     /// are absolute screen coordinates.
     pub points: Vec<[f32; 2]>,
-    /// Origin the path hangs from: a viewport corner (default top-left) or a
-    /// projected world point. Every point in `points` is relative to this.
-    pub anchor: OverlayAnchor,
-    /// Placement in logical pixels relative to the resolved `anchor` origin,
-    /// added to every point. Default: `[0.0, 0.0]`.
-    pub position: [f32; 2],
-    /// How the path's bounding box sits horizontally on `anchor` + `position`.
-    /// Default `Left` leaves the points as authored.
-    pub align_x: AnchorX,
-    /// How the path's bounding box sits vertically on `anchor` + `position`.
-    /// Default `Top` leaves the points as authored.
-    pub align_y: AnchorY,
-    /// Stroke thickness in logical pixels.
-    pub thickness: f32,
-    /// RGBA colour in linear float format.
-    pub colour: crate::colour::Colour,
-    /// How segment joints are drawn.
-    pub join: LineJoin,
-    /// Mitre limit: when the mitre extension exceeds this multiple of
-    /// `thickness`, the joint auto-falls back to a bevel.
-    pub mitre_limit: f32,
-    /// End-cap style for open polylines and dash ends. Closed solid
-    /// polylines have no free ends, so caps are ignored there.
-    pub cap: PolylineCap,
-    /// Solid, dashed, or dotted stroke.
-    pub stroke_pattern: StrokePattern,
+    /// Where the item hangs from and which point of its own box lands there.
+    ///
+    /// `transform.translate` is a nudge from the resolved origin, and a world
+    /// origin behind the camera or off screen culls the item for the frame.
+    pub anchoring: OverlayAnchoring,
+    /// Translate, rotate, and scale, in logical pixels and radians.
+    ///
+    /// `translate` is the nudge from the resolved `anchor` origin, so with the
+    /// default anchor and alignment it is the absolute screen placement.
+    /// Rotation turns the item inside its extent box, which stays
+    /// axis-aligned, so `anchoring.align` places the unrotated box and the
+    /// content turns within it. See [`OverlayTransform`] for how an item's
+    /// transform composes with the transform of a retained group containing
+    /// it.
+    pub transform: OverlayTransform,
+    /// Baked appearance: fill, shadow layers, and backdrop effects.
+    ///
+    /// Shared across the overlay item types, so a field can be present and
+    /// inert here. Ask
+    /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
+    /// this family draws.
+    pub style: OverlayStyle,
+    /// Animation tracks resolved each frame against `OverlayFrame::time`.
+    ///
+    /// Boxed and `None` for a static item: the track block is several times
+    /// the size of the rest of the item, so only items that animate pay for
+    /// it. See [`OverlayAnimations`] for why the channel list is what it is.
+    pub animations: Option<Box<OverlayAnimations>>,
+    /// What this item is clipped to: an axis-aligned box, a mask shape, or
+    /// both. The default clips nothing.
+    pub clip: OverlayClip,
+    /// The line itself: width, colour, pattern, joins and caps.
+    ///
+    /// `None` draws no line at all, which is what a closed polyline with a
+    /// fill and no outline wants.
+    pub stroke: Option<OverlayStroke>,
     /// When `true`, the last point connects back to the first.
     pub closed: bool,
-    /// Optional interior fill. Only used when `closed` is `true`.
-    ///
-    /// Texture fills use this the same way [`OverlayShapeItem`] does: when
-    /// `texture` is set, `OverlayFill::Solid` acts as a tint. Gradient fills
-    /// are ignored for textured interiors.
-    pub fill: Option<OverlayFill>,
-    /// Optional texture fill for the interior. Only used when `closed` is `true`.
-    ///
-    /// The polygon is clipped by triangulating the closed path. UVs are
-    /// derived from the path bounds unless `uvs` has one entry per point.
-    pub texture: Option<OverlayTextureId>,
     /// Optional per-point UVs for textured interiors.
     ///
     /// When set, this must have the same length as `points`. Otherwise the
     /// renderer falls back to bounds-mapped UVs.
     pub uvs: Option<Vec<[f32; 2]>>,
-    /// Affine transform applied to texture UVs before sampling.
-    pub texture_transform: TextureTransform,
-    /// Overall opacity multiplier in `[0, 1]`.
-    pub opacity: f32,
     /// Draw order relative to other overlay rects, polylines, and labels.
     /// Lower values render first (further back).
     pub z_order: i32,
-    /// When set, the path is clipped to the mask shape whose `clip_mask_id`
-    /// matches this value: stroke and interior-fill fragments outside the mask
-    /// are discarded, so a path drawn inside a scrolling region is contained.
-    /// The mask can be any overlay shape (rect, rounded rect, circle, ...), and
-    /// masks may nest. `None` (the default) draws the path unclipped, as does a
-    /// missing mask.
-    pub clip_id: Option<u32>,
-    /// Stacked drop shadows and contours drawn behind this item, first entry
-    /// furthest back. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
-    ///
-    /// Empty by default, which draws none. A contour that keeps the item legible
-    /// over an unpredictable background is one
-    /// [`ShadowLayer::outline`] entry; a soft drop shadow is a blurred entry.
-    ///
-    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub shadows: Vec<crate::overlay::ShadowLayer>,
 }
 
 impl Default for OverlayPolylineItem {
     fn default() -> Self {
         Self {
             points: Vec::new(),
-            anchor: OverlayAnchor::default(),
-            position: [0.0, 0.0],
-            align_x: AnchorX::Left,
-            align_y: AnchorY::Top,
-            thickness: 2.0,
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
-            join: LineJoin::Mitre,
-            mitre_limit: 4.0,
-            cap: PolylineCap::Butt,
-            stroke_pattern: StrokePattern::Solid,
+            anchoring: crate::overlay::OverlayAnchoring::default(),
+            transform: OverlayTransform::IDENTITY,
+            style: OverlayStyle::default(),
+            animations: None,
+            clip: OverlayClip::default(),
+            stroke: Some(OverlayStroke::default()),
             closed: false,
-            fill: None,
-            texture: None,
             uvs: None,
-            texture_transform: TextureTransform::default(),
-            opacity: 1.0,
             z_order: 0,
-            clip_id: None,
-            shadows: Vec::new(),
         }
     }
 }
@@ -188,34 +234,33 @@ impl OverlayPolylineItem {
     }
 
     /// Set the origin the path hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: OverlayAnchor) -> Self {
-        self.anchor = anchor;
+    pub fn with_anchor(mut self, anchor: OverlayOrigin) -> Self {
+        self.anchoring.origin = anchor;
         self
     }
 
     /// Pin the path to a world-space position, reprojected each frame. Sugar for
-    /// `with_anchor(OverlayAnchor::World(pos))`.
+    /// `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = OverlayAnchor::World(pos);
+        self.anchoring.origin = OverlayOrigin::World(pos);
         self
     }
 
     /// Set the placement in logical pixels relative to the resolved anchor
     /// origin, added to every point.
     pub fn with_position(mut self, position: [f32; 2]) -> Self {
-        self.position = position;
+        self.transform.translate = position;
         self
     }
 
     /// Set how the path's bounding box aligns onto the resolved anchor origin.
-    pub fn with_align(mut self, align_x: AnchorX, align_y: AnchorY) -> Self {
-        self.align_x = align_x;
-        self.align_y = align_y;
+    pub fn with_align(mut self, align: Alignment) -> Self {
+        self.anchoring.align = align;
         self
     }
 
     /// Resolve the screen-pixel offset added to every point for a frame: the
-    /// `anchor` origin, plus `position`, shifted by `align_x` / `align_y` for the
+    /// origin, plus `position`, shifted by `anchoring.align` for the
     /// path's bounding box. Returns `None` when a `World` anchor projects behind
     /// the camera or off-screen (the path is skipped that frame). The default
     /// anchor with a zero `position` and `Left` / `Top` alignment resolves to
@@ -226,7 +271,7 @@ impl OverlayPolylineItem {
         view: &glam::Mat4,
         proj: &glam::Mat4,
     ) -> Option<[f32; 2]> {
-        let origin = resolve_anchor_origin(&self.anchor, viewport_size, view, proj)?;
+        let origin = resolve_anchor_origin(&self.anchoring.origin, viewport_size, view, proj)?;
         let (mut min_x, mut min_y, mut max_x, mut max_y) = (0.0, 0.0, 0.0, 0.0);
         if let Some((first, rest)) = self.points.split_first() {
             min_x = first[0];
@@ -241,45 +286,98 @@ impl OverlayPolylineItem {
             }
         }
         Some([
-            origin[0] + self.position[0] + self.align_x.align_shift(max_x - min_x),
-            origin[1] + self.position[1] + self.align_y.align_shift(max_y - min_y),
+            origin[0]
+                + self.transform.translate[0]
+                + self.anchoring.align.x.align_shift(max_x - min_x),
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(max_y - min_y),
         ])
     }
 
-    /// Set the stroke thickness in logical pixels.
+    /// Set the whole baked appearance at once: fill, shadow layers, backdrop,
+    /// tint and opacity. The escape hatch for any cell without a dedicated
+    /// builder.
+    pub fn with_style(mut self, style: crate::overlay::OverlayStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers, drawn over the item and
+    /// eroding inward from its boundary.
+    pub fn with_inner_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
+        self.style.inner_shadows = shadows;
+        self
+    }
+
+    /// Add one inner shadow layer, over any already set.
+    pub fn with_inner_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
+        self.style.inner_shadows.push(shadow);
+        self
+    }
+
+    /// Pin the item to a fixed screen position in logical pixels from the
+    /// top-left. Sugar for the default viewport origin with `position` set to
+    /// `pos`.
+    pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
+        self.anchoring =
+            crate::overlay::OverlayAnchoring::default().with_align(self.anchoring.align);
+        self.transform.translate = pos;
+        self
+    }
+
+    /// Set the whole stroke at once.
+    pub fn with_stroke(mut self, stroke: OverlayStroke) -> Self {
+        self.stroke = Some(stroke);
+        self
+    }
+
+    /// Draw no line, leaving only the interior fill of a closed polyline.
+    pub fn without_stroke(mut self) -> Self {
+        self.stroke = None;
+        self
+    }
+
+    /// The stroke, inserting the default one if the item currently has none, so
+    /// a single-field setter can be called on a bare item.
+    fn stroke_mut(&mut self) -> &mut OverlayStroke {
+        self.stroke.get_or_insert_with(OverlayStroke::default)
+    }
+
+    /// Set the stroke width in logical pixels.
     pub fn with_thickness(mut self, thickness: f32) -> Self {
-        self.thickness = thickness;
+        self.stroke_mut().width = thickness;
         self
     }
 
     /// Set the stroke colour.
     pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
-        self.colour = colour.into();
+        self.stroke_mut().colour = colour.into();
         self
     }
 
     /// Set how segment joints are drawn.
     pub fn with_join(mut self, join: LineJoin) -> Self {
-        self.join = join;
+        self.stroke_mut().join = join;
         self
     }
 
-    /// Set the mitre limit as a multiple of `thickness` before a mitre joint
-    /// falls back to a bevel.
+    /// Set the mitre limit as a multiple of the stroke width before a mitre
+    /// joint falls back to a bevel.
     pub fn with_mitre_limit(mut self, mitre_limit: f32) -> Self {
-        self.mitre_limit = mitre_limit;
+        self.stroke_mut().mitre_limit = mitre_limit;
         self
     }
 
     /// Set the end-cap style for open polylines and dash ends.
     pub fn with_cap(mut self, cap: PolylineCap) -> Self {
-        self.cap = cap;
+        self.stroke_mut().cap = cap;
         self
     }
 
     /// Set the stroke pattern (solid, dashed, or dotted).
     pub fn with_stroke_pattern(mut self, stroke_pattern: StrokePattern) -> Self {
-        self.stroke_pattern = stroke_pattern;
+        self.stroke_mut().pattern = stroke_pattern;
         self
     }
 
@@ -291,13 +389,14 @@ impl OverlayPolylineItem {
 
     /// Set the interior fill. Only used when the polyline is closed.
     pub fn with_fill(mut self, fill: OverlayFill) -> Self {
-        self.fill = Some(fill);
+        self.style.fill = fill;
         self
     }
 
     /// Set the interior texture fill. Only used when the polyline is closed.
+    /// Replaces any colour or gradient fill: an item has one fill.
     pub fn with_texture(mut self, texture: OverlayTextureId) -> Self {
-        self.texture = Some(texture);
+        self.style.fill = OverlayFill::texture(texture);
         self
     }
 
@@ -307,15 +406,9 @@ impl OverlayPolylineItem {
         self
     }
 
-    /// Set the affine transform applied to texture UVs before sampling.
-    pub fn with_texture_transform(mut self, texture_transform: TextureTransform) -> Self {
-        self.texture_transform = texture_transform;
-        self
-    }
-
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
-        self.opacity = opacity;
+        self.style.opacity = opacity;
         self
     }
 
@@ -330,7 +423,7 @@ impl OverlayPolylineItem {
     /// Fragments outside the mask are discarded, so a path drawn inside a
     /// scrolling region is contained.
     pub fn with_clip(mut self, clip_id: u32) -> Self {
-        self.clip_id = Some(clip_id);
+        self.clip.mask = Some(clip_id);
         self
     }
 
@@ -350,8 +443,7 @@ impl OverlayPolylineItem {
     ) -> Self {
         Self {
             points: sample_open_path(path, samples),
-            thickness,
-            colour: colour.into(),
+            stroke: Some(OverlayStroke::new(thickness, colour)),
             ..Default::default()
         }
     }
@@ -362,20 +454,22 @@ impl OverlayPolylineItem {
     /// double up the start point.
     ///
     /// Sets `closed = true` and applies the given fill and stroke. Pass
-    /// `None` for `fill` to draw the outline only.
+    /// [`OverlayFill::none`] to draw the outline only.
     pub fn closed_from_path(
         path: impl Fn(f32) -> [f32; 2],
         samples: u32,
-        fill: Option<OverlayFill>,
+        fill: OverlayFill,
         stroke_colour: impl Into<crate::colour::Colour>,
         thickness: f32,
     ) -> Self {
         Self {
             points: sample_closed_path(path, samples),
-            thickness,
-            colour: stroke_colour.into(),
+            stroke: Some(OverlayStroke::new(thickness, stroke_colour)),
             closed: true,
-            fill,
+            style: OverlayStyle {
+                fill,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -397,23 +491,93 @@ impl OverlayPolylineItem {
 
     /// Set the stacked shadow layers drawn behind this item.
     pub fn with_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
-        self.shadows = shadows;
+        self.style.shadows = shadows;
         self
     }
 
     /// Add one shadow layer, in front of any already set.
     pub fn with_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
-        self.shadows.push(shadow);
+        self.style.shadows.push(shadow);
         self
     }
 
-    /// Add a contour of `width` logical pixels in `colour` behind this item.
-    /// Shorthand for pushing a [`ShadowLayer::outline`].
+    /// Add an outline: a band of `width` logical pixels on the item's edge,
+    /// placed by `mode`. A width of `0.0` adds nothing.
     ///
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.shadows
-            .push(crate::overlay::ShadowLayer::outline(colour, width));
+    /// An outline is a shadow layer with no blur, so this pushes one (or two,
+    /// for [`OutlineMode::Centre`]) onto the style's shadow lists, and costs a
+    /// layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list.
+    ///
+    /// [`OutlineMode::Centre`]: crate::overlay::OutlineMode::Centre
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
+    pub fn with_outline(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        width: f32,
+        mode: crate::overlay::OutlineMode,
+    ) -> Self {
+        if width <= 0.0 {
+            return self;
+        }
+        let colour = colour.into();
+        let band = |spread: f32| {
+            crate::overlay::ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread)
+        };
+        match mode {
+            crate::overlay::OutlineMode::Inset => self.style.inner_shadows.push(band(width)),
+            crate::overlay::OutlineMode::Outer => self.style.shadows.push(band(width)),
+            crate::overlay::OutlineMode::Centre => {
+                self.style.inner_shadows.push(band(width * 0.5));
+                self.style.shadows.push(band(width * 0.5));
+            }
+        }
+        self
+    }
+
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the rotation in radians about the pivot.
+    ///
+    /// The points are the caller's, so a consumer drawing immediately could
+    /// always rotate them itself. Under retention it could not: the points are
+    /// baked into the compiled buffer, and turning them means re-compiling.
+    pub fn with_rotation(mut self, radians: f32) -> Self {
+        self.transform.rotation = radians;
+        self
+    }
+
+    /// Set the point to rotate and scale around, in logical pixels from the
+    /// centre of the path's bounding box.
+    pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
+        self.transform.pivot = pivot;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.style.tint = tint;
+        self
+    }
+
+    /// Set the animation tracks.
+    pub fn with_animations(mut self, animations: OverlayAnimations) -> Self {
+        self.animations = Some(Box::new(animations));
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip.rect = Some(clip_rect);
         self
     }
 }
@@ -467,11 +631,11 @@ mod path_sample_tests {
 
     #[test]
     fn closed_from_path_skips_duplicate_endpoint() {
-        let fill = Some(OverlayFill::Solid([0.2, 0.4, 0.6, 1.0].into()));
+        let fill = OverlayFill::Solid([0.2, 0.4, 0.6, 1.0].into());
         let item = OverlayPolylineItem::closed_from_path(circle, 4, fill.clone(), [1.0; 4], 3.0);
         assert!(item.closed);
-        assert_eq!(item.fill, fill);
-        assert_eq!(item.thickness, 3.0);
+        assert_eq!(item.style.fill, fill);
+        assert_eq!(item.stroke.as_ref().unwrap().width, 3.0);
         // 5 points spanning [0, 1); the last is at 4/5, not back at the start.
         assert_eq!(item.points.len(), 5);
         assert!((item.points[0][0] - item.points[4][0]).abs() > 1e-3);
@@ -495,11 +659,11 @@ mod path_sample_tests {
         // A path spanning [0,0]..[40,20], anchored and aligned bottom-right, has
         // its bounding-box bottom-right corner pinned to the viewport corner.
         let p = OverlayPolylineItem::new(vec![[0.0, 0.0], [40.0, 20.0]])
-            .with_anchor(OverlayAnchor::Viewport {
-                x: AnchorX::Right,
-                y: AnchorY::Bottom,
-            })
-            .with_align(AnchorX::Right, AnchorY::Bottom);
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Bottom,
+            )))
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom));
         let off = p
             .resolve_offset([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
             .unwrap();

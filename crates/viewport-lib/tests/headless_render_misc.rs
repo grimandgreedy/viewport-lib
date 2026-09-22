@@ -267,7 +267,7 @@ fn render_tuning_round_trips() {
 /// over a mid-grey background must leave visible non-background pixels.
 #[test]
 fn overlay_shape_shadow_layers_and_pivot_render() {
-    use viewport_lib::{OverlayFill, OverlayShape, OverlayShapeItem, ShadowLayer};
+    use viewport_lib::{OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, ShadowLayer};
 
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -297,7 +297,7 @@ fn overlay_shape_shadow_layers_and_pivot_render() {
             [48.0, 48.0],
         )
         .with_fill(OverlayFill::Solid([0.9, 0.2, 0.1, 1.0].into()))
-        .with_border([1.0, 1.0, 1.0, 1.0], 2.0)
+        .with_outline([1.0, 1.0, 1.0, 1.0], 2.0, OutlineMode::Inset)
         .with_rotation(0.5)
         .with_rotation_pivot([10.0, 6.0])
         .with_shadows(vec![

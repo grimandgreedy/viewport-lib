@@ -2,7 +2,8 @@
 //
 // Same SDF logic as overlay_shape.wgsl, but the interior samples from a
 // bound texture instead of a solid fill colour. fill_colour acts as a tint
-// multiplied with each texel. Supports optional outer shadow/glow.
+// multiplied with each texel. Reads the same stacked shadow-layer buffer the
+// solid path does, so a textured shape takes the same outer and inner layers.
 
 @group(0) @binding(0) var t_fill: texture_2d<f32>;
 @group(0) @binding(1) var s_fill: sampler;
@@ -11,19 +12,49 @@ struct VertexInput {
     @location(0) position:      vec2<f32>,  // NDC xy
     @location(1) local_pos:     vec2<f32>,  // pixels from shape centre
     @location(2) fill_colour:   vec4<f32>,  // tint (multiplied with texture sample)
-    @location(3) border_colour: vec4<f32>,
-    @location(4) half_size:     vec2<f32>,  // shape half-extents in pixels
-    @location(5) radii:         vec4<f32>,  // shape-specific params
-    @location(6) shape_meta:    vec3<f32>,  // x=border_width, y=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), z=clip_index (or -1)
-    @location(7) clip_rect:     vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
-    @location(8) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
-    @location(9) shadow_colour: vec4<f32>,  // RGBA shadow colour
-    @location(10) shadow_params: vec4<f32>, // x=radius, y=offset_x, z=offset_y, w=border_mode
-    @location(11) extras:        vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
-    @location(12) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
-    @location(13) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
-    @location(14) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
-    @location(15) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
+    @location(3) half_size:     vec2<f32>,  // shape half-extents in pixels
+    @location(4) radii:         vec4<f32>,  // shape-specific params
+    @location(5) shape_meta:    vec2<f32>,  // x=shape_type (0=rounded rect, 1=circle, 2=ellipse, 3=capsule, 4=ring, 5=arc, 6=triangle), y=clip_index (or -1)
+    @location(6) clip_rect:     vec4<f32>,  // framebuffer-pixel clip bbox (x0,y0,x1,y1); all zero = no box clip
+    @location(7) uv:            vec2<f32>,  // texture UV: (0,0)=top-left, (1,1)=bottom-right
+    @location(8) shadow_index:  vec3<f32>,  // base_index, outer_count, inner_count
+    @location(9) extras:         vec4<f32>, // x=blur, y=ns_centre_mode, z=ns_edge_mode, w=ns_enabled
+    @location(10) nine_slice_uv:   vec4<f32>, // texture-uv insets: top,right,bottom,left
+    @location(11) nine_slice_frac: vec4<f32>, // shape-fraction insets: top,right,bottom,left
+    @location(12) texture_transform_a: vec4<f32>, // offset.xy, scale.xy
+    @location(13) texture_transform_b: vec4<f32>, // rotation, tile_mode, flip_x, flip_y
+}
+
+// One stacked shadow layer. `params` = (blur, offset_x, offset_y, is_inner),
+// `params2` = (spread, falloff, unused, unused). Same layout as the solid
+// path's buffer, which is the same buffer.
+struct ShadowLayer {
+    colour: vec4<f32>,
+    params: vec4<f32>,
+    params2: vec4<f32>,
+};
+
+// Coverage of an outer layer at signed distance `sd`, matching
+// `shadow_coverage` in overlay_shape.wgsl.
+fn shadow_coverage(sd: f32, spread: f32, blur: f32, falloff: f32, aa: f32) -> f32 {
+    let dd = sd - spread;
+    let w = max(blur, aa);
+    let base = 1.0 - smoothstep(0.0, w, dd);
+    if (falloff == 1.0) {
+        return base;
+    }
+    return pow(base, falloff);
+}
+
+// The inset counterpart: coverage rises from 0 at the shape edge to 1 across
+// the blur band, with `spread` starting the band further inside.
+fn inner_shadow_coverage(sd: f32, spread: f32, blur: f32, falloff: f32, aa: f32) -> f32 {
+    let w = max(blur, aa);
+    let base = smoothstep(0.0, w, sd + spread);
+    if (falloff == 1.0) {
+        return base;
+    }
+    return pow(base, falloff);
 }
 
 // One clip-mask shape (framebuffer pixels). `params` = (shape_type, rotation,
@@ -49,6 +80,9 @@ struct Viewport {
 };
 @group(1) @binding(1) var<uniform> viewport: Viewport;
 
+// The stacked shadow layers, shared with the solid overlay-shape pass.
+@group(1) @binding(2) var<storage, read> shadow_layers: array<ShadowLayer>;
+
 fn px_to_ndc(px: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(px.x / viewport.size.x * 2.0 - 1.0, 1.0 - px.y / viewport.size.y * 2.0);
 }
@@ -57,21 +91,18 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) local_pos:     vec2<f32>,
     @location(1) fill_colour:   vec4<f32>,
-    @location(2) border_colour: vec4<f32>,
-    @location(3) half_size:     vec2<f32>,
-    @location(4) radii:         vec4<f32>,
-    @location(5) border_width:  f32,
-    @location(6) shape_type:    f32,
-    @location(7) uv:            vec2<f32>,
-    @location(8) shadow_colour: vec4<f32>,
-    @location(9) shadow_params: vec4<f32>,
-    @location(10) extras:       vec4<f32>,
-    @location(11) @interpolate(flat) nine_slice_uv:   vec4<f32>,
-    @location(12) @interpolate(flat) nine_slice_frac: vec4<f32>,
-    @location(13) @interpolate(flat) texture_transform_a: vec4<f32>,
-    @location(14) @interpolate(flat) texture_transform_b: vec4<f32>,
-    @location(15) @interpolate(flat) clip_rect:  vec4<f32>,
-    @location(16) @interpolate(flat) clip_index: f32,
+    @location(2) half_size:     vec2<f32>,
+    @location(3) radii:         vec4<f32>,
+    @location(4) shape_type:    f32,
+    @location(5) uv:            vec2<f32>,
+    @location(6) @interpolate(flat) shadow_index: vec3<f32>,
+    @location(7) extras:       vec4<f32>,
+    @location(8) @interpolate(flat) nine_slice_uv:   vec4<f32>,
+    @location(9) @interpolate(flat) nine_slice_frac: vec4<f32>,
+    @location(10) @interpolate(flat) texture_transform_a: vec4<f32>,
+    @location(11) @interpolate(flat) texture_transform_b: vec4<f32>,
+    @location(12) @interpolate(flat) clip_rect:  vec4<f32>,
+    @location(13) @interpolate(flat) clip_index: f32,
 };
 
 @vertex
@@ -80,21 +111,18 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = vec4<f32>(px_to_ndc(in.position), 0.0, 1.0);
     out.local_pos     = in.local_pos;
     out.fill_colour   = in.fill_colour;
-    out.border_colour = in.border_colour;
     out.half_size     = in.half_size;
     out.radii         = in.radii;
-    out.border_width  = in.shape_meta.x;
-    out.shape_type    = in.shape_meta.y;
+    out.shape_type    = in.shape_meta.x;
     out.uv            = in.uv;
-    out.shadow_colour = in.shadow_colour;
-    out.shadow_params = in.shadow_params;
+    out.shadow_index = in.shadow_index;
     out.extras        = in.extras;
     out.nine_slice_uv   = in.nine_slice_uv;
     out.nine_slice_frac = in.nine_slice_frac;
     out.texture_transform_a = in.texture_transform_a;
     out.texture_transform_b = in.texture_transform_b;
     out.clip_rect  = in.clip_rect;
-    out.clip_index = in.shape_meta.z;
+    out.clip_index = in.shape_meta.y;
     return out;
 }
 
@@ -344,28 +372,41 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let aa = 1.0;
 
-    // Decode shadow_params.w: combined = border_mode + 3 * inset_shadow.
-    let combined_w = i32(in.shadow_params.w + 0.5);
-    let inset_shadow = combined_w >= 3;
-    let border_mode = combined_w % 3;
+    // shadow_index: (base_index, outer_count, inner_count).
+    let base_index = i32(in.shadow_index.x + 0.5);
+    let outer_count = i32(in.shadow_index.y + 0.5);
+    let inner_count = i32(in.shadow_index.z + 0.5);
 
-    // Outer shadow behind the fill (only when inset_shadow is off).
-    let shadow_r = in.shadow_params.x;
-    let shadow_off = vec2<f32>(in.shadow_params.y, in.shadow_params.z);
-    var shadow_a = 0.0;
-    if (!inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0) {
-        let sd = eval_sdf(p - shadow_off, hs, in.shape_type, in.radii);
-        shadow_a = in.shadow_colour.a * (1.0 - smoothstep(0.0, shadow_r, sd));
+    // Stacked outer layers behind the fill, first layer furthest back.
+    var shadow_col = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    for (var i = 0; i < outer_count; i = i + 1) {
+        let layer = shadow_layers[base_index + i];
+        let sr = layer.params.x;
+        let soff = layer.params.yz;
+        let sspread = layer.params2.x;
+        let sfall = layer.params2.y;
+        if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
+            let sd = eval_sdf(p - soff, hs, in.shape_type, in.radii);
+            let a = layer.colour.a * shadow_coverage(sd, sspread, sr, sfall, aa);
+            let src = vec4<f32>(layer.colour.rgb, a);
+            shadow_col = vec4<f32>(
+                mix(shadow_col.rgb, src.rgb, src.a),
+                src.a + shadow_col.a * (1.0 - src.a),
+            );
+        }
     }
 
     let fill_alpha = 1.0 - smoothstep(-aa, 0.0, d);
 
-    if (fill_alpha <= 0.0 && shadow_a <= 0.0) {
+    // Clip the outer layers to outside the silhouette, as the solid path does.
+    shadow_col = vec4<f32>(shadow_col.rgb, shadow_col.a * (1.0 - fill_alpha));
+
+    if (fill_alpha <= 0.0 && shadow_col.a <= 0.0) {
         discard;
     }
 
-    // Start with the shadow layer.
-    var colour = vec4<f32>(in.shadow_colour.rgb, shadow_a);
+    // Start with the shadow layers.
+    var colour = shadow_col;
 
     // Composite textured fill on top of shadow.
     if (fill_alpha > 0.0) {
@@ -456,45 +497,36 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let tinted = tex_sample * in.fill_colour;
             fc = vec4<f32>(tinted.rgb, tinted.a * fill_alpha);
         }
-        colour = vec4<f32>(
-            mix(colour.rgb, fc.rgb, fc.a),
-            fc.a + colour.a * (1.0 - fc.a),
-        );
+        // Source-over on un-premultiplied colours: weight the destination by
+        // its own alpha. A plain mix() would let a fully clipped shadow's
+        // colour bleed through the fill, since its alpha is zero but its rgb
+        // is not.
+        let out_a = fc.a + colour.a * (1.0 - fc.a);
+        let rgb = (fc.rgb * fc.a + colour.rgb * colour.a * (1.0 - fc.a)) / max(out_a, 1.0e-5);
+        colour = vec4<f32>(select(fc.rgb, rgb, out_a > 0.0), out_a);
     }
 
-    // Inner shadow: composite on top of the textured fill, under the border.
-    if (inset_shadow && shadow_r > 0.0 && in.shadow_colour.a > 0.0 && d < 0.0) {
-        let inner_sd = eval_sdf(p - shadow_off, hs, in.shape_type, in.radii);
-        let inner_alpha = in.shadow_colour.a * smoothstep(0.0, shadow_r, inner_sd);
-        if (inner_alpha > 0.0) {
-            let ic = vec4<f32>(in.shadow_colour.rgb, inner_alpha);
-            colour = vec4<f32>(
-                mix(colour.rgb, ic.rgb, ic.a),
-                ic.a + colour.a * (1.0 - ic.a),
-            );
+    // Stacked inner layers over the textured fill.
+    if (d < 0.0) {
+        for (var j = 0; j < inner_count; j = j + 1) {
+            let layer = shadow_layers[base_index + outer_count + j];
+            let sr = layer.params.x;
+            let soff = layer.params.yz;
+            let sspread = layer.params2.x;
+            let sfall = layer.params2.y;
+            if ((sr > 0.0 || sspread > 0.0) && layer.colour.a > 0.0) {
+                let inner_sd = eval_sdf(p - soff, hs, in.shape_type, in.radii);
+                let inner_alpha =
+                    layer.colour.a * inner_shadow_coverage(inner_sd, sspread, sr, sfall, aa);
+                if (inner_alpha > 0.0) {
+                    let ic = vec4<f32>(layer.colour.rgb, inner_alpha);
+                    colour = vec4<f32>(
+                        mix(colour.rgb, ic.rgb, ic.a),
+                        ic.a + colour.a * (1.0 - ic.a),
+                    );
+                }
+            }
         }
-    }
-
-    // Border: blend border colour in a band near d = 0.
-    // border_mode (low part of shadow_params.w): 0=inset, 1=outer, 2=center.
-    if (in.border_width > 0.0) {
-        let bw = in.border_width;
-        let bm = border_mode;
-        var lo: f32;
-        var hi: f32;
-        if (bm == 1) {
-            lo = 0.0;
-            hi = bw;
-        } else if (bm == 2) {
-            lo = -bw * 0.5;
-            hi = bw * 0.5;
-        } else {
-            lo = -bw;
-            hi = 0.0;
-        }
-        let border_alpha = (1.0 - smoothstep(hi, hi + aa, d)) * smoothstep(lo - aa, lo, d);
-        let border_ref_alpha = 1.0 - smoothstep(-aa, 0.0, d - hi);
-        colour = mix(colour, vec4<f32>(in.border_colour.rgb, in.border_colour.a * border_ref_alpha), border_alpha);
     }
 
     return colour;

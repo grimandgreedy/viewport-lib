@@ -67,9 +67,9 @@ fn absent_and_transparent_layers_are_inert() {
     transparent.overlays.labels = plain.overlays.labels.clone();
     transparent.overlays.glyph_runs = plain.overlays.glyph_runs.clone();
     transparent.overlays.polylines = plain.overlays.polylines.clone();
-    transparent.overlays.labels[0].shadows = vec![invisible];
-    transparent.overlays.glyph_runs[0].shadows = vec![invisible];
-    transparent.overlays.polylines[0].shadows = vec![invisible];
+    transparent.overlays.labels[0].style.shadows = vec![invisible];
+    transparent.overlays.glyph_runs[0].style.shadows = vec![invisible];
+    transparent.overlays.polylines[0].style.shadows = vec![invisible];
 
     let a = renderer.render_offscreen(&device, &queue, &plain, SIZE, SIZE);
     let b = renderer.render_offscreen(&device, &queue, &transparent, SIZE, SIZE);
@@ -397,12 +397,14 @@ fn label_rotation_pivot_moves_the_centre_of_rotation() {
     );
 }
 
-/// A rotated label turns its background plate with its glyphs. Turning only the
-/// text inside a level plate is the bug this feature exists to avoid, so the
-/// plate's own pixels have to move.
+/// A label and the shape backing it turn together: both take the same rotation
+/// about their own centres, and with the backing sized to the measured text plus
+/// uniform padding those centres coincide. Turning only the text inside a level
+/// panel is the bug this checks against, now that a backing is a shape rather
+/// than a plate inside the text stream.
 #[test]
-fn label_rotation_turns_the_background_plate() {
-    use viewport_lib::LabelItem;
+fn a_label_and_its_backing_shape_turn_together() {
+    use viewport_lib::{LabelItem, OverlayFill, OverlayShape, OverlayShapeItem};
 
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
@@ -410,25 +412,56 @@ fn label_rotation_turns_the_background_plate() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    // Plate only: transparent text, so every differing pixel belongs to the plate.
-    let render = |rotation: f32, r: &mut ViewportRenderer| {
+    let text = "Hg";
+    let pad = 6.0;
+    let metrics = renderer.resources().measure_overlay_text(text, 32.0, None);
+    let pos = [20.0_f32, 30.0];
+
+    let render = |panel_rotation: f32, text_rotation: f32, r: &mut ViewportRenderer| {
         let mut frame = base_frame();
+        frame.overlays.shapes = vec![
+            OverlayShapeItem::new(
+                OverlayShape::Rect { corner_radius: 4.0 },
+                [pos[0] - pad, pos[1] - pad],
+                [metrics.width + pad * 2.0, metrics.height + pad * 2.0],
+            )
+            .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 1.0].into()))
+            .with_rotation(panel_rotation),
+        ];
         frame.overlays.labels = vec![
-            LabelItem::new("Hg")
-                .with_position([20.0, 30.0])
+            LabelItem::new(text)
+                .with_position(pos)
                 .with_font_size(32.0)
-                .with_colour([0.0, 0.0, 0.0, 0.0])
-                .with_background(true)
-                .with_background_colour([0.0, 0.0, 0.0, 1.0])
-                .with_rotation(rotation),
+                .with_colour([1.0, 1.0, 1.0, 1.0])
+                .with_rotation(text_rotation),
         ];
         r.render_offscreen(&device, &queue, &frame, SIZE, SIZE)
     };
 
+    let white = |px: &[u8]| {
+        px.chunks_exact(4)
+            .filter(|p| p[0] > 200 && p[1] > 200 && p[2] > 200)
+            .count()
+    };
+
+    let level = render(0.0, 0.0, &mut renderer);
+    let turned = render(0.6, 0.6, &mut renderer);
+    assert_ne!(level, turned, "the pair must turn");
+
+    // Turning the panel and leaving the text level is a different picture, which
+    // is what says the text actually rode the panel rather than the panel simply
+    // growing to cover it.
+    let panel_only = render(0.6, 0.0, &mut renderer);
     assert_ne!(
-        render(0.0, &mut renderer),
-        render(0.6, &mut renderer),
-        "the background plate must turn with the label"
+        turned, panel_only,
+        "the label must turn with its backing, not sit level on a turned panel"
+    );
+
+    // And the glyphs survive the turn rather than being swallowed by the panel.
+    let (level_text, turned_text) = (white(&level), white(&turned));
+    assert!(
+        turned_text > level_text / 2,
+        "the turned label should still draw its glyphs: {turned_text} vs {level_text}"
     );
 }
 
@@ -459,4 +492,106 @@ fn glyph_run_rotation_turns_the_run() {
 
     let plain = render(0.0, &mut renderer);
     assert_ne!(plain, render(0.7, &mut renderer), "a rotated run must move");
+}
+
+/// `with_inner_shadow` exists on every family and draws on every family.
+///
+/// Inner shadows landed on the tessellated and glyph backends before the
+/// builder did, so for a while the capability was reachable only by editing
+/// `style` directly on three of the four families. This is the assertion that
+/// would have caught that: set one through the builder, and the pixels move.
+#[test]
+fn every_family_has_a_working_inner_shadow_builder() {
+    use viewport_lib::{
+        GlyphRunItem, LabelItem, OverlayFill, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+        PositionedGlyph, ShadowLayer,
+    };
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // An inset layer needs a spread: without one the band starts at the edge
+    // and the whole interior is outside it.
+    let inset = || ShadowLayer::new([0.0_f32, 0.0, 0.0, 1.0], 6.0, [0.0, 0.0]).with_spread(8.0);
+    let white = OverlayFill::Solid([1.0_f32, 1.0, 1.0, 1.0].into());
+
+    let shape = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item = OverlayShapeItem::new(OverlayShape::Circle, [20.0, 20.0], [56.0, 56.0])
+            .with_fill(white.clone());
+        ovl.shapes = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+    let polyline = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item =
+            OverlayPolylineItem::new(vec![[20.0, 20.0], [70.0, 20.0], [70.0, 70.0], [20.0, 70.0]])
+                .with_closed(true)
+                .with_fill(white.clone());
+        ovl.polylines = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+    let label = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item = LabelItem::new("Mg")
+            .with_position([20.0, 20.0])
+            .with_font_size(48.0)
+            .with_colour([1.0, 1.0, 1.0, 1.0]);
+        ovl.labels = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+    let run = |inner: bool| {
+        let mut ovl = viewport_lib::OverlayFrame::default();
+        let item = GlyphRunItem::new(vec![
+            PositionedGlyph::new(55, 0.0, 0.0),
+            PositionedGlyph::new(82, 30.0, 0.0),
+        ])
+        .with_font_size(48.0)
+        .with_position([20.0, 60.0])
+        .with_colour([1.0, 1.0, 1.0, 1.0]);
+        ovl.glyph_runs = vec![if inner {
+            item.with_inner_shadow(inset())
+        } else {
+            item
+        }];
+        ovl
+    };
+
+    for (name, build) in [
+        (
+            "shape",
+            &shape as &dyn Fn(bool) -> viewport_lib::OverlayFrame,
+        ),
+        ("polyline", &polyline),
+        ("label", &label),
+        ("glyph run", &run),
+    ] {
+        let mut plain = base_frame();
+        plain.overlays = build(false);
+        let plain = renderer.render_offscreen(&device, &queue, &plain, SIZE, SIZE);
+
+        let mut inset_frame = base_frame();
+        inset_frame.overlays = build(true);
+        let with_inset = renderer.render_offscreen(&device, &queue, &inset_frame, SIZE, SIZE);
+
+        assert_ne!(
+            plain, with_inset,
+            "{name}: with_inner_shadow changed nothing, so the builder does not reach the backend"
+        );
+    }
 }

@@ -1,5 +1,7 @@
 //! Positioned glyph runs: shaped, laid-out text ready for the overlay atlas.
 
+use crate::overlay::OverlayClip;
+
 /// One glyph placed at an explicit position within a [`GlyphRunItem`].
 ///
 /// `glyph_id` is an index into the font's glyph table, not a Unicode codepoint.
@@ -9,6 +11,7 @@
 /// glyph straight from this id; it never sees the source text.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct PositionedGlyph {
     /// Index into the run's font glyph table.
     pub glyph_id: u16,
@@ -42,113 +45,82 @@ impl PositionedGlyph {
 /// One run carries one font. A line that spans several fonts (script fallback,
 /// or mixing a text font with an icon font) is submitted as several runs sharing
 /// a baseline, one per font. Glyph positions are relative to the resolved
-/// `anchor` origin, so moving a whole run is a change to `anchor` / `position`.
+/// origin, so moving a whole run is a change to `anchoring` or `position`.
+///
+/// The run's colour is `style.fill`, with `glyph_tints` multiplying over it per
+/// glyph.
 ///
 /// [`LabelItem`]: crate::overlay::LabelItem
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct GlyphRunItem {
-    /// Font the glyph ids index into. `None` uses the built-in default font.
-    pub font: Option<crate::overlay::font::FontHandle>,
+    /// Which font the glyph ids index into, and the size the bitmaps are
+    /// rasterised at. The glyph positions themselves come from `glyphs`.
+    pub text_style: crate::overlay::TextStyle,
 
-    /// Font size in logical pixels. Sizes the rasterised glyph bitmaps; the glyph
-    /// positions themselves come from `glyphs`.
-    pub font_size: f32,
-
-    /// Origin the run hangs from: a viewport corner (default top-left) or a
-    /// projected world point. Each glyph's `(x, y)` is relative to this.
-    pub anchor: crate::overlay::OverlayAnchor,
-
-    /// Placement in logical pixels relative to the resolved `anchor` origin.
-    /// With the default anchor and alignment this is the run's screen position
-    /// from the viewport top-left. Default: `[0.0, 0.0]`.
-    pub position: [f32; 2],
-
-    /// How the run's glyph-extent box sits horizontally on `anchor` + `position`.
-    /// Default `Left` leaves the glyph positions as authored.
-    pub align_x: crate::overlay::AnchorX,
-
-    /// How the run's glyph-extent box sits vertically on `anchor` + `position`.
-    /// Default `Top` leaves the glyph positions as authored.
-    pub align_y: crate::overlay::AnchorY,
+    /// Where the item hangs from and which point of its own box lands there.
+    ///
+    /// `transform.translate` is a nudge from the resolved origin, and a world
+    /// origin behind the camera or off screen culls the item for the frame.
+    pub anchoring: crate::overlay::OverlayAnchoring,
+    /// Translate, rotate, and scale, in logical pixels and radians.
+    ///
+    /// `translate` is the nudge from the resolved `anchor` origin, so with the
+    /// default anchor and alignment it is the absolute screen placement.
+    /// Rotation turns the item inside its extent box, which stays
+    /// axis-aligned, so `anchoring.align` places the unrotated box and the
+    /// content turns within it. See [`OverlayTransform`] for how an item's
+    /// transform composes with the transform of a retained group containing
+    /// it.
+    pub transform: crate::overlay::OverlayTransform,
+    /// Baked appearance: fill, shadow layers, and backdrop effects.
+    ///
+    /// Shared across the overlay item types, so a field can be present and
+    /// inert here. Ask
+    /// [`OverlayStyleSupport`](crate::overlay::OverlayStyleSupport) for what
+    /// this family draws.
+    pub style: crate::overlay::OverlayStyle,
+    /// Animation tracks resolved each frame against `OverlayFrame::time`.
+    ///
+    /// Boxed and `None` for a static item: the track block is several times
+    /// the size of the rest of the item, so only items that animate pay for
+    /// it. See [`crate::overlay::OverlayAnimations`] for why the channel list is what it is.
+    pub animations: Option<Box<crate::overlay::OverlayAnimations>>,
+    /// What this item is clipped to: an axis-aligned box, a mask shape, or
+    /// both. The default clips nothing.
+    pub clip: OverlayClip,
 
     /// Positioned glyphs, in draw order.
     pub glyphs: Vec<PositionedGlyph>,
 
-    /// RGBA tint in linear float, applied to every glyph in the run that does
-    /// not have its own entry in `colours`.
-    pub colour: crate::colour::Colour,
-
-    /// Optional per-glyph tint, parallel to `glyphs`. When non-empty, glyph `i`
-    /// uses `colours[i]`; glyphs past the end of this list (or all glyphs when it
-    /// is empty) fall back to `colour`. Use it for runs where glyphs differ in
-    /// colour, such as syntax highlighting.
-    pub colours: Vec<crate::colour::Colour>,
-
-    /// Overall opacity multiplier applied to the run. Range 0.0 (invisible) to
-    /// 1.0 (fully opaque).
-    pub opacity: f32,
+    /// Optional per-glyph colour multiplier over `style.fill`, parallel to
+    /// `glyphs`. When non-empty, glyph `i` is multiplied by `glyph_tints[i]`;
+    /// glyphs past the end of this list (and every glyph when it is empty) draw
+    /// the fill unmodified. Use it for runs where glyphs differ in colour, such
+    /// as syntax highlighting.
+    ///
+    /// It is a multiplier and not a colour, and it behaves like the item's own
+    /// `style.tint`: it never reaches a shadow layer, so a run's contour stays
+    /// one colour however many the glyphs are.
+    pub glyph_tints: Vec<[f32; 4]>,
 
     /// Explicit draw order. Runs with lower values are drawn first (further
     /// back). Shares the cross-family z-order space with labels and shapes.
     pub z_order: i32,
-
-    /// When set, the run is clipped to the mask shape whose `clip_mask_id`
-    /// matches this value, the same clip model [`LabelItem`] uses. `None` (the
-    /// default) draws the run unclipped.
-    ///
-    /// [`LabelItem`]: crate::overlay::LabelItem
-    pub clip_id: Option<u32>,
-    /// Stacked drop shadows and contours drawn behind this item, first entry
-    /// furthest back. Up to [`OVERLAY_MAX_SHADOW_LAYERS`] are honoured.
-    ///
-    /// Empty by default, which draws none. A contour that keeps the item legible
-    /// over an unpredictable background is one
-    /// [`ShadowLayer::outline`] entry; a soft drop shadow is a blurred entry.
-    ///
-    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub shadows: Vec<crate::overlay::ShadowLayer>,
-    /// Rotation around the text-box centre in radians. Positive rotates
-    /// counter-clockwise in math coordinates, which reads as clockwise on
-    /// screen because the Y axis points down. `0.0` keeps the default
-    /// orientation.
-    ///
-    /// The extent box stays axis-aligned: `align_x` / `align_y` place the
-    /// unrotated box on the anchor and the text turns inside it, matching
-    /// [`OverlayShapeItem::rotation`].
-    ///
-    /// [`OverlayShapeItem::rotation`]: crate::overlay::OverlayShapeItem::rotation
-    pub rotation: f32,
-
-    /// Point to rotate around, in logical pixels measured from the text-box
-    /// centre. `[0.0, 0.0]` (default) rotates around the centre. Positive X is
-    /// right, positive Y is down, matching the screen-space axes.
-    ///
-    /// The box is the laid-out text, so it moves when the text, font, or wrap
-    /// width changes. To turn about a fixed corner instead, measure the text
-    /// and offset the pivot by half its extent.
-    pub rotation_pivot: [f32; 2],
 }
 
 impl Default for GlyphRunItem {
     fn default() -> Self {
         Self {
-            font: None,
-            font_size: 14.0,
-            anchor: crate::overlay::OverlayAnchor::default(),
-            position: [0.0, 0.0],
-            align_x: crate::overlay::AnchorX::Left,
-            align_y: crate::overlay::AnchorY::Top,
+            text_style: crate::overlay::TextStyle::default(),
+            anchoring: crate::overlay::OverlayAnchoring::default(),
+            transform: crate::overlay::OverlayTransform::IDENTITY,
+            style: crate::overlay::OverlayStyle::default(),
+            animations: None,
+            clip: OverlayClip::default(),
             glyphs: Vec::new(),
-            colour: [1.0, 1.0, 1.0, 1.0].into(),
-            colours: Vec::new(),
-            opacity: 1.0,
+            glyph_tints: Vec::new(),
             z_order: 0,
-            clip_id: None,
-            shadows: Vec::new(),
-            rotation: 0.0,
-            rotation_pivot: [0.0, 0.0],
         }
     }
 }
@@ -166,26 +138,76 @@ impl GlyphRunItem {
     /// Set the font the glyph ids index into. Without this the built-in default
     /// font is used.
     pub fn with_font(mut self, font: crate::overlay::font::FontHandle) -> Self {
-        self.font = Some(font);
+        self.text_style.font = Some(font);
         self
     }
 
     /// Set the font size in logical pixels.
     pub fn with_font_size(mut self, font_size: f32) -> Self {
-        self.font_size = font_size;
+        self.text_style.size = font_size;
+        self
+    }
+
+    /// Set what the glyphs are filled with: a colour, or a gradient across the
+    /// text box. This is the text colour, and the only source of it.
+    pub fn with_fill(mut self, fill: crate::overlay::OverlayFill) -> Self {
+        self.style.fill = fill;
+        self
+    }
+
+    /// Set the text colour. Sugar for a solid [`with_fill`](Self::with_fill).
+    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
+        self.style.fill = crate::overlay::OverlayFill::Solid(colour.into());
+        self
+    }
+
+    /// Set the whole baked appearance at once: fill, shadow layers, backdrop,
+    /// tint and opacity. The escape hatch for any cell without a dedicated
+    /// builder.
+    pub fn with_style(mut self, style: crate::overlay::OverlayStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Set the stacked inner (inset) shadow layers, drawn over the item and
+    /// eroding inward from its boundary.
+    pub fn with_inner_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
+        self.style.inner_shadows = shadows;
+        self
+    }
+
+    /// Add one inner shadow layer, over any already set.
+    pub fn with_inner_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
+        self.style.inner_shadows.push(shadow);
+        self
+    }
+
+    /// Pin the item to a fixed screen position in logical pixels from the
+    /// top-left. Sugar for the default viewport origin with `position` set to
+    /// `pos`.
+    pub fn with_screen_anchor(mut self, pos: [f32; 2]) -> Self {
+        self.anchoring =
+            crate::overlay::OverlayAnchoring::default().with_align(self.anchoring.align);
+        self.transform.translate = pos;
+        self
+    }
+
+    /// Set the whole text style: the font and its size.
+    pub fn with_text_style(mut self, text_style: crate::overlay::TextStyle) -> Self {
+        self.text_style = text_style;
         self
     }
 
     /// Set the origin the run hangs from (a viewport corner or a world point).
-    pub fn with_anchor(mut self, anchor: crate::overlay::OverlayAnchor) -> Self {
-        self.anchor = anchor;
+    pub fn with_anchor(mut self, anchor: crate::overlay::OverlayOrigin) -> Self {
+        self.anchoring.origin = anchor;
         self
     }
 
     /// Pin the run to a world-space position, reprojected each frame. Sugar for
-    /// `with_anchor(OverlayAnchor::World(pos))`.
+    /// `with_anchor(OverlayOrigin::World(pos))`.
     pub fn with_world_anchor(mut self, pos: [f32; 3]) -> Self {
-        self.anchor = crate::overlay::OverlayAnchor::World(pos);
+        self.anchoring.origin = crate::overlay::OverlayOrigin::World(pos);
         self
     }
 
@@ -193,18 +215,13 @@ impl GlyphRunItem {
     /// origin. With the default anchor this is the run's screen position from
     /// the viewport top-left.
     pub fn with_position(mut self, position: [f32; 2]) -> Self {
-        self.position = position;
+        self.transform.translate = position;
         self
     }
 
     /// Set how the run's glyph-extent box aligns onto the resolved anchor origin.
-    pub fn with_align(
-        mut self,
-        align_x: crate::overlay::AnchorX,
-        align_y: crate::overlay::AnchorY,
-    ) -> Self {
-        self.align_x = align_x;
-        self.align_y = align_y;
+    pub fn with_align(mut self, align: crate::overlay::Alignment) -> Self {
+        self.anchoring.align = align;
         self
     }
 
@@ -214,26 +231,16 @@ impl GlyphRunItem {
         self
     }
 
-    /// Set the run tint colour, used for any glyph without a per-glyph entry in
-    /// `colours`.
-    pub fn with_colour(mut self, colour: impl Into<crate::colour::Colour>) -> Self {
-        self.colour = colour.into();
-        self
-    }
-
-    /// Set per-glyph tint colours, parallel to the glyphs. Glyphs past the end of
-    /// this list fall back to the run `colour`.
-    pub fn with_colours(
-        mut self,
-        colours: impl IntoIterator<Item = impl Into<crate::colour::Colour>>,
-    ) -> Self {
-        self.colours = colours.into_iter().map(Into::into).collect();
+    /// Set the per-glyph colour multipliers over `style.fill`, parallel to the
+    /// glyphs. Glyphs past the end of this list draw the fill unmodified.
+    pub fn with_glyph_tints(mut self, glyph_tints: impl IntoIterator<Item = [f32; 4]>) -> Self {
+        self.glyph_tints = glyph_tints.into_iter().collect();
         self
     }
 
     /// Set the overall opacity multiplier (0.0 to 1.0).
     pub fn with_opacity(mut self, opacity: f32) -> Self {
-        self.opacity = opacity;
+        self.style.opacity = opacity;
         self
     }
 
@@ -249,41 +256,146 @@ impl GlyphRunItem {
     ///
     /// [`OverlayShapeItem::with_clip_mask`]: crate::overlay::OverlayShapeItem::with_clip_mask
     pub fn with_clip(mut self, clip_id: u32) -> Self {
-        self.clip_id = Some(clip_id);
+        self.clip.mask = Some(clip_id);
         self
     }
 
     /// Set the stacked shadow layers drawn behind this item.
     pub fn with_shadows(mut self, shadows: Vec<crate::overlay::ShadowLayer>) -> Self {
-        self.shadows = shadows;
+        self.style.shadows = shadows;
         self
     }
 
     /// Add one shadow layer, in front of any already set.
     pub fn with_shadow(mut self, shadow: crate::overlay::ShadowLayer) -> Self {
-        self.shadows.push(shadow);
+        self.style.shadows.push(shadow);
         self
     }
 
-    /// Add a contour of `width` logical pixels in `colour` behind this item.
-    /// Shorthand for pushing a [`ShadowLayer::outline`].
+    /// Add an outline: a band of `width` logical pixels on the item's edge,
+    /// placed by `mode`. A width of `0.0` adds nothing.
     ///
-    /// [`ShadowLayer::outline`]: crate::overlay::ShadowLayer::outline
-    pub fn with_outline(mut self, colour: impl Into<crate::colour::Colour>, width: f32) -> Self {
-        self.shadows
-            .push(crate::overlay::ShadowLayer::outline(colour, width));
+    /// An outline is a shadow layer with no blur, so this pushes one (or two,
+    /// for [`OutlineMode::Centre`]) onto the style's shadow lists, and costs a
+    /// layer out of [`OVERLAY_MAX_SHADOW_LAYERS`] per list.
+    ///
+    /// [`OutlineMode::Centre`]: crate::overlay::OutlineMode::Centre
+    /// [`OVERLAY_MAX_SHADOW_LAYERS`]: crate::overlay::OVERLAY_MAX_SHADOW_LAYERS
+    pub fn with_outline(
+        mut self,
+        colour: impl Into<crate::colour::Colour>,
+        width: f32,
+        mode: crate::overlay::OutlineMode,
+    ) -> Self {
+        if width <= 0.0 {
+            return self;
+        }
+        let colour = colour.into();
+        let band = |spread: f32| {
+            crate::overlay::ShadowLayer::new(colour, 0.0, [0.0, 0.0]).with_spread(spread)
+        };
+        match mode {
+            crate::overlay::OutlineMode::Inset => self.style.inner_shadows.push(band(width)),
+            crate::overlay::OutlineMode::Outer => self.style.shadows.push(band(width)),
+            crate::overlay::OutlineMode::Centre => {
+                self.style.inner_shadows.push(band(width * 0.5));
+                self.style.shadows.push(band(width * 0.5));
+            }
+        }
         self
     }
 
     /// Set the rotation in radians about the text-box centre.
     pub fn with_rotation(mut self, radians: f32) -> Self {
-        self.rotation = radians;
+        self.transform.rotation = radians;
         self
     }
 
     /// Set the point to rotate about, in logical pixels from the text-box centre.
     pub fn with_rotation_pivot(mut self, pivot: [f32; 2]) -> Self {
-        self.rotation_pivot = pivot;
+        self.transform.pivot = pivot;
+        self
+    }
+
+    /// The extent box of the authored glyph positions, as `[min_x, min_y]` and
+    /// `[width, height]` in logical pixels. This is the box alignment shifts and
+    /// the box the run turns inside, measured from the pen positions rather than
+    /// from the rasterised glyph bitmaps, so it matches what the renderer uses.
+    /// An empty run has no extent and returns `None`.
+    pub fn extent(&self) -> Option<([f32; 2], [f32; 2])> {
+        let (first, rest) = self.glyphs.split_first()?;
+        let (mut min_x, mut min_y) = (first.x, first.y);
+        let (mut max_x, mut max_y) = (first.x, first.y);
+        for g in rest {
+            min_x = min_x.min(g.x);
+            min_y = min_y.min(g.y);
+            max_x = max_x.max(g.x);
+            max_y = max_y.max(g.y);
+        }
+        Some(([min_x, min_y], [max_x - min_x, max_y - min_y]))
+    }
+
+    /// Resolve the top-left pixel of the run's extent box for a frame: the
+    /// origin, plus `position`, shifted by `anchoring.align` for
+    /// that box. Returns `None` when a `World` anchor projects behind the camera
+    /// or off-screen, which is the frame the run is skipped on, and for a run
+    /// with no glyphs.
+    ///
+    /// Glyph positions are authored relative to the run origin, which is this
+    /// value minus the extent box's own `[min_x, min_y]` from [`Self::extent`].
+    /// The box returned is the unrotated one, as with the other overlay items.
+    pub fn resolve_top_left(
+        &self,
+        viewport_size: [f32; 2],
+        view: &glam::Mat4,
+        proj: &glam::Mat4,
+    ) -> Option<[f32; 2]> {
+        let origin = crate::overlay::resolve_anchor_origin(
+            &self.anchoring.origin,
+            viewport_size,
+            view,
+            proj,
+        )?;
+        let (min, size) = self.extent()?;
+        Some([
+            origin[0]
+                + self.transform.translate[0]
+                + self.anchoring.align.x.align_shift(size[0])
+                + min[0],
+            origin[1]
+                + self.transform.translate[1]
+                + self.anchoring.align.y.align_shift(size[1])
+                + min[1],
+        ])
+    }
+
+    /// Set the transform: translate, rotate, scale, and pivot at once.
+    pub fn with_transform(mut self, transform: crate::overlay::OverlayTransform) -> Self {
+        self.transform = transform;
+        self
+    }
+
+    /// Set the uniform scale about the transform pivot.
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Set the per-frame colour multiplier (identity `[1, 1, 1, 1]`).
+    pub fn with_tint(mut self, tint: [f32; 4]) -> Self {
+        self.style.tint = tint;
+        self
+    }
+
+    /// Set the animation tracks.
+    pub fn with_animations(mut self, animations: crate::overlay::OverlayAnimations) -> Self {
+        self.animations = Some(Box::new(animations));
+        self
+    }
+
+    /// Clip to an axis-aligned box in logical pixels `[x0, y0, x1, y1]`.
+    pub fn with_clip_rect(mut self, clip_rect: [f32; 4]) -> Self {
+        self.clip.rect = Some(clip_rect);
         self
     }
 }
@@ -295,14 +407,14 @@ mod tests {
     #[test]
     fn defaults_and_builders() {
         let run = GlyphRunItem::default();
-        assert!(run.font.is_none());
-        assert_eq!(run.font_size, 14.0);
-        assert_eq!(run.position, [0.0, 0.0]);
+        assert!(run.text_style.font.is_none());
+        assert_eq!(run.text_style.size, 14.0);
+        assert_eq!(run.transform.translate, [0.0, 0.0]);
         assert!(run.glyphs.is_empty());
-        assert!(run.colours.is_empty());
-        assert_eq!(run.opacity, 1.0);
+        assert!(run.glyph_tints.is_empty());
+        assert_eq!(run.style.opacity, 1.0);
         assert_eq!(run.z_order, 0);
-        assert!(run.clip_id.is_none());
+        assert!(run.clip.mask.is_none());
 
         let glyphs = vec![
             PositionedGlyph::new(4, 0.0, 0.0),
@@ -311,25 +423,69 @@ mod tests {
         let run = GlyphRunItem::new(glyphs.clone())
             .with_font_size(20.0)
             .with_position([10.0, 12.0])
-            .with_colour([1.0, 0.0, 0.0, 1.0])
-            .with_colours(vec![[0.0, 1.0, 0.0, 1.0]])
+            .with_fill(crate::overlay::OverlayFill::Solid(
+                [1.0, 0.0, 0.0, 1.0].into(),
+            ))
+            .with_glyph_tints(vec![[0.0, 1.0, 0.0, 1.0]])
             .with_opacity(0.5)
             .with_z_order(3)
             .with_clip(7);
 
         assert_eq!(run.glyphs, glyphs);
-        assert_eq!(run.font_size, 20.0);
-        assert_eq!(run.position, [10.0, 12.0]);
-        assert_eq!(run.colour.to_linear_rgba(), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(run.text_style.size, 20.0);
+        assert_eq!(run.transform.translate, [10.0, 12.0]);
         assert_eq!(
-            run.colours
-                .iter()
-                .map(|c| c.to_linear_rgba())
-                .collect::<Vec<_>>(),
-            vec![[0.0, 1.0, 0.0, 1.0]]
+            run.style.fill,
+            crate::overlay::OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into())
         );
-        assert_eq!(run.opacity, 0.5);
+        assert_eq!(run.glyph_tints, vec![[0.0, 1.0, 0.0, 1.0]]);
+        assert_eq!(run.style.opacity, 0.5);
         assert_eq!(run.z_order, 3);
-        assert_eq!(run.clip_id, Some(7));
+        assert_eq!(run.clip.mask, Some(7));
+    }
+
+    #[test]
+    fn extent_spans_the_authored_pen_positions() {
+        let run = GlyphRunItem::new(vec![
+            PositionedGlyph::new(4, 10.0, -4.0),
+            PositionedGlyph::new(9, 30.0, 6.0),
+        ]);
+        let (min, size) = run.extent().unwrap();
+        assert_eq!(min, [10.0, -4.0]);
+        assert_eq!(size, [20.0, 10.0]);
+        assert!(GlyphRunItem::default().extent().is_none());
+    }
+
+    #[test]
+    fn resolve_top_left_places_the_extent_box() {
+        let glyphs = vec![
+            PositionedGlyph::new(4, 10.0, 0.0),
+            PositionedGlyph::new(9, 30.0, 10.0),
+        ];
+        // Default anchor and alignment: the box stays where it was authored,
+        // offset by the position, and needs no camera.
+        let run = GlyphRunItem::new(glyphs.clone()).with_position([5.0, 7.0]);
+        let tl = run
+            .resolve_top_left([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
+            .unwrap();
+        assert_eq!(tl, [15.0, 7.0]);
+
+        // Anchored and aligned bottom-right: the box's bottom-right corner sits
+        // on the viewport's, so its top-left is back by the extent.
+        let run = GlyphRunItem::new(glyphs)
+            .with_anchor(crate::overlay::OverlayOrigin::Viewport(
+                crate::overlay::Alignment::new(
+                    crate::overlay::AnchorX::Right,
+                    crate::overlay::AnchorY::Bottom,
+                ),
+            ))
+            .with_align(crate::overlay::Alignment::new(
+                crate::overlay::AnchorX::Right,
+                crate::overlay::AnchorY::Bottom,
+            ));
+        let tl = run
+            .resolve_top_left([800.0, 600.0], &glam::Mat4::IDENTITY, &glam::Mat4::IDENTITY)
+            .unwrap();
+        assert_eq!(tl, [800.0 - 20.0 + 10.0, 600.0 - 10.0]);
     }
 }

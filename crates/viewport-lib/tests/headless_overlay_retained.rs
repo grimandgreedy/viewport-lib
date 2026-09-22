@@ -15,8 +15,8 @@ mod common;
 use common::*;
 
 use viewport_lib::{
-    AnchorX, AnchorY, GlyphRunItem, LabelItem, OverlayAnchor, OverlayFill, OverlayPolylineItem,
-    OverlayShape, OverlayShapeItem, PositionedGlyph, RetainedOverlay,
+    Alignment, AnchorX, AnchorY, GlyphRunItem, LabelItem, OverlayFill, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, PositionedGlyph, RetainedOverlay,
 };
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
@@ -41,9 +41,9 @@ fn red_square() -> OverlayPolylineItem {
     let mut p = OverlayPolylineItem::default();
     p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
     p.closed = true;
-    p.thickness = 0.0;
-    p.fill = Some(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()));
-    p.opacity = 1.0;
+    p.stroke = None;
+    p.style.fill = OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into());
+    p.style.opacity = 1.0;
     p
 }
 
@@ -90,9 +90,9 @@ fn white_square() -> OverlayPolylineItem {
     let mut p = OverlayPolylineItem::default();
     p.points = vec![[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]];
     p.closed = true;
-    p.thickness = 0.0;
-    p.fill = Some(OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into()));
-    p.opacity = 1.0;
+    p.stroke = None;
+    p.style.fill = OverlayFill::Solid([1.0, 1.0, 1.0, 1.0].into());
+    p.style.opacity = 1.0;
     p
 }
 
@@ -170,15 +170,21 @@ fn retained_per_frame_scale() {
         "scaled-down text square should cover x=16,y=16"
     );
 
-    // Shape stream is not scaled by P2: the same scale leaves the SDF rect at full size.
+    // The shape stream scales too: the group transform maps the quad while the
+    // SDF stays in the shape's own frame, so a rect over 16..48 at scale 0.5
+    // about the origin lands on 8..24 like the text square.
     let shape_id =
         renderer.compile_overlay_geometry(&device, &queue, &[], &[red_sdf_rect()], &[], &[], 1.0);
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![RetainedOverlay::new(shape_id).with_scale(0.5)];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
-        is_red(rgb_at(&px, size, 32, 32)),
-        "SDF shape should ignore per-frame scale (P2 scope), still covering the centre"
+        is_background(rgb_at(&px, size, 32, 32)),
+        "scaled-down shape should have vacated the centre"
+    );
+    assert!(
+        is_red(rgb_at(&px, size, 16, 16)),
+        "scaled-down shape should cover x=16,y=16"
     );
 }
 
@@ -210,7 +216,7 @@ fn retained_sdf_shape_draws_and_translates() {
     );
 
     let mut frame = overlay_frame(size);
-    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_position([16.0, 0.0])];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
         is_red(rgb_at(&px, size, 56, 32)),
@@ -259,7 +265,7 @@ fn retained_shape_per_frame_clip() {
     let mut frame = overlay_frame(size);
     frame.overlays.retained = vec![
         RetainedOverlay::new(id)
-            .with_translate([-20.0, 0.0])
+            .with_position([-20.0, 0.0])
             .with_clip_rect(clip),
     ];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
@@ -275,7 +281,7 @@ fn retained_shape_per_frame_clip() {
 fn circle_mask() -> OverlayShapeItem {
     OverlayShapeItem::new(OverlayShape::Circle, [16.0, 16.0], [32.0, 32.0])
         .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
-        .with_clip_mask(7)
+        .provides_mask(7)
 }
 
 /// A retained group clips to an SDF mask referenced by `clip_id` (P8), for both
@@ -301,7 +307,7 @@ fn retained_group_clips_to_sdf_mask() {
     for id in [shape_id, text_id] {
         let mut frame = overlay_frame(size);
         frame.overlays.shapes = vec![circle_mask()]; // register mask 7 this frame
-        frame.overlays.retained = vec![RetainedOverlay::new(id).with_clip_mask(7)];
+        frame.overlays.retained = vec![RetainedOverlay::new(id).with_clip(7)];
         let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
         assert!(
             is_red(rgb_at(&px, size, 32, 32)),
@@ -440,10 +446,10 @@ fn retained_label_anchor_resolves_to_corner() {
     let top_left = LabelItem::new("ABCD")
         .with_font_size(22.0)
         .with_colour([1.0, 1.0, 1.0, 1.0])
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Left,
-            y: AnchorY::Top,
-        })
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Left,
+            AnchorY::Top,
+        )))
         .with_align_x(AnchorX::Left)
         .with_align_y(AnchorY::Top)
         .with_position([6.0, 6.0]);
@@ -465,10 +471,10 @@ fn retained_label_anchor_resolves_to_corner() {
     let bottom_right = LabelItem::new("ABCD")
         .with_font_size(22.0)
         .with_colour([1.0, 1.0, 1.0, 1.0])
-        .with_anchor(OverlayAnchor::Viewport {
-            x: AnchorX::Right,
-            y: AnchorY::Bottom,
-        })
+        .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+            AnchorX::Right,
+            AnchorY::Bottom,
+        )))
         .with_align_x(AnchorX::Right)
         .with_align_y(AnchorY::Bottom)
         .with_position([-6.0, -6.0]);
@@ -532,7 +538,7 @@ fn retained_mixed_group_shape_and_label() {
 
     // One translate moves the whole group: the square vacates its old centre.
     let mut frame = overlay_frame(size);
-    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_position([16.0, 0.0])];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
         is_red(rgb_at(&px, size, 56, 32)),
@@ -572,7 +578,7 @@ fn retained_draws_and_translates() {
     // Translate +16 in x with the SAME compiled id: the square now covers 32..64,
     // so the old centre reads background and a point at x=56 reads red.
     let mut frame = overlay_frame(size);
-    frame.overlays.retained = vec![RetainedOverlay::new(id).with_translate([16.0, 0.0])];
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_position([16.0, 0.0])];
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
     assert!(
         is_background(rgb_at(&px, size, 24, 32)),
@@ -617,5 +623,56 @@ fn retained_opacity_and_free() {
     assert!(
         is_background(rgb_at(&px, size, 32, 32)),
         "a freed group should draw nothing"
+    );
+}
+
+/// A retained group anchors like an item: the same compiled handle pins to a
+/// viewport corner that follows a resize, and to a world point that follows the
+/// camera and culls when it leaves the frustum.
+#[test]
+fn retained_group_anchors_to_a_corner_and_a_world_point() {
+    use viewport_lib::{AnchorX, AnchorY, OverlayOrigin};
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+    let id =
+        renderer.compile_overlay_geometry(&device, &queue, &[red_square()], &[], &[], &[], 1.0);
+
+    // The square is compiled over 16..48 in group-local pixels. Anchored to the
+    // bottom-right corner with matching alignment, its far corner lands on the
+    // viewport corner whatever the viewport size is, so the pixel just inside
+    // it is covered.
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![
+        RetainedOverlay::new(id)
+            .with_anchor(OverlayOrigin::Viewport(Alignment::new(
+                AnchorX::Right,
+                AnchorY::Bottom,
+            )))
+            .with_align(Alignment::new(AnchorX::Right, AnchorY::Bottom)),
+    ];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, size - 2, size - 2)),
+        "a bottom-right anchored group should reach the bottom-right corner"
+    );
+    assert!(
+        is_background(rgb_at(&px, size, 2, 2)),
+        "and should not still be drawing at the origin"
+    );
+
+    // A world anchor behind the camera culls the group rather than drawing it
+    // at a projected-but-meaningless position.
+    let mut behind = overlay_frame(size);
+    behind.overlays.retained =
+        vec![RetainedOverlay::new(id).with_anchor(OverlayOrigin::World([0.0, 0.0, -1000.0]))];
+    let px = renderer.render_offscreen(&device, &queue, &behind, size, size);
+    assert!(
+        px.chunks_exact(4).all(|p| !is_red((p[0], p[1], p[2]))),
+        "a culled world anchor should draw nothing"
     );
 }

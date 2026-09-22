@@ -1,0 +1,17 @@
+# cargo-mobile2 project description. `cargo mobile init` reads this and writes
+# the Xcode and Gradle projects under `gen/`, which is gitignored: everything in
+# there is generated, and the Xcode project bakes in absolute paths and a
+# development team id.
+#
+# Set `apple.development-team` to your own team id before `cargo apple run`. Get
+# it from Xcode (Settings -> Accounts -> your account -> Manage Certificates) or
+# with `security find-identity -p codesigning -v`.
+
+[app]
+name = "viewport-lib-examples-mobile"
+stylized-name = "Viewport Mobile"
+identifier = "com.viewport.mobile"
+template-pack = "winit"
+
+[apple]
+development-team = "REPLACE_WITH_YOUR_TEAM_ID"

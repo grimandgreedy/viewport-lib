@@ -13,6 +13,7 @@
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
 pub mod item_types;
+pub mod overlays;
 pub mod meshes;
 #[cfg(feature = "real_models")]
 pub mod real_models;
@@ -105,6 +106,9 @@ pub struct BuiltScene {
     /// post-process configuration (supersampling, say) rather than an item
     /// type. `None` leaves the frame's defaults alone.
     pub post_process: Option<viewport_lib::PostProcessSettings>,
+    /// Screen-space overlay items: shapes, labels, glyph runs, polylines, and
+    /// retained groups compiled during `build`.
+    pub overlays: viewport_lib::OverlayFrame,
     /// Scene-content version stamped onto `SceneFrame::generation`.
     ///
     /// The renderer's instanced-batch cache trusts this: two consecutive
@@ -210,6 +214,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     if let Some(post) = scene.post_process.clone() {
         fd.effects.post_process = post;
     }
+    fd.overlays = scene.overlays.clone();
     fd.viewport.background_colour = Some(scene.background.unwrap_or(TEST_BACKGROUND).into());
     fd.viewport.show_axes_indicator = false;
     // Scenes mark an item selected to put the selection outline in the
@@ -797,6 +802,7 @@ pub fn catalogue() -> Vec<NamedScene> {
         },
     ];
     scenes.extend(item_types::scenes());
+    scenes.extend(overlays::scenes());
     scenes
 }
 

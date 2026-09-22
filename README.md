@@ -40,6 +40,7 @@
 - **eframe-primitives**: demonstrates the built-in geometry primitives.
 - **eframe-multi-viewport**: a mid-complexity example with several viewports in one window.
 - **eframe-input-controllers**: shows custom input bindings and controller configuration.
+- **mobile**: the same scene on Android and iOS, orbited with touch. Needs cargo-mobile2 and a device toolchain; see the crate's README.
 
 ```
 cargo run --release -p viewport-lib-examples-eframe --example eframe-showcase
@@ -50,7 +51,7 @@ cargo run --release --manifest-path crates/viewport-lib-examples/slint/Cargo.tom
 cargo run --release --manifest-path crates/viewport-lib-examples/bevy/Cargo.toml  --example bevy-swarm
 ```
 
-The slint and bevy crates are built by manifest path because their frameworks pin wgpu 29, so they cannot be workspace members alongside crates on the default wgpu 27 leg. Each example crate carries `wgpu27` / `wgpu29` / `wgpu30` features that select viewport-lib's leg:
+The slint and bevy crates are built by manifest path because their frameworks pin wgpu 29, so they cannot be workspace members alongside crates on the default wgpu 27 leg. The mobile crate is outside the workspace too, because cargo-mobile2's generated Xcode and Gradle projects expect its target directory to be its own; it is built and deployed from its own directory, which its README covers. Each example crate carries `wgpu27` / `wgpu29` / `wgpu30` features that select viewport-lib's leg:
 
 ```
 cargo run --release -p viewport-lib-examples-winit --no-default-features --features wgpu30 --example winit-minimal

@@ -14,7 +14,7 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::{FillRule, OverlayFill, OverlayShape, OverlayShapeItem, SubPath};
+use viewport_lib::{FillRule, OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, SubPath};
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
 fn overlay_frame(size: u32) -> FrameData {
@@ -145,7 +145,7 @@ fn border_outline_draws() {
     frame.overlays.shapes = vec![
         OverlayShapeItem::vector(vec![square], FillRule::NonZero, [0.0, 0.0], [64.0, 64.0])
             .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
-            .with_border([0.0, 1.0, 0.0, 1.0], 4.0),
+            .with_outline([0.0, 1.0, 0.0, 1.0], 4.0, OutlineMode::Inset),
     ];
 
     let px = renderer.render_offscreen(&device, &queue, &frame, size, size);

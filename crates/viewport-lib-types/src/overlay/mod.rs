@@ -9,6 +9,7 @@
 
 pub mod anchor;
 pub mod animation;
+pub mod clip;
 pub mod fill;
 pub mod font;
 pub mod frame;
@@ -17,11 +18,14 @@ pub mod glyph_run;
 pub mod label;
 pub mod polyline;
 pub mod shape;
+pub mod style;
 pub mod texture;
+pub mod transform;
 pub mod vector;
 
 pub use self::anchor::*;
 pub use self::animation::*;
+pub use self::clip::*;
 pub use self::fill::*;
 pub use self::font::*;
 pub use self::frame::*;
@@ -30,5 +34,7 @@ pub use self::glyph_run::*;
 pub use self::label::*;
 pub use self::polyline::*;
 pub use self::shape::*;
+pub use self::style::*;
 pub use self::texture::*;
+pub use self::transform::*;
 pub use self::vector::*;

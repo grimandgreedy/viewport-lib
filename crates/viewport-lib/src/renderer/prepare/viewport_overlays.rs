@@ -91,10 +91,6 @@ fn encode_overlay_shape(
 /// Curve-flattening tolerance for vector-shape fills, in logical pixels.
 const VECTOR_FILL_TOLERANCE: f32 = 0.2;
 
-/// Mitre limit for a vector shape's outline stroke (it has no per-item value,
-/// unlike `OverlayPolylineItem`).
-const VECTOR_BORDER_MITRE_LIMIT: f32 = 4.0;
-
 /// Map a vector shape's path-local points into screen-space logical pixels,
 /// applying the item's position and rotation about its centre plus pivot. This
 /// is the inverse of the frame `OverlayShapeItem::distance` evaluates in, so
@@ -105,22 +101,27 @@ fn transform_vector_positions(
 ) -> Vec<[f32; 2]> {
     let hw = shape.size[0] * 0.5;
     let hh = shape.size[1] * 0.5;
-    let cx = shape.position[0] + hw;
-    let cy = shape.position[1] + hh;
-    let piv = shape.rotation_pivot;
-    let c = shape.rotation.cos();
-    let s = shape.rotation.sin();
+    let cx = shape.transform.translate[0] + hw;
+    let cy = shape.transform.translate[1] + hh;
+    let piv = shape.transform.pivot;
+    let sc = shape.transform.scale;
+    let c = shape.transform.rotation.cos();
+    let s = shape.transform.rotation.sin();
+    let identity = shape.transform.rotation == 0.0 && sc == 1.0;
     local
         .iter()
         .map(|lp| {
             // Path-local -> centred (the unrotated `p` frame in `distance`).
             let cpx = lp[0] - hw;
             let cpy = lp[1] - hh;
-            if shape.rotation == 0.0 {
+            if identity {
                 return [cx + cpx, cy + cpy];
             }
-            let ax = cpx - piv[0];
-            let ay = cpy - piv[1];
+            // Scale about the pivot, then rotate about it: the inner half of
+            // the composition contract, baked in because an immediate item has
+            // no instance slot of its own.
+            let ax = (cpx - piv[0]) * sc;
+            let ay = (cpy - piv[1]) * sc;
             let rx = c * ax - s * ay + piv[0];
             let ry = s * ax + c * ay + piv[1];
             [cx + rx, cy + ry]
@@ -128,8 +129,8 @@ fn transform_vector_positions(
         .collect()
 }
 
-/// Tessellate and emit a vector shape's fill, plus its outline border when set,
-/// as `OverlayTextVertex`s into `batch`.
+/// Tessellate and emit a vector shape's fill and its shadow layers as
+/// `OverlayTextVertex`s into `batch`.
 pub(super) fn emit_vector_shape(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
@@ -145,69 +146,144 @@ pub(super) fn emit_vector_shape(
     // wider, once per band: the stroke is what supplies the dilation the SDF
     // path gets from `spread`.
     for layer in shape
+        .style
         .shadows
         .iter()
         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
         .filter(|l| l.is_visible())
     {
-        emit_vector_shadow(batch, shape, subpaths, &mesh, layer, vp_w, vp_h);
+        emit_vector_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
     }
 
+    let content_start = batch.len();
     if !mesh.indices.is_empty() {
         let positions = transform_vector_positions(&mesh.positions, shape);
         emit_vector_fill(
             batch,
             &positions,
             &mesh.indices,
-            &shape.fill,
-            shape.opacity,
+            &shape.style.fill,
+            shape.style.opacity,
             vp_w,
             vp_h,
         );
     }
 
-    // Border: a vector outline stroke, not an SDF band. Stroke each flattened
-    // contour through the same tessellator polylines use, honouring the subpath's
-    // `closed` flag: an open subpath strokes as an open line (a wireframe edge, a
-    // bare polyline), a closed one strokes its whole boundary. An open contour
-    // takes round caps so its ends read cleanly.
-    if shape.border_width > 0.0 && shape.border_colour.alpha() > 0.0 {
-        let mut colour = shape.border_colour.to_linear_rgba();
-        colour[3] *= shape.opacity;
-        for (contour, closed) in crate::renderer::types::flatten_contours(subpaths) {
-            if contour.len() < 2 {
-                continue;
-            }
-            let pts = transform_vector_positions(&contour, shape);
-            let cap = if closed {
-                crate::renderer::types::PolylineCap::Butt
-            } else {
-                crate::renderer::types::PolylineCap::Round
-            };
-            batch.extend(tessellate_polyline(
-                &pts,
-                shape.border_width,
-                closed,
-                crate::renderer::types::LineJoin::Mitre,
-                VECTOR_BORDER_MITRE_LIMIT,
-                cap,
-                colour,
-                vp_w,
-                vp_h,
-            ));
+    // Tint the fill now rather than at the end: the inner shadows that follow
+    // are shadow geometry, and a tint never reaches a shadow layer.
+    tint_vertices_from(batch, content_start, shape.style.tint);
+
+    // Inner shadow layers, over the fill, matching the order the SDF path
+    // composites in. A band runs inward from each contour, which is the
+    // erosion an inset layer describes.
+    for layer in shape
+        .style
+        .inner_shadows
+        .iter()
+        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+        .filter(|l| l.is_visible())
+    {
+        emit_vector_inner_shadow(batch, shape, subpaths, layer, vp_w, vp_h);
+    }
+}
+
+/// Intersect two clip boxes in framebuffer pixels. An all-zero box means "no
+/// clip", so the other wins; two real boxes intersect, and a non-overlapping
+/// pair returns an off-screen box so nothing survives. This mirrors
+/// `combine_clip` in the overlay shaders, which does the same for the instance
+/// half of the clip.
+fn combine_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let a_valid = a[2] > a[0] && a[3] > a[1];
+    let b_valid = b[2] > b[0] && b[3] > b[1];
+    if !a_valid {
+        return b;
+    }
+    if !b_valid {
+        return a;
+    }
+    let r = [
+        a[0].max(b[0]),
+        a[1].max(b[1]),
+        a[2].min(b[2]),
+        a[3].min(b[3]),
+    ];
+    if r[2] <= r[0] || r[3] <= r[1] {
+        return [1.0e9, 1.0e9, 1.0e9 + 1.0, 1.0e9 + 1.0];
+    }
+    r
+}
+
+/// Multiply a gradient (or solid) fill into the colours of `batch[from..]`,
+/// sampled at each vertex position over the item's box.
+///
+/// This is how the glyph families get a fill: a glyph is a coverage bitmap
+/// tinted by the vertex colour, so evaluating the gradient per vertex and
+/// letting the rasteriser interpolate gives an exact linear gradient (a linear
+/// function interpolated linearly is itself) and a per-glyph piecewise-linear
+/// radial or conical one. A per-glyph `colours` entry multiplies into it,
+/// matching how `tint` composes.
+pub(super) fn fill_vertices_from(
+    batch: &mut [crate::resources::OverlayTextVertex],
+    from: usize,
+    fill: &crate::renderer::types::OverlayFill,
+    box_min: [f32; 2],
+    box_size: [f32; 2],
+) {
+    let half = [box_size[0] * 0.5, box_size[1] * 0.5];
+    let centre = [box_min[0] + half[0], box_min[1] + half[1]];
+    for v in &mut batch[from..] {
+        // Text-stream vertex positions are logical pixels.
+        let c = fill.sample_in_box([v.position[0] - centre[0], v.position[1] - centre[1]], half);
+        v.colour = [
+            v.colour[0] * c[0],
+            v.colour[1] * c[1],
+            v.colour[2] * c[2],
+            v.colour[3] * c[3],
+        ];
+    }
+}
+
+/// Multiply an item's `tint` into the colours of `batch[from..]`, and mark that
+/// range as the item's content.
+///
+/// Called per emitted range rather than over the whole batch so shadow ranges
+/// are skipped: a tint never reaches a shadow layer, on any path. A compiled
+/// group's shadow colours are baked, so retention could only ever honour that
+/// rule, and content that changed appearance when it moved between the
+/// immediate and retained paths is the defect this vocabulary exists to remove.
+///
+/// The same range is what a retained group's own per-frame tint applies to, so
+/// the mark is set whether or not the item has a tint of its own.
+pub(super) fn tint_vertices_from(
+    batch: &mut [crate::resources::OverlayTextVertex],
+    from: usize,
+    tint: [f32; 4],
+) {
+    let identity = tint == [1.0, 1.0, 1.0, 1.0];
+    for v in &mut batch[from..] {
+        v.group_tint = 1.0;
+        if !identity {
+            v.colour = [
+                v.colour[0] * tint[0],
+                v.colour[1] * tint[1],
+                v.colour[2] * tint[2],
+                v.colour[3] * tint[3],
+            ];
         }
     }
 }
 
-/// Emit one shadow layer of a vector path: the filled silhouette plus its
-/// contours re-stroked at `2 * (spread + d)` for each blur band, all offset by
-/// the layer offset and drawn flat in the layer colour.
-#[allow(clippy::too_many_arguments)]
-fn emit_vector_shadow(
+/// Emit one inner shadow layer of a vector path: a band running inward from
+/// each contour, `spread + d` wide for each blur band, in the layer colour.
+///
+/// The band is stacked from the contour rather than drawn as an eroded copy of
+/// the fill, so it stays inside the silhouette whatever the layer offset does:
+/// the offset widens the band where it points and narrows it where it points
+/// away, which is the region an offset erosion covers.
+fn emit_vector_inner_shadow(
     batch: &mut Vec<crate::resources::OverlayTextVertex>,
     shape: &crate::renderer::types::OverlayShapeItem,
     subpaths: &[crate::renderer::types::SubPath],
-    mesh: &super::overlay_vector::VectorMesh,
     layer: &crate::renderer::types::ShadowLayer,
     vp_w: f32,
     vp_h: f32,
@@ -216,59 +292,84 @@ fn emit_vector_shadow(
     let contours = crate::renderer::types::flatten_contours(subpaths);
     for (d, band_alpha) in overlay_geometry::shadow_bands(layer) {
         let mut colour = base;
-        colour[3] *= shape.opacity * band_alpha;
-        if colour[3] <= 0.0 {
+        colour[3] *= shape.style.opacity * band_alpha;
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
             continue;
         }
-        let shift = |p: &[[f32; 2]]| -> Vec<[f32; 2]> {
-            transform_vector_positions(p, shape)
-                .into_iter()
-                .map(|q| [q[0] + layer.offset[0], q[1] + layer.offset[1]])
-                .collect()
-        };
-        if !mesh.indices.is_empty() {
-            let positions = shift(&mesh.positions);
-            overlay_geometry::emit_flat_mesh(batch, &positions, &mesh.indices, colour, vp_w, vp_h);
-        }
-        let width = 2.0 * (layer.spread + d);
-        if width <= 0.0 {
-            continue;
-        }
-        for (contour, closed) in &contours {
-            if contour.len() < 2 {
-                continue;
-            }
-            let pts = shift(contour);
-            let cap = if *closed {
-                crate::renderer::types::PolylineCap::Butt
-            } else {
-                crate::renderer::types::PolylineCap::Round
-            };
-            batch.extend(tessellate_polyline(
+        for (contour, _closed) in &contours {
+            // A contour bounds the fill whether or not its subpath was closed,
+            // so the band follows it as a loop either way.
+            let pts = transform_vector_positions(contour, shape);
+            let side = -overlay_geometry::contour_outward_sign(&pts);
+            overlay_geometry::emit_contour_band(
+                batch,
                 &pts,
+                side,
                 width,
-                *closed,
-                crate::renderer::types::LineJoin::Mitre,
-                VECTOR_BORDER_MITRE_LIMIT,
-                cap,
+                layer.offset,
                 colour,
                 vp_w,
                 vp_h,
-            ));
+            );
+        }
+    }
+}
+
+/// Emit one outer shadow layer of a vector path: a band running outward from
+/// each contour, `spread + d` wide for each blur band, in the layer colour.
+///
+/// The band stops at the contour instead of painting the dilated silhouette
+/// behind the fill, which is how the distance-field path clips an outer layer
+/// and is what keeps a translucent path from tinting itself through its own
+/// shadow. The layer offset widens the band where it points and narrows it
+/// where it points away, which is the region an offset dilation covers.
+fn emit_vector_shadow(
+    batch: &mut Vec<crate::resources::OverlayTextVertex>,
+    shape: &crate::renderer::types::OverlayShapeItem,
+    subpaths: &[crate::renderer::types::SubPath],
+    layer: &crate::renderer::types::ShadowLayer,
+    vp_w: f32,
+    vp_h: f32,
+) {
+    let base = layer.colour.to_linear_rgba();
+    let contours = crate::renderer::types::flatten_contours(subpaths);
+    for (d, band_alpha) in overlay_geometry::shadow_bands(layer) {
+        let mut colour = base;
+        colour[3] *= shape.style.opacity * band_alpha;
+        let width = layer.spread + d;
+        if colour[3] <= 0.0 || width <= 0.0 {
+            continue;
+        }
+        for (contour, _closed) in &contours {
+            // A contour bounds the fill whether or not its subpath was closed,
+            // so the band follows it as a loop either way.
+            let pts = transform_vector_positions(contour, shape);
+            let side = overlay_geometry::contour_outward_sign(&pts);
+            overlay_geometry::emit_contour_band(
+                batch,
+                &pts,
+                side,
+                width,
+                layer.offset,
+                colour,
+                vp_w,
+                vp_h,
+            );
         }
     }
 }
 
 /// Build the per-frame clip-shape registry from the overlay shapes that are clip
-/// masks (`clip_mask_id` set). Returns the GPU array (framebuffer-pixel geometry),
-/// a map from `clip_mask_id` to its index in that array, and the axis-aligned
+/// masks (`provides_mask` set). Returns the GPU array (framebuffer-pixel geometry),
+/// a map from mask id to its index in that array, and the axis-aligned
 /// bounding box (framebuffer pixels) of each mask, parallel to the GPU array. A
-/// mask's own `clip_id` links it to a parent, so nested masks compose by
+/// mask's own `clip.mask` links it to a parent, so nested masks compose by
 /// intersection.
 ///
 /// The bounding boxes drive the shader's cheap pre-reject and share this array's
 /// indexing, so a drawn item's `clip_rect` and `clip_index` always describe the
-/// same mask. A `clip_mask_id` is expected to be unique within a frame; if one is
+/// same mask. A mask id is expected to be unique within a frame; if one is
 /// reused, the first mask with that id wins (both for the index and the bbox),
 /// which is why the bbox comes from here rather than a separate id-keyed map.
 fn build_clip_shapes(
@@ -290,7 +391,7 @@ fn build_clip_shapes(
     let mut index_of: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
     let mut masks: Vec<(&crate::renderer::types::OverlayShapeItem, [f32; 2])> = Vec::new();
     for s in shapes {
-        if let Some(id) = s.clip_mask_id {
+        if let Some(id) = s.provides_mask {
             if let std::collections::hash_map::Entry::Vacant(e) = index_of.entry(id) {
                 if let Some(tl) = s.resolve_top_left(viewport, view, proj) {
                     e.insert(masks.len() as i32);
@@ -319,15 +420,16 @@ fn build_clip_shapes(
         let center = [(tl[0] + hw) * ppp, (tl[1] + hh) * ppp];
         let half = [hw * ppp, hh * ppp];
         let parent = s
-            .clip_id
+            .clip
+            .mask
             .and_then(|pid| index_of.get(&pid).copied())
             .unwrap_or(-1);
         out.push(crate::resources::ClipShapeGpu {
             center,
             half_size: half,
             radii,
-            params: [shape_type, s.rotation, parent as f32, 0.0],
-            pivot: [s.rotation_pivot[0] * ppp, s.rotation_pivot[1] * ppp],
+            params: [shape_type, s.transform.rotation, parent as f32, 0.0],
+            pivot: [s.transform.pivot[0] * ppp, s.transform.pivot[1] * ppp],
             _pad: [0.0, 0.0],
         });
         bboxes.push([
@@ -523,17 +625,29 @@ impl ViewportRenderer {
                 // masks scroll containers use.) The bbox and the SDF index come from the
                 // same registry, so a clipped item's `clip_rect` and `clip_index` always
                 // describe the same mask.
+                let overlay_time = frame.overlays.time;
                 let (clip_shapes, clip_index_of, clip_bboxes) =
                     build_clip_shapes(&frame.overlays.shapes, ppp, [vp_w, vp_h], view, proj);
+                // Stamp an item's clip onto every vertex it emitted: the mask
+                // bbox and index when it names a mask, intersected with the
+                // item's own `clip_rect`. Both are framebuffer-pixel boxes, and
+                // they compose by intersection, so naming both clips to the
+                // overlap.
                 let stamp_clip = |batch: &mut [crate::resources::OverlayTextVertex],
-                                  clip_id: Option<u32>| {
-                    if let Some(id) = clip_id {
-                        if let Some(&ci) = clip_index_of.get(&id) {
-                            let cr = clip_bboxes[ci as usize];
-                            for v in batch.iter_mut() {
-                                v.clip_rect = cr;
-                                v.clip_index = ci as f32;
-                            }
+                                  clip_id: Option<u32>,
+                                  clip_rect: Option<[f32; 4]>| {
+                    let mask = clip_id.and_then(|id| clip_index_of.get(&id).copied());
+                    let rect = clip_rect.map(|r| [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp]);
+                    if mask.is_none() && rect.is_none() {
+                        return;
+                    }
+                    let mask_rect = mask.map_or([0.0; 4], |ci| clip_bboxes[ci as usize]);
+                    let cr = combine_clip_rects(mask_rect, rect.unwrap_or([0.0; 4]));
+                    let ci = mask.map_or(-1.0, |ci| ci as f32);
+                    for v in batch.iter_mut() {
+                        v.clip_rect = cr;
+                        if ci >= 0.0 {
+                            v.clip_index = ci;
                         }
                     }
                 };
@@ -547,9 +661,30 @@ impl ViewportRenderer {
                     .iter()
                     .chain(gizmo_polylines.iter())
                 {
-                    if poly.points.len() < 2 || poly.opacity <= 0.0 {
+                    if poly.points.len() < 2 || poly.style.opacity <= 0.0 {
                         continue;
                     }
+                    // Resolve animation tracks first: a `translate` track drives
+                    // the same channel the anchor offset is measured from, so
+                    // resolving the offset before the track would use last
+                    // frame's translate.
+                    let animated_storage;
+                    let poly: &crate::renderer::types::OverlayPolylineItem =
+                        if poly.animations.is_none() {
+                            poly
+                        } else {
+                            let mut owned = poly.clone();
+                            if let Some(anims) = owned.animations.take() {
+                                anims.apply(
+                                    overlay_time,
+                                    &mut owned.transform,
+                                    &mut owned.style.opacity,
+                                    &mut owned.style.tint,
+                                );
+                            }
+                            animated_storage = owned;
+                            &animated_storage
+                        };
                     // Resolve the anchor to a screen-pixel offset and draw the
                     // path there; a culled world anchor skips it. The offset is
                     // baked into a translated copy so the stroke and fill paths
@@ -571,34 +706,94 @@ impl ViewportRenderer {
                         translated_storage = ts;
                         &translated_storage
                     };
+                    super::overlay_style_check::warn_inert_style(
+                        "OverlayPolylineItem",
+                        crate::renderer::types::OverlayStyleSupport::for_polyline(poly.closed),
+                        &poly.style,
+                    );
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     // Shadow layers first, behind both the fill and the stroke.
                     for layer in poly
+                        .style
                         .shadows
                         .iter()
                         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
                         .filter(|l| l.is_visible())
                     {
-                        emit_polyline_shadow(&mut batch, poly, layer, poly.opacity, vp_w, vp_h);
+                        emit_polyline_shadow(
+                            &mut batch,
+                            poly,
+                            layer,
+                            poly.style.opacity,
+                            vp_w,
+                            vp_h,
+                        );
                     }
-                    if poly.closed && poly.texture.is_none() {
-                        if let Some(fill) = &poly.fill {
-                            emit_filled_polyline(
-                                &mut batch,
-                                &poly.points,
-                                fill,
-                                poly.opacity,
+                    let content_start = batch.len();
+                    if poly.closed && poly.style.fill.texture_id().is_none() {
+                        emit_filled_polyline(
+                            &mut batch,
+                            &poly.points,
+                            &poly.style.fill,
+                            poly.style.opacity,
+                            vp_w,
+                            vp_h,
+                        );
+                    }
+                    // Tint the fill before the inner shadows go over it: a tint
+                    // never reaches a shadow layer.
+                    tint_vertices_from(&mut batch, content_start, poly.style.tint);
+                    // An inset layer goes over what it erodes and under the
+                    // edge of it: over the fill and under the stroke for a
+                    // filled path, over the stroke when the stroke is all the
+                    // item covers.
+                    let filled = poly.closed && poly.style.fill.is_set();
+                    let mut inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                        for layer in poly
+                            .style
+                            .inner_shadows
+                            .iter()
+                            .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                            .filter(|l| l.is_visible())
+                        {
+                            emit_polyline_inner_shadow(
+                                batch,
+                                poly,
+                                layer,
+                                poly.style.opacity,
                                 vp_w,
                                 vp_h,
                             );
                         }
+                    };
+                    if filled {
+                        inner(&mut batch);
                     }
-                    if poly.thickness > 0.0 {
-                        let mut colour = poly.colour.to_linear_rgba();
-                        colour[3] *= poly.opacity;
-                        emit_polyline_stroke(&mut batch, poly, colour, vp_w, vp_h);
+                    let stroke_start = batch.len();
+                    if let Some(stroke) = poly.stroke.as_ref().filter(|s| s.width > 0.0) {
+                        let mut colour = stroke.colour.to_linear_rgba();
+                        colour[3] *= poly.style.opacity;
+                        emit_polyline_stroke(&mut batch, poly, stroke, colour, vp_w, vp_h);
                     }
-                    stamp_clip(&mut batch, poly.clip_id);
+                    tint_vertices_from(&mut batch, stroke_start, poly.style.tint);
+                    if !filled {
+                        inner(&mut batch);
+                    }
+                    // The path turns and scales about its own bounding box,
+                    // shadows included, after every part of it has been emitted.
+                    if let Some((pmin, pmax)) = polyline_bounds(&poly.points) {
+                        let rot = OverlayRotation::new(
+                            poly.transform.rotation,
+                            poly.transform.scale,
+                            OverlayRotation::pivot_point(
+                                pmin,
+                                [pmax[0] - pmin[0], pmax[1] - pmin[1]],
+                                poly.transform.pivot,
+                            ),
+                        );
+                        rotate_vertices_from(&mut batch, 0, rot);
+                    }
+                    stamp_clip(&mut batch, poly.clip.mask, poly.clip.rect);
                     if !batch.is_empty() {
                         batches.push((poly.z_order, batch));
                     }
@@ -607,9 +802,9 @@ impl ViewportRenderer {
                 // --- Vector shapes (tessellated fills + outline strokes) ---
                 // A vector shape has no SDF, so it draws here through the same
                 // triangle-fill pipeline as filled polylines rather than the
-                // SDF shape pass. Fill, gradient, opacity, clip, and the border
-                // outline carry over; SDF-derived effects (soft shadows, the
-                // distance-band border) do not apply.
+                // SDF shape pass. Fill, gradient, opacity, clip and the shadow
+                // layers carry over; the effects that need a distance field
+                // (texture, backdrop, nine-slice) do not apply.
                 for shape in &frame.overlays.shapes {
                     let crate::renderer::types::OverlayShape::Vector {
                         subpaths,
@@ -622,21 +817,35 @@ impl ViewportRenderer {
                     // fully transparent ones. A `texture` set on a vector shape
                     // is ignored (documented on the variant): the fill still
                     // draws.
-                    if shape.clip_mask_id.is_some() || shape.opacity <= 0.0 {
+                    if shape.provides_mask.is_some() || shape.style.opacity <= 0.0 {
                         continue;
+                    }
+                    super::overlay_style_check::warn_inert_style(
+                        "OverlayShape::Vector",
+                        crate::renderer::types::OverlayStyleSupport::for_shape(&shape.shape),
+                        &shape.style,
+                    );
+                    let mut owned = shape.clone();
+                    if let Some(anims) = owned.animations.take() {
+                        anims.apply(
+                            overlay_time,
+                            &mut owned.transform,
+                            &mut owned.style.opacity,
+                            &mut owned.style.tint,
+                        );
                     }
                     // Resolve the anchor to an absolute top-left so anchored
                     // vector shapes tessellate where they draw; a culled world
-                    // anchor skips the shape. Vector shapes take no animation
-                    // tracks, so the raw item resolves directly.
-                    let Some(tl) = shape.resolve_top_left([vp_w, vp_h], view, proj) else {
+                    // anchor skips the shape. Tracks resolve first, because a
+                    // `translate` track drives the channel the top-left is
+                    // measured from.
+                    let Some(tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
                         continue;
                     };
-                    let mut owned = shape.clone();
-                    owned.position = tl;
+                    owned.transform.translate = tl;
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     emit_vector_shape(&mut batch, &owned, subpaths, *fill_rule, vp_w, vp_h);
-                    stamp_clip(&mut batch, owned.clip_id);
+                    stamp_clip(&mut batch, owned.clip.mask, owned.clip.rect);
                     if !batch.is_empty() {
                         batches.push((shape.z_order, batch));
                     }
@@ -644,12 +853,12 @@ impl ViewportRenderer {
 
                 // --- Labels ---
                 for label in &frame.overlays.labels {
-                    if label.text.is_empty() || label.opacity <= 0.0 {
+                    if label.text.is_empty() || label.style.opacity <= 0.0 {
                         continue;
                     }
 
                     let Some(anchor_px) = crate::renderer::types::resolve_anchor_origin(
-                        &label.anchor,
+                        &label.anchoring.origin,
                         [vp_w, vp_h],
                         view,
                         proj,
@@ -657,13 +866,36 @@ impl ViewportRenderer {
                         continue;
                     };
 
-                    let opacity = label.opacity.clamp(0.0, 1.0);
+                    // Resolve animation tracks onto a local copy so the input
+                    // frame stays untouched; a static label skips the clone.
+                    let animated_storage;
+                    let label: &crate::renderer::types::LabelItem = if label.animations.is_none() {
+                        label
+                    } else {
+                        let mut owned = label.clone();
+                        if let Some(anims) = owned.animations.take() {
+                            anims.apply(
+                                overlay_time,
+                                &mut owned.transform,
+                                &mut owned.style.opacity,
+                                &mut owned.style.tint,
+                            );
+                        }
+                        animated_storage = owned;
+                        &animated_storage
+                    };
+                    let opacity = label.style.opacity.clamp(0.0, 1.0);
+                    super::overlay_style_check::warn_inert_style(
+                        "LabelItem",
+                        crate::renderer::types::OverlayStyleSupport::for_glyphs(),
+                        &label.style,
+                    );
 
                     let layout = if let Some(max_w) = label.max_width {
                         self.resources.content.glyph_atlas.layout_text_wrapped(
                             &label.text,
-                            label.font_size,
-                            label.font,
+                            label.text_style.size,
+                            label.text_style.font,
                             max_w,
                             ppp,
                             device,
@@ -672,99 +904,40 @@ impl ViewportRenderer {
                     } else {
                         self.resources.content.glyph_atlas.layout_text(
                             &label.text,
-                            label.font_size,
-                            label.font,
+                            label.text_style.size,
+                            label.text_style.font,
                             ppp,
                             device,
                             GlyphStyle::PLAIN,
                         )
                     };
 
-                    let font_index = label.font.map_or(0, |h| h.0);
+                    let font_index = label.text_style.font.map_or(0, |h| h.0);
                     let ascent = self
                         .resources
                         .content
                         .glyph_atlas
-                        .font_ascent(font_index, label.font_size);
+                        .font_ascent(font_index, label.text_style.size);
 
-                    let align_offset = match label.align_x {
-                        crate::renderer::types::AnchorX::Left => label.anchor_padding,
-                        crate::renderer::types::AnchorX::Middle => -layout.total_width * 0.5,
-                        crate::renderer::types::AnchorX::Right => {
-                            -layout.total_width - label.anchor_padding
-                        }
-                    };
+                    let align_offset = label.anchoring.align.x.align_shift(layout.total_width);
+                    let align_offset_y = label.anchoring.align.y.align_shift(layout.height);
 
-                    let align_offset_y = match label.align_y {
-                        crate::renderer::types::AnchorY::Top => 0.0,
-                        crate::renderer::types::AnchorY::Middle => -layout.height * 0.5,
-                        crate::renderer::types::AnchorY::Bottom => -layout.height,
-                    };
-
-                    let text_x = anchor_px[0] + align_offset + label.position[0];
-                    let text_y = anchor_px[1] + align_offset_y + label.position[1];
+                    let text_x = anchor_px[0] + align_offset + label.transform.translate[0];
+                    let text_y = anchor_px[1] + align_offset_y + label.transform.translate[1];
 
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
 
-                    // A turned label turns its plate and its shadows with its
-                    // glyphs, but not its leader line: that runs to the projected
-                    // world anchor and must keep pointing at it. So the plate and
-                    // the text are rotated as two ranges with the leader between.
+                    // A label is one range: its glyphs and their shadow layers,
+                    // turned together about the laid-out box.
                     let rot = OverlayRotation::new(
-                        label.rotation,
+                        label.transform.rotation,
+                        label.transform.scale,
                         OverlayRotation::pivot_point(
                             [text_x, text_y],
                             [layout.total_width, layout.height],
-                            label.rotation_pivot,
+                            label.transform.pivot,
                         ),
                     );
-                    let bg_start = batch.len();
-
-                    if label.background {
-                        let pad = label.padding;
-                        let bx0 = text_x - pad;
-                        let by0 = text_y - pad;
-                        let bx1 = text_x + layout.total_width + pad;
-                        let by1 = text_y + layout.height + pad;
-                        let bg_colour =
-                            apply_opacity(label.background_colour.to_linear_rgba(), opacity);
-                        if label.border_radius > 0.0 {
-                            emit_rounded_quad(
-                                &mut batch,
-                                bx0,
-                                by0,
-                                bx1,
-                                by1,
-                                label.border_radius,
-                                bg_colour,
-                                vp_w,
-                                vp_h,
-                            );
-                        } else {
-                            emit_solid_quad(&mut batch, bx0, by0, bx1, by1, bg_colour, vp_w, vp_h);
-                        }
-                    }
-
-                    rotate_vertices_from(&mut batch, bg_start, rot);
-
-                    if label.leader_line {
-                        if let crate::renderer::types::OverlayAnchor::World(wa) = label.anchor {
-                            let world_px = project_to_screen(wa, view, proj, vp_w, vp_h);
-                            if let Some(wp) = world_px {
-                                emit_line_quad(
-                                    &mut batch,
-                                    wp[0],
-                                    wp[1],
-                                    text_x,
-                                    text_y + layout.height * 0.5,
-                                    1.5,
-                                    apply_opacity(label.leader_colour.to_linear_rgba(), opacity),
-                                    vp_w,
-                                    vp_h,
-                                );
-                            }
-                        }
-                    }
 
                     let text_start = batch.len();
 
@@ -774,6 +947,7 @@ impl ViewportRenderer {
                     // copies. Layout is identical to the plain pass, so the
                     // shadow stays registered with the text it backs.
                     for layer in label
+                        .style
                         .shadows
                         .iter()
                         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
@@ -783,12 +957,13 @@ impl ViewportRenderer {
                             layer.spread * ppp,
                             layer.blur * ppp,
                             layer.falloff,
+                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
                         );
                         let sl = if let Some(max_w) = label.max_width {
                             self.resources.content.glyph_atlas.layout_text_wrapped(
                                 &label.text,
-                                label.font_size,
-                                label.font,
+                                label.text_style.size,
+                                label.text_style.font,
                                 max_w,
                                 ppp,
                                 device,
@@ -797,8 +972,8 @@ impl ViewportRenderer {
                         } else {
                             self.resources.content.glyph_atlas.layout_text(
                                 &label.text,
-                                label.font_size,
-                                label.font,
+                                label.text_style.size,
+                                label.text_style.font,
                                 ppp,
                                 device,
                                 style,
@@ -816,9 +991,12 @@ impl ViewportRenderer {
                         );
                     }
 
-                    let text_colour = apply_opacity(label.colour.to_linear_rgba(), opacity);
+                    // The glyphs start white and `style.fill` multiplies into
+                    // them below, so a label has one colour source.
+                    let text_colour = apply_opacity([1.0, 1.0, 1.0, 1.0], opacity);
                     // The label origin is the top-left of the text box; add the
                     // ascent to reach the first baseline the quads are relative to.
+                    let glyph_start = batch.len();
                     emit_glyph_quads(
                         &mut batch,
                         &layout.quads,
@@ -828,59 +1006,137 @@ impl ViewportRenderer {
                         vp_w,
                         vp_h,
                     );
+                    if label.style.fill.is_set() {
+                        fill_vertices_from(
+                            &mut batch,
+                            glyph_start,
+                            &label.style.fill,
+                            [text_x, text_y],
+                            [layout.total_width, layout.height],
+                        );
+                    }
+                    tint_vertices_from(&mut batch, glyph_start, label.style.tint);
+
+                    // Inner shadow layers, over the glyphs. The cell is the
+                    // letterform with a band eaten in from its edge, so it lands
+                    // on the same quads the plain pass used.
+                    for layer in label
+                        .style
+                        .inner_shadows
+                        .iter()
+                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                        .filter(|l| l.is_visible())
+                    {
+                        let style = GlyphStyle::from_inner_shadow(
+                            layer.spread * ppp,
+                            layer.blur * ppp,
+                            layer.falloff,
+                        );
+                        if style == GlyphStyle::PLAIN {
+                            continue;
+                        }
+                        let sl = if let Some(max_w) = label.max_width {
+                            self.resources.content.glyph_atlas.layout_text_wrapped(
+                                &label.text,
+                                label.text_style.size,
+                                label.text_style.font,
+                                max_w,
+                                ppp,
+                                device,
+                                style,
+                            )
+                        } else {
+                            self.resources.content.glyph_atlas.layout_text(
+                                &label.text,
+                                label.text_style.size,
+                                label.text_style.font,
+                                ppp,
+                                device,
+                                style,
+                            )
+                        };
+                        let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
+                        emit_glyph_quads(
+                            &mut batch,
+                            &sl.quads,
+                            text_x,
+                            text_y + ascent,
+                            col,
+                            vp_w,
+                            vp_h,
+                        );
+                    }
 
                     rotate_vertices_from(&mut batch, text_start, rot);
 
-                    stamp_clip(&mut batch, label.clip_id);
+                    stamp_clip(&mut batch, label.clip.mask, label.clip.rect);
                     batches.push((label.z_order, batch));
                 }
 
                 // --- Glyph runs (pre-positioned glyphs, drawn as given) ---
                 for run in &frame.overlays.glyph_runs {
-                    if run.glyphs.is_empty() || run.opacity <= 0.0 {
+                    if run.glyphs.is_empty() || run.style.opacity <= 0.0 {
                         continue;
                     }
+                    let animated_storage;
+                    let run: &crate::renderer::types::GlyphRunItem = if run.animations.is_none() {
+                        run
+                    } else {
+                        let mut owned = run.clone();
+                        if let Some(anims) = owned.animations.take() {
+                            anims.apply(
+                                overlay_time,
+                                &mut owned.transform,
+                                &mut owned.style.opacity,
+                                &mut owned.style.tint,
+                            );
+                        }
+                        animated_storage = owned;
+                        &animated_storage
+                    };
+                    super::overlay_style_check::warn_inert_style(
+                        "GlyphRunItem",
+                        crate::renderer::types::OverlayStyleSupport::for_glyphs(),
+                        &run.style,
+                    );
 
                     // Resolve the anchor origin; skip the run when a world anchor
                     // is culled. Alignment shifts the whole run by its glyph-extent
                     // box, so default Left/Top leaves the authored positions.
                     let Some(origin) = crate::renderer::types::resolve_anchor_origin(
-                        &run.anchor,
+                        &run.anchoring.origin,
                         [vp_w, vp_h],
                         view,
                         proj,
                     ) else {
                         continue;
                     };
-                    let (mut min_x, mut min_y, mut max_x, mut max_y) =
-                        (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-                    for g in &run.glyphs {
-                        min_x = min_x.min(g.x);
-                        min_y = min_y.min(g.y);
-                        max_x = max_x.max(g.x);
-                        max_y = max_y.max(g.y);
-                    }
-                    let run_x =
-                        origin[0] + run.position[0] + run.align_x.align_shift(max_x - min_x);
-                    let run_y =
-                        origin[1] + run.position[1] + run.align_y.align_shift(max_y - min_y);
+                    let Some(([min_x, min_y], [ext_w, ext_h])) = run.extent() else {
+                        continue;
+                    };
+                    let run_x = origin[0]
+                        + run.transform.translate[0]
+                        + run.anchoring.align.x.align_shift(ext_w);
+                    let run_y = origin[1]
+                        + run.transform.translate[1]
+                        + run.anchoring.align.y.align_shift(ext_h);
 
-                    let opacity = run.opacity.clamp(0.0, 1.0);
-                    // Each glyph carries its tint through layout so per-glyph
-                    // colours stay aligned with the quads after zero-area skips.
-                    // Glyphs without a per-glyph entry fall back to the run colour.
+                    let opacity = run.style.opacity.clamp(0.0, 1.0);
+                    // Each glyph carries its multiplier through layout so the
+                    // per-glyph entries stay aligned with the quads after
+                    // zero-area skips. White is "the fill unmodified": the fill
+                    // multiplies into the quads below.
                     let quads = self.resources.content.glyph_atlas.layout_glyph_run(
                         run.glyphs.iter().enumerate().map(|(i, g)| {
-                            let colour = run
-                                .colours
+                            let tint = run
+                                .glyph_tints
                                 .get(i)
                                 .copied()
-                                .unwrap_or(run.colour)
-                                .to_linear_rgba();
-                            (g.glyph_id, g.x, g.y, apply_opacity(colour, opacity))
+                                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                            (g.glyph_id, g.x, g.y, apply_opacity(tint, opacity))
                         }),
-                        run.font_size,
-                        run.font,
+                        run.text_style.size,
+                        run.text_style.font,
                         ppp,
                         device,
                         GlyphStyle::PLAIN,
@@ -892,11 +1148,12 @@ impl ViewportRenderer {
                     let mut batch: Vec<crate::resources::OverlayTextVertex> = Vec::new();
                     // The run turns about its glyph-extent box, shadows included.
                     let rot = OverlayRotation::new(
-                        run.rotation,
+                        run.transform.rotation,
+                        run.transform.scale,
                         OverlayRotation::pivot_point(
                             [run_x + min_x, run_y + min_y],
-                            [max_x - min_x, max_y - min_y],
-                            run.rotation_pivot,
+                            [ext_w, ext_h],
+                            run.transform.pivot,
                         ),
                     );
 
@@ -905,6 +1162,7 @@ impl ViewportRenderer {
                     // in the layer colour, which is what makes it read as one
                     // silhouette rather than a blurred copy of the text.
                     for layer in run
+                        .style
                         .shadows
                         .iter()
                         .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
@@ -914,12 +1172,13 @@ impl ViewportRenderer {
                             layer.spread * ppp,
                             layer.blur * ppp,
                             layer.falloff,
+                            [layer.offset[0] * ppp, layer.offset[1] * ppp],
                         );
                         let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
                         let sq = self.resources.content.glyph_atlas.layout_glyph_run(
                             run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
-                            run.font_size,
-                            run.font,
+                            run.text_style.size,
+                            run.text_style.font,
                             ppp,
                             device,
                             style,
@@ -937,10 +1196,51 @@ impl ViewportRenderer {
                     // Positions are already relative to the run origin, so the
                     // resolved origin is the only offset added; no ascent, unlike
                     // labels.
+                    let glyph_start = batch.len();
                     emit_glyph_quads_colored(&mut batch, &quads, run_x, run_y, vp_w, vp_h);
+                    if run.style.fill.is_set() {
+                        fill_vertices_from(
+                            &mut batch,
+                            glyph_start,
+                            &run.style.fill,
+                            [run_x + min_x, run_y + min_y],
+                            [ext_w, ext_h],
+                        );
+                    }
+                    tint_vertices_from(&mut batch, glyph_start, run.style.tint);
+
+                    // Inner shadow layers, over the run, on the same quads the
+                    // plain pass used.
+                    for layer in run
+                        .style
+                        .inner_shadows
+                        .iter()
+                        .take(crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS)
+                        .filter(|l| l.is_visible())
+                    {
+                        let style = GlyphStyle::from_inner_shadow(
+                            layer.spread * ppp,
+                            layer.blur * ppp,
+                            layer.falloff,
+                        );
+                        if style == GlyphStyle::PLAIN {
+                            continue;
+                        }
+                        let col = apply_opacity(layer.colour.to_linear_rgba(), opacity);
+                        let sq = self.resources.content.glyph_atlas.layout_glyph_run(
+                            run.glyphs.iter().map(|g| (g.glyph_id, g.x, g.y, col)),
+                            run.text_style.size,
+                            run.text_style.font,
+                            ppp,
+                            device,
+                            style,
+                        );
+                        emit_glyph_quads_colored(&mut batch, &sq, run_x, run_y, vp_w, vp_h);
+                    }
+
                     rotate_vertices_from(&mut batch, 0, rot);
 
-                    stamp_clip(&mut batch, run.clip_id);
+                    stamp_clip(&mut batch, run.clip.mask, run.clip.rect);
                     batches.push((run.z_order, batch));
                 }
 
@@ -985,7 +1285,26 @@ impl ViewportRenderer {
                     // Re-emit the group first if its baked glyph UVs went stale
                     // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
                     self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp);
-                    let (text, shape, anchor) =
+                    // Resolve the group's tracks. Every channel they drive rides
+                    // the instance, so an animated group never re-compiles; a
+                    // static group skips the clone.
+                    let animated_storage;
+                    let r: &crate::renderer::types::RetainedOverlay = if r.animations.is_none() {
+                        r
+                    } else {
+                        let mut owned = r.clone();
+                        if let Some(anims) = owned.animations.take() {
+                            anims.apply(
+                                frame.overlays.time,
+                                &mut owned.transform,
+                                &mut owned.opacity,
+                                &mut owned.tint,
+                            );
+                        }
+                        animated_storage = owned;
+                        &animated_storage
+                    };
+                    let (text, shape, (compiled_anchor, bounds)) =
                         match self.resources.content.overlay_geometry.get(r.id) {
                             Some(c) => {
                                 let text = (c.vertex_count > 0)
@@ -996,19 +1315,25 @@ impl ViewportRenderer {
                                     }
                                     _ => None,
                                 };
-                                (text, shape, c.anchor)
+                                (text, shape, (c.anchor, c.bounds))
                             }
                             None => continue,
                         };
                     if text.is_none() && shape.is_none() {
                         continue;
                     }
-                    // A compiled label carries its own anchor: resolve it to a
-                    // screen origin (a viewport corner, or a world point projected
-                    // through the camera) and fold it into the translate. The
-                    // submission's translate composes on top (scroll/nudge). A world
-                    // anchor that is culled skips the group for this frame.
-                    let translate = match anchor {
+                    // Resolve the group's anchor to a screen origin (a viewport
+                    // corner, or a world point projected through the camera) and
+                    // fold it into the translate, then shift by the alignment
+                    // against the group's own compiled extent. The submission's
+                    // translate composes on top (scroll/nudge). A world anchor
+                    // that is culled skips the group for this frame.
+                    //
+                    // The submission's anchor wins over the one a group compiled
+                    // from a single label carries, so a caller can re-anchor a
+                    // compiled label without re-compiling it.
+                    let submitted_origin = r.anchoring.map(|a| a.origin);
+                    let translate = match submitted_origin.or(compiled_anchor) {
                         Some(a) => {
                             let Some(origin) = crate::renderer::types::resolve_anchor_origin(
                                 &a,
@@ -1018,29 +1343,38 @@ impl ViewportRenderer {
                             ) else {
                                 continue;
                             };
-                            [origin[0] + r.translate[0], origin[1] + r.translate[1]]
+                            // Alignment only means something against an extent,
+                            // and a group compiled from one label already placed
+                            // its own alignment at compile time, so it is applied
+                            // only for an anchoring the submission set.
+                            let align = match (r.anchoring, bounds) {
+                                (Some(anchoring), Some((min, max))) => [
+                                    anchoring.align.x.align_shift(max[0] - min[0]) - min[0],
+                                    anchoring.align.y.align_shift(max[1] - min[1]) - min[1],
+                                ],
+                                _ => [0.0, 0.0],
+                            };
+                            [
+                                origin[0] + align[0] + r.transform.translate[0],
+                                origin[1] + align[1] + r.transform.translate[1],
+                            ]
                         }
-                        None => r.translate,
+                        None => r.transform.translate,
                     };
                     // Resolve the group's clip mask (if any) to this frame's
                     // clip-shape index and bbox, mirroring the immediate
                     // `stamp_clip`. The mask is registered as an immediate shape
                     // each frame; if it is absent this frame the group is unclipped.
                     let (clip_index, mask_bbox) =
-                        match r.clip_id.and_then(|id| clip_index_of.get(&id).copied()) {
+                        match r.clip.mask.and_then(|id| clip_index_of.get(&id).copied()) {
                             Some(ci) => (ci as f32, Some(clip_bboxes[ci as usize])),
                             None => (-1.0, None),
                         };
                     // Outer bbox in framebuffer pixels: the group's explicit
                     // `clip_rect` if set, else the mask's own bbox (a cheap reject
                     // matching the shaped mask), else none.
-                    let clip_rect = if r.clip_rect != [0.0, 0.0, 0.0, 0.0] {
-                        [
-                            r.clip_rect[0] * ppp,
-                            r.clip_rect[1] * ppp,
-                            r.clip_rect[2] * ppp,
-                            r.clip_rect[3] * ppp,
-                        ]
+                    let clip_rect = if let Some(rect) = r.clip.rect {
+                        [rect[0] * ppp, rect[1] * ppp, rect[2] * ppp, rect[3] * ppp]
                     } else if let Some(bb) = mask_bbox {
                         bb
                     } else {
@@ -1053,8 +1387,13 @@ impl ViewportRenderer {
                         clip_index,
                         clip_rect,
                         tint: r.tint,
-                        scale: r.scale,
-                        _pad: [0.0, 0.0, 0.0],
+                        scale: r.transform.scale,
+                        rotation: r.transform.rotation,
+                        // Logical pixels, like `translate`: the instance's
+                        // transform is applied to vertex positions, which are
+                        // logical. Only `clip_rect` is in framebuffer pixels,
+                        // because it is compared against @builtin(position).
+                        pivot: r.transform.pivot,
                     });
                     if let Some((vbuf, vcount)) = text {
                         let draw_index = self.overlay_retained_draws.len() as u32;
@@ -1205,11 +1544,12 @@ impl ViewportRenderer {
         let (gizmo_shapes, _) = self.gizmo_overlay_items(frame);
         // The bottom-left orientation indicator draws as overlay shapes too.
         let axes_shapes = self.axes_overlay_items(frame);
-        let has_textured_polyline_fill = frame
-            .overlays
-            .polylines
-            .iter()
-            .any(|p| p.closed && p.texture.is_some() && p.opacity > 0.0 && p.points.len() >= 3);
+        let has_textured_polyline_fill = frame.overlays.polylines.iter().any(|p| {
+            p.closed
+                && p.style.fill.texture_id().is_some()
+                && p.style.opacity > 0.0
+                && p.points.len() >= 3
+        });
         if !frame.overlays.shapes.is_empty()
             || !gizmo_shapes.is_empty()
             || !axes_shapes.is_empty()
@@ -1231,12 +1571,12 @@ impl ViewportRenderer {
 
                 let has_solid = sorted
                     .iter()
-                    .any(|s| s.texture.is_none() && s.backdrop_blur <= 0.0);
-                let has_tex =
-                    sorted.iter().any(|s| s.texture.is_some()) || has_textured_polyline_fill;
+                    .any(|s| s.style.fill.texture_id().is_none() && s.style.backdrop.blur <= 0.0);
+                let has_tex = sorted.iter().any(|s| s.style.fill.texture_id().is_some())
+                    || has_textured_polyline_fill;
                 let has_blur = sorted
                     .iter()
-                    .any(|s| s.backdrop_blur > 0.0 && s.texture.is_none());
+                    .any(|s| s.style.backdrop.blur > 0.0 && s.style.fill.texture_id().is_none());
                 if has_solid {
                     self.resources.ensure_overlay_shape_pipeline(device);
                 }
@@ -1290,7 +1630,7 @@ impl ViewportRenderer {
                 for shape_orig in &sorted {
                     // Mask-only shapes contribute a clip rectangle but are
                     // not drawn themselves.
-                    if shape_orig.clip_mask_id.is_some() {
+                    if shape_orig.provides_mask.is_some() {
                         continue;
                     }
                     // Vector shapes have no analytic SDF; the solid/textured
@@ -1303,59 +1643,21 @@ impl ViewportRenderer {
                     ) {
                         continue;
                     }
+                    super::overlay_style_check::warn_inert_style(
+                        "OverlayShapeItem",
+                        crate::renderer::types::OverlayStyleSupport::for_shape(&shape_orig.shape),
+                        &shape_orig.style,
+                    );
                     // Clone so per-frame animation overrides are local and
                     // the input frame data stays untouched.
                     let mut owned: crate::renderer::types::OverlayShapeItem = (*shape_orig).clone();
-                    if let Some(track) = owned.animations.opacity {
-                        // Multi-channel opacity track takes precedence over
-                        // the legacy `animation` field.
-                        owned.opacity = track.sample(overlay_time);
-                        owned.animation = crate::renderer::types::OverlayAnimation::None;
-                    }
-                    if let Some(track) = owned.animations.position {
-                        owned.position = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.size {
-                        owned.size = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.fill {
-                        if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
-                            owned.fill = crate::renderer::types::OverlayFill::Solid(
-                                track.sample(overlay_time).into(),
-                            );
-                        }
-                    }
-                    if let Some(track) = owned.animations.border {
-                        owned.border_colour = track.sample(overlay_time).into();
-                    }
-                    if let Some(track) = owned.animations.rotation {
-                        owned.rotation = track.sample(overlay_time);
-                    }
-                    // Path tracks override the matching linear track when
-                    // both are set. `opacity_path` also takes precedence
-                    // over the legacy `animation` field.
-                    if let Some(track) = owned.animations.opacity_path.clone() {
-                        owned.opacity = track.sample(overlay_time);
-                        owned.animation = crate::renderer::types::OverlayAnimation::None;
-                    }
-                    if let Some(track) = owned.animations.position_path.clone() {
-                        owned.position = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.size_path.clone() {
-                        owned.size = track.sample(overlay_time);
-                    }
-                    if let Some(track) = owned.animations.fill_path.clone() {
-                        if let crate::renderer::types::OverlayFill::Solid(_) = owned.fill {
-                            owned.fill = crate::renderer::types::OverlayFill::Solid(
-                                track.sample(overlay_time).into(),
-                            );
-                        }
-                    }
-                    if let Some(track) = owned.animations.border_path.clone() {
-                        owned.border_colour = track.sample(overlay_time).into();
-                    }
-                    if let Some(track) = owned.animations.rotation_path.clone() {
-                        owned.rotation = track.sample(overlay_time);
+                    if let Some(anims) = owned.animations.take() {
+                        anims.apply(
+                            overlay_time,
+                            &mut owned.transform,
+                            &mut owned.style.opacity,
+                            &mut owned.style.tint,
+                        );
                     }
                     // Resolve the anchor origin + animated position + alignment
                     // to an absolute top-left, then draw the shape as if it were
@@ -1368,33 +1670,9 @@ impl ViewportRenderer {
                     let Some(resolved_tl) = owned.resolve_top_left([vp_w, vp_h], view, proj) else {
                         continue;
                     };
-                    owned.position = resolved_tl;
+                    owned.transform.translate = resolved_tl;
                     let shape = &owned;
-                    // Resolve animation to final opacity.
-                    let resolved_opacity = match shape.animation {
-                        crate::renderer::types::OverlayAnimation::None => shape.opacity,
-                        crate::renderer::types::OverlayAnimation::FadeIn {
-                            start_time,
-                            duration,
-                        } => {
-                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6))
-                                .clamp(0.0, 1.0);
-                            shape.opacity * t
-                        }
-                        crate::renderer::types::OverlayAnimation::FadeOut {
-                            start_time,
-                            duration,
-                        } => {
-                            let t = ((overlay_time - start_time) as f32 / duration.max(1e-6))
-                                .clamp(0.0, 1.0);
-                            shape.opacity * (1.0 - t)
-                        }
-                        crate::renderer::types::OverlayAnimation::Pulse { start_time, period } => {
-                            let t = ((overlay_time - start_time) as f32) / period.max(1e-6);
-                            let wave = (t * std::f32::consts::TAU).sin() * 0.5 + 0.5;
-                            shape.opacity * wave
-                        }
-                    };
+                    let resolved_opacity = shape.style.opacity;
 
                     if resolved_opacity <= 0.0 {
                         continue;
@@ -1402,22 +1680,15 @@ impl ViewportRenderer {
 
                     let hw = shape.size[0] * 0.5;
                     let hh = shape.size[1] * 0.5;
-                    let cx = shape.position[0] + hw;
-                    let cy = shape.position[1] + hh;
+                    let cx = shape.transform.translate[0] + hw;
+                    let cy = shape.transform.translate[1] + hh;
 
                     // Outer-shadow extent that reaches past the shape edge.
                     // Inner shadows stay inside the shape, so they need no quad
                     // padding. Both the legacy single shadow and the stacked
                     // `shadows` layers contribute.
-                    let mut shadow_pad = if shape.shadow_radius > 0.0 {
-                        shape.shadow_radius
-                            + shape.shadow_offset[0]
-                                .abs()
-                                .max(shape.shadow_offset[1].abs())
-                    } else {
-                        0.0
-                    };
-                    for l in &shape.shadows {
+                    let mut shadow_pad = 0.0f32;
+                    for l in &shape.style.shadows {
                         shadow_pad = shadow_pad.max(l.extent());
                     }
 
@@ -1430,21 +1701,21 @@ impl ViewportRenderer {
                         _ => 0.0,
                     };
 
-                    // Base half-extents including the border, before rotation.
-                    let bx = hw + shape.border_width + extra_expand;
-                    let by = hh + shape.border_width + extra_expand;
+                    // Base half-extents before rotation.
+                    let bx = hw + extra_expand;
+                    let by = hh + extra_expand;
 
                     // Rotation about the pivot moves the shape's corners out of
                     // the axis-aligned box, so grow the quad to the AABB of the
-                    // rotated border box (matching how the fragment shader maps
+                    // rotated bounding box (matching how the fragment shader maps
                     // the rotated shape into the quad). Without this a rotated
                     // rect, capsule, or off-centre pivot clips against its own
                     // quad. A zero rotation with a zero pivot leaves bx/by
                     // unchanged.
-                    let (rx, ry) = if shape.rotation != 0.0 {
-                        let c = shape.rotation.cos();
-                        let s = shape.rotation.sin();
-                        let piv = shape.rotation_pivot;
+                    let (rx, ry) = if shape.transform.rotation != 0.0 {
+                        let c = shape.transform.rotation.cos();
+                        let s = shape.transform.rotation.sin();
+                        let piv = shape.transform.pivot;
                         let mut mx = 0.0_f32;
                         let mut my = 0.0_f32;
                         for cxp in [-bx, bx] {
@@ -1545,7 +1816,7 @@ impl ViewportRenderer {
                     let mut stop_colours = [[0.0f32; 4]; 4];
                     let mut stop_positions = [0.0_f32, 1.0, 1.0, 1.0];
                     let stop_count: f32;
-                    let gradient_params = match &shape.fill {
+                    let gradient_params = match &shape.style.fill {
                         crate::renderer::types::OverlayFill::Solid(c) => {
                             stop_colours[0] = c.to_linear_rgba();
                             stop_colours[1] = c.to_linear_rgba();
@@ -1599,6 +1870,14 @@ impl ViewportRenderer {
                             stop_count = pack_stops(stops, &mut stop_colours, &mut stop_positions);
                             [3.0_f32, *offset_angle]
                         }
+                        // A texture fill has no gradient: its tint is the
+                        // colour the sample is multiplied by.
+                        crate::renderer::types::OverlayFill::Texture { tint, .. } => {
+                            stop_colours[0] = tint.to_linear_rgba();
+                            stop_colours[1] = stop_colours[0];
+                            stop_count = 0.0;
+                            [0.0_f32, 0.0]
+                        }
                         // OverlayFill is non_exhaustive; render unknown fills as a flat no-op gradient.
                         _ => {
                             stop_count = 0.0;
@@ -1612,40 +1891,83 @@ impl ViewportRenderer {
                     for colour in &mut stop_colours {
                         colour[3] *= resolved_opacity;
                     }
+                    // Fold the item tint into the fill and gradient colours. It
+                    // stops there: a tint never reaches a shadow layer,
+                    // matching the group tint the shaders apply.
+                    let tint = shape.style.tint;
+                    for colour in &mut stop_colours {
+                        for (c, t) in colour.iter_mut().zip(tint) {
+                            *c *= t;
+                        }
+                    }
                     let fc = stop_colours[0];
                     let fc2 = stop_colours[1];
                     let _ = (start_colour, end_colour);
-                    let mut bc = shape.border_colour.to_linear_rgba();
-                    bc[3] *= resolved_opacity;
 
                     let half_size = [hw, hh];
 
-                    let mut sc = shape.shadow_colour.to_linear_rgba();
-                    sc[3] *= resolved_opacity;
-                    let border_mode_f = match shape.border_mode {
-                        crate::renderer::types::BorderMode::Inset => 0.0,
-                        crate::renderer::types::BorderMode::Outer => 1.0,
-                        crate::renderer::types::BorderMode::Center => 2.0,
-                    };
-                    // Pack the inset-shadow flag alongside border_mode in
-                    // shadow_params.w. The shader decodes via (combined % 3)
-                    // for border_mode and (combined >= 3) for inset.
-                    let inset_flag = if shape.shadow_inset { 3.0 } else { 0.0 };
-                    let shadow_params = [
-                        shape.shadow_radius,
-                        shape.shadow_offset[0],
-                        shape.shadow_offset[1],
-                        border_mode_f + inset_flag,
-                    ];
+                    // Build the stacked shadow layers for this shape: outer
+                    // layers first, then inner, appended to the shared frame
+                    // buffer. The solid, textured and backdrop-blur pipelines
+                    // all read that buffer, so a shape takes the same layers
+                    // whichever one draws it.
+                    let base_index = shadow_layers.len();
+                    let mut outer_count = 0usize;
+                    let mut inner_count = 0usize;
+                    let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
+                    for l in shape.style.shadows.iter().take(max_layers) {
+                        let mut col = l.colour.to_linear_rgba();
+                        col[3] *= resolved_opacity;
+                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                            colour: col,
+                            params: [l.blur, l.offset[0], l.offset[1], 0.0],
+                            params2: [l.spread, l.falloff, 0.0, 0.0],
+                        });
+                        outer_count += 1;
+                    }
+                    for l in shape.style.inner_shadows.iter().take(max_layers) {
+                        let mut col = l.colour.to_linear_rgba();
+                        col[3] *= resolved_opacity;
+                        shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
+                            colour: col,
+                            params: [l.blur, l.offset[0], l.offset[1], 1.0],
+                            params2: [l.spread, l.falloff, 0.0, 0.0],
+                        });
+                        inner_count += 1;
+                    }
+                    let shadow_index = [base_index as f32, outer_count as f32, inner_count as f32];
 
                     // Emit 6 vertices (two triangles) for the bounding quad.
+                    // Scale the quad about the pivot while `local_pos`,
+                    // `half_size` and `radii` stay in the shape's own frame, so
+                    // the SDF is evaluated unscaled and the quad carries the
+                    // scaling, the same way the group transform does in the
+                    // shader. Rotation is not folded in here: it rides the
+                    // `rotation_pivot` vertex attribute and turns the sample
+                    // point instead.
+                    let item_scale = shape.transform.scale;
+                    let pivot_px = [cx + shape.transform.pivot[0], cy + shape.transform.pivot[1]];
+                    let scaled = |x: f32, y: f32| {
+                        if item_scale == 1.0 {
+                            (x, y)
+                        } else {
+                            (
+                                pivot_px[0] + (x - pivot_px[0]) * item_scale,
+                                pivot_px[1] + (y - pivot_px[1]) * item_scale,
+                            )
+                        }
+                    };
+                    let corner = |x: f32, y: f32, lx: f32, ly: f32| {
+                        let (px, py) = scaled(x, y);
+                        (px, py, lx, ly)
+                    };
                     let corners_px = [
-                        (cx - ex, cy - ey, -ex, -ey),
-                        (cx + ex, cy - ey, ex, -ey),
-                        (cx + ex, cy + ey, ex, ey),
-                        (cx - ex, cy - ey, -ex, -ey),
-                        (cx + ex, cy + ey, ex, ey),
-                        (cx - ex, cy + ey, -ex, ey),
+                        corner(cx - ex, cy - ey, -ex, -ey),
+                        corner(cx + ex, cy - ey, ex, -ey),
+                        corner(cx + ex, cy + ey, ex, ey),
+                        corner(cx - ex, cy - ey, -ex, -ey),
+                        corner(cx + ex, cy + ey, ex, ey),
+                        corner(cx - ex, cy + ey, -ex, ey),
                     ];
 
                     // Resolve the clip mask for this shape (shared by the solid,
@@ -1654,17 +1976,32 @@ impl ViewportRenderer {
                     // treat as no clipping. The bbox and index come from the same
                     // registry entry, so they never disagree.
                     let clip_index_i = shape
-                        .clip_id
+                        .clip
+                        .mask
                         .and_then(|id| clip_index_of.get(&id).copied())
                         .unwrap_or(-1);
-                    let clip_rect = if clip_index_i >= 0 {
+                    let mask_rect = if clip_index_i >= 0 {
                         clip_bboxes[clip_index_i as usize]
                     } else {
                         [0.0, 0.0, 0.0, 0.0]
                     };
+                    let clip_rect = match shape.clip.rect {
+                        Some(r) => combine_clip_rects(
+                            mask_rect,
+                            [r[0] * ppp, r[1] * ppp, r[2] * ppp, r[3] * ppp],
+                        ),
+                        None => mask_rect,
+                    };
                     let clip_index = clip_index_i as f32;
 
-                    if let Some(tex_id) = shape.texture {
+                    if let crate::renderer::types::OverlayFill::Texture {
+                        id: tex_id,
+                        transform: tex_transform,
+                        nine_slice: tex_nine_slice,
+                        ..
+                    } = &shape.style.fill
+                    {
+                        let tex_id = *tex_id;
                         // Find or create a group for this texture ID.
                         let group_idx = tex_groups
                             .iter()
@@ -1687,7 +2024,7 @@ impl ViewportRenderer {
                         // (using the bound texture's size) and to shape-fraction
                         // ratios for the shader's piecewise UV remap.
                         let (nine_uv, nine_frac, nine_extras_yzw) =
-                            if let Some(ns) = shape.nine_slice {
+                            if let Some(ns) = *tex_nine_slice {
                                 let tex_size = self
                                     .resources
                                     .content
@@ -1718,7 +2055,7 @@ impl ViewportRenderer {
                                 ([0.0; 4], [0.0; 4], [0.0, 0.0, 0.0])
                             };
 
-                        let tt = shape.texture_transform;
+                        let tt = *tex_transform;
                         let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
                         let tt_b = [
                             tt.rotation,
@@ -1731,14 +2068,11 @@ impl ViewportRenderer {
                                 position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
-                                border_colour: bc,
                                 half_size,
                                 radii,
-                                border_width: shape.border_width,
                                 shape_type,
                                 uv: [(lx + hw_s) / (2.0 * hw_s), (ly + hh_s) / (2.0 * hh_s)],
-                                shadow_colour: sc,
-                                shadow_params,
+                                shadow_index,
                                 extras: [
                                     0.0,
                                     nine_extras_yzw[0],
@@ -1759,30 +2093,27 @@ impl ViewportRenderer {
                             tex_seg_start,
                             group_verts.len() as u32 - tex_seg_start,
                         ));
-                    } else if shape.backdrop_blur > 0.0 {
-                        max_blur_radius = max_blur_radius.max(shape.backdrop_blur);
+                    } else if shape.style.backdrop.blur > 0.0 {
+                        max_blur_radius = max_blur_radius.max(shape.style.backdrop.blur);
                         // Blur backdrop: same tex vertex layout but UV is screen-space.
                         for (px, py, lx, ly) in corners_px {
                             blur_verts.push(crate::resources::OverlayShapeTexVertex {
                                 position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
-                                border_colour: bc,
                                 half_size,
                                 radii,
-                                border_width: shape.border_width,
                                 shape_type,
                                 uv: [px / vp_w, py / vp_h],
-                                shadow_colour: sc,
-                                shadow_params,
+                                shadow_index,
                                 // extras.x = 1.0 flags the blur path; yzw carry
                                 // the backdrop colour filters (saturation,
                                 // brightness, hue-shift radians).
                                 extras: [
                                     1.0,
-                                    shape.backdrop_saturation,
-                                    shape.backdrop_brightness,
-                                    shape.backdrop_hue_shift,
+                                    shape.style.backdrop.saturation,
+                                    shape.style.backdrop.brightness,
+                                    shape.style.backdrop.hue_shift,
                                 ],
                                 nine_slice_uv: [0.0; 4],
                                 nine_slice_frac: [0.0; 4],
@@ -1798,73 +2129,10 @@ impl ViewportRenderer {
                         // gradient_params is now vec4: [type, angle, stop_count, _pad]
                         let gp4 = [gradient_params[0], gradient_params[1], stop_count, 0.0];
 
-                        // Build the stacked shadow layers for this shape:
-                        // outer layers first, then inner, appended to the
-                        // shared frame buffer. Prefer the Vec-based lists; fall
-                        // back to the single legacy `shadow_*` fields so old
-                        // call sites keep working.
-                        let base_index = shadow_layers.len();
-                        let mut outer_count = 0usize;
-                        let mut inner_count = 0usize;
-                        let max_layers = crate::renderer::types::OVERLAY_MAX_SHADOW_LAYERS;
-                        if !shape.shadows.is_empty() {
-                            for l in shape.shadows.iter().take(max_layers) {
-                                let mut col = l.colour.to_linear_rgba();
-                                col[3] *= resolved_opacity;
-                                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                    colour: col,
-                                    params: [l.blur, l.offset[0], l.offset[1], 0.0],
-                                    params2: [l.spread, l.falloff, 0.0, 0.0],
-                                });
-                                outer_count += 1;
-                            }
-                        } else if shape.shadow_radius > 0.0 && !shape.shadow_inset {
-                            shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                colour: sc,
-                                params: [
-                                    shape.shadow_radius,
-                                    shape.shadow_offset[0],
-                                    shape.shadow_offset[1],
-                                    0.0,
-                                ],
-                                params2: [0.0, 1.0, 0.0, 0.0],
-                            });
-                            outer_count += 1;
-                        }
-                        if !shape.inner_shadows.is_empty() {
-                            for l in shape.inner_shadows.iter().take(max_layers) {
-                                let mut col = l.colour.to_linear_rgba();
-                                col[3] *= resolved_opacity;
-                                shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                    colour: col,
-                                    params: [l.blur, l.offset[0], l.offset[1], 1.0],
-                                    params2: [l.spread, l.falloff, 0.0, 0.0],
-                                });
-                                inner_count += 1;
-                            }
-                        } else if shape.shadow_radius > 0.0 && shape.shadow_inset {
-                            shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
-                                colour: sc,
-                                params: [
-                                    shape.shadow_radius,
-                                    shape.shadow_offset[0],
-                                    shape.shadow_offset[1],
-                                    1.0,
-                                ],
-                                params2: [0.0, 1.0, 0.0, 0.0],
-                            });
-                            inner_count += 1;
-                        }
-                        let shadow_index = [
-                            base_index as f32,
-                            outer_count as f32,
-                            inner_count as f32,
-                            border_mode_f,
-                        ];
                         let rotation_pivot = [
-                            shape.rotation,
-                            shape.rotation_pivot[0],
-                            shape.rotation_pivot[1],
+                            shape.transform.rotation,
+                            shape.transform.pivot[0],
+                            shape.transform.pivot[1],
                             0.0,
                         ];
                         let solid_seg_start = solid_verts.len() as u32;
@@ -1873,10 +2141,8 @@ impl ViewportRenderer {
                                 position: overlay_local_px(px, py, vp_w, vp_h),
                                 local_pos: [lx, ly],
                                 fill_colour: fc,
-                                border_colour: bc,
                                 half_size,
                                 radii,
-                                border_width: shape.border_width,
                                 shape_type,
                                 fill_colour2: fc2,
                                 gradient_params: gp4,
@@ -1901,10 +2167,17 @@ impl ViewportRenderer {
                 }
 
                 for poly in &frame.overlays.polylines {
-                    let Some(tex_id) = poly.texture else {
+                    let crate::renderer::types::OverlayFill::Texture {
+                        id: tex_id,
+                        transform: tex_transform,
+                        tint: tex_tint,
+                        ..
+                    } = &poly.style.fill
+                    else {
                         continue;
                     };
-                    if !poly.closed || poly.opacity <= 0.0 || poly.points.len() < 3 {
+                    let tex_id = *tex_id;
+                    if !poly.closed || poly.style.opacity <= 0.0 || poly.points.len() < 3 {
                         continue;
                     }
                     // Resolve the anchor to a screen offset and translate the
@@ -1938,7 +2211,8 @@ impl ViewportRenderer {
                     // absent mask id falls through to a -1 index and an all-zero
                     // rect, which the shader reads as no clipping.
                     let clip_index_i = poly
-                        .clip_id
+                        .clip
+                        .mask
                         .and_then(|id| clip_index_of.get(&id).copied())
                         .unwrap_or(-1);
                     let poly_clip_rect = if clip_index_i >= 0 {
@@ -1960,16 +2234,13 @@ impl ViewportRenderer {
                     let size = [(max[0] - min[0]).max(1e-6), (max[1] - min[1]).max(1e-6)];
                     let centre = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
                     let half_size = [size[0] * 0.5, size[1] * 0.5];
-                    let mut tint = match &poly.fill {
-                        Some(crate::renderer::types::OverlayFill::Solid(c)) => c.to_linear_rgba(),
-                        _ => [1.0, 1.0, 1.0, 1.0],
-                    };
-                    tint[3] *= poly.opacity;
+                    let mut tint = tex_tint.to_linear_rgba();
+                    tint[3] *= poly.style.opacity;
                     let explicit_uvs = poly
                         .uvs
                         .as_ref()
                         .filter(|uvs| uvs.len() == poly.points.len());
-                    let tt = poly.texture_transform;
+                    let tt = *tex_transform;
                     let tt_a = [tt.offset[0], tt.offset[1], tt.scale[0], tt.scale[1]];
                     let tt_b = [
                         tt.rotation,
@@ -1989,14 +2260,11 @@ impl ViewportRenderer {
                                 position: overlay_local_px(p[0], p[1], vp_w, vp_h),
                                 local_pos: local,
                                 fill_colour: tint,
-                                border_colour: [0.0; 4],
                                 half_size,
                                 radii: [0.0; 4],
-                                border_width: 0.0,
                                 shape_type: 0.0,
                                 uv,
-                                shadow_colour: [0.0; 4],
-                                shadow_params: [0.0; 4],
+                                shadow_index: [0.0; 3],
                                 extras: [0.0; 4],
                                 nine_slice_uv: [0.0; 4],
                                 nine_slice_frac: [0.0; 4],
@@ -2025,7 +2293,10 @@ impl ViewportRenderer {
                 // The solid pipeline layout always expects group 0, so we
                 // provide at least one (dummy) element even when no shape has
                 // shadows.
-                let (shadow_bind_group, shadow_buf, shape_clip_buf) = if solid_vbuf.is_some() {
+                // One shadow-layer buffer per frame, read by all three shape
+                // pipelines. A layer is always present so the storage binding
+                // has something to point at.
+                let shadow_buf = if solid_vbuf.is_some() || has_tex || has_blur {
                     if shadow_layers.is_empty() {
                         shadow_layers.push(crate::resources::OverlayShadowLayerGpu {
                             colour: [0.0; 4],
@@ -2041,37 +2312,44 @@ impl ViewportRenderer {
                         mapped_at_creation: false,
                     });
                     queue.write_buffer(&buf, 0, bytemuck::cast_slice(&shadow_layers));
-                    let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
-                    let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
-                    let inst_buf = self.overlay_instances_buf.as_ref().unwrap();
-                    let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
-                        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
-                            label: Some("overlay_shape_shadow_bg"),
-                            layout: bgl,
-                            entries: &[
-                                crate::gpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: clip_buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: vp_buf.as_entire_binding(),
-                                },
-                                crate::gpu::BindGroupEntry {
-                                    binding: 3,
-                                    resource: inst_buf.as_entire_binding(),
-                                },
-                            ],
-                        })
-                    });
-                    (bg, Some(buf), Some(clip_buf))
+                    Some(buf)
                 } else {
-                    (None, None, None)
+                    None
                 };
+
+                let (shadow_bind_group, shape_clip_buf) =
+                    if let (true, Some(buf)) = (solid_vbuf.is_some(), shadow_buf.as_ref()) {
+                        let clip_buf = upload_clip_buffer(device, queue, &clip_shapes);
+                        let vp_buf = self.overlay_viewport_buf.as_ref().unwrap();
+                        let inst_buf = self.overlay_instances_buf.as_ref().unwrap();
+                        let bg = self.resources.overlay_shape.shadow_bgl.as_ref().map(|bgl| {
+                            device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+                                label: Some("overlay_shape_shadow_bg"),
+                                layout: bgl,
+                                entries: &[
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: clip_buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: vp_buf.as_entire_binding(),
+                                    },
+                                    crate::gpu::BindGroupEntry {
+                                        binding: 3,
+                                        resource: inst_buf.as_entire_binding(),
+                                    },
+                                ],
+                            })
+                        });
+                        (bg, Some(clip_buf))
+                    } else {
+                        (None, None)
+                    };
 
                 let mut tex_batches = Vec::new();
                 // Maps a texture group index to its batch index in `tex_batches`
@@ -2170,6 +2448,10 @@ impl ViewportRenderer {
                                     binding: 1,
                                     resource: vp_buf.as_entire_binding(),
                                 },
+                                crate::gpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: shadow_buf.as_ref().unwrap().as_entire_binding(),
+                                },
                             ],
                         });
                         (Some(bg), Some(clip_buf))
@@ -2236,9 +2518,9 @@ mod clip_registry_tests {
             [100.0, 50.0],
             [200.0, 100.0],
         )
-        .with_clip_mask(10);
+        .provides_mask(10);
         let child = OverlayShapeItem::new(OverlayShape::Circle, [110.0, 60.0], [80.0, 80.0])
-            .with_clip_mask(20)
+            .provides_mask(20)
             .with_clip(10);
         let (gpu, map, bboxes) = build_clip_shapes(
             &[parent, child],
@@ -2280,13 +2562,13 @@ mod clip_registry_tests {
             [0.0, 0.0],
             [100.0, 100.0],
         )
-        .with_clip_mask(5);
+        .provides_mask(5);
         let second = OverlayShapeItem::new(
             OverlayShape::Rect { corner_radius: 0.0 },
             [500.0, 500.0],
             [50.0, 50.0],
         )
-        .with_clip_mask(5);
+        .provides_mask(5);
         let (gpu, map, bboxes) = build_clip_shapes(
             &[first, second],
             1.0,

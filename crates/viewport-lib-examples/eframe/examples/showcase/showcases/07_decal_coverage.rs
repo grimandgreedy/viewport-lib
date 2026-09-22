@@ -900,7 +900,7 @@ impl Showcase for DecalCoverageShowcase {
                     [size.x, size.y],
                 )
                 .with_fill(OverlayFill::Solid([0.3, 0.6, 1.0, 0.12].into()))
-                .with_border([0.5, 0.8, 1.0, 0.9], 1.5);
+                .with_outline([0.5, 0.8, 1.0, 0.9], 1.5, vpl::OutlineMode::Inset);
                 session.frame_data_mut().overlays.shapes.push(rect);
             }
         }

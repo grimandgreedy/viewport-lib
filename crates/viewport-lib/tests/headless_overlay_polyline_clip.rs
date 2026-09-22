@@ -42,7 +42,7 @@ fn left_half_mask() -> OverlayShapeItem {
         [0.0, 0.0],
         [32.0, 64.0],
     )
-    .with_clip_mask(7)
+    .provides_mask(7)
 }
 
 /// A thick blue stroke across the full width at y = 32, which without a clip

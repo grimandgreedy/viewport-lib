@@ -54,9 +54,8 @@ use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
-    BorderMode, BuiltinColourmap, Colour, FontHandle, GlyphRunItem, LabelAnchor, LabelItem,
-    LineCap, OverlayAnimation, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph,
-    TriangleDirection,
+    BuiltinColourmap, Colour, FontHandle, GlyphRunItem, LabelAnchor, LabelItem, LineCap,
+    OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph, TriangleDirection,
 };
 
 /// System color-emoji fonts to try, in order. First one found is used.
@@ -119,19 +118,19 @@ pub(crate) fn build_glyph_run(app: &App) -> Vec<GlyphRunItem> {
     let t = app.ovl_state.start_time.elapsed().as_secs_f32();
     let count = 24usize;
     let mut glyphs = Vec::with_capacity(count);
-    let mut colours = Vec::with_capacity(count);
+    let mut glyph_tints = Vec::with_capacity(count);
     for i in 0..count {
         let x = i as f32 * 24.0;
         let y = (i as f32 * 0.5 + t * 2.0).sin() * 12.0;
         glyphs.push(PositionedGlyph::new(20 + i as u16, x, y));
-        colours.push(hue_rgba(i as f32 / count as f32));
+        glyph_tints.push(hue_rgba(i as f32 / count as f32));
     }
     vec![
         GlyphRunItem::new(glyphs)
             // A fixed row below the shape gallery, above the emoji row.
             .with_position([40.0, 870.0])
             .with_font_size(30.0)
-            .with_colours(colours),
+            .with_glyph_tints(glyph_tints),
     ]
 }
 
@@ -451,12 +450,14 @@ pub(crate) fn build_overlay_frame(
                 LabelItem::new(text)
                     .with_world_anchor(pos)
                     .with_colour(Colour::srgb(colour[0], colour[1], colour[2], colour[3]))
-                    .with_leader_line(true)
-                    .with_leader_colour(Colour::srgb(colour[0], colour[1], colour[2], 0.7))
-                    .with_background(true)
-                    .with_background_colour(Colour::srgb(0.0, 0.0, 0.0, 0.5))
-                    .with_border_radius(4.0)
-                    .with_padding(4.0)
+                    // A label draws text only: a contour keeps it readable over the
+                    // scene. For a real panel behind it, submit an OverlayShapeItem
+                    // with the same anchoring and the measured text plus padding.
+                    .with_outline(
+                        Colour::srgb(0.0, 0.0, 0.0, 0.8),
+                        2.0,
+                        vpl::OutlineMode::Outer,
+                    )
                     .with_align_x(LabelAnchor::Left),
             );
         }
@@ -610,7 +611,7 @@ fn row_solid_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) -> 
                 .with_fill(OverlayFill::Solid(Colour::srgb(
                     colour[0], colour[1], colour[2], colour[3],
                 )))
-                .with_border(
+                .with_outline(
                     Colour::srgb(
                         border_colour[0],
                         border_colour[1],
@@ -618,6 +619,7 @@ fn row_solid_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) -> 
                         border_colour[3],
                     ),
                     bw,
+                    OutlineMode::Inset,
                 )
                 .with_z_order(0),
         );
@@ -646,7 +648,7 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         shapes.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x2, y2_mid - sz * 0.5], [sz, sz])
                 .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-                .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2)
+                .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, OutlineMode::Inset)
                 .with_texture(tid),
         );
         x2 += sz + gap;
@@ -661,7 +663,7 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 [140.0, row2_h],
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_border(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw2)
+            .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw2, OutlineMode::Inset)
             .with_texture(tid),
         );
         x2 += 140.0 + gap;
@@ -674,13 +676,10 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
         let t = app.ovl_state.start_time.elapsed().as_secs_f32();
         shapes.push(
             OverlayShapeItem::new(OverlayShape::Circle, [x2, y2_mid - sz * 0.5], [sz, sz])
-                .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-                .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2)
-                .with_texture(tid)
-                .with_texture_transform(vpl::TextureTransform {
-                    rotation: t * 0.5,
-                    ..Default::default()
-                }),
+                .with_fill(OverlayFill::texture(tid).with_texture_transform(
+                    vpl::TextureTransform::default().with_rotation(t * 0.5),
+                ))
+                .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, OutlineMode::Inset),
         );
         x2 += sz + gap;
     }
@@ -694,14 +693,14 @@ fn row_textured(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 [x2, y2_mid - row2_h * 0.5],
                 [180.0, row2_h],
             )
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2)
-            .with_texture(tid)
-            .with_texture_transform(vpl::TextureTransform {
-                scale: [3.0, 3.0],
-                tile_mode: vpl::TileMode::Tile,
-                ..Default::default()
-            }),
+            .with_fill(
+                OverlayFill::texture(tid).with_texture_transform(
+                    vpl::TextureTransform::default()
+                        .with_scale([3.0, 3.0])
+                        .with_tile_mode(vpl::TileMode::Tile),
+                ),
+            )
+            .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.9), bw2, OutlineMode::Inset),
         );
     }
 }
@@ -728,7 +727,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.05, 0.65, 0.65, 0.9),
             angle: 0.0,
         })
-        .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw),
+        .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -746,7 +745,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(1.0, 0.6, 0.1, 0.9),
             angle: PI / 4.0,
         })
-        .with_border(Colour::srgb(1.0, 0.5, 0.2, 0.8), bw),
+        .with_outline(Colour::srgb(1.0, 0.5, 0.2, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -762,7 +761,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.5, 1.0, 0.3, 0.9),
             angle: PI / 2.0,
         })
-        .with_border(Colour::srgb(0.4, 1.0, 0.3, 0.8), bw),
+        .with_outline(Colour::srgb(0.4, 1.0, 0.3, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -774,7 +773,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 end_colour: Colour::srgb(0.9, 0.3, 0.6, 0.9),
                 angle: 0.0,
             })
-            .with_border(Colour::srgb(0.8, 0.4, 1.0, 0.8), bw),
+            .with_outline(Colour::srgb(0.8, 0.4, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -786,7 +785,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 end_colour: Colour::srgb(0.85, 0.85, 0.85, 0.9),
                 angle: 0.0,
             })
-            .with_border(Colour::srgb(0.6, 0.6, 0.6, 0.8), bw),
+            .with_outline(Colour::srgb(0.6, 0.6, 0.6, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -804,7 +803,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.7, 0.9, 1.0, 0.9),
             angle: -PI / 4.0,
         })
-        .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw),
+        .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -822,7 +821,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(1.0, 0.9, 0.1, 0.9),
             angle: PI / 2.0,
         })
-        .with_border(Colour::srgb(1.0, 0.6, 0.2, 0.8), bw),
+        .with_outline(Colour::srgb(1.0, 0.6, 0.2, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 60.0 + gap;
 
@@ -837,7 +836,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             centre_colour: Colour::srgb(1.0, 0.95, 0.7, 1.0),
             edge_colour: Colour::srgb(0.2, 0.05, 0.0, 0.9),
         })
-        .with_border(Colour::srgb(1.0, 0.8, 0.4, 0.8), bw),
+        .with_outline(Colour::srgb(1.0, 0.8, 0.4, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -853,7 +852,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.2, 0.6, 1.0, 1.0),
             offset_angle: 0.0,
         })
-        .with_border(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw),
+        .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
     );
     x3 += row3_h + gap;
 
@@ -875,7 +874,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             ],
             angle: 0.0,
         })
-        .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.8), bw),
+        .with_outline(Colour::srgb(1.0, 0.85, 0.4, 0.8), bw, OutlineMode::Inset),
     );
     x3 += 120.0 + gap;
 
@@ -896,7 +895,7 @@ fn row_gradients(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             ],
             offset_angle: 0.0,
         })
-        .with_border(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw),
+        .with_outline(Colour::srgb(0.9, 0.9, 0.9, 0.8), bw, OutlineMode::Inset),
     );
     let _ = x3;
 }
@@ -918,8 +917,12 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, row4_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.95)))
-        .with_border(Colour::srgb(0.5, 0.5, 0.6, 0.8), bw)
-        .with_shadow([0.0, 0.0, 0.0, 0.5], 12.0, [4.0, 4.0]),
+        .with_outline(Colour::srgb(0.5, 0.5, 0.6, 0.8), bw, OutlineMode::Inset)
+        .with_shadows(vec![vpl::ShadowLayer::new(
+            [0.0, 0.0, 0.0, 0.5],
+            12.0,
+            [4.0, 4.0],
+        )]),
     );
     x4 += 120.0 + gap + 16.0; // extra gap for shadow bleed
 
@@ -928,8 +931,12 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Circle, [x4, y4_mid - sz * 0.5], [sz, sz])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.15, 0.35, 0.95)))
-            .with_border(Colour::srgb(0.3, 0.5, 1.0, 0.9), bw)
-            .with_shadow([0.2, 0.4, 1.0, 0.6], 16.0, [0.0, 0.0]),
+            .with_outline(Colour::srgb(0.3, 0.5, 1.0, 0.9), bw, OutlineMode::Inset)
+            .with_shadows(vec![vpl::ShadowLayer::new(
+                [0.2, 0.4, 1.0, 0.6],
+                16.0,
+                [0.0, 0.0],
+            )]),
     );
     x4 += sz + gap + 16.0;
 
@@ -937,8 +944,12 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Capsule, [x4, y4_mid - 20.0], [120.0, 40.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.15, 0.05, 0.95)))
-            .with_border(Colour::srgb(1.0, 0.6, 0.2, 0.9), bw)
-            .with_shadow([1.0, 0.5, 0.1, 0.45], 14.0, [0.0, 2.0]),
+            .with_outline(Colour::srgb(1.0, 0.6, 0.2, 0.9), bw, OutlineMode::Inset)
+            .with_shadows(vec![vpl::ShadowLayer::new(
+                [1.0, 0.5, 0.1, 0.45],
+                14.0,
+                [0.0, 2.0],
+            )]),
     );
     x4 += 120.0 + gap + 16.0;
 
@@ -946,8 +957,12 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Ellipse, [x4, y4_mid - 30.0], [120.0, 60.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.3, 0.15, 0.95)))
-            .with_border(Colour::srgb(0.5, 0.9, 0.3, 0.9), bw)
-            .with_shadow([0.0, 0.0, 0.0, 0.45], 10.0, [3.0, 5.0]),
+            .with_outline(Colour::srgb(0.5, 0.9, 0.3, 0.9), bw, OutlineMode::Inset)
+            .with_shadows(vec![vpl::ShadowLayer::new(
+                [0.0, 0.0, 0.0, 0.45],
+                10.0,
+                [3.0, 5.0],
+            )]),
     );
     x4 += 120.0 + gap + 16.0;
 
@@ -961,13 +976,17 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [60.0, row4_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.05, 0.25, 0.1, 0.95)))
-        .with_border(Colour::srgb(0.3, 1.0, 0.4, 0.9), bw)
-        .with_shadow([0.1, 0.8, 0.2, 0.5], 14.0, [0.0, 0.0]),
+        .with_outline(Colour::srgb(0.3, 1.0, 0.4, 0.9), bw, OutlineMode::Inset)
+        .with_shadows(vec![vpl::ShadowLayer::new(
+            [0.1, 0.8, 0.2, 0.5],
+            14.0,
+            [0.0, 0.0],
+        )]),
     );
     x4 += 60.0 + gap + 16.0;
 
-    // Pressed-button effect using shadow_inset: a dark inner shadow
-    // offset slightly down makes the surface read as recessed.
+    // Pressed-button effect from an inner shadow layer: dark, and
+    // offset slightly down, so the surface reads as recessed.
     shapes.push(
         OverlayShapeItem::new(
             OverlayShape::Rect { corner_radius: cr },
@@ -975,9 +994,12 @@ fn row_shadows(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, row4_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.22, 0.24, 0.30, 1.0)))
-        .with_border(Colour::srgb(0.05, 0.07, 0.12, 0.9), 1.0)
-        .with_shadow([0.0, 0.0, 0.0, 0.7], 14.0, [0.0, 4.0])
-        .with_shadow_inset(true),
+        .with_outline(Colour::srgb(0.05, 0.07, 0.12, 0.9), 1.0, OutlineMode::Inset)
+        .with_inner_shadows(vec![vpl::ShadowLayer::new(
+            [0.0, 0.0, 0.0, 0.7],
+            14.0,
+            [0.0, 4.0],
+        )]),
     );
     let _ = x4;
 }
@@ -1005,8 +1027,7 @@ fn row_anim(
             [100.0, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
-        .with_border(Colour::srgb(0.9, 0.9, 0.3, 1.0), 3.0)
-        .with_border_mode(BorderMode::Inset),
+        .with_outline(Colour::srgb(0.9, 0.9, 0.3, 1.0), 3.0, OutlineMode::Inset),
     );
     x5 += 100.0 + gap;
 
@@ -1018,8 +1039,7 @@ fn row_anim(
             [100.0, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
-        .with_border(Colour::srgb(0.3, 0.9, 0.5, 1.0), 3.0)
-        .with_border_mode(BorderMode::Outer),
+        .with_outline(Colour::srgb(0.3, 0.9, 0.5, 1.0), 3.0, OutlineMode::Outer),
     );
     x5 += 100.0 + gap;
 
@@ -1031,8 +1051,7 @@ fn row_anim(
             [row5_h, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.15, 0.15, 0.2, 0.9)))
-        .with_border(Colour::srgb(0.5, 0.5, 1.0, 1.0), 3.0)
-        .with_border_mode(BorderMode::Center),
+        .with_outline(Colour::srgb(0.5, 0.5, 1.0, 1.0), 3.0, OutlineMode::Centre),
     );
     x5 += row5_h + gap;
 
@@ -1044,11 +1063,14 @@ fn row_anim(
             [row5_h, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.5, 1.0, 0.9)))
-        .with_border(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw)
-        .with_animation(OverlayAnimation::Pulse {
-            start_time: 0.0,
-            period: 2.0,
-        }),
+        .with_outline(Colour::srgb(0.4, 0.7, 1.0, 0.9), bw, OutlineMode::Inset)
+        .with_animations(
+            vpl::OverlayAnimations::default().with_opacity(
+                vpl::AnimTrack::new(0.0, 2.0, 0.0, 0.9)
+                    .with_easing(vpl::OverlayEasing::Pulse)
+                    .with_repeat(vpl::RepeatMode::Loop),
+            ),
+        ),
     );
     x5 += row5_h + gap;
 
@@ -1059,11 +1081,11 @@ fn row_anim(
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Capsule, [x5, y5_mid - 20.0], [120.0, 40.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(0.6, 0.2, 0.1, 0.9)))
-            .with_border(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw)
-            .with_animation(OverlayAnimation::FadeIn {
-                start_time: fade_start,
-                duration: 3.0,
-            }),
+            .with_outline(Colour::srgb(1.0, 0.5, 0.3, 0.9), bw, OutlineMode::Inset)
+            .with_animations(
+                vpl::OverlayAnimations::default()
+                    .with_opacity(vpl::AnimTrack::new(fade_start, 3.0, 0.0, 0.9)),
+            ),
     );
     x5 += 120.0 + gap;
 
@@ -1088,7 +1110,7 @@ fn row_anim(
             offset_angle: 0.0,
         })
         .with_rotation(t * 0.8)
-        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw),
+        .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw, OutlineMode::Inset),
     );
     x5 += row5_h + gap;
 
@@ -1103,7 +1125,7 @@ fn row_anim(
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.3, 0.8, 0.5, 0.9)))
         .with_rotation(-t * 1.2)
-        .with_border(Colour::srgb(0.5, 1.0, 0.7, 0.9), bw),
+        .with_outline(Colour::srgb(0.5, 1.0, 0.7, 0.9), bw, OutlineMode::Inset),
     );
     x5 += row5_h + gap;
 
@@ -1120,16 +1142,18 @@ fn row_anim(
             [44.0, 28.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.65, 0.25, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw)
+        .with_outline(Colour::srgb(1.0, 0.85, 0.4, 0.9), bw, OutlineMode::Inset)
         .with_animations(
-            vpl::OverlayAnimations::default().with_position(vpl::AnimTrack {
-                start_time: 0.0,
-                duration: 1.8,
-                from: [base_x, y5_mid - 14.0],
-                to: [base_x + 50.0, y5_mid - 14.0],
-                easing: vpl::OverlayEasing::EaseInOut,
-                repeat: vpl::RepeatMode::PingPong,
-            }),
+            vpl::OverlayAnimations::default().with_translate(
+                vpl::AnimTrack::new(
+                    0.0,
+                    1.8,
+                    [base_x, y5_mid - 14.0],
+                    [base_x + 50.0, y5_mid - 14.0],
+                )
+                .with_easing(vpl::OverlayEasing::EaseInOut)
+                .with_repeat(vpl::RepeatMode::PingPong),
+            ),
         ),
     );
     x5 += 100.0 + gap;
@@ -1144,27 +1168,16 @@ fn row_anim(
             [44.0, 44.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.45, 0.85, 1.0, 0.95)))
-        .with_border(Colour::srgb(0.7, 0.95, 1.0, 0.9), bw)
+        .with_outline(Colour::srgb(0.7, 0.95, 1.0, 0.9), bw, OutlineMode::Inset)
+        // Scale, not size: a scale rides the per-draw instance, so the same
+        // track animates a compiled group without re-tessellating it, and it
+        // pulses about the pivot so nothing has to recentre it.
         .with_animations(
-            vpl::OverlayAnimations::default()
-                .with_size(vpl::AnimTrack {
-                    start_time: 0.0,
-                    duration: 1.4,
-                    from: [44.0, 44.0],
-                    to: [64.0, 64.0],
-                    easing: vpl::OverlayEasing::Pulse,
-                    repeat: vpl::RepeatMode::Loop,
-                })
-                .with_position(vpl::AnimTrack {
-                    // Recentre while the size grows so the circle pulses
-                    // about its centre rather than drifting south-east.
-                    start_time: 0.0,
-                    duration: 1.4,
-                    from: [pulse_cx - 22.0, pulse_cy - 22.0],
-                    to: [pulse_cx - 32.0, pulse_cy - 32.0],
-                    easing: vpl::OverlayEasing::Pulse,
-                    repeat: vpl::RepeatMode::Loop,
-                }),
+            vpl::OverlayAnimations::default().with_scale(
+                vpl::AnimTrack::new(0.0, 1.4, 1.0, 1.45)
+                    .with_easing(vpl::OverlayEasing::Pulse)
+                    .with_repeat(vpl::RepeatMode::Loop),
+            ),
         ),
     );
     x5 += row5_h + gap;
@@ -1178,15 +1191,17 @@ fn row_anim(
             [70.0, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.25, 0.5, 0.95)))
-        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw)
-        .with_animations(vpl::OverlayAnimations::default().with_fill(vpl::AnimTrack {
-            start_time: 0.0,
-            duration: 1.6,
-            from: [0.95, 0.25, 0.5, 0.95],
-            to: [0.25, 0.55, 0.95, 0.95],
-            easing: vpl::OverlayEasing::EaseInOut,
-            repeat: vpl::RepeatMode::PingPong,
-        })),
+        .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.7), bw, OutlineMode::Inset)
+        // Tint, not fill: a tint is a per-draw multiplier, so a colour cycle
+        // costs nothing on a compiled group. The authored fill is white here so
+        // the tint reads as the colour.
+        .with_animations(
+            vpl::OverlayAnimations::default().with_tint(
+                vpl::AnimTrack::new(0.0, 1.6, [1.0, 0.55, 0.75, 1.0], [0.45, 0.75, 1.0, 1.0])
+                    .with_easing(vpl::OverlayEasing::EaseInOut)
+                    .with_repeat(vpl::RepeatMode::PingPong),
+            ),
+        ),
     );
     x5 += 70.0 + gap;
 
@@ -1202,16 +1217,13 @@ fn row_anim(
             [row5_h, row5_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.9, 0.3, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.95, 0.5, 0.9), bw)
+        .with_outline(Colour::srgb(1.0, 0.95, 0.5, 0.9), bw, OutlineMode::Inset)
         .with_animations(
-            vpl::OverlayAnimations::default().with_rotation(vpl::AnimTrack {
-                start_time: 0.0,
-                duration: 4.0,
-                from: 0.0,
-                to: std::f32::consts::TAU,
-                easing: vpl::OverlayEasing::Linear,
-                repeat: vpl::RepeatMode::Loop,
-            }),
+            vpl::OverlayAnimations::default().with_rotation(
+                vpl::AnimTrack::new(0.0, 4.0, 0.0, std::f32::consts::TAU)
+                    .with_easing(vpl::OverlayEasing::Linear)
+                    .with_repeat(vpl::RepeatMode::Loop),
+            ),
         ),
     );
     x5 += row5_h + gap;
@@ -1224,11 +1236,12 @@ fn row_anim(
         let cy = y5_mid;
         let dot_size = 22.0_f32;
 
-        let path = vpl::PathTrack::<[f32; 2]>::new(0.0, 4.5, move |t| {
-            let p = infinity_bezier_point(t, cx, cy);
-            [p[0] - dot_size * 0.5, p[1] - dot_size * 0.5]
-        })
-        .with_repeat(vpl::RepeatMode::Loop);
+        // A genuine motion path is the consumer's: sample the curve at this
+        // frame's time and set `position`. The library's track channels are the
+        // ones that survive compilation, and an arbitrary closure is not one of
+        // them.
+        let phase = (app.ovl_state.start_time.elapsed().as_secs_f32() / 4.5).fract();
+        let dot = infinity_bezier_point(phase, cx, cy);
 
         // Sample the same Bezier closure into the polyline trace.
         let trace = vpl::OverlayPolylineItem::from_path(
@@ -1246,8 +1259,8 @@ fn row_anim(
                 [dot_size, dot_size],
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.45, 0.85, 1.0)))
-            .with_border(Colour::srgb(1.0, 0.7, 0.95, 0.9), bw)
-            .with_animations(vpl::OverlayAnimations::default().with_position_path(path)),
+            .with_outline(Colour::srgb(1.0, 0.7, 0.95, 0.9), bw, OutlineMode::Inset)
+            .with_position([dot[0] - dot_size * 0.5, dot[1] - dot_size * 0.5]),
         );
         x5 += 260.0 + gap;
     }
@@ -1273,7 +1286,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [100.0, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.7, 1.0, 0.9)))
-        .with_border(Colour::srgb(0.5, 0.9, 1.0, 0.9), bw),
+        .with_outline(Colour::srgb(0.5, 0.9, 1.0, 0.9), bw, OutlineMode::Inset),
     );
     x6 += 100.0 + gap;
 
@@ -1288,7 +1301,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, 4.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 0.6, 0.2, 0.9)))
-        .with_border(Colour::srgb(1.0, 0.8, 0.4, 0.9), 0.0),
+        .with_outline(Colour::srgb(1.0, 0.8, 0.4, 0.9), 0.0, OutlineMode::Inset),
     );
     x6 += 120.0 + gap;
 
@@ -1303,7 +1316,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 0.85, 0.1, 0.9)))
-        .with_border(Colour::srgb(1.0, 1.0, 0.5, 0.9), bw),
+        .with_outline(Colour::srgb(1.0, 1.0, 0.5, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1318,7 +1331,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.3, 0.9, 0.9)))
-        .with_border(Colour::srgb(1.0, 0.6, 1.0, 0.9), bw),
+        .with_outline(Colour::srgb(1.0, 0.6, 1.0, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1330,7 +1343,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.2, 0.8, 0.4, 0.9)))
-        .with_border(Colour::srgb(0.4, 1.0, 0.6, 0.9), bw),
+        .with_outline(Colour::srgb(0.4, 1.0, 0.6, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1342,7 +1355,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.1, 0.5, 0.9, 0.9)))
-        .with_border(Colour::srgb(0.3, 0.7, 1.0, 0.9), bw),
+        .with_outline(Colour::srgb(0.3, 0.7, 1.0, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1356,7 +1369,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [row6_h, row6_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.2, 0.2, 0.9)))
-        .with_border(Colour::srgb(1.0, 0.5, 0.5, 0.9), bw),
+        .with_outline(Colour::srgb(1.0, 0.5, 0.5, 0.9), bw, OutlineMode::Inset),
     );
     x6 += row6_h + gap;
 
@@ -1374,7 +1387,7 @@ fn row_new_shapes(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             end_colour: Colour::srgb(0.1, 0.3, 1.0, 0.9),
             angle: std::f32::consts::PI * 0.25,
         })
-        .with_border(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw),
+        .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, OutlineMode::Inset),
     );
     let _ = x6;
 }
@@ -1403,7 +1416,7 @@ fn row_masks_and_polylines(
                 [px, py],
                 [poly_size * 0.5, poly_size],
             )
-            .with_clip_mask(7),
+            .provides_mask(7),
         );
         // Outline so the clip edge is visible.
         shapes.push(
@@ -1413,8 +1426,7 @@ fn row_masks_and_polylines(
                 [poly_size * 0.5, poly_size],
             )
             .with_fill(OverlayFill::Solid(Colour::srgb(0.0, 0.0, 0.0, 0.0)))
-            .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.5), 1.0)
-            .with_border_mode(BorderMode::Outer),
+            .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.5), 1.0, OutlineMode::Outer),
         );
         // The rotating decagon, sized to the full square. Only the
         // left half passes the clip.
@@ -1427,7 +1439,7 @@ fn row_masks_and_polylines(
             )
             .with_rotation(t * 0.6)
             .with_fill(OverlayFill::Solid(Colour::srgb(0.9, 0.55, 0.2, 0.95)))
-            .with_border(Colour::srgb(1.0, 0.8, 0.3, 0.9), bw)
+            .with_outline(Colour::srgb(1.0, 0.8, 0.3, 0.9), bw, OutlineMode::Inset)
             .with_clip(7),
         );
     }
@@ -1452,8 +1464,7 @@ fn row_masks_and_polylines(
                 [x_left, py],
                 [panel_w, panel_h],
             )
-            .with_texture(tid)
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0))),
+            .with_texture(tid),
         );
         // Right: same source, same size, 9-slice on.
         shapes.push(
@@ -1462,13 +1473,10 @@ fn row_masks_and_polylines(
                 [x_right, py],
                 [panel_w, panel_h],
             )
-            .with_texture(tid)
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_nine_slice(vpl::NineSlice {
-                insets_px: [10.0, 10.0, 10.0, 10.0],
-                centre_mode: vpl::TileMode::Stretch,
-                edge_mode: vpl::TileMode::Stretch,
-            }),
+            .with_fill(
+                OverlayFill::texture(tid)
+                    .with_nine_slice(vpl::NineSlice::new([10.0, 10.0, 10.0, 10.0])),
+            ),
         );
     }
 
@@ -1620,10 +1628,10 @@ fn row_masks_and_polylines(
             let mut blob = vpl::OverlayPolylineItem::closed_from_path(
                 blob_path,
                 64,
-                Some(OverlayFill::RadialGradient {
+                OverlayFill::RadialGradient {
                     centre_colour: Colour::srgb(0.9, 0.7, 0.2, 0.85),
                     edge_colour: Colour::srgb(0.7, 0.2, 0.5, 0.85),
-                }),
+                },
                 [1.0, 1.0, 1.0, 0.85],
                 2.0,
             );
@@ -1644,12 +1652,11 @@ fn row_masks_and_polylines(
                         [x_tex + a.cos() * (r + a5), y_poly + a.sin() * (r + a5)]
                     },
                     60,
-                    Some(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.95))),
+                    OverlayFill::texture(tid).with_tint(Colour::srgb(1.0, 1.0, 1.0, 0.95)),
                     [1.0, 0.9, 0.7, 0.9],
                     2.0,
                 );
                 // Leaving uvs None maps the path bounds to [0, 1] UVs.
-                textured.texture = Some(tid);
                 textured.z_order = 1;
                 polylines.push(textured);
             }
@@ -1679,7 +1686,7 @@ fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [120.0, row7_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.16, 0.17, 0.22, 1.0)))
-        .with_border(Colour::srgb(0.7, 0.72, 0.8, 0.9), 1.0)
+        .with_outline(Colour::srgb(0.7, 0.72, 0.8, 0.9), 1.0, OutlineMode::Inset)
         .with_shadows(vec![
             vpl::ShadowLayer::new([0.95, 0.25, 0.2, 0.85], 20.0, [16.0, 14.0]),
             vpl::ShadowLayer::new([0.2, 0.5, 1.0, 0.85], 20.0, [-16.0, -14.0]),
@@ -1703,7 +1710,7 @@ fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
             [16.0, hand_h],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.95, 0.75, 0.2, 0.95)))
-        .with_border(Colour::srgb(1.0, 0.9, 0.5, 0.9), bw)
+        .with_outline(Colour::srgb(1.0, 0.9, 0.5, 0.9), bw, OutlineMode::Inset)
         .with_rotation((t * 2.0).sin() * 0.7)
         .with_rotation_pivot([0.0, hand_h * 0.5]),
     );
@@ -1718,10 +1725,12 @@ fn row_new_features(app: &App, shapes: &mut Vec<OverlayShapeItem>, top: f32) {
                 [x7, y7_mid - row7_h * 0.5],
                 [110.0, row7_h],
             )
-            .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 1.0)))
-            .with_border(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw)
-            .with_texture(tid)
-            .with_texture_flip(false, true),
+            .with_fill(
+                OverlayFill::texture(tid).with_texture_transform(
+                    vpl::TextureTransform::default().with_flip(false, true),
+                ),
+            )
+            .with_outline(Colour::srgb(0.8, 0.8, 0.8, 0.9), bw, OutlineMode::Inset),
         );
     }
 }
@@ -1737,7 +1746,7 @@ fn row_backdrop(app: &App, shapes: &mut Vec<OverlayShapeItem>, row1_right: f32) 
     shapes.push(
         OverlayShapeItem::new(OverlayShape::Circle, [x + gap, 20.0], [140.0, 140.0])
             .with_fill(OverlayFill::Solid(Colour::srgb(1.0, 1.0, 1.0, 0.12)))
-            .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.3), 1.0)
+            .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.3), 1.0, OutlineMode::Inset)
             .with_backdrop_blur(app.ovl_state.backdrop_blur_radius),
     );
     // Second frosted panel with backdrop colour filters: desaturated,
@@ -1753,7 +1762,7 @@ fn row_backdrop(app: &App, shapes: &mut Vec<OverlayShapeItem>, row1_right: f32) 
             [140.0, 96.0],
         )
         .with_fill(OverlayFill::Solid(Colour::srgb(0.4, 0.5, 0.7, 0.14)))
-        .with_border(Colour::srgb(1.0, 1.0, 1.0, 0.25), 1.0)
+        .with_outline(Colour::srgb(1.0, 1.0, 1.0, 0.25), 1.0, OutlineMode::Inset)
         .with_backdrop_blur(app.ovl_state.backdrop_blur_radius)
         .with_backdrop_filters(0.35, 0.9, 0.6 * t.sin()),
     );
@@ -1776,30 +1785,30 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.ovl_state.cloud_scalars = scalars;
     app.ovl_state.cloud_built = true;
     let (tw, th, tdata) = build_demo_texture();
-    app.ovl_state.tex_id = Some(
-        renderer
-            .resources_mut()
-            .upload_overlay_texture(&app.device, &app.queue, tw, th, &tdata),
-    );
-    app.ovl_state.carlgauss_tex_id =
-        Some(renderer.resources_mut().upload_overlay_texture(
-            &app.device,
-            &app.queue,
-            CARLGAUSS_WIDTH,
-            CARLGAUSS_HEIGHT,
-            CARLGAUSS_RGBA,
-        ));
+    app.ovl_state.tex_id = Some(renderer.resources_mut().upload_overlay_texture(
+        &app.device,
+        &app.queue,
+        tw,
+        th,
+        &tdata,
+    ));
+    app.ovl_state.carlgauss_tex_id = Some(renderer.resources_mut().upload_overlay_texture(
+        &app.device,
+        &app.queue,
+        CARLGAUSS_WIDTH,
+        CARLGAUSS_HEIGHT,
+        CARLGAUSS_RGBA,
+    ));
     let (nw, nh, ndata) = build_nine_slice_texture();
-    app.ovl_state.nine_slice_tex_id = Some(
-        renderer
-            .resources_mut()
-            .upload_overlay_texture(&app.device, &app.queue, nw, nh, &ndata),
-    );
+    app.ovl_state.nine_slice_tex_id = Some(renderer.resources_mut().upload_overlay_texture(
+        &app.device,
+        &app.queue,
+        nw,
+        nh,
+        &ndata,
+    ));
     // Optional color-emoji font for the glyph-run row.
-    if let Some(bytes) = EMOJI_FONT_PATHS
-        .iter()
-        .find_map(|p| std::fs::read(p).ok())
-    {
+    if let Some(bytes) = EMOJI_FONT_PATHS.iter().find_map(|p| std::fs::read(p).ok()) {
         if let Ok(handle) = renderer.resources_mut().upload_font(&bytes) {
             let ids = emoji_glyph_ids(&bytes);
             if !ids.is_empty() {
@@ -1811,8 +1820,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::new(0.0, 1.57, 0.0),
         distance: 9.0,
-        orientation: glam::Quat::from_rotation_z(0.4)
-            * glam::Quat::from_rotation_x(1.0),
+        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()
     };
 }
@@ -1828,9 +1836,8 @@ pub(crate) fn scene(
     _frame: &crate::eframe::Frame,
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
-    let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        (Vec::new(), None, vpl::LightingSettings::default(), 0, 0)
-    };
+    let (items, bg_colour, lighting, scene_gen, sel_gen) =
+        { (Vec::new(), None, vpl::LightingSettings::default(), 0, 0) };
     crate::SceneContents {
         items,
         bg_colour,
@@ -1847,11 +1854,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     fd.overlays.time = app.ovl_state.start_time.elapsed().as_secs_f64();
     let (shapes, labels, polylines) = build_overlay_frame(app);
     fd.overlays.polylines = polylines;
@@ -1861,7 +1864,7 @@ pub(crate) fn frame(
     fd.overlays.glyph_runs = runs;
     // Enable HDR callback path so the renderer owns the encoder and can
     // run backdrop blur passes.
-    if shapes.iter().any(|s| s.backdrop_blur > 0.0) {
+    if shapes.iter().any(|s| s.style.backdrop.is_active()) {
         fd.effects.display.mode = vpl::PipelineMode::Hdr;
     }
     fd.overlays.shapes = shapes;
@@ -1884,7 +1887,6 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
 pub(crate) fn tick(_app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -1898,21 +1900,15 @@ pub(crate) fn tick(_app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -1953,7 +1949,12 @@ impl crate::Showcase for ScOverlay {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -1962,7 +1963,12 @@ impl crate::Showcase for ScOverlay {
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         tick(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -1971,7 +1977,12 @@ impl crate::Showcase for ScOverlay {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_overlay(app, ui)
     }
 }

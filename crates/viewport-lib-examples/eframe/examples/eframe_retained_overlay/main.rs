@@ -26,14 +26,14 @@
 //! Navigation: left/middle drag orbit, right drag pan, scroll zoom (the cube is
 //! just context behind the panel).
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
     AnchorY, LabelItem, Material, Modifiers, OffscreenViewportTarget, OrbitCameraController,
     OverlayFill, OverlayGeometryId, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
-    RetainedOverlay, ViewportContext, ViewportEvent, ViewportInstance, primitives,
+    OverlayStroke, RetainedOverlay, ViewportContext, ViewportEvent, ViewportInstance, primitives,
 };
 
 /// Panel geometry, in the panel's own logical-pixel space (top-left origin near
@@ -72,8 +72,7 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + ROW_STEP - 8.0],
             [PANEL_X + PANEL_W - 20.0, y + ROW_STEP - 8.0],
         ];
-        sep.thickness = 1.5;
-        sep.colour = [0.4, 0.45, 0.6, 0.7].into();
+        sep.stroke = Some(OverlayStroke::new(1.5, [0.4, 0.45, 0.6, 0.7]));
         lines.push(sep);
         // A small filled swatch, hue cycling down the list.
         let t = i as f32 / ROW_COUNT as f32;
@@ -85,9 +84,8 @@ fn panel_content() -> Vec<OverlayPolylineItem> {
             [PANEL_X + 20.0, y + 24.0],
         ];
         swatch.closed = true;
-        swatch.fill = Some(OverlayFill::Solid(
-            [0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0].into(),
-        ));
+        swatch.style.fill =
+            OverlayFill::Solid([0.9 - t * 0.6, 0.4 + t * 0.4, 0.3 + t * 0.5, 1.0].into());
         lines.push(swatch);
     }
     lines
@@ -256,16 +254,36 @@ impl App {
                         .with_screen_anchor([PANEL_X, PANEL_TOP - 8.0])
                         .with_align_y(AnchorY::Bottom)
                         .with_font_size(16.0)
-                        .with_colour([0.95, 0.97, 1.0, 1.0])
-                        .with_background(true)
-                        .with_background_colour([0.2, 0.24, 0.34, 1.0])
-                        .with_padding(5.0)
-                        .with_border_radius(4.0);
+                        .with_colour([0.95, 0.97, 1.0, 1.0]);
+                    // The title's own panel is a shape in the same compiled
+                    // group: measure the text, pad it, and place it behind the
+                    // label. Shapes draw under text at the same `z_order`.
+                    let title_pad = 5.0;
+                    let title_size = self
+                        .session
+                        .renderer_mut()
+                        .resources()
+                        .measure_overlay_text("Layers", 16.0, None);
+                    let mut chrome = panel_background();
+                    chrome.push(
+                        OverlayShapeItem::new(
+                            OverlayShape::RoundedRect { radii: [4.0; 4] },
+                            [
+                                PANEL_X - title_pad,
+                                PANEL_TOP - 8.0 - title_size.height - title_pad,
+                            ],
+                            [
+                                title_size.width + title_pad * 2.0,
+                                title_size.height + title_pad * 2.0,
+                            ],
+                        )
+                        .with_fill(OverlayFill::Solid([0.2, 0.24, 0.34, 1.0].into())),
+                    );
                     let bg = self.session.renderer_mut().compile_overlay_geometry(
                         &rs.device,
                         &rs.queue,
                         &[],
-                        &panel_background(),
+                        &chrome,
                         &[],
                         std::slice::from_ref(&title),
                         ppp,
@@ -280,13 +298,11 @@ impl App {
                         ppp,
                     );
                     // A world-anchored label, laid out once. The renderer resolves
-                    // its anchor each frame so it tracks the cube; the "cube" text,
-                    // background, and leader line are never re-tessellated.
+                    // its anchor each frame so it tracks the cube; the glyphs and
+                    // their contour are never re-laid-out.
                     let tag = LabelItem::new("cube")
                         .with_world_anchor([0.0, 0.0, 0.7])
-                        .with_leader_line(true)
-                        .with_background(true)
-                        .with_border_radius(4.0)
+                        .with_outline([0.0, 0.0, 0.0, 0.85], 2.0, vpl::OutlineMode::Outer)
                         .with_align_y(AnchorY::Bottom)
                         .with_font_size(15.0);
                     let label = self
@@ -316,7 +332,7 @@ impl App {
                     [PANEL_W, PANEL_H],
                 )
                 .with_fill(OverlayFill::Solid([0.0, 0.0, 0.0, 0.0].into()))
-                .with_clip_mask(CLIP_MASK_ID);
+                .with_clip(CLIP_MASK_ID);
                 self.session.frame_data_mut().overlays.shapes = vec![mask];
 
                 // Set the retained submissions (assembly clears overlays, so this
@@ -327,8 +343,8 @@ impl App {
                     // Scrolling content (text + shape streams), clipped to the
                     // rounded panel mask; only the translate changes per frame.
                     RetainedOverlay::new(self.content.unwrap())
-                        .with_translate([0.0, -scroll])
-                        .with_clip_mask(CLIP_MASK_ID)
+                        .with_position([0.0, -scroll])
+                        .with_clip(CLIP_MASK_ID)
                         .with_z_order(1),
                     // World-anchored label: no translate here. The renderer
                     // resolves its baked anchor to the cube's projected position

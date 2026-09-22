@@ -44,6 +44,16 @@ pub(crate) struct GlyphStyle {
     blur_tenths: u32,
     /// Falloff exponent in tenths. `0` marks the plain (unstyled) glyph.
     falloff_tenths: u32,
+    /// Erode inward from the glyph edge instead of dilating outward, for an
+    /// inset layer. The cell is the glyph's own coverage with its interior
+    /// eaten away, so it draws over the glyph rather than behind it.
+    inner: bool,
+    /// Where the glyph sits relative to this cell once the layer offset has
+    /// moved it, in whole physical pixels. An outer cell is cut back to outside
+    /// the letterform, and the cut has to land where the letterform actually
+    /// is, so the offset is part of what makes a cell distinct.
+    clip_dx: i32,
+    clip_dy: i32,
 }
 
 /// Largest dilation or blur honoured on a glyph cell, in physical pixels.
@@ -56,11 +66,36 @@ impl GlyphStyle {
         spread_tenths: 0,
         blur_tenths: 0,
         falloff_tenths: 0,
+        inner: false,
+        clip_dx: 0,
+        clip_dy: 0,
     };
 
-    /// Build a style from a shadow layer's physical-pixel spread and blur.
-    /// Returns [`GlyphStyle::PLAIN`] when the layer would not change the cell.
-    pub(crate) fn from_shadow(spread_px: f32, blur_px: f32, falloff: f32) -> Self {
+    /// Build a style from a shadow layer's physical-pixel spread, blur and
+    /// offset. Returns [`GlyphStyle::PLAIN`] when the layer would not change
+    /// the cell.
+    pub(crate) fn from_shadow(
+        spread_px: f32,
+        blur_px: f32,
+        falloff: f32,
+        offset_px: [f32; 2],
+    ) -> Self {
+        let mut s = Self::from_layer(spread_px, blur_px, falloff, false);
+        if !s.is_plain() {
+            let clamp = |v: f32| v.clamp(-MAX_GLYPH_STYLE_PX, MAX_GLYPH_STYLE_PX).round() as i32;
+            s.clip_dx = clamp(offset_px[0]);
+            s.clip_dy = clamp(offset_px[1]);
+        }
+        s
+    }
+
+    /// The inset counterpart: the cell is the glyph with a band eaten inward
+    /// from its edge, drawn over the glyph in the layer colour.
+    pub(crate) fn from_inner_shadow(spread_px: f32, blur_px: f32, falloff: f32) -> Self {
+        Self::from_layer(spread_px, blur_px, falloff, true)
+    }
+
+    fn from_layer(spread_px: f32, blur_px: f32, falloff: f32, inner: bool) -> Self {
         let spread = spread_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
         let blur = blur_px.clamp(0.0, MAX_GLYPH_STYLE_PX);
         if spread <= 0.0 && blur <= 0.0 {
@@ -70,6 +105,9 @@ impl GlyphStyle {
             spread_tenths: (spread * 10.0).round() as u32,
             blur_tenths: (blur * 10.0).round() as u32,
             falloff_tenths: ((falloff.clamp(0.05, 16.0)) * 10.0).round().max(1.0) as u32,
+            inner,
+            clip_dx: 0,
+            clip_dy: 0,
         }
     }
 
@@ -93,6 +131,11 @@ impl GlyphStyle {
     fn pad(&self) -> u32 {
         if self.is_plain() {
             return 0;
+        }
+        if self.inner {
+            // An inset cell never grows past the glyph; one pixel of margin
+            // keeps the blur off the cell border.
+            return 1;
         }
         (self.spread() + self.blur()).ceil() as u32 + 1
     }
@@ -678,6 +721,102 @@ impl GlyphAtlas {
         }
     }
 
+    /// Measure a word-wrapped text run without rasterizing or uploading any
+    /// glyphs.
+    ///
+    /// Returns the same `width` and `height` that [`layout_text_wrapped`] would
+    /// produce for the same `text`, `font_size`, `font`, and `max_width`, plus
+    /// the ascent. Like [`measure_text`] this is a pure read of the font
+    /// metrics, so it takes `&self` and needs no `device`, and the result is
+    /// independent of `pixels_per_point` for the same reason.
+    ///
+    /// The break rule is the one the drawn text uses: hard `\n` splits first,
+    /// then words are packed onto a line while they fit, and a word wider than
+    /// `max_width` on its own is not broken and overhangs instead. `width` is
+    /// the widest line actually used, which can be less than `max_width`.
+    ///
+    /// [`layout_text_wrapped`]: Self::layout_text_wrapped
+    /// [`measure_text`]: Self::measure_text
+    pub fn measure_text_wrapped(
+        &self,
+        text: &str,
+        font_size: f32,
+        font: Option<FontHandle>,
+        max_width: f32,
+    ) -> TextMetrics {
+        let font_index = font.map_or(0, |h| h.0);
+        let fd = &self.fonts[font_index];
+
+        let line_height = fd
+            .horizontal_line_metrics(font_size)
+            .map(|m| m.ascent - m.descent + m.line_gap)
+            .unwrap_or(font_size * 1.2);
+
+        let space_advance = {
+            let gi = fd.lookup_glyph_index(' ');
+            fd.metrics_indexed(gi, font_size).advance_width
+        };
+
+        // Mirror the word packing in `layout_text_wrapped`, skipping only the
+        // glyph rasterization. Kerning is accumulated within a word and reset
+        // between words, matching the per-word pen that path uses.
+        let mut line_x: f32 = 0.0;
+        let mut line_y: f32 = 0.0;
+        let mut max_line_width: f32 = 0.0;
+
+        for (logical_line_idx, logical_line) in text.split('\n').enumerate() {
+            if logical_line_idx > 0 {
+                max_line_width = max_line_width.max(line_x);
+                line_x = 0.0;
+                line_y += line_height;
+            }
+
+            let mut first_on_line = true;
+            for word in logical_line.split_whitespace() {
+                let mut word_width: f32 = 0.0;
+                let mut prev_glyph: Option<u16> = None;
+                for ch in word.chars() {
+                    let glyph_index = fd.lookup_glyph_index(ch);
+                    if let Some(prev) = prev_glyph {
+                        if let Some(kern) = fd.horizontal_kern_indexed(prev, glyph_index, font_size)
+                        {
+                            word_width += kern;
+                        }
+                    }
+                    prev_glyph = Some(glyph_index);
+                    word_width += fd.metrics_indexed(glyph_index, font_size).advance_width;
+                }
+
+                let test_x = if first_on_line {
+                    line_x
+                } else {
+                    line_x + space_advance
+                };
+                if !first_on_line && test_x + word_width > max_width {
+                    max_line_width = max_line_width.max(line_x);
+                    line_x = 0.0;
+                    line_y += line_height;
+                    first_on_line = true;
+                }
+
+                let start_x = if first_on_line {
+                    line_x
+                } else {
+                    line_x + space_advance
+                };
+                line_x = start_x + word_width;
+                first_on_line = false;
+            }
+        }
+        max_line_width = max_line_width.max(line_x);
+
+        TextMetrics {
+            width: max_line_width,
+            height: line_y + line_height,
+            ascent: self.font_ascent(font_index, font_size),
+        }
+    }
+
     /// Upload new glyph data to the GPU if any glyphs were rasterized since
     /// the last upload.
     pub fn upload_if_dirty(&mut self, queue: &crate::gpu::Queue) {
@@ -975,6 +1114,32 @@ impl crate::resources::DeviceResources {
         self.content.glyph_atlas.measure_text(text, font_size, font)
     }
 
+    /// Measure a text run as it would be laid out for a [`LabelItem`] with
+    /// `max_width` set, returning its [`TextMetrics`] in logical pixels.
+    ///
+    /// Same as [`measure_overlay_text`], but with the word wrapping the label
+    /// applies when it has a `max_width`: hard `\n` splits first, then words
+    /// are packed onto a line while they fit, and a word too wide to fit on its
+    /// own is not broken and overhangs. The returned `width` is the widest line
+    /// actually used, so it can be narrower than `max_width`.
+    ///
+    /// This only reads font metrics: no glyphs are rasterized or uploaded, so it
+    /// takes `&self` and needs no `device`.
+    ///
+    /// [`LabelItem`]: crate::renderer::types::LabelItem
+    /// [`measure_overlay_text`]: Self::measure_overlay_text
+    pub fn measure_overlay_text_wrapped(
+        &self,
+        text: &str,
+        font_size: f32,
+        font: Option<FontHandle>,
+        max_width: f32,
+    ) -> TextMetrics {
+        self.content
+            .glyph_atlas
+            .measure_text_wrapped(text, font_size, font, max_width)
+    }
+
     /// The raw bytes of the font `font` refers to (`None` = the built-in default),
     /// if uploaded. A downstream text shaper can register these exact bytes so its
     /// glyph ids match what the overlay atlas rasterizes them to.
@@ -1016,9 +1181,18 @@ fn style_coverage(
         }
     }
 
+    // Kept for the cases that need the glyph's own coverage back: the inset
+    // band is what an erosion ate, and an outer layer is cut back to outside
+    // the letterform.
+    let src = a.clone();
+
     let spread = style.spread();
     if spread > 0.0 {
-        a = dilate_disc(&a, ow, oh, spread);
+        a = if style.inner {
+            erode_disc(&a, ow, oh, spread)
+        } else {
+            dilate_disc(&a, ow, oh, spread)
+        };
     }
 
     let blur = style.blur();
@@ -1027,6 +1201,35 @@ fn style_coverage(
         let r = (blur * 0.25).round().max(1.0) as u32;
         a = box_blur(&a, ow, oh, r);
         a = box_blur(&a, ow, oh, r);
+    }
+
+    if style.inner {
+        // The band is what the erosion ate: the glyph's own coverage minus
+        // what survived. Multiplying by the source keeps the outer edge as
+        // clean as the glyph's, which is what an inset layer needs, since it
+        // draws over the letterform rather than behind it.
+        for (v, &s) in a.iter_mut().zip(src.iter()) {
+            *v = 255 - *v;
+            *v = ((*v as u32 * s as u32) / 255) as u8;
+        }
+    } else {
+        // Cut the cell back to outside the letterform, the way an outer
+        // box-shadow is clipped to outside the border box. The layer offset
+        // moves the cell, so the letterform is sampled at that offset: the
+        // hole then lands on the glyph once the cell is drawn. Each glyph is
+        // cut against its own coverage, so a neighbour's shadow can still show
+        // through a translucent letterform where the two overlap.
+        for y in 0..oh as i32 {
+            for x in 0..ow as i32 {
+                let (sx, sy) = (x + style.clip_dx, y + style.clip_dy);
+                if sx < 0 || sy < 0 || sx >= ow as i32 || sy >= oh as i32 {
+                    continue;
+                }
+                let g = src[(sy * ow as i32 + sx) as usize] as u32;
+                let i = (y * ow as i32 + x) as usize;
+                a[i] = ((a[i] as u32 * (255 - g)) / 255) as u8;
+            }
+        }
     }
 
     let falloff = style.falloff();
@@ -1078,6 +1281,44 @@ fn dilate_disc(src: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
     out
 }
 
+/// Shrink coverage by taking the minimum over a disc of `radius` pixels.
+/// Outside the cell counts as empty, so the glyph erodes in from its edge.
+fn erode_disc(src: &[u8], w: u32, h: u32, radius: f32) -> Vec<u8> {
+    let r = radius.ceil() as i32;
+    let r2 = radius * radius;
+    let mut disc: Vec<(i32, i32)> = Vec::new();
+    for dy in -r..=r {
+        for dx in -r..=r {
+            if (dx * dx + dy * dy) as f32 <= r2 {
+                disc.push((dx, dy));
+            }
+        }
+    }
+
+    let mut out = vec![0u8; src.len()];
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let mut m = 255u8;
+            for &(dx, dy) in &disc {
+                let (sx, sy) = (x + dx, y + dy);
+                let v = if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
+                    0
+                } else {
+                    src[(sy * w as i32 + sx) as usize]
+                };
+                if v < m {
+                    m = v;
+                    if m == 0 {
+                        break;
+                    }
+                }
+            }
+            out[(y * w as i32 + x) as usize] = m;
+        }
+    }
+    out
+}
+
 /// Separable box blur of the given radius, run horizontally then vertically.
 fn box_blur(src: &[u8], w: u32, h: u32, radius: u32) -> Vec<u8> {
     let r = radius as i32;
@@ -1105,4 +1346,112 @@ fn box_blur(src: &[u8], w: u32, h: u32, radius: u32) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use viewport_lib_testkit::headless_device;
+
+    /// The strings and widths the wrap tests share: a run that breaks in several
+    /// places, one that fits on a line untouched, one with a word wider than the
+    /// limit, and one with a hard newline on top of the wrapping.
+    const CASES: &[(&str, f32)] = &[
+        ("the quick brown fox jumps over the lazy dog", 120.0),
+        ("the quick brown fox jumps over the lazy dog", 400.0),
+        ("short", 200.0),
+        ("antidisestablishmentarianism is long", 60.0),
+        ("first line here\nsecond line wraps around", 90.0),
+        ("", 100.0),
+    ];
+
+    /// `measure_text_wrapped` reports what `layout_text_wrapped` draws, for the
+    /// same text and limit. This is the property the measurement exists for: a
+    /// consumer sizing a backing gets the renderer's box, not an approximation.
+    #[test]
+    fn wrapped_measure_matches_wrapped_layout() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+
+        for &(text, max_width) in CASES {
+            for font_size in [12.0_f32, 28.0] {
+                let laid = atlas.layout_text_wrapped(
+                    text,
+                    font_size,
+                    None,
+                    max_width,
+                    1.0,
+                    &device,
+                    GlyphStyle::PLAIN,
+                );
+                let measured = atlas.measure_text_wrapped(text, font_size, None, max_width);
+                assert!(
+                    (measured.width - laid.total_width).abs() < 0.01,
+                    "width {} vs {} for {text:?} at {font_size} wrapped to {max_width}",
+                    measured.width,
+                    laid.total_width
+                );
+                assert!(
+                    (measured.height - laid.height).abs() < 0.01,
+                    "height {} vs {} for {text:?} at {font_size} wrapped to {max_width}",
+                    measured.height,
+                    laid.height
+                );
+            }
+        }
+    }
+
+    /// Measurement is in logical pixels, so it does not move with
+    /// `pixels_per_point`: the layout scales up to physical and back down, and
+    /// the measure never leaves logical units. Same note as `measure_text`.
+    #[test]
+    fn wrapped_measure_is_independent_of_pixels_per_point() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut atlas = GlyphAtlas::new(&device);
+
+        for &(text, max_width) in CASES {
+            let measured = atlas.measure_text_wrapped(text, 16.0, None, max_width);
+            for ppp in [1.0_f32, 1.5, 2.0] {
+                let laid = atlas.layout_text_wrapped(
+                    text,
+                    16.0,
+                    None,
+                    max_width,
+                    ppp,
+                    &device,
+                    GlyphStyle::PLAIN,
+                );
+                assert!(
+                    (measured.width - laid.total_width).abs() < 0.05
+                        && (measured.height - laid.height).abs() < 0.05,
+                    "ppp {ppp} moved the box for {text:?}: measured {measured:?}, laid out {} x {}",
+                    laid.total_width,
+                    laid.height
+                );
+            }
+        }
+    }
+
+    /// An unwrapped measure and a wrapped one with a limit nothing reaches agree
+    /// on a single-line run, so a consumer can hold one code path for both.
+    #[test]
+    fn wrapped_measure_matches_plain_measure_when_nothing_breaks() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let atlas = GlyphAtlas::new(&device);
+
+        let plain = atlas.measure_text("short run", 18.0, None);
+        let wrapped = atlas.measure_text_wrapped("short run", 18.0, None, 10_000.0);
+        assert!((plain.width - wrapped.width).abs() < 0.01);
+        assert!((plain.height - wrapped.height).abs() < 0.01);
+        assert_eq!(plain.ascent, wrapped.ascent);
+    }
 }
