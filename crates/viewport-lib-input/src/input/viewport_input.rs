@@ -15,6 +15,17 @@ use super::touch::TouchSettings;
 use super::viewport_binding::{ViewportBinding, ViewportGesture};
 
 /// Pixels-per-line conversion for scroll delta normalisation.
+///
+/// A wheel arrives in lines on Windows and X11 and in pixels from a trackpad, and
+/// the adapters preserve whichever the host sent rather than converting at the
+/// boundary, so the conversion happens once, here, and a notch means the same
+/// amount of zoom everywhere.
+///
+/// viewport-lib-ui has a constant of its own at 30, converting the other way (pixels
+/// into notches, to scroll a list). The two are not a shared contract and neither is
+/// derived from the other: one sets how far a widget scrolls per notch, this one sets
+/// how much a camera zooms. They are close because a wheel notch is about that far on
+/// both platforms, not because they agree on anything.
 const PIXELS_PER_LINE: f32 = 28.0;
 
 /// Maximum pointer displacement (in viewport pixels) between primary press and
