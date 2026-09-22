@@ -19,6 +19,7 @@ pub enum ResolvedActionState {
 ///
 /// Produced by `ViewportInput` after processing all events for a frame.
 /// Non-zero fields indicate active input in that direction.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct NavigationActions {
     /// Orbit delta in radians (x = yaw, y = pitch). Zero if no orbit input.
@@ -52,6 +53,31 @@ pub struct PointerFrame {
     pub drag_started: bool,
     /// True while the primary button is held.
     pub dragging: bool,
+    /// True on the frame a touch contact lifted without having travelled far enough
+    /// to be a drag. The touch counterpart of [`clicked`](Self::clicked).
+    ///
+    /// A double tap sets this as well, on its second tap: telling the two apart
+    /// needs a delay that only the application can decide to pay.
+    pub tapped: bool,
+    /// True on the frame a second tap landed soon enough, and close enough, to the
+    /// one before it.
+    ///
+    /// Needs a clock: only resolves when the frame is begun with
+    /// `ViewportInput::begin_frame_at`.
+    pub double_tapped: bool,
+    /// True on the frame a contact has been down and still long enough to count as a
+    /// long press. Fires once, while the finger is still down, and suppresses the tap
+    /// that contact would otherwise have produced when it lifts.
+    ///
+    /// Needs a clock: only resolves when the frame is begun with
+    /// `ViewportInput::begin_frame_at`.
+    pub long_pressed: bool,
+    /// Where the last touch event landed, in viewport-local pixels. `None` until one
+    /// arrives; it is not cleared when the contact lifts, so a tap can be
+    /// hit-tested on the frame it is reported.
+    pub touch_position: Option<glam::Vec2>,
+    /// How many touch contacts are down.
+    pub contacts: u8,
 }
 
 /// Per-frame resolved action output.

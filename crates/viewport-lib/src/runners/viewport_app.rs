@@ -739,11 +739,16 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                     return;
                 }
 
-                state.session.begin_frame(ViewportContext {
-                    hovered: state.hovered,
-                    focused: state.focused,
-                    viewport_size: [w, h],
-                });
+                // begin_frame_at rather than begin_frame: the runner already owns a
+                // clock, and double tap and long press need one.
+                state.session.begin_frame_at(
+                    ViewportContext {
+                        hovered: state.hovered,
+                        focused: state.focused,
+                        viewport_size: [w, h],
+                    },
+                    self.start.elapsed().as_secs_f32(),
+                );
                 // Continuous keeps the loop spinning; OnDemand only redraws when
                 // the callback asked to (an animating callback calls
                 // request_redraw each frame).

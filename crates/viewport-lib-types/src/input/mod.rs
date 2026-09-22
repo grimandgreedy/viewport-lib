@@ -28,6 +28,8 @@ pub mod event;
 pub mod mode;
 /// Named control presets.
 pub mod preset;
+/// Touch gesture calibration.
+pub mod touch;
 /// Viewport gesture and binding types.
 pub mod viewport_binding;
 
@@ -42,4 +44,5 @@ pub use mode::{InputMode, NavigationMode};
 pub use preset::{
     BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
 };
+pub use touch::TouchSettings;
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};

@@ -1027,11 +1027,16 @@ impl AppHandlerV2 {
 
             crate::gpu::present(&gpu.queue, frame);
 
-            state.session.begin_frame(ViewportContext {
-                hovered: state.hovered,
-                focused: state.focused,
-                viewport_size: [w, h],
-            });
+            // begin_frame_at rather than begin_frame: the runner already owns a clock,
+            // and double tap and long press need one.
+            state.session.begin_frame_at(
+                ViewportContext {
+                    hovered: state.hovered,
+                    focused: state.focused,
+                    viewport_size: [w, h],
+                },
+                time,
+            );
             if state.redraw_mode == RedrawMode::Continuous || request_redraw {
                 state.window.request_redraw();
             }

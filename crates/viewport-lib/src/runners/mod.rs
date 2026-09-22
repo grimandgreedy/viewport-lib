@@ -46,7 +46,7 @@ pub mod viewport_app_v2;
 
 use crate::camera::Camera;
 use crate::interaction::input::{
-    ActionFrame, BindingPreset, ViewportBinding, ViewportContext, ViewportEvent,
+    ActionFrame, BindingPreset, TouchSettings, ViewportBinding, ViewportContext, ViewportEvent,
 };
 use crate::interaction::manipulation::{ManipResult, ManipulationController};
 use crate::interaction::select::selection::Selection;
@@ -243,6 +243,28 @@ impl ViewportInstance {
     pub fn begin_frame(&mut self, ctx: ViewportContext) {
         self.viewport_size = ctx.viewport_size;
         self.input.begin_frame(ctx);
+    }
+
+    /// Begin a frame, and tell the resolver what time it is.
+    ///
+    /// `time_seconds` is your own elapsed-seconds clock. Use this instead of
+    /// [`begin_frame`](Self::begin_frame) on anything with a touchscreen: double tap
+    /// and long press cannot be decided from positions alone, and stay quiet without
+    /// a clock.
+    pub fn begin_frame_at(&mut self, ctx: ViewportContext, time_seconds: f32) {
+        self.viewport_size = ctx.viewport_size;
+        self.input.begin_frame_at(ctx, time_seconds);
+    }
+
+    /// The numbers touch recognition is calibrated on: sensitivities with per-axis
+    /// inversion, the tap and long-press tolerances, and the double-tap window.
+    pub fn touch_settings(&self) -> TouchSettings {
+        self.input.touch_settings()
+    }
+
+    /// Replace the touch calibration.
+    pub fn set_touch_settings(&mut self, settings: TouchSettings) {
+        self.input.set_touch_settings(settings);
     }
 
     /// Feed one native event, already translated to a [`ViewportEvent`].

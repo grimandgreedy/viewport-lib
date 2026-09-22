@@ -28,7 +28,7 @@ name = "mobile-desktop"
 path = "src/main.rs"
 
 [dependencies]
-viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["wgpu27"] }
+viewport-lib = { path = "../../viewport-lib", default-features = false, features = ["wgpu27", "winit-adapter"] }
 glam = { version = "=0.30.10", features = ["bytemuck"] }
 wgpu = "27.0"
 winit = "0.30"

@@ -11,6 +11,7 @@ use super::viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};
 /// to the resolver that owns them, not to a camera controller: one
 /// `ViewportInput` per viewport holds the set, and controllers consume the
 /// `ActionFrame` it produces.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BindingPreset {
     /// The default scheme: the library takes the middle button and the wheel, and
@@ -53,8 +54,8 @@ pub const VIEWPORT_PRIMITIVES: BindingPreset = BindingPreset::Viewer;
 #[deprecated(note = "renamed: use BindingPreset::Default")]
 pub const VIEWPORT_ALL: BindingPreset = BindingPreset::Default;
 
-/// The camera-navigation half of [`BindingPreset::Default`]: the middle button and
-/// the wheel, and nothing else.
+/// The camera-navigation half of [`BindingPreset::Default`]: the middle button, the
+/// wheel, and the touch gestures.
 ///
 /// Left drag and right drag are unbound and belong to the application. Use this when
 /// you want the camera scheme without the viewport's keyboard shortcuts.
@@ -97,6 +98,14 @@ pub fn viewport_camera_bindings() -> Vec<ViewportBinding> {
                 modifiers: ModifiersMatch::Exact(Modifiers::NONE),
             },
         ),
+        // The touch scheme. One finger orbits and two pan, which is what every
+        // mobile 3D viewer does; selection is the tap, not the drag, so a viewport
+        // with tools still has the gesture it needs. Twist is not here because it has
+        // no Action to bind to: it resolves straight into navigation, like the
+        // trackpad rotation gesture.
+        ViewportBinding::new(Action::Orbit, ViewportGesture::TouchDrag { contacts: 1 }),
+        ViewportBinding::new(Action::Pan, ViewportGesture::TouchDrag { contacts: 2 }),
+        ViewportBinding::new(Action::Zoom, ViewportGesture::TouchPinch),
     ]
 }
 

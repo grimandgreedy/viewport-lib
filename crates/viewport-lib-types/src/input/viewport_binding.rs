@@ -31,6 +31,7 @@ impl ModifiersMatch {
 }
 
 /// A viewport gesture : the richer gesture vocabulary used by the new pipeline.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ViewportGesture {
     /// A mouse drag with a specific button and modifier policy.
@@ -54,6 +55,22 @@ pub enum ViewportGesture {
         /// Required modifier state.
         modifiers: ModifiersMatch,
     },
+    /// Touch contacts dragging together: the motion of their centroid.
+    ///
+    /// Matches only while exactly `contacts` fingers are down, so one-finger and
+    /// two-finger drags bind to different actions without fighting. The delta is in
+    /// logical pixels, like a mouse drag, so a controller reading the resolved
+    /// `ActionFrame` cannot tell which pointer produced it.
+    TouchDrag {
+        /// How many contacts must be down.
+        contacts: u8,
+    },
+    /// Two contacts moving apart or together.
+    ///
+    /// Produces a scalar on the same log scale as
+    /// [`TrackpadPinch`](super::event::ViewportEvent::TrackpadPinch): positive is
+    /// spreading the fingers, and `0.0` is no change.
+    TouchPinch,
     /// A single key press : fires once on the initial press, not on repeat.
     KeyPress {
         /// The key that must be pressed.
