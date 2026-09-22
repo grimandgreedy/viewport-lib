@@ -140,3 +140,84 @@ pub enum ViewportEvent {
     /// [`FileHovered`](ViewportEvent::FileHovered).
     FileHoverCancelled,
 }
+
+impl ViewportEvent {
+    /// Whether this event would be claimed by both the viewport and anything drawn
+    /// over it, so at most one of them may act on it.
+    ///
+    /// A left press, its release, and the pointer motion between them are contested:
+    /// a press-and-move is exactly what a camera orbit, a gizmo drag and a UI drag
+    /// would all claim, so it has to belong to one of them. Everything else is
+    /// **ambient**: the wheel, the other buttons and the modifiers can be acted on by
+    /// more than one claimant in the same frame.
+    ///
+    /// That asymmetry is deliberate. Withholding the whole event stream whenever
+    /// something over the viewport holds the pointer is the obvious implementation
+    /// and it fails in the most visible place: the moment the cursor crosses a gizmo
+    /// handle, scrolling stops zooming, which is exactly where someone is most likely
+    /// to scroll.
+    ///
+    /// The set is fixed and does not consult the active bindings. Right and middle
+    /// drag stay ambient even though the default scheme binds them to camera
+    /// navigation, because chrome overwhelmingly uses the primary button, and
+    /// contesting the others would break the commoner case of a camera drag
+    /// interrupted by the cursor passing over a readout. An application whose own
+    /// chrome binds right or middle drag withholds those itself before forwarding.
+    ///
+    /// Used by [`forward_to_viewport`](super::context::forward_to_viewport), which is
+    /// what most callers want.
+    pub fn is_contested(&self) -> bool {
+        matches!(
+            self,
+            ViewportEvent::MouseButton {
+                button: MouseButton::Left,
+                ..
+            } | ViewportEvent::PointerMoved { .. }
+        )
+    }
+}
+
+#[cfg(test)]
+mod contested_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_left_button_and_pointer_motion_are_contested() {
+        assert!(
+            ViewportEvent::PointerMoved {
+                position: glam::Vec2::ZERO
+            }
+            .is_contested()
+        );
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            assert!(
+                ViewportEvent::MouseButton {
+                    button: MouseButton::Left,
+                    state
+                }
+                .is_contested()
+            );
+        }
+
+        // Ambient: acted on by the camera even while something over it holds the pointer.
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            assert!(
+                !ViewportEvent::MouseButton {
+                    button,
+                    state: ButtonState::Pressed
+                }
+                .is_contested(),
+                "{button:?} must stay ambient"
+            );
+        }
+        assert!(
+            !ViewportEvent::Wheel {
+                delta: glam::Vec2::Y,
+                units: ScrollUnits::Lines
+            }
+            .is_contested()
+        );
+        assert!(!ViewportEvent::ModifiersChanged(Modifiers::NONE).is_contested());
+        assert!(!ViewportEvent::PointerLeft.is_contested());
+    }
+}
