@@ -20,6 +20,17 @@ const PIXELS_PER_LINE: f32 = 28.0;
 /// release for the gesture to count as a click rather than a drag.
 const CLICK_THRESHOLD_PX: f32 = 5.0;
 
+/// Pinch-to-zoom conversion: wheel-equivalent pixels per unit of pinch delta.
+///
+/// The counterpart of [`PIXELS_PER_LINE`] for the trackpad. A pinch delta is a
+/// log-scale magnification (see [`ViewportEvent::TrackpadPinch`]), so a full
+/// spread of the fingers accumulates to roughly `1.0`. Feeding that through the
+/// default zoom sensitivity gives about a halving of the camera distance, which
+/// puts one full pinch at roughly one doubling of apparent size: the same ballpark
+/// as the platform's own pinch-to-zoom, and close to what egui's `exp()` mapping
+/// produces for its own widgets.
+const PINCH_PIXELS_PER_UNIT: f32 = 500.0;
+
 /// Stateful viewport input accumulator.
 ///
 /// Maintains pointer and button state across frames and resolves raw
@@ -45,6 +56,8 @@ pub struct ViewportInput {
     drag_delta: glam::Vec2,
     wheel_delta: glam::Vec2, // always in pixels
     rotate_gesture: f32,     // accumulated two-finger rotation this frame, radians
+    pinch_gesture: f32,      // accumulated two-finger pinch this frame, log-scale magnification
+    pan_gesture: glam::Vec2, // accumulated trackpad pan this frame, logical pixels
 
     // Per-frame pointer/click state (reset by begin_frame). Unlike `drag_delta`,
     // `pointer_delta` accumulates every pointer move, not only while a button is held.
@@ -92,6 +105,8 @@ impl ViewportInput {
             drag_delta: glam::Vec2::ZERO,
             wheel_delta: glam::Vec2::ZERO,
             rotate_gesture: 0.0,
+            pinch_gesture: 0.0,
+            pan_gesture: glam::Vec2::ZERO,
             pointer_delta: glam::Vec2::ZERO,
             left_drag_started: false,
             left_clicked: false,
@@ -169,6 +184,8 @@ impl ViewportInput {
         self.drag_delta = glam::Vec2::ZERO;
         self.wheel_delta = glam::Vec2::ZERO;
         self.rotate_gesture = 0.0;
+        self.pinch_gesture = 0.0;
+        self.pan_gesture = glam::Vec2::ZERO;
         self.pointer_delta = glam::Vec2::ZERO;
         self.left_drag_started = false;
         self.left_clicked = false;
@@ -285,6 +302,16 @@ impl ViewportInput {
             ViewportEvent::TrackpadRotate(angle) => {
                 if self.ctx.hovered {
                     self.rotate_gesture += angle;
+                }
+            }
+            ViewportEvent::TrackpadPinch(delta) => {
+                if self.ctx.hovered {
+                    self.pinch_gesture += delta;
+                }
+            }
+            ViewportEvent::TrackpadPan(delta) => {
+                if self.ctx.hovered {
+                    self.pan_gesture += delta;
                 }
             }
             // ViewportEvent is non_exhaustive; ignore events this pipeline does not handle.
@@ -417,11 +444,14 @@ impl ViewportInput {
         pointer.dragging =
             button_index(MouseButton::Left).is_some_and(|i| self.button_held[i]);
 
+        // The trackpad gestures resolve straight into navigation rather than through the
+        // binding table: they are already a named camera intent, and there is no button or
+        // modifier to key a binding on. Same treatment as the rotation gesture.
         let mut frame = ActionFrame::default();
         frame.navigation = NavigationActions {
             orbit,
-            pan,
-            zoom,
+            pan: pan + self.pan_gesture,
+            zoom: zoom + self.pinch_gesture * PINCH_PIXELS_PER_UNIT,
             twist: self.rotate_gesture,
         };
         frame.actions = actions;
@@ -818,10 +848,9 @@ mod tests {
         assert!((frame.navigation.twist - 0.3).abs() < 1e-5);
     }
 
-    // Tier-2 events the resolver does not model (drag-drop, pinch/pan, raw motion,
-    // theme, occlusion, extra mouse buttons) must pass through without perturbing the
-    // resolved navigation or pointer state. They reach a consumer via the raw event
-    // stream instead.
+    // Events the resolver does not model (drag-drop, raw motion, theme, occlusion,
+    // extra mouse buttons) must pass through without perturbing the resolved navigation
+    // or pointer state. They reach a consumer via the raw event stream instead.
     #[test]
     fn unmodelled_events_do_not_perturb_navigation() {
         use crate::input::event::Theme;
@@ -832,8 +861,6 @@ mod tests {
         input.push_event(ViewportEvent::FileDropped(PathBuf::from("/x")));
         input.push_event(ViewportEvent::FileHovered(PathBuf::from("/x")));
         input.push_event(ViewportEvent::FileHoverCancelled);
-        input.push_event(ViewportEvent::TrackpadPinch(0.5));
-        input.push_event(ViewportEvent::TrackpadPan(glam::Vec2::new(5.0, 5.0)));
         input.push_event(ViewportEvent::RawMotion {
             delta: glam::Vec2::new(9.0, 9.0),
         });
@@ -850,6 +877,71 @@ mod tests {
         assert!(frame.navigation.twist.abs() < 1e-6);
         assert!(!frame.pointer.clicked);
         assert!(!frame.pointer.dragging);
+    }
+
+    #[test]
+    fn a_trackpad_pinch_zooms_and_a_pan_pans() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::TrackpadPinch(0.1));
+        input.push_event(ViewportEvent::TrackpadPan(glam::Vec2::new(5.0, -3.0)));
+        let frame = input.resolve();
+        assert!(
+            frame.navigation.zoom > 0.0,
+            "spreading the fingers zooms in, got {}",
+            frame.navigation.zoom
+        );
+        assert_eq!(frame.navigation.pan, glam::Vec2::new(5.0, -3.0));
+    }
+
+    #[test]
+    fn pinching_together_zooms_the_other_way() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::TrackpadPinch(-0.1));
+        assert!(input.resolve().navigation.zoom < 0.0);
+    }
+
+    #[test]
+    fn gestures_accumulate_within_a_frame_and_reset_between_them() {
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::TrackpadPinch(0.05));
+        input.push_event(ViewportEvent::TrackpadPinch(0.05));
+        let both = input.resolve().navigation.zoom;
+
+        input.begin_frame(focused_ctx());
+        input.push_event(ViewportEvent::TrackpadPinch(0.1));
+        let one = input.resolve().navigation.zoom;
+        assert!(
+            (both - one).abs() < 1e-3,
+            "two half-pinches must equal one whole: {both} vs {one}"
+        );
+
+        input.begin_frame(focused_ctx());
+        assert_eq!(
+            input.resolve().navigation.zoom,
+            0.0,
+            "a new frame starts from nothing"
+        );
+    }
+
+    #[test]
+    fn trackpad_gestures_are_dropped_when_not_hovered() {
+        // Same gate as the wheel: a gesture over someone else's pane is not ours.
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(ViewportContext {
+            hovered: false,
+            focused: false,
+            viewport_size: [800.0, 600.0],
+        });
+        input.push_event(ViewportEvent::TrackpadPinch(0.5));
+        input.push_event(ViewportEvent::TrackpadPan(glam::Vec2::new(5.0, 5.0)));
+        input.push_event(ViewportEvent::TrackpadRotate(0.5));
+        let frame = input.resolve();
+        assert_eq!(frame.navigation.zoom, 0.0);
+        assert_eq!(frame.navigation.pan, glam::Vec2::ZERO);
+        assert_eq!(frame.navigation.twist, 0.0);
     }
 
     #[test]

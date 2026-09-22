@@ -103,7 +103,9 @@ pub enum ViewportEvent {
     ///
     /// `delta` is the change in angle this event, in radians.
     /// Positive = counter-clockwise (matches winit's `RotationGesture` convention,
-    /// converted from degrees to radians by the host).
+    /// converted from degrees to radians by the host). egui's angle convention is the
+    /// opposite, so its adapter negates; twist therefore turns the same way through
+    /// either host.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
@@ -111,9 +113,15 @@ pub enum ViewportEvent {
 
     /// Two-finger trackpad pinch (magnify) gesture.
     ///
-    /// `delta` is the change in scale this event (winit's `PinchGesture` delta):
-    /// positive = pinch out / zoom in. Pass-through by default; a consumer maps it to
-    /// camera zoom if desired.
+    /// `delta` is the change in magnification this event, on a log scale: positive =
+    /// pinch out / zoom in, and `0.0` is no change. This is winit's `PinchGesture`
+    /// convention. A host whose framework reports a multiplicative factor instead
+    /// (egui's `Event::Zoom`, where `1.0` is no change) converts with `ln`; the
+    /// adapters do this, so the same physical pinch resolves the same way whichever
+    /// shell hosts the viewport.
+    ///
+    /// Resolves into [`NavigationActions::zoom`](crate::input::NavigationActions::zoom),
+    /// gated on the viewport being hovered, like the wheel.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
@@ -121,7 +129,9 @@ pub enum ViewportEvent {
 
     /// Two-finger trackpad pan gesture.
     ///
-    /// `delta` is the pan this event in logical points. Pass-through by default.
+    /// `delta` is the pan this event in logical points. Resolves into
+    /// [`NavigationActions::pan`](crate::input::NavigationActions::pan), gated on the
+    /// viewport being hovered.
     ///
     /// ## Platform-specific
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
