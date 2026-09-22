@@ -26,7 +26,9 @@ macro_rules! egui_adapter {
     ($egui:ident) => {
         use $egui as egui;
 
-        use crate::input::{ButtonState, KeyCode, MouseButton, ScrollUnits, ViewportEvent};
+        use crate::input::{
+            ButtonState, KeyCode, MouseButton, ScrollUnits, TouchId, TouchPhase, ViewportEvent,
+        };
 
         /// Translate an `egui::Event` into a [`ViewportEvent`], or `None` for
         /// events the viewport does not consume.
@@ -84,6 +86,15 @@ macro_rules! egui_adapter {
                 // egui-winit negates on the way in. Negate back, so twist turns the
                 // same way whichever shell hosts the viewport.
                 Event::Rotate(radians) => Some(ViewportEvent::TrackpadRotate(-*radians)),
+                // Raw contacts, not egui's derived multi-touch state: the viewport
+                // recognises gestures itself so the feel is the same through every
+                // host. egui also warns its own translation delta may not be in
+                // screen points, which the recogniser would have to undo.
+                Event::Touch { id, phase, pos, .. } => Some(ViewportEvent::Touch {
+                    id: TouchId(id.0),
+                    phase: map_touch_phase(*phase),
+                    position: glam::Vec2::new(pos.x, pos.y) - viewport_origin,
+                }),
                 Event::Key {
                     key,
                     pressed,
@@ -99,6 +110,15 @@ macro_rules! egui_adapter {
                     repeat: *repeat,
                 }),
                 _ => None,
+            }
+        }
+
+        fn map_touch_phase(phase: egui::TouchPhase) -> TouchPhase {
+            match phase {
+                egui::TouchPhase::Start => TouchPhase::Started,
+                egui::TouchPhase::Move => TouchPhase::Moved,
+                egui::TouchPhase::End => TouchPhase::Ended,
+                egui::TouchPhase::Cancel => TouchPhase::Cancelled,
             }
         }
 
@@ -396,6 +416,45 @@ macro_rules! egui_adapter {
                 match from_egui(&Event::Rotate(0.25), glam::Vec2::ZERO) {
                     Some(ViewportEvent::TrackpadRotate(r)) => assert!((r + 0.25).abs() < 1e-6),
                     other => panic!("expected TrackpadRotate, got {other:?}"),
+                }
+            }
+
+            #[test]
+            fn a_touch_keeps_its_id_and_is_made_viewport_local() {
+                let ev = from_egui(
+                    &Event::Touch {
+                        device_id: egui::TouchDeviceId(0),
+                        id: egui::TouchId(7),
+                        phase: egui::TouchPhase::Move,
+                        pos: Pos2::new(60.0, 50.0),
+                        force: None,
+                    },
+                    glam::Vec2::new(10.0, 20.0),
+                );
+                match ev {
+                    Some(ViewportEvent::Touch {
+                        id,
+                        phase,
+                        position,
+                    }) => {
+                        assert_eq!(id, TouchId(7));
+                        assert_eq!(phase, TouchPhase::Moved);
+                        assert_eq!(position, glam::Vec2::new(50.0, 30.0));
+                    }
+                    other => panic!("expected Touch, got {other:?}"),
+                }
+            }
+
+            #[test]
+            fn egui_touch_phases_map() {
+                let cases = [
+                    (egui::TouchPhase::Start, TouchPhase::Started),
+                    (egui::TouchPhase::Move, TouchPhase::Moved),
+                    (egui::TouchPhase::End, TouchPhase::Ended),
+                    (egui::TouchPhase::Cancel, TouchPhase::Cancelled),
+                ];
+                for (egui_phase, expected) in cases {
+                    assert_eq!(map_touch_phase(egui_phase), expected);
                 }
             }
 

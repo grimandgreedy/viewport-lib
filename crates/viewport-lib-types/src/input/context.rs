@@ -1,6 +1,6 @@
 //! Per-frame viewport context for the new input pipeline.
 
-use super::event::ViewportEvent;
+use super::event::{TouchPhase, ViewportEvent};
 
 /// Who owns the pointer for this frame, as the application's own routing decided.
 ///
@@ -59,8 +59,12 @@ impl PointerOwnership {
 /// inside the resolver by the [`ViewportContext`] you set: the wheel accrues only
 /// while hovered, keys only while focused.
 ///
-/// The one special case is [`ViewportEvent::PointerLeft`] under
-/// [`PointerOwnership::Grabbed`], which is dropped: see that variant.
+/// Two special cases, both about teardown. [`ViewportEvent::PointerLeft`] is dropped
+/// under [`PointerOwnership::Grabbed`] (see that variant), and a touch contact ending
+/// or being cancelled is forwarded whoever owns the input, so a contact the viewport
+/// was already tracking cannot be stranded down by ownership changing mid-gesture. An
+/// end for a contact the viewport never saw start is a no-op, so this cannot make it
+/// act on a gesture that was never its own.
 ///
 /// ```
 /// # use viewport_lib_types::input::{forward_to_viewport, PointerOwnership, ViewportEvent, ScrollUnits};
@@ -71,6 +75,10 @@ impl PointerOwnership {
 pub fn forward_to_viewport(event: &ViewportEvent, ownership: PointerOwnership) -> bool {
     match event {
         ViewportEvent::PointerLeft => !matches!(ownership, PointerOwnership::Grabbed),
+        ViewportEvent::Touch {
+            phase: TouchPhase::Ended | TouchPhase::Cancelled,
+            ..
+        } => true,
         _ if event.is_contested() => ownership.owns_input(),
         _ => true,
     }
@@ -136,7 +144,7 @@ impl Default for ViewportContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{ButtonState, MouseButton, ScrollUnits};
+    use crate::input::{ButtonState, MouseButton, ScrollUnits, TouchId};
 
     fn left(state: ButtonState) -> ViewportEvent {
         ViewportEvent::MouseButton {
@@ -204,6 +212,37 @@ mod tests {
         // Forwarding the press but not the release would leave the button stuck down.
         assert!(left(ButtonState::Pressed).is_contested());
         assert!(left(ButtonState::Released).is_contested());
+    }
+
+    #[test]
+    fn a_contact_is_withheld_but_its_end_is_not() {
+        let touch = |phase| ViewportEvent::Touch {
+            id: TouchId(1),
+            phase,
+            position: glam::Vec2::ZERO,
+        };
+        // A finger that lands on a control over the viewport is not also the camera's.
+        assert!(!forward_to_viewport(
+            &touch(TouchPhase::Started),
+            PointerOwnership::Inside
+        ));
+        assert!(!forward_to_viewport(
+            &touch(TouchPhase::Moved),
+            PointerOwnership::Inside
+        ));
+        // But teardown always lands, or ownership changing mid-gesture strands the contact.
+        for phase in [TouchPhase::Ended, TouchPhase::Cancelled] {
+            for o in [
+                PointerOwnership::Elsewhere,
+                PointerOwnership::Inside,
+                PointerOwnership::Owned,
+            ] {
+                assert!(
+                    forward_to_viewport(&touch(phase), o),
+                    "{phase:?} under {o:?}"
+                );
+            }
+        }
     }
 
     #[test]

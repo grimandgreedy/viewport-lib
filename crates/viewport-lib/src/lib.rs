@@ -257,9 +257,9 @@ pub use camera::controllers::{
 };
 pub use interaction::input::{
     ActionFrame, BindingPreset, ButtonState, CursorShape, ModifiersMatch, NavigationActions,
-    PointerFrame, PointerOwnership, ResolvedActionState, ScrollUnits, Theme, ViewportBinding,
-    ViewportContext, ViewportEvent, ViewportGesture, ViewportInput, forward_to_viewport,
-    viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+    PointerFrame, PointerOwnership, ResolvedActionState, ScrollUnits, Theme, TouchId, TouchPhase,
+    ViewportBinding, ViewportContext, ViewportEvent, ViewportGesture, ViewportInput,
+    forward_to_viewport, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
 };
 pub use interaction::manipulation::solvers::{
     angular_rotation_from_cursor, constrained_scale, constrained_translation,

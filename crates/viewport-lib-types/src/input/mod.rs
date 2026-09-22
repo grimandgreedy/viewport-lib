@@ -37,7 +37,7 @@ pub use binding::{ActivationMode, Binding, KeyCode, Modifiers, MouseButton, Trig
 pub use context::{PointerOwnership, ViewportContext, forward_to_viewport};
 pub use cursor::CursorShape;
 pub use defaults::default_bindings;
-pub use event::{ButtonState, ScrollUnits, Theme, ViewportEvent};
+pub use event::{ButtonState, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent};
 pub use mode::{InputMode, NavigationMode};
 pub use preset::{
     BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,

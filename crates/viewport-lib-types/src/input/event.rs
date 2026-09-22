@@ -33,6 +33,26 @@ pub enum ScrollUnits {
     Pages,
 }
 
+/// Identifies one finger or pen on a touch surface. Stable from the contact going
+/// down to it lifting; reused freely after that, so it is not a handle to keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TouchId(pub u64);
+
+/// Where a touch contact is in its lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TouchPhase {
+    /// The contact went down.
+    Started,
+    /// The contact moved, or one of its other properties changed.
+    Moved,
+    /// The contact lifted normally.
+    Ended,
+    /// The system took the contact away: a call arrived, a system gesture won it,
+    /// the finger slid off a bezel. Whatever the contact was doing does not count
+    /// as having happened.
+    Cancelled,
+}
+
 /// An event delivered to the viewport input pipeline.
 ///
 /// Host applications translate their native windowing events into
@@ -137,6 +157,27 @@ pub enum ViewportEvent {
     /// Only emitted on macOS (and iOS). Silently unused on Windows and Linux.
     TrackpadPan(glam::Vec2),
 
+    /// A touch contact went down, moved, lifted, or was taken away.
+    ///
+    /// One event per contact per change, so a two-finger gesture arrives as two
+    /// interleaved streams distinguished by `id`. The viewport tracks the contacts
+    /// and recognises the gestures itself, rather than taking a host's derived
+    /// pinch or pan, so that the same finger movement feels the same whichever
+    /// shell hosts the viewport.
+    ///
+    /// A host that also synthesises mouse events from touch (most do) should send
+    /// one or the other, not both, or every gesture counts twice.
+    Touch {
+        /// Which contact this is.
+        id: TouchId,
+        /// What the contact just did.
+        phase: TouchPhase,
+        /// Viewport-local position in logical pixels, origin at top-left. The same
+        /// space as [`PointerMoved`](ViewportEvent::PointerMoved), which is what
+        /// lets the two share the hit-testing an application already has.
+        position: glam::Vec2,
+    },
+
     /// Raw, unaccelerated relative pointer motion from the input device, not tied to
     /// the window or surface. `delta` is in raw device units. Use this for
     /// first-person / mouselook navigation while the cursor is grabbed; the ordinary
@@ -173,9 +214,11 @@ impl ViewportEvent {
     ///
     /// A left press, its release, and the pointer motion between them are contested:
     /// a press-and-move is exactly what a camera orbit, a gizmo drag and a UI drag
-    /// would all claim, so it has to belong to one of them. Everything else is
-    /// **ambient**: the wheel, the other buttons and the modifiers can be acted on by
-    /// more than one claimant in the same frame.
+    /// would all claim, so it has to belong to one of them. Touch contacts are
+    /// contested for the same reason and with no exception: a finger is the only
+    /// pointer a touch device has, so a control that takes the contact takes all of
+    /// it. Everything else is **ambient**: the wheel, the other buttons and the
+    /// modifiers can be acted on by more than one claimant in the same frame.
     ///
     /// That asymmetry is deliberate. Withholding the whole event stream whenever
     /// something over the viewport holds the pointer is the obvious implementation
@@ -199,6 +242,7 @@ impl ViewportEvent {
                 button: MouseButton::Left,
                 ..
             } | ViewportEvent::PointerMoved { .. }
+                | ViewportEvent::Touch { .. }
         )
     }
 }

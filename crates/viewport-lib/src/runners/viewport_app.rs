@@ -768,6 +768,15 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             }
 
             other => {
+                // A touch device never sends CursorEntered, so the contact itself is
+                // what makes the viewport hovered: without this the resolver gates
+                // every touch-driven gesture out.
+                if let WindowEvent::Touch(touch) = &other {
+                    state.hovered = !matches!(
+                        touch.phase,
+                        ::winit::event::TouchPhase::Ended | ::winit::event::TouchPhase::Cancelled
+                    );
+                }
                 let scale = state.window.scale_factor() as f32;
                 if let Some(ev) = from_winit(&other, scale) {
                     // Without an input handler, feed the resolver directly (orbit /
