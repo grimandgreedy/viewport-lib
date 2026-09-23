@@ -569,7 +569,16 @@ fn compute_surface(in: VertexOut, is_front: bool) -> Surface {
 }
 
 // Lighting for the instanced transparent path. Skips shadow sampling.
-fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -> LitResult {
+fn compute_lit(
+    surface: Surface,
+    in: VertexOut,
+    saa_kernel: f32,
+    refl_dr: f32,
+    d_uv_dx: vec2<f32>,
+    d_uv_dy: vec2<f32>,
+    d_uv1_dx: vec2<f32>,
+    d_uv1_dy: vec2<f32>,
+) -> LitResult {
     let inst = instances[in.instance_idx];
     let mat = material_gpu_buf[inst.material_id];
     var base_colour = surface.base_colour;
@@ -583,12 +592,12 @@ fn compute_lit(surface: Surface, in: VertexOut, saa_kernel: f32, refl_dr: f32) -
     // The PBR block below is gated on per-instance data, so evaluating the
     // underlying derivatives here would violate WGSL uniformity.
 
-    // Metallic-roughness texture (slot 3), sampled in uniform control flow; used
-    // only when `has_mr_tex` is set (the PBR branch below is per-instance).
-    let d_uv_dx = dpdx(in.uv);
-    let d_uv_dy = dpdy(in.uv);
-    let d_uv1_dx = dpdx(in.uv1);
-    let d_uv1_dy = dpdy(in.uv1);
+    // Metallic-roughness texture (slot 3), sampled unconditionally; used only
+    // when `has_mr_tex` is set (the PBR branch below is per-instance). The UV
+    // derivatives arrive as parameters because they cannot be taken here: this
+    // function is called past the per-instance early return in the entry point,
+    // so its whole body is non-uniform control flow, and `dpdx` and `dpdy` are
+    // not legal there.
     let s_mr = material_slot_uv(
         inst.material_id, 3u, in.uv, in.uv1, d_uv_dx, d_uv_dy, d_uv1_dx, d_uv1_dy,
     );
@@ -739,11 +748,23 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     let R_dr = reflect(-V_dr, surface.normal);
     let refl_dr = max(length(dpdx(R_dr)), length(dpdy(R_dr)));
 
+    // The emissive slot's derivatives, taken here for the same reason: the
+    // early return below is per-instance, so everything after it is in
+    // non-uniform control flow and `dpdx`/`dpdy` are not legal there. Tint
+    // rejects the module over it, so no instanced mesh draws at all in Chrome;
+    // naga does not enforce the rule and lets the same source through.
+    let de_uv_dx = dpdx(in.uv);
+    let de_uv_dy = dpdy(in.uv);
+    let de_uv1_dx = dpdx(in.uv1);
+    let de_uv1_dy = dpdy(in.uv1);
+
     if surface.resolved {
         return surface.out_oit;
     }
 
-    let lit = compute_lit(surface, in, saa_kernel, refl_dr);
+    let lit = compute_lit(
+        surface, in, saa_kernel, refl_dr, de_uv_dx, de_uv_dy, de_uv1_dx, de_uv1_dy,
+    );
 
     // Re-bind the locals the debug-vis overlay reads before the include.
     let N = surface.normal;
@@ -764,10 +785,6 @@ fn fs_oit_main(in: VertexOut, @builtin(front_facing) is_front: bool) -> OitOut {
     let e_mat = material_gpu_buf[e_inst.material_id];
     var emissive = e_mat.scalars2.xyz;
     if e_mat.scalars3.w != 0.0 {
-        let de_uv_dx = dpdx(in.uv);
-        let de_uv_dy = dpdy(in.uv);
-        let de_uv1_dx = dpdx(in.uv1);
-        let de_uv1_dy = dpdy(in.uv1);
         let s_em = material_slot_uv(
             e_inst.material_id, 4u, in.uv, in.uv1, de_uv_dx, de_uv_dy, de_uv1_dx, de_uv1_dy,
         );

@@ -22,3 +22,9 @@ bytemuck = { version = "1.25", features = ["derive"] }
 glam = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
 thiserror = "2.0"
+
+# CPU parallelism for the whole workspace, behind `par`. Not pulled in on wasm:
+# that target has no OS threads, so rayon would only panic on first use, and
+# `par` runs serially there instead. See `src/par.rs`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1"

@@ -6,6 +6,12 @@
 //! during `process_uploads`. Callers query progress through `upload_status`
 //! and learn about completion either by polling or by attaching a callback.
 //!
+//! Where there is no background thread to run on (wasm), the CPU stage runs
+//! inline at submit time and the job is already finished by the time `submit`
+//! returns. Completion is still reported through `process_uploads`, so the
+//! calling sequence does not change; only the moment the work happens does.
+//! The GPU stage is unaffected: it was always deferred to the device thread.
+//!
 //! No upload entry points use the runner yet. Real submitters will land
 //! alongside the async variants of each existing `upload_*` method.
 
@@ -17,6 +23,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 use web_time::Instant;
+
+use viewport_lib_types::par;
 
 use crate::error::ViewportError;
 
@@ -514,7 +522,7 @@ impl JobRunner {
         let (tx, rx) = mpsc::channel();
         let worker_tx = tx.clone();
 
-        rayon::spawn(move || {
+        par::spawn(move || {
             let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
                 Ok(Ok(product)) => WorkerOutcome::Done(product, t0.elapsed()),
@@ -563,7 +571,7 @@ impl JobRunner {
         let (tx, rx) = mpsc::channel();
         let worker_tx = tx.clone();
 
-        rayon::spawn(move || {
+        par::spawn(move || {
             let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
                 Ok(Ok(gpu_work)) => {
@@ -612,7 +620,7 @@ impl JobRunner {
         let (tx, rx) = mpsc::channel();
         let worker_tx = tx.clone();
 
-        rayon::spawn(move || {
+        par::spawn(move || {
             let t0 = Instant::now();
             let outcome = match catch_unwind(AssertUnwindSafe(|| work(&worker_progress))) {
                 Ok(Ok(gpu_work)) => {
@@ -1238,7 +1246,17 @@ impl super::DeviceResources {
                 UploadStatus::Ready => return Ok(()),
                 UploadStatus::Failed(e) => return Err(e),
                 UploadStatus::Pending { .. } => {
-                    std::thread::sleep(Duration::from_micros(200));
+                    // Sleeping lets the worker thread that will finish this job
+                    // get on with it. Where there is no worker thread the CPU
+                    // stage already ran inline at submit time, so the only work
+                    // left is the GPU stage that `process_uploads` itself
+                    // advances; sleeping would stall the one thread that can
+                    // make progress, and on this target it is not implemented
+                    // anyway.
+                    if par::is_threaded() {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        std::thread::sleep(Duration::from_micros(200));
+                    }
                 }
                 UploadStatus::Unknown => {
                     return Err(crate::error::ViewportError::JobResultMissing {

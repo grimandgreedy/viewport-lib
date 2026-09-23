@@ -21,6 +21,7 @@ pub mod ids;
 pub mod input;
 pub mod material;
 pub mod overlay;
+pub mod par;
 pub mod plugin;
 pub mod render_item;
 pub mod scene;

@@ -360,16 +360,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
+    // Sampled with an explicit level rather than `textureSample`, which computes
+    // its own derivatives and is therefore only legal in uniform control flow.
+    // `use_texture` varies per vertex, so the branches below are not uniform,
+    // and a strict WGSL front end rejects the whole module: Tint does, naga
+    // does not, so the text pipeline failed to build in Chrome while working in
+    // Firefox. The atlas has one mip level, so level zero is what an implicit
+    // lookup would have chosen anyway.
+    let atlas = textureSampleLevel(glyph_atlas, atlas_sampler, in.uv, 0.0);
+
     var result: vec4<f32>;
     if (in.use_texture > 1.5) {
         // Colour glyph (emoji): draw the atlas RGBA as-is. The run colour only
         // carries opacity through its alpha; the tint RGB is ignored.
-        let c = textureSample(glyph_atlas, atlas_sampler, in.uv);
-        result = vec4<f32>(c.rgb, c.a * in.colour.a);
+        result = vec4<f32>(atlas.rgb, atlas.a * in.colour.a);
     } else if (in.use_texture > 0.5) {
         // Coverage glyph: tint the atlas alpha by the run colour.
-        let atlas_a = textureSample(glyph_atlas, atlas_sampler, in.uv).a;
-        result = vec4<f32>(in.colour.rgb, in.colour.a * atlas_a);
+        result = vec4<f32>(in.colour.rgb, in.colour.a * atlas.a);
     } else {
         result = in.colour;
     }

@@ -138,22 +138,36 @@ impl ViewportInstance {
                 );
             }
 
-            // Unlike the features above, an insufficient storage-buffer limit is
-            // fatal: the renderer asserts on it at construction (a backend that
-            // enforces the limit cannot build the clustered mesh pipeline layout).
-            // Surface it here first so the actionable guidance is logged before
-            // that panic, alongside the feature diagnostics, rather than only
-            // appearing in the panic message deep in renderer bring-up.
+            // Storage buffers come in three tiers, so the warning has to say
+            // which one the device missed. Below MIN the renderer cannot build
+            // the clustered mesh pipeline layout and asserts at construction, so
+            // surface the actionable guidance here first rather than leaving it
+            // to a panic deep in bring-up. Between MIN and REQUIRED the viewport
+            // renders, but the optional features that need the headroom
+            // (per-vertex deformers, the raytrace path tracer) gate themselves
+            // off, which is worth saying out loud because it is silent otherwise.
             let available = device.limits().max_storage_buffers_per_shader_stage;
+            let minimum = ViewportRenderer::MIN_STORAGE_BUFFERS_PER_STAGE;
             let required = ViewportRenderer::REQUIRED_STORAGE_BUFFERS_PER_STAGE;
-            if available < required {
+            if available < minimum {
                 tracing::warn!(
                     "ViewportInstance: device max_storage_buffers_per_shader_stage is {} but \
-                     viewport-lib needs {}; renderer construction will fail. Pass \
+                     the base mesh path needs {}; renderer construction will fail. Pass \
                      ViewportRenderer::recommended_device_limits(adapter) as required_limits in \
                      your device descriptor.",
                     available,
+                    minimum,
+                );
+            } else if available < required {
+                tracing::warn!(
+                    "ViewportInstance: device max_storage_buffers_per_shader_stage is {}. The \
+                     viewport renders, but features needing {} are disabled on it (per-vertex \
+                     deformers need {}). Pass \
+                     ViewportRenderer::recommended_device_limits(adapter) as required_limits in \
+                     your device descriptor to turn them on where the adapter allows it.",
+                    available,
                     required,
+                    ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE,
                 );
             }
         }

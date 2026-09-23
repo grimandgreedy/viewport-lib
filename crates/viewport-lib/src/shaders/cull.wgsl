@@ -412,16 +412,22 @@ fn chunk_counts(
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
     let ch = wg.x;
-    if ch >= compact_scratch[PLAN_BASE + frustum.batch_count] {
-        return;
-    }
-    let owner = chunk_owner(ch);
-    let bmeta = batch_metas[owner];
-    let idx = (ch - compact_scratch[PLAN_BASE + owner]) * CHUNK + lid.x;
+    // Guard the work rather than returning early. Every invocation in this
+    // workgroup computes the same predicate (`ch` is the workgroup id), but it
+    // reads a storage buffer, which WGSL's uniformity analysis treats as
+    // non-uniform: an early `return` here would leave the barriers below in
+    // non-uniform control flow, which a strict front end rejects outright. An
+    // inactive workgroup now runs the scan over zeros and writes nothing.
+    let chunk_in_range = ch < compact_scratch[PLAN_BASE + frustum.batch_count];
 
     var survives = 0u;
-    if idx < bmeta.instance_count && compact_scratch[flags_base() + bmeta.vis_offset + idx] != CULLED_SLOT {
-        survives = 1u;
+    if chunk_in_range {
+        let owner = chunk_owner(ch);
+        let bmeta = batch_metas[owner];
+        let idx = (ch - compact_scratch[PLAN_BASE + owner]) * CHUNK + lid.x;
+        if idx < bmeta.instance_count && compact_scratch[flags_base() + bmeta.vis_offset + idx] != CULLED_SLOT {
+            survives = 1u;
+        }
     }
     scan[lid.x] = survives;
     workgroupBarrier();
@@ -433,7 +439,7 @@ fn chunk_counts(
         }
         workgroupBarrier();
     }
-    if lid.x == 0u {
+    if chunk_in_range && lid.x == 0u {
         compact_scratch[total_base() + ch] = scan[0];
     }
 }
@@ -457,9 +463,11 @@ fn scatter_visible(
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
     let ch = wg.x;
-    if ch >= compact_scratch[PLAN_BASE + frustum.batch_count] {
-        return;
-    }
+    // Same reason as `chunk_counts`: returning early here would put the
+    // barriers below in non-uniform control flow. An inactive workgroup runs
+    // the scans on out-of-range reads, which WGSL bounds-checks for us, and is
+    // held back from every write by `chunk_in_range`.
+    let chunk_in_range = ch < compact_scratch[PLAN_BASE + frustum.batch_count];
     let owner = chunk_owner(ch);
     let bmeta = batch_metas[owner];
     let first = compact_scratch[PLAN_BASE + owner];
@@ -501,14 +509,14 @@ fn scatter_visible(
         workgroupBarrier();
     }
 
-    if survives == 1u {
+    if chunk_in_range && survives == 1u {
         let rank = scan[lid.x] - 1u;
         visibility_indices[bmeta.vis_offset + base + rank] = entry;
     }
 
     // Last chunk of the batch: publish the batch's visible count. Batches with
     // no chunks at all keep the zero `write_indirect_args` left behind.
-    if lid.x == 0u && ch + 1u == compact_scratch[PLAN_BASE + owner + 1u] {
+    if chunk_in_range && lid.x == 0u && ch + 1u == compact_scratch[PLAN_BASE + owner + 1u] {
         atomicStore(&batch_counters[owner], base + scan[CHUNK - 1u]);
     }
 }
