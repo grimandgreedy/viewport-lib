@@ -42,7 +42,7 @@ pub struct CameraRig {
 impl CameraRig {
     pub fn new() -> Self {
         Self {
-            orbit: OrbitCameraController::viewport_all(),
+            orbit: OrbitCameraController::new_stateless(),
             fp: FirstPersonCameraController::new(
                 FirstPersonCameraController::DEFAULT_SENSITIVITY,
                 FirstPersonCameraController::DEFAULT_PITCH_CLAMP,

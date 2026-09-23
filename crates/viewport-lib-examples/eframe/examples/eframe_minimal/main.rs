@@ -74,7 +74,7 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(App {
                 session,
-                orbit: OrbitCameraController::viewport_all(),
+                orbit: OrbitCameraController::new_stateless(),
                 cube_id,
                 target: None,
             }))

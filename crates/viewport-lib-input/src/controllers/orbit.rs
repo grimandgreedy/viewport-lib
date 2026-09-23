@@ -133,9 +133,11 @@ impl OrbitCameraController {
         Self::new(BindingPreset::Viewer)
     }
 
-    /// Create a controller seeded with the [`BindingPreset::Default`] scheme.
-    ///
-    /// See [`new`](Self::new) for why a session ignores this.
+    /// Former name for `new(BindingPreset::Default)`, from when that preset was
+    /// called `ViewportAll`.
+    #[deprecated(
+        note = "renamed: use OrbitCameraController::new_stateless if a session or host owns the resolver, or new(BindingPreset::Default) for the standalone path"
+    )]
     pub fn viewport_all() -> Self {
         Self::new(BindingPreset::Default)
     }
@@ -385,7 +387,7 @@ mod tests {
 
     #[test]
     fn resolve_no_events_zero_nav() {
-        let mut ctrl = OrbitCameraController::viewport_all();
+        let mut ctrl = OrbitCameraController::new(BindingPreset::Default);
         ctrl.begin_frame(make_ctx());
         let frame = ctrl.resolve();
         assert_eq!(frame.navigation.orbit, glam::Vec2::ZERO);
@@ -469,7 +471,7 @@ mod tests {
 
     #[test]
     fn fly_moves_camera() {
-        let mut ctrl = OrbitCameraController::viewport_all();
+        let mut ctrl = OrbitCameraController::new(BindingPreset::Default);
         ctrl.navigation_mode = NavigationMode::Fly;
         ctrl.fly_speed = 1.0;
         ctrl.begin_frame(make_ctx());

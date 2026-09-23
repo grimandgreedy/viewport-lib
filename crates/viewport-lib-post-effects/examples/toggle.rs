@@ -121,7 +121,7 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(App {
                 session,
-                orbit: OrbitCameraController::viewport_all(),
+                orbit: OrbitCameraController::new_stateless(),
                 target: None,
                 bloom: true,
                 cs_impl: Impl::Builtin,

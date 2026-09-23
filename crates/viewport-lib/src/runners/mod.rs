@@ -670,7 +670,7 @@ mod tests {
         session.camera_mut().distance = 6.0;
 
         session.begin_frame(ctx());
-        let mut orbit = OrbitCameraController::viewport_all();
+        let mut orbit = OrbitCameraController::new_stateless();
         let frame = session.update_orbit(&mut orbit);
         // Assembly collected the scene node and stamped a non-default generation.
         assert!(
@@ -740,7 +740,7 @@ mod tests {
         };
         let mut session = ViewportInstance::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         session.begin_frame(ctx());
-        let mut orbit = OrbitCameraController::viewport_all();
+        let mut orbit = OrbitCameraController::new_stateless();
 
         // A retained extra is re-injected into the scene every frame.
         let mut pc = PointCloudItem::default();

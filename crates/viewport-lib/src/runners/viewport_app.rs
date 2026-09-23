@@ -385,7 +385,7 @@ impl ViewportApp {
     /// the runner still owning the window, the wgpu bring-up, and the render loop.
     ///
     /// ```rust,ignore
-    /// let mut orbit = OrbitCameraController::viewport_all();
+    /// let mut orbit = OrbitCameraController::new_stateless();
     /// ViewportApp::new(config)
     ///     .with_input(move |ictx| {
     ///         for ev in ictx.events() {
@@ -426,7 +426,7 @@ impl ViewportApp {
             callback,
             input: self.input,
             state: None,
-            orbit: OrbitCameraController::viewport_all(),
+            orbit: OrbitCameraController::new_stateless(),
             events: Vec::new(),
             last_frame: Instant::now(),
             start: Instant::now(),

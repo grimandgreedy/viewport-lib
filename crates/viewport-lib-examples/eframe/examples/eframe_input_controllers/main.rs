@@ -24,8 +24,8 @@ use viewport_lib as vpl;
 
 use crate::eframe::{egui, wgpu};
 use vpl::{
-    Action, ButtonState, Camera, CameraFrame, FirstPersonCameraController, FrameData, Gizmo,
-    GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult,
+    Action, BindingPreset, ButtonState, Camera, CameraFrame, FirstPersonCameraController,
+    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult,
     ManipulationContext, ManipulationController, ManipulationKind, Material, MeshId,
     OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
     ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
@@ -234,7 +234,7 @@ impl App {
                 ..Camera::default()
             },
             ctrl_primitives: OrbitCameraController::viewport_primitives(),
-            ctrl_all: OrbitCameraController::viewport_all(),
+            ctrl_all: OrbitCameraController::new(BindingPreset::Default),
             // Resolver for the play modes: viewport_all provides the WASD/Fly
             // movement actions. Look is driven from raw pointer motion in the
             // update loop, so it follows the mouse without holding a button.

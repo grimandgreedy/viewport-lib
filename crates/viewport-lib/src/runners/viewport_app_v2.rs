@@ -855,7 +855,7 @@ impl AppHandlerV2 {
                 surface_config,
                 session,
                 redraw_mode: config.redraw_mode,
-                orbit: OrbitCameraController::viewport_all(),
+                orbit: OrbitCameraController::new_stateless(),
                 input,
                 callback,
                 paint,

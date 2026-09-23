@@ -32,8 +32,9 @@ use crate::eframe::{egui, wgpu};
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use vpl::{
-    Action, BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
-    GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult, ManipulationContext,
+    Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
+    GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult,
+    ManipulationContext,
     ManipulationController, Material, MeshId, Modifiers, MouseButton, OffscreenViewportTarget,
     OrbitCameraController,
     Projection, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ViewportContext,
@@ -232,10 +233,10 @@ impl App {
             selection: Selection::new(),
             cameras,
             controllers: [
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
             ],
             gizmo: Gizmo::new(),
             gizmo_center: None,
