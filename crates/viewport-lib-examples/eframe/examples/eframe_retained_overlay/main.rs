@@ -117,10 +117,7 @@ fn panel_content_shapes() -> Vec<OverlayShapeItem> {
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : retained overlay (egui)",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 640.0]),
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([1000.0, 640.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state

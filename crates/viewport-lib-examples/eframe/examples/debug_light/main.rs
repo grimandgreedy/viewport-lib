@@ -127,12 +127,7 @@ fn tet_soup_mesh(positions: &[[f32; 3]], tets: &[[u32; 4]]) -> MeshData {
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : Debug Light",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1100.0, 720.0]),
-            depth_buffer: 24,
-            stencil_buffer: 8,
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([1100.0, 720.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state

@@ -63,3 +63,52 @@ pub use eframe033 as eframe;
 pub use eframe035 as eframe;
 #[cfg(feature = "wgpu30")]
 pub use eframe036 as eframe;
+
+/// eframe options with a device the renderer can actually use.
+///
+/// eframe requests `wgpu::Limits::default()`, which grants eight storage buffers
+/// per shader stage. That is the floor for the lit mesh path and no more, so a
+/// build with the `raytrace` feature (this crate's `showcase`, on by default)
+/// needs ten and `ViewportRenderer::new` rejects the device outright. Every
+/// example goes through here rather than repeating the closure.
+///
+/// The existing configuration is edited rather than rebuilt, because
+/// `WgpuSetupCreateNew` gained a field without a default in egui 0.35 and so
+/// cannot be constructed the same way on all three legs.
+///
+/// `size` is the initial window size in logical points.
+pub fn native_options(size: [f32; 2]) -> eframe::NativeOptions {
+    use eframe::wgpu;
+
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        setup.device_descriptor = std::sync::Arc::new(|adapter| {
+            // WebGL cannot meet the recommended limits at all, so it keeps its own
+            // downlevel set and gives up the features that need more.
+            let base = if adapter.get_info().backend == wgpu::Backend::Gl {
+                wgpu::Limits::downlevel_webgl2_defaults()
+            } else {
+                viewport_lib::ViewportRenderer::recommended_device_limits(adapter)
+            };
+            wgpu::DeviceDescriptor {
+                label: Some("viewport-lib example device"),
+                required_features: viewport_lib::ViewportRenderer::recommended_device_features(
+                    adapter,
+                ),
+                required_limits: wgpu::Limits {
+                    max_texture_dimension_2d: 8192,
+                    ..base
+                },
+                ..Default::default()
+            }
+        });
+    }
+
+    eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default().with_inner_size(size),
+        depth_buffer: 24,
+        stencil_buffer: 8,
+        wgpu_options,
+        ..Default::default()
+    }
+}

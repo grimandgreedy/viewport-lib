@@ -17,12 +17,7 @@ use vpl::{
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : Primitives Showcase",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
-            depth_buffer: 24,
-            stencil_buffer: 8,
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([1280.0, 800.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state

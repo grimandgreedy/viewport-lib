@@ -43,12 +43,7 @@ const CAPSULE_HEIGHT: f32 = 1.8;
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : Input Controllers",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 600.0]),
-            depth_buffer: 24,
-            stencil_buffer: 8,
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([900.0, 600.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state
