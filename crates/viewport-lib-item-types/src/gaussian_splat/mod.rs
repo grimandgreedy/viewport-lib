@@ -16,7 +16,7 @@ mod types;
 
 use std::sync::Arc;
 
-use crate::point_disc_mask::PointDiscMaskUniform;
+use crate::helpers::point_disc_mask::PointDiscMaskUniform;
 use store::{GaussianSplatStore, build_gaussian_splat_set, validate_gaussian_splat_data};
 pub use types::GaussianSplatItem;
 use viewport_lib::gpu;

@@ -7,7 +7,7 @@
 //! the layout to build pipelines over it.
 
 use super::store::PointCloudGpuData;
-use crate::point_disc_mask::PointDiscMaskUniform;
+use crate::helpers::point_disc_mask::PointDiscMaskUniform;
 use crate::shader::{scene_shader, wgsl_source};
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::builders;

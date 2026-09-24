@@ -38,10 +38,6 @@ pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
             "point_cloud_pick.wgsl",
             scene_shader(&[], wgsl_source!("point_cloud_pick")),
         ),
-        (
-            "point_disc_mask.wgsl",
-            scene_shader(&[], wgsl_source!("point_disc_mask")),
-        ),
     ]
 }
 

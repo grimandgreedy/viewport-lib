@@ -31,7 +31,7 @@ mod gaussian_splat;
 mod gpu_implicit;
 mod image_slice;
 mod point_cloud;
-mod point_disc_mask;
+mod helpers;
 mod shader;
 mod volume_surface_slice;
 
@@ -80,10 +80,7 @@ pub fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(image_slice::shader_sources());
     all.extend(point_cloud::shader_sources());
     all.extend(volume_surface_slice::shader_sources());
-    all.push((
-        "point_disc_mask.wgsl",
-        shader::scene_shader(&[], shader::wgsl_source!("point_disc_mask")),
-    ));
+    all.extend(helpers::shader_sources());
     all
 }
 
