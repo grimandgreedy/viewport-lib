@@ -108,14 +108,14 @@ pub(crate) use self::postprocess::lic::LIC_STRENGTH_ENCODE_MAX;
 pub(crate) use self::postprocess::producer::{PostStage, ProducerFrameInputs, ProducerTiming};
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
-    ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform, GlyphBaseMesh,
+    ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData,
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
     OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
-    OverlayTextVertex, OverlayUniform, PickInstance, PointDiscMaskUniform, ProjectedTetUniform,
-    SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData,
-    ToneMapUniform, ViewportCullState, ViewportHdrState,
+    OverlayTextVertex, PickInstance, PointDiscMaskUniform, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
+    ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform,
+    ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,

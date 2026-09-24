@@ -119,7 +119,7 @@ fn render_set(
     let mut frame = camera();
     frame
         .scene
-        .sprite_set_refs
+        .items_mut::<viewport_lib::SpriteSetRefItem>()
         .push(viewport_lib::renderer::SpriteSetRefItem::new(id));
     checksum(&renderer.render_offscreen(device, queue, &frame, W, H))
 }
@@ -236,7 +236,7 @@ fn render_ribbon(
     let mut frame = side_camera();
     frame
         .scene
-        .ribbon_refs
+        .items_mut::<viewport_lib::RibbonRefItem>()
         .push(viewport_lib::renderer::RibbonRefItem::new(id));
     checksum(&renderer.render_offscreen(device, queue, &frame, W, H))
 }
@@ -338,7 +338,10 @@ fn every_sprite_blend_and_lit_combination_draws() {
                     item.lit = lit;
 
                     let mut frame = camera();
-                    frame.scene.sprite_items.push(item);
+                    frame
+                        .scene
+                        .items_mut::<viewport_lib::SpriteItem>()
+                        .push(item);
                     if !hdr {
                         frame.effects.display.mode = viewport_lib::PipelineMode::Direct;
                     }

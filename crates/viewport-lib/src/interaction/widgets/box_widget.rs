@@ -34,9 +34,9 @@ enum BoxHandle {
 ///
 /// // Each frame:
 /// bw.update(&ctx);
-/// fd.scene.polylines.push(bw.wireframe_item(BOX_ID));
-/// fd.scene.polylines.push(bw.rotation_arcs_item(ARC_ID));
-/// fd.scene.glyphs.push(bw.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(bw.wireframe_item(BOX_ID));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(bw.rotation_arcs_item(ARC_ID));
+/// fd.scene.items_mut::<crate::GlyphItem>().push(bw.handle_glyphs(HANDLE_ID, &ctx));
 /// ```
 pub struct BoxWidget {
     /// World-space center of the box.

@@ -612,17 +612,15 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
     if app.clipvol_state.show_overlay {
         let colour = [CLIP_COLOUR[0], CLIP_COLOUR[1], CLIP_COLOUR[2], 1.0];
         for co in clip_objects.iter().filter(|c| c.enabled) {
-            fd.scene.polylines.push(vpl::clip_plane::visual::outline(
-                &co.shape,
-                PLANE_EXTENT,
-                colour,
-            ));
+            fd.scene.items_mut::<viewport_lib::PolylineItem>().push(
+                vpl::clip_plane::visual::outline(&co.shape, PLANE_EXTENT, colour),
+            );
         }
     }
     fd.effects.clip.objects.extend(clip_objects);
     if app.clipvol_state.scene_mode == SceneMode::Volume {
         if let Some(vol) = app.make_clipvol_volume_item() {
-            fd.scene.volumes.push(vol);
+            fd.scene.items_mut::<viewport_lib::VolumeItem>().push(vol);
         }
     }
 }
@@ -691,15 +689,12 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
-
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
 pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -716,12 +711,9 @@ pub(crate) fn drag_input(app: &mut crate::App, cx: &crate::ViewportCtx) {
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
 
-
 /// Flush any per-frame GPU writes this showcase has queued.
-
 
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -777,7 +769,12 @@ impl crate::Showcase for ScClipVolumes {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -789,7 +786,12 @@ impl crate::Showcase for ScClipVolumes {
     fn cache_gizmo(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         cache_gizmo(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -798,7 +800,12 @@ impl crate::Showcase for ScClipVolumes {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_clipvol(app, ui)
     }
 }

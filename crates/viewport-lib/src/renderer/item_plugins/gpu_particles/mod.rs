@@ -15,7 +15,7 @@ pub(crate) mod store;
 pub(crate) mod types;
 
 use crate::gpu::util::DeviceExt;
-use crate::plugin_api::{ItemFrameContext, ItemTypePlugin, PaintContext, PluginItemCollection};
+use crate::plugin_api::{ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext};
 use crate::renderer::{GpuParticleSystemItem, SpriteBlend};
 use store::{
     EmitParamsGpu, EmitState, GpuParticle, ParticleDrawRoute, ParticleLayouts, ParticleStore,
@@ -25,15 +25,11 @@ use types::{GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender};
 
 pub(crate) const TYPE_NAME: &str = "vpl.gpu_particles";
 
-impl PluginItemCollection for Vec<GpuParticleSystemItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl crate::plugin_api::PluginItem for GpuParticleSystemItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -298,14 +294,11 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
         self.revalidate_draw_bindings(device, ctx.resources);
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<GpuParticleSystemItem>>()
-            .expect("particle collection is the SceneFrame field");
+        let items = items.of::<GpuParticleSystemItem>();
         if items.is_empty() {
             return Vec::new();
         }
@@ -429,7 +422,7 @@ impl ItemTypePlugin for GpuParticlesPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.frame.is_empty() {
@@ -565,8 +558,11 @@ mod emission_tests {
                 clip_objects: &[],
                 quality_reduced: false,
                 decal_excluded_surfaces: &[],
-                ref_items: [None, None],
+                collections: &[],
             };
+            let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+                vec![Box::new(items)];
+            let items = crate::plugin_api::ItemCollections::new(&collections);
             let bufs = plugin.prepare(device, queue, &ctx, &items);
             queue.submit(bufs);
         }

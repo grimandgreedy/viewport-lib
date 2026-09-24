@@ -181,10 +181,7 @@ impl App {
                     (b - 0.5) / SH0_C,
                 ]);
             }
-            if let Ok(sid) =
-                renderer
-                    .upload_gaussian_splat(&self.device, &self.queue, &sd)
-            {
+            if let Ok(sid) = renderer.upload_gaussian_splat(&self.device, &self.queue, &sd) {
                 self.lc_state.splat_id = Some(sid);
             }
         }
@@ -439,7 +436,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         pc.point_size = 8.0;
         pc.default_colour = [0.10, 0.26, 0.68, 1.0].into();
         broadcast(s, &mut pc.settings);
-        fd.scene.point_clouds.push(pc);
+        fd.scene
+            .items_mut::<viewport_lib::PointCloudItem>()
+            .push(pc);
     }
 
     // Cell (2, 0): glyphs on a ring in the camera-facing X-Z plane, tangent vectors
@@ -460,7 +459,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         g.default_colour = [0.72, 0.42, 0.04, 1.0].into();
         g.scale = 0.9;
         broadcast(s, &mut g.settings);
-        fd.scene.glyphs.push(g);
+        fd.scene.items_mut::<viewport_lib::GlyphItem>().push(g);
     }
 
     // Cell (3, 0): tensor glyphs.
@@ -475,7 +474,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
                 .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
         }
         broadcast(s, &mut tg.settings);
-        fd.scene.tensor_glyphs.push(tg);
+        fd.scene
+            .items_mut::<viewport_lib::TensorGlyphItem>()
+            .push(tg);
     }
 
     // Cell (4, 0): polyline (spiral) in the X-Z plane with a small Y depth wiggle.
@@ -496,7 +497,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         pl.default_colour = [0.62, 0.55, 0.06, 1.0].into();
         pl.line_width = 2.5;
         broadcast(s, &mut pl.settings);
-        fd.scene.polylines.push(pl);
+        fd.scene.items_mut::<viewport_lib::PolylineItem>().push(pl);
     }
 
     // Cell (0, 1): streamtube traced as a loop in X-Z with a Y depth wiggle.
@@ -517,7 +518,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         st.colour = [0.05, 0.55, 0.45, 1.0].into();
         st.radius = 0.08;
         broadcast(s, &mut st.settings);
-        fd.scene.streamtube_items.push(st);
+        fd.scene
+            .items_mut::<viewport_lib::StreamtubeItem>()
+            .push(st);
     }
 
     // Cell (1, 1): tube with tapering radius along the same X-Z loop pattern.
@@ -541,7 +544,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         tb.radius_attribute = Some(radii);
         tb.colour = [0.62, 0.08, 0.35, 1.0].into();
         broadcast(s, &mut tb.settings);
-        fd.scene.tube_items.push(tb);
+        fd.scene.items_mut::<viewport_lib::TubeItem>().push(tb);
     }
 
     // Cell (2, 1): ribbon along the X-Z loop. Twist vectors point radially outward
@@ -566,7 +569,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         rb.twist_attribute = Some(twists);
         rb.colour = [0.60, 0.35, 0.08, 1.0].into();
         broadcast(s, &mut rb.settings);
-        fd.scene.ribbon_items.push(rb);
+        fd.scene.items_mut::<viewport_lib::RibbonItem>().push(rb);
     }
 
     // Cell (3, 1): GPU implicit (sphere).
@@ -590,7 +593,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             max_distance: 60.0,
         };
         broadcast(s, &mut item.settings);
-        fd.scene.gpu_implicit.push(item);
+        fd.scene
+            .items_mut::<viewport_lib::GpuImplicitItem>()
+            .push(item);
     }
 
     // Cell (4, 1): Gaussian splats.
@@ -600,7 +605,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         item.source = sid;
         item.model = glam::Mat4::from_translation(p).to_cols_array_2d();
         broadcast(s, &mut item.settings);
-        fd.scene.gaussian_splats.push(item);
+        fd.scene
+            .items_mut::<viewport_lib::GaussianSplatItem>()
+            .push(item);
     }
 
     // Cell (0, 2): volume (ray-march). `settings.unlit` flows into the
@@ -622,7 +629,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             .mul_mat4(&glam::Mat4::from_scale(glam::Vec3::splat(0.9)))
             .to_cols_array_2d();
         broadcast(s, &mut v.settings);
-        fd.scene.volumes.push(v);
+        fd.scene.items_mut::<viewport_lib::VolumeItem>().push(v);
     }
 
     // Cell (1, 2): volume surface slice (disk through the small scalar field).
@@ -645,7 +652,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             * glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2))
         .to_cols_array_2d();
         broadcast(s, &mut ss.settings);
-        fd.scene.volume_surface_slices.push(ss);
+        fd.scene
+            .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
+            .push(ss);
     }
 
     // Cell (2, 2): transparent volume mesh (single tet). The projected-tet
@@ -693,8 +702,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            lc_collect_scene_items(app);
+        let (items, lighting, sg, ss) = lc_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -713,11 +721,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     if app.lc_state.built {
         submit_lc_items(app, &mut *fd);
     }
@@ -729,7 +733,6 @@ pub(crate) fn frame(
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -746,21 +749,15 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -801,7 +798,12 @@ impl crate::Showcase for ScLightingConsistency {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -810,7 +812,12 @@ impl crate::Showcase for ScLightingConsistency {
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         tick(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -819,7 +826,12 @@ impl crate::Showcase for ScLightingConsistency {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_lc(app, ui)
     }
 }

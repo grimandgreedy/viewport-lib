@@ -10,8 +10,8 @@ pub(crate) mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, SubObjectRef, TensorGlyphItem, TensorGlyphSetRefItem,
@@ -26,27 +26,19 @@ pub(crate) use types::TensorGlyphSetId;
 
 pub(crate) const TYPE_NAME: &str = "vpl.tensor_glyph";
 
-impl PluginItemCollection for Vec<TensorGlyphItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for TensorGlyphItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
-impl PluginItemCollection for Vec<TensorGlyphSetRefItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for TensorGlyphSetRefItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -95,13 +87,10 @@ impl ItemTypePlugin for TensorGlyphPlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<TensorGlyphItem>>()
-            .expect("tensor glyph collection is the SceneFrame field");
+        let items = items.of::<TensorGlyphItem>();
         let refs = ctx.refs_of::<TensorGlyphSetRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
@@ -174,7 +163,7 @@ impl ItemTypePlugin for TensorGlyphPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
@@ -220,7 +209,7 @@ impl ItemTypePlugin for TensorGlyphPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = false;
@@ -367,7 +356,7 @@ impl ItemTypePlugin for TensorGlyphPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
             return;

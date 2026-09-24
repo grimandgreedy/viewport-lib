@@ -283,32 +283,8 @@ pub struct SceneFrame {
     pub generation: u64,
     /// Surface geometry submission (opaque and transparent meshes).
     pub surfaces: SurfaceSubmission,
-    /// Point cloud items to render this frame.
-    pub point_clouds: Vec<PointCloudItem>,
-    /// References to pre-uploaded point clouds.
-    pub point_cloud_refs: Vec<PointCloudRefItem>,
-    /// Instanced glyph items to render this frame.
-    pub glyphs: Vec<GlyphItem>,
-    /// References to pre-uploaded glyph sets.
-    pub glyph_set_refs: Vec<GlyphSetRefItem>,
-    /// Polyline (streamline) items to render this frame.
-    pub polylines: Vec<PolylineItem>,
-    /// References to pre-uploaded polylines (one entry per draw). Each
-    /// `PolylineRefItem` carries a handle into the renderer's polyline store
-    /// plus a per-frame model matrix and item settings.
-    pub polyline_refs: Vec<PolylineRefItem>,
-    /// Volume items to render this frame via GPU ray-marching.
-    pub volumes: Vec<VolumeItem>,
     /// Isoline (contour line) items to render on mesh surfaces.
     pub isolines: Vec<crate::geometry::isoline::IsolineItem>,
-    /// Streamtube items to render this frame.
-    pub streamtube_items: Vec<StreamtubeItem>,
-    /// References to pre-uploaded streamtubes.
-    pub streamtube_refs: Vec<StreamtubeRefItem>,
-    /// GPU implicit surface items to render this frame.
-    pub gpu_implicit: Vec<crate::resources::GpuImplicitItem>,
-    /// GPU marching cubes items to dispatch this frame.
-    pub gpu_mc_items: Vec<crate::resources::GpuMarchingCubesItem>,
     /// GPU compute filter items dispatched before the render pass.
     ///
     /// Each item references a pre-uploaded mesh and a compute kernel that
@@ -325,41 +301,8 @@ pub struct SceneFrame {
     /// Cell-level picking, selection outlines, and wireframe overlays are
     /// driven from this collection regardless of mode.
     pub volume_meshes: Vec<VolumeMeshItem>,
-    /// General tube items to render this frame.
-    pub tube_items: Vec<TubeItem>,
-    /// References to pre-uploaded tubes.
-    pub tube_refs: Vec<TubeRefItem>,
-    /// 2D image slice items to render this frame.
-    pub image_slices: Vec<ImageSliceItem>,
-    /// Tensor glyph items to render this frame.
-    pub tensor_glyphs: Vec<TensorGlyphItem>,
-    /// References to pre-uploaded tensor glyph sets.
-    pub tensor_glyph_set_refs: Vec<TensorGlyphSetRefItem>,
-    /// Ribbon items to render this frame.
-    pub ribbon_items: Vec<RibbonItem>,
-    /// References to pre-uploaded ribbons.
-    pub ribbon_refs: Vec<RibbonRefItem>,
-    /// Volume surface slice items to render this frame.
-    pub volume_surface_slices: Vec<VolumeSurfaceSliceItem>,
-    /// Billboard sprite items to render this frame.
-    pub sprite_items: Vec<SpriteItem>,
-    /// References to pre-uploaded sprite sets (static billboards).
-    pub sprite_set_refs: Vec<SpriteSetRefItem>,
-    /// References to pre-uploaded sprite instance sets (entity sprites).
-    pub sprite_instance_set_refs: Vec<SpriteInstanceSetRefItem>,
     /// Mesh-instance batches to render this frame (mesh-based particles).
     pub mesh_instances: Vec<MeshInstanceItem>,
-    /// GPU particle systems to advance and draw this frame.
-    pub gpu_particle_systems: Vec<GpuParticleSystemItem>,
-    /// External instance sets to draw this frame (mesh per element of a
-    /// caller-supplied GPU positions buffer).
-    pub external_instances: Vec<ExternalInstancesItem>,
-    /// Gaussian splat items to render this frame.
-    pub gaussian_splats: Vec<GaussianSplatItem>,
-    /// Screen-space decal items to render this frame.
-    pub decals: Vec<DecalItem>,
-    /// Participating-media volumes (fog, smoke, clouds) to render this frame.
-    pub scatter_volumes: Vec<ScatterVolumeItem>,
     /// Scene-graph light sources to union with `EffectsFrame::lighting.lights`.
     ///
     /// Populate via [`crate::scene::scene::Scene::collect_lights`]. The renderer
@@ -384,8 +327,10 @@ pub struct SceneFrame {
     /// renderer iterates this map during `prepare` / `paint` and dispatches
     /// to the matching registered plugin. Entries whose `type_name` is not
     /// registered on the renderer are silently ignored.
-    pub plugin_items:
-        std::collections::HashMap<&'static str, Box<dyn crate::plugin_api::PluginItemCollection>>,
+    pub plugin_items: std::collections::HashMap<
+        &'static str,
+        Vec<Box<dyn crate::plugin_api::PluginItemCollection>>,
+    >,
 }
 
 impl Default for SceneFrame {
@@ -393,37 +338,10 @@ impl Default for SceneFrame {
         Self {
             generation: 0,
             surfaces: SurfaceSubmission::default(),
-            point_clouds: Vec::new(),
-            point_cloud_refs: Vec::new(),
-            glyphs: Vec::new(),
-            glyph_set_refs: Vec::new(),
-            polylines: Vec::new(),
-            polyline_refs: Vec::new(),
-            volumes: Vec::new(),
             isolines: Vec::new(),
-            streamtube_items: Vec::new(),
-            streamtube_refs: Vec::new(),
-            gpu_implicit: Vec::new(),
-            gpu_mc_items: Vec::new(),
             compute_filter_items: Vec::new(),
             volume_meshes: Vec::new(),
-            tube_items: Vec::new(),
-            tube_refs: Vec::new(),
-            image_slices: Vec::new(),
-            tensor_glyphs: Vec::new(),
-            tensor_glyph_set_refs: Vec::new(),
-            ribbon_items: Vec::new(),
-            ribbon_refs: Vec::new(),
-            volume_surface_slices: Vec::new(),
-            sprite_items: Vec::new(),
-            sprite_set_refs: Vec::new(),
-            sprite_instance_set_refs: Vec::new(),
             mesh_instances: Vec::new(),
-            gpu_particle_systems: Vec::new(),
-            external_instances: Vec::new(),
-            gaussian_splats: Vec::new(),
-            decals: Vec::new(),
-            scatter_volumes: Vec::new(),
             lights: Vec::new(),
             foreground_items: Vec::new(),
             plugin_items: std::collections::HashMap::new(),
@@ -493,7 +411,55 @@ impl SceneFrame {
         type_name: &'static str,
         items: C,
     ) {
-        self.plugin_items.insert(type_name, Box::new(items));
+        self.plugin_items
+            .entry(type_name)
+            .or_default()
+            .push(Box::new(items));
+    }
+
+    /// The submitted items of type `T`, creating an empty collection if this
+    /// frame has none yet.
+    ///
+    /// This is the typed submission path: `frame.scene.items_mut::<crate::PointCloudItem>().push(item)`
+    /// reaches the same collection the plugin reads back with
+    /// [`ItemFrameContext::items_of`](crate::plugin_api::ItemFrameContext::items_of).
+    /// An item type with several forms keeps one collection per form, all
+    /// under [`PluginItem::TYPE_NAME`](crate::plugin_api::PluginItem::TYPE_NAME).
+    pub fn items_mut<T: crate::plugin_api::PluginItem>(&mut self) -> &mut Vec<T> {
+        let slot = self.plugin_items.entry(T::TYPE_NAME).or_default();
+        if let Some(index) = slot
+            .iter()
+            .position(|c| c.as_any().downcast_ref::<Vec<T>>().is_some())
+        {
+            return slot[index]
+                .as_any_mut()
+                .downcast_mut::<Vec<T>>()
+                .expect("position() just matched this collection's concrete type");
+        }
+        slot.push(Box::new(Vec::<T>::new()));
+        slot.last_mut()
+            .expect("just pushed")
+            .as_any_mut()
+            .downcast_mut::<Vec<T>>()
+            .expect("just pushed a Vec<T>")
+    }
+
+    /// The submitted items of type `T`, or an empty slice if this frame
+    /// carries none. Read-only counterpart to [`items_mut`](Self::items_mut).
+    pub fn items_of<T: crate::plugin_api::PluginItem>(&self) -> &[T] {
+        self.plugin_items
+            .get(T::TYPE_NAME)
+            .and_then(|slot| {
+                slot.iter()
+                    .find_map(|c| c.as_any().downcast_ref::<Vec<T>>())
+            })
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Replace the submitted items of type `T` with `items`.
+    pub fn submit<T: crate::plugin_api::PluginItem>(&mut self, items: Vec<T>) {
+        *self.items_mut::<T>() = items;
     }
 
     /// Build a scene frame from an already-allocated shared slice.
@@ -530,14 +496,15 @@ impl SceneFrame {
         let items = scene.collect_render_items(selection);
         let lights = scene.collect_lights();
         let (light_glyphs, light_polylines) = crate::scene::build_light_glyphs(scene, selection);
-        Self {
+        let mut frame = Self {
             generation: scene.version(),
             surfaces: SurfaceSubmission::Flat(items.into()),
             lights,
-            glyphs: light_glyphs,
-            polylines: light_polylines,
             ..Self::default()
-        }
+        };
+        *frame.items_mut::<crate::GlyphItem>() = light_glyphs;
+        *frame.items_mut::<crate::PolylineItem>() = light_polylines;
+        frame
     }
 }
 

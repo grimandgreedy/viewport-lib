@@ -338,7 +338,7 @@ fn hdr_lightmap_survives_above_one() {
 
     // Render the box lit only by a uniform lightmap of value `radiance`, and
     // return the peak captured channel.
-    let mut capture_with = |renderer: &mut ViewportRenderer, tex| -> f32 {
+    let capture_with = |renderer: &mut ViewportRenderer, tex| -> f32 {
         renderer
             .resources_mut()
             .set_lightmap(
@@ -440,7 +440,7 @@ fn multi_page_lightmap_selects_layer_per_vertex() {
         .upload_texture_hdr_layers(&device, &queue, 2, 2, 2, &atlas)
         .unwrap();
 
-    let mut capture_page = |renderer: &mut ViewportRenderer, page: u32| -> f32 {
+    let capture_page = |renderer: &mut ViewportRenderer, page: u32| -> f32 {
         let pages = vec![page; vcount];
         renderer
             .resources_mut()

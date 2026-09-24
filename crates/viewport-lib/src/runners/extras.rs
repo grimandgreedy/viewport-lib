@@ -77,12 +77,26 @@ impl ViewportInstance {
     pub(super) fn inject_extras(&mut self) {
         for (_, extra) in &self.extras {
             match extra {
-                SceneExtra::PointCloud(item) => self.frame.scene.point_clouds.push(item.clone()),
-                SceneExtra::Glyphs(item) => self.frame.scene.glyphs.push(item.clone()),
-                SceneExtra::Volume(item) => self.frame.scene.volumes.push(item.clone()),
-                SceneExtra::GaussianSplat(item) => {
-                    self.frame.scene.gaussian_splats.push(item.clone())
-                }
+                SceneExtra::PointCloud(item) => self
+                    .frame
+                    .scene
+                    .items_mut::<crate::PointCloudItem>()
+                    .push(item.clone()),
+                SceneExtra::Glyphs(item) => self
+                    .frame
+                    .scene
+                    .items_mut::<crate::GlyphItem>()
+                    .push(item.clone()),
+                SceneExtra::Volume(item) => self
+                    .frame
+                    .scene
+                    .items_mut::<crate::VolumeItem>()
+                    .push(item.clone()),
+                SceneExtra::GaussianSplat(item) => self
+                    .frame
+                    .scene
+                    .items_mut::<crate::GaussianSplatItem>()
+                    .push(item.clone()),
             }
         }
     }

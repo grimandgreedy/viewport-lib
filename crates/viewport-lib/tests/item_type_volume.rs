@@ -46,7 +46,7 @@ fn gpu_pick_hits_voxel_volume() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(63);
-    frame.scene.volumes = vec![vol];
+    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
 
     // prepare builds the per-volume GPU data (bind group + cube) the pick reuses.
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -99,7 +99,7 @@ fn gpu_pick_voxel_volume_resolves_voxel() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(63);
-    frame.scene.volumes = vec![vol];
+    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
@@ -206,7 +206,7 @@ fn gpu_pick_hits_showcase_style_voxel_volume() {
     vol.threshold_min = 0.15;
     vol.threshold_max = 1.0;
     vol.settings.pick_id = PickId(20);
-    frame.scene.volumes = vec![vol];
+    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -252,7 +252,7 @@ fn cpu_pick_hits_voxel_volume() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(64);
-    frame.scene.volumes = vec![vol];
+    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);
@@ -307,7 +307,7 @@ fn rect_pick_hits_voxel_volume() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(65);
-    frame.scene.volumes = vec![vol];
+    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);

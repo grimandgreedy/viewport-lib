@@ -64,7 +64,10 @@ fn first_decal_frame_builds_no_pipelines() {
     decal.texture_id = tex_id;
     decal.transform = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
     let mut with_decal = mesh_frame(item, [200.0, 150.0]);
-    with_decal.scene.decals.push(decal);
+    with_decal
+        .scene
+        .items_mut::<viewport_lib::DecalItem>()
+        .push(decal);
     let _ = h.render(&with_decal, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
@@ -110,7 +113,7 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
     let mut with_cloud = mesh_frame(item, [200.0, 150.0]);
     with_cloud
         .scene
-        .point_cloud_refs
+        .items_mut::<viewport_lib::PointCloudRefItem>()
         .push(PointCloudRefItem::new(source));
     let _ = h.render(&with_cloud, 200, 150);
     assert_eq!(
@@ -162,7 +165,10 @@ fn volume_pipelines_are_owned_by_the_plugin() {
     let mut volume = VolumeItem::default();
     volume.volume_id = volume_id;
     let mut with_volume = mesh_frame(item, [200.0, 150.0]);
-    with_volume.scene.volumes.push(volume);
+    with_volume
+        .scene
+        .items_mut::<viewport_lib::VolumeItem>()
+        .push(volume);
     let _ = h.render(&with_volume, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
@@ -240,16 +246,22 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     let mut with_curves = mesh_frame(item, [200.0, 150.0]);
     with_curves
         .scene
-        .ribbon_refs
+        .items_mut::<viewport_lib::RibbonRefItem>()
         .push(viewport_lib::RibbonRefItem::new(source));
     let mut streamtube = viewport_lib::StreamtubeItem::default();
     streamtube.positions = vec![[-1.0, 0.5, 0.0], [0.0, 0.5, 0.0], [1.0, 0.5, 0.0]];
     streamtube.strip_lengths = vec![3];
-    with_curves.scene.streamtube_items.push(streamtube);
+    with_curves
+        .scene
+        .items_mut::<viewport_lib::StreamtubeItem>()
+        .push(streamtube);
     let mut tube = viewport_lib::TubeItem::default();
     tube.positions = vec![[-1.0, -0.5, 0.0], [0.0, -0.5, 0.0], [1.0, -0.5, 0.0]];
     tube.strip_lengths = vec![3];
-    with_curves.scene.tube_items.push(tube);
+    with_curves
+        .scene
+        .items_mut::<viewport_lib::TubeItem>()
+        .push(tube);
     let _ = h.render(&with_curves, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,

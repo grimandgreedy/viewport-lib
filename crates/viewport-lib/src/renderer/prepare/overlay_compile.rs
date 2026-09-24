@@ -113,7 +113,7 @@ fn emit_base(
         // An inset layer goes over what it erodes and under the edge of it:
         // over the fill and under the stroke for a filled path, over the stroke
         // when the stroke is all the item covers.
-        let mut inner = |verts: &mut Vec<crate::resources::OverlayTextVertex>| {
+        let inner = |verts: &mut Vec<crate::resources::OverlayTextVertex>| {
             for layer in poly
                 .style
                 .inner_shadows
@@ -330,7 +330,7 @@ fn emit_label(
     atlas: &mut crate::resources::overlay::font::GlyphAtlas,
     device: &crate::gpu::Device,
     label: &crate::renderer::types::LabelItem,
-    emit_leader: bool,
+    _emit_leader: bool,
     ppp: f32,
 ) {
     if label.text.is_empty()

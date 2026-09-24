@@ -18,7 +18,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use viewport_lib as vpl;
-use vpl::wgpu;
 use vpl::{
     AppConfigV2, BlitTexture, ButtonState, Material, NodeId, OffscreenViewportTarget,
     OrbitCameraController, ViewportAppV2, ViewportContext, ViewportEvent, ViewportInstance,
@@ -36,11 +35,18 @@ struct Pane {
 }
 
 impl Pane {
-    fn new(device: &vpl::wgpu::Device, surface_format: vpl::wgpu::TextureFormat, size: [u32; 2]) -> Self {
+    fn new(
+        device: &vpl::wgpu::Device,
+        surface_format: vpl::wgpu::TextureFormat,
+        size: [u32; 2],
+    ) -> Self {
         Self {
             // The offscreen instance targets the sRGB render format so the blit into
             // the (sRGB) window surface encodes exactly once.
-            session: ViewportInstance::new(device, OffscreenViewportTarget::render_format(surface_format)),
+            session: ViewportInstance::new(
+                device,
+                OffscreenViewportTarget::render_format(surface_format),
+            ),
             target: OffscreenViewportTarget::new(device, surface_format, size),
             orbit: OrbitCameraController::new_stateless(),
             blit: None,
@@ -83,7 +89,9 @@ impl Pane {
             }
         }
         let _ = self.session.update_orbit(&mut self.orbit);
-        let cmd = self.session.render(device, queue, self.target.render_view());
+        let cmd = self
+            .session
+            .render(device, queue, self.target.render_view());
         queue.submit(std::iter::once(cmd));
     }
 }
@@ -196,7 +204,14 @@ fn main() {
                     }
                     let left_events: Vec<ViewportEvent> =
                         events.iter().map(|e| remap(e, 0.0)).collect();
-                    left.render(&device, &queue, pane_vp, ppp, active == Some(0), &left_events);
+                    left.render(
+                        &device,
+                        &queue,
+                        pane_vp,
+                        ppp,
+                        active == Some(0),
+                        &left_events,
+                    );
                 }
                 if panes.left.as_ref().is_some_and(|p| p.blit.is_none()) {
                     let blit = ctx
@@ -210,7 +225,14 @@ fn main() {
                     right.resize(&device, [right_w.max(1), ph]);
                     let right_events: Vec<ViewportEvent> =
                         events.iter().map(|e| remap(e, half_logical)).collect();
-                    right.render(&device, &queue, pane_vp, ppp, active == Some(1), &right_events);
+                    right.render(
+                        &device,
+                        &queue,
+                        pane_vp,
+                        ppp,
+                        active == Some(1),
+                        &right_events,
+                    );
                 }
                 if panes.right.as_ref().is_some_and(|p| p.blit.is_none()) {
                     let blit = ctx

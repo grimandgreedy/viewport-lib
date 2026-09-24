@@ -356,13 +356,19 @@ pub(crate) fn submit_pc_items(app: &mut App, fd: &mut FrameData) {
     }
     match app.pc_state.sub_mode {
         PcSubMode::PointCloud => {
-            fd.scene.point_clouds.push(app.make_pc_point_cloud_item());
+            fd.scene
+                .items_mut::<viewport_lib::PointCloudItem>()
+                .push(app.make_pc_point_cloud_item());
         }
         PcSubMode::VectorField => {
-            fd.scene.glyphs.push(app.make_pc_glyph_item());
+            fd.scene
+                .items_mut::<viewport_lib::GlyphItem>()
+                .push(app.make_pc_glyph_item());
         }
         PcSubMode::PointGaussian => {
-            fd.scene.point_clouds.push(app.make_pc_gaussian_item());
+            fd.scene
+                .items_mut::<viewport_lib::PointCloudItem>()
+                .push(app.make_pc_gaussian_item());
         }
     }
     if app.pc_state.ssao_enabled {
@@ -417,8 +423,7 @@ pub(crate) fn build(app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer)
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.6)
-            * glam::Quat::from_rotation_x(1.1),
+        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()
     };
 }
@@ -435,8 +440,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            pc_collect_scene_items(app);
+        let (items, lighting, sg, ss) = pc_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -455,11 +459,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     // Point cloud / glyph items (Showcase 15) : submitted every frame.
     submit_pc_items(app, &mut *fd);
 }
@@ -471,30 +471,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -535,13 +527,23 @@ impl crate::Showcase for ScPointClouds {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -550,7 +552,12 @@ impl crate::Showcase for ScPointClouds {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_point_clouds(app, ui)
     }
 }

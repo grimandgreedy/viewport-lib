@@ -216,38 +216,48 @@ impl PickingShowcase {
         // Point cloud.
         let mut pc = self.pc.clone();
         pc.settings.selected = sel(PC);
-        fd.scene.point_clouds.push(pc);
+        fd.scene
+            .items_mut::<viewport_lib::PointCloudItem>()
+            .push(pc);
 
         // Arrow glyphs.
         let mut glyphs = self.glyphs.clone();
         glyphs.settings.selected = sel(GLYPH);
-        fd.scene.glyphs.push(glyphs);
+        fd.scene.items_mut::<viewport_lib::GlyphItem>().push(glyphs);
 
         // Multi-strip polyline.
         let mut polyline = self.polyline.clone();
         polyline.settings.selected = sel(POLY);
-        fd.scene.polylines.push(polyline);
+        fd.scene
+            .items_mut::<viewport_lib::PolylineItem>()
+            .push(polyline);
 
         // Tensor glyphs.
         let mut tensor = self.tensor.clone();
         tensor.settings.selected = sel(TENSOR);
-        fd.scene.tensor_glyphs.push(tensor);
+        fd.scene
+            .items_mut::<viewport_lib::TensorGlyphItem>()
+            .push(tensor);
 
         // Sprites.
         let mut sprites = self.sprites.clone();
         sprites.settings.selected = sel(SPRITE);
-        fd.scene.sprite_items.push(sprites);
+        fd.scene
+            .items_mut::<viewport_lib::SpriteItem>()
+            .push(sprites);
 
         // Streamtube / tube / ribbon.
         let mut st = self.streamtube.clone();
         st.settings.selected = sel(STREAMTUBE);
-        fd.scene.streamtube_items.push(st);
+        fd.scene
+            .items_mut::<viewport_lib::StreamtubeItem>()
+            .push(st);
         let mut tb = self.tube.clone();
         tb.settings.selected = sel(TUBE);
-        fd.scene.tube_items.push(tb);
+        fd.scene.items_mut::<viewport_lib::TubeItem>().push(tb);
         let mut rb = self.ribbon.clone();
         rb.settings.selected = sel(RIBBON);
-        fd.scene.ribbon_items.push(rb);
+        fd.scene.items_mut::<viewport_lib::RibbonItem>().push(rb);
 
         // Ray-marched volume.
         if let (Some(vol_id), Some(data)) = (self.volume_id, self.volume_data.as_ref()) {
@@ -265,7 +275,7 @@ impl PickingShowcase {
             vol.settings.pick_id = PickId(VOLUME);
             vol.settings.selected = sel(VOLUME);
             vol.volume_data = Some(data.clone());
-            fd.scene.volumes.push(vol);
+            fd.scene.items_mut::<viewport_lib::VolumeItem>().push(vol);
         }
 
         // Gaussian splats.
@@ -276,7 +286,9 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(SPLAT);
             item.settings.selected = sel(SPLAT);
             item.settings.unlit = false;
-            fd.scene.gaussian_splats.push(item);
+            fd.scene
+                .items_mut::<viewport_lib::GaussianSplatItem>()
+                .push(item);
         }
 
         // Volume mesh (capsule): opaque boundary surface, so point-like picking
@@ -304,7 +316,9 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(SLICE);
             item.settings.selected = sel(SLICE);
             item.settings.unlit = false;
-            fd.scene.volume_surface_slices.push(item);
+            fd.scene
+                .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
+                .push(item);
         }
 
         // GPU implicit: two smooth-blended spheres.
@@ -333,7 +347,9 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(IMPLICIT);
             item.settings.selected = sel(IMPLICIT);
             item.settings.unlit = false;
-            fd.scene.gpu_implicit.push(item);
+            fd.scene
+                .items_mut::<viewport_lib::GpuImplicitItem>()
+                .push(item);
         }
 
         // GPU marching cubes: gyroid surface.
@@ -344,13 +360,15 @@ impl PickingShowcase {
             settings.unlit = false;
             settings.pick_id = PickId(MC);
             settings.selected = sel(MC);
-            fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
-                volume_id: mc_id,
-                isovalue: 0.0,
-                material: mat,
-                settings,
-                cpu_data: self.mc_data.clone(),
-            });
+            fd.scene
+                .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+                .push(GpuMarchingCubesItem {
+                    volume_id: mc_id,
+                    isovalue: 0.0,
+                    material: mat,
+                    settings,
+                    cpu_data: self.mc_data.clone(),
+                });
         }
 
         // Decal: a target sticker straddling the cube's top face.
@@ -360,7 +378,7 @@ impl PickingShowcase {
             d.texture_id = tex;
             d.settings.pick_id = PickId(DECAL);
             d.settings.selected = sel(DECAL);
-            fd.scene.decals.push(d);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(d);
         }
     }
 }

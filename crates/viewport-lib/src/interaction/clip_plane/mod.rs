@@ -33,7 +33,7 @@
 //!
 //! // Draw the plane indicator: build the outline from `visual` and submit it as an
 //! // ordinary scene polyline, tagged `ignore_clip` so it stays visible through the cut:
-//! frame.scene.polylines.push(visual::outline(&clip.shape, extent, colour));
+//! frame.scene.items_mut::<crate::PolylineItem>().push(visual::outline(&clip.shape, extent, colour));
 //! ```
 
 use crate::camera::camera::Camera;

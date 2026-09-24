@@ -21,9 +21,9 @@
 //!
 //! // After step: convert accumulated primitives to render items.
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
-//!     frame_data.scene.polylines.extend(dd.to_polylines());
+//!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
 //!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.point_clouds.push(pc);
+//!         frame_data.scene.items_mut::<crate::PointCloudItem>().push(pc);
 //!     }
 //!     frame_data.overlays.labels.extend(dd.to_labels());
 //! }
@@ -55,9 +55,9 @@
 //! ```rust,ignore
 //! // After step():
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
-//!     frame_data.scene.polylines.extend(dd.to_polylines());
+//!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
 //!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.point_clouds.push(pc);
+//!         frame_data.scene.items_mut::<crate::PointCloudItem>().push(pc);
 //!     }
 //!     frame_data.overlays.labels.extend(dd.to_labels());
 //! }

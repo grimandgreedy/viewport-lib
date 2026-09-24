@@ -13,8 +13,8 @@ use super::draw::{
 use super::pipeline::{CurveFrame, CurveMeshGpu};
 use super::types::StreamtubeId;
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, RectPickContext,
 };
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, StreamtubeItem, StreamtubeRefItem, SubObjectRef,
@@ -66,13 +66,10 @@ impl ItemTypePlugin for StreamtubePlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<StreamtubeItem>>()
-            .expect("streamtube collection is the SceneFrame field");
+        let items = items.of::<StreamtubeItem>();
         let refs = ctx.refs_of::<StreamtubeRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
@@ -148,7 +145,7 @@ impl ItemTypePlugin for StreamtubePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         paint_curve_mesh(pass, ctx, self.gpu.as_ref(), &self.frame);
     }
@@ -161,7 +158,7 @@ impl ItemTypePlugin for StreamtubePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         outline_mask_curve_mesh(pass, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
     }
@@ -245,7 +242,7 @@ impl ItemTypePlugin for StreamtubePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         render_pick_curve_mesh(pass, ctx, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
     }
@@ -261,7 +258,7 @@ impl ItemTypePlugin for StreamtubePlugin {
     }
     fn sub_object_position(
         &self,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         pick_id: PickId,
         sub_object: SubObjectRef,
     ) -> Option<glam::Vec3> {

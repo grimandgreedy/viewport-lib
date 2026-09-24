@@ -351,7 +351,9 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
         item.scalar_range = Some((-1.2, 1.2));
         item.colourmap_id = Some(ColourmapId(state.colourmap as usize));
         item.settings.pick_id = PickId(PICK_TENSOR_GLYPHS);
-        fd.scene.tensor_glyphs.push(item);
+        fd.scene
+            .items_mut::<viewport_lib::TensorGlyphItem>()
+            .push(item);
     }
 }
 
@@ -640,10 +642,8 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
@@ -657,18 +657,13 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
 
-
 /// Advance this showcase's own camera animation or object motion for the frame.
-
 
 /// Update this showcase's interactive widgets for the frame.
 
-
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -709,7 +704,12 @@ impl crate::Showcase for ScTensorGlyphs {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -718,7 +718,12 @@ impl crate::Showcase for ScTensorGlyphs {
     fn on_click(&self, app: &mut crate::App, cx: &crate::ClickCtx) {
         on_click(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -727,7 +732,12 @@ impl crate::Showcase for ScTensorGlyphs {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_tensor_glyphs(app, ui)
     }
 }

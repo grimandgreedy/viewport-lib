@@ -31,8 +31,8 @@ enum CylinderHandle {
 ///
 /// // Each frame:
 /// cyl.update(&ctx);
-/// fd.scene.polylines.push(cyl.wireframe_item(CYL_ID));
-/// fd.scene.glyphs.push(cyl.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(cyl.wireframe_item(CYL_ID));
+/// fd.scene.items_mut::<crate::GlyphItem>().push(cyl.handle_glyphs(HANDLE_ID, &ctx));
 /// ```
 pub struct CylinderWidget {
     /// World-space position of the first endpoint (bottom cap center).

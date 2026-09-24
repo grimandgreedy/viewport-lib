@@ -352,7 +352,7 @@ impl SpriteGpu {
         // One PipelineVariantSet-style build covers all 12 (depth_write x
         // blend x lit) combinations: the same closure picks the unlit or lit
         // shader/layout pair and the blend state for every key up front.
-        let pipelines = (SpriteVariantSet::build(|key| {
+        let pipelines = SpriteVariantSet::build(|key| {
             let blend = match key.blend {
                 crate::renderer::SpriteBlend::AlphaBlend => alpha,
                 crate::renderer::SpriteBlend::Additive => additive,
@@ -363,7 +363,7 @@ impl SpriteGpu {
             } else {
                 make_sprite(key.depth_write, blend, "sprite_pipeline_variant")
             }
-        }));
+        });
 
         // The fallback bind group reuses the crate-wide `fallback_normal_map`,
         // already populated with `(128, 128, 255, 255)` for tangent-space `(0, 0, 1)`.
@@ -480,25 +480,25 @@ impl SpriteGpu {
         };
 
         let oit_pipeline =
-            (make_oit_pipeline(&oit_layout, &oit_shader, "fs_oit", "sprite_oit_pipeline"));
-        let oit_pipeline_premultiplied = (make_oit_pipeline(
+            make_oit_pipeline(&oit_layout, &oit_shader, "fs_oit", "sprite_oit_pipeline");
+        let oit_pipeline_premultiplied = make_oit_pipeline(
             &oit_layout,
             &oit_shader,
             "fs_oit_premultiplied",
             "sprite_oit_pipeline_premultiplied",
-        ));
-        let oit_lit_pipeline = (make_oit_pipeline(
+        );
+        let oit_lit_pipeline = make_oit_pipeline(
             &oit_lit_layout,
             &oit_lit_shader,
             "fs_oit",
             "sprite_lit_oit_pipeline",
-        ));
-        let oit_lit_pipeline_premultiplied = (make_oit_pipeline(
+        );
+        let oit_lit_pipeline_premultiplied = make_oit_pipeline(
             &oit_lit_layout,
             &oit_lit_shader,
             "fs_oit_premultiplied",
             "sprite_lit_oit_pipeline_premultiplied",
-        ));
+        );
 
         let mask_shader = crate::resources::builders::wgsl_module(
             device,

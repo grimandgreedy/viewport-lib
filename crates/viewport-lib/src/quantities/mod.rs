@@ -17,7 +17,7 @@
 //!     &intrinsic_vecs,   // &[[f32; 2]] : (u, v) per vertex
 //!     0.3,               // arrow scale
 //! );
-//! frame.scene.glyphs.push(glyph);
+//! frame.scene.items_mut::<crate::GlyphItem>().push(glyph);
 //!
 //! // Edge one-forms : Whitney reconstruction per triangle.
 //! let glyph = edge_one_form_to_glyphs(
@@ -26,7 +26,7 @@
 //!     &edge_values,      // &[f32] : 3 values per triangle (e01, e12, e20)
 //!     0.3,
 //! );
-//! frame.scene.glyphs.push(glyph);
+//! frame.scene.items_mut::<crate::GlyphItem>().push(glyph);
 //! ```
 //!
 //! # Tangent frames

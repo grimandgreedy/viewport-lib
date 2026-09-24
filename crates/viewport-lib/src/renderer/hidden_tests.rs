@@ -85,7 +85,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         eprintln!("skipping non_mesh_pipelines_drop_hidden_items_at_upload: no GPU adapter");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
+    let renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
     // -----------------------------------------------------------------
     // Point cloud
@@ -101,6 +101,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.positions = vec![[1.0, 0.0, 0.0]];
         hid.settings = hidden();
         let items: Vec<PointCloudItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -117,7 +120,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = PointCloudPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -144,6 +147,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.vectors = vec![[0.0, 0.0, 1.0]];
         hid.settings = hidden();
         let items: Vec<GlyphItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -160,7 +166,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = GlyphPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -190,6 +196,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.eigenvectors = eigenvectors;
         hid.settings = hidden();
         let items: Vec<TensorGlyphItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -206,7 +215,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = TensorGlyphPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -233,6 +242,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
         let items: Vec<PolylineItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -249,7 +261,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = PolylinePlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -276,6 +288,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
         let items: Vec<StreamtubeItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -292,7 +307,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = StreamtubePlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -319,6 +334,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
         let items: Vec<TubeItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -335,7 +353,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = TubePlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -362,6 +380,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.strip_lengths = vec![2];
         hid.settings = hidden();
         let items: Vec<RibbonItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -378,7 +399,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = RibbonPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);
@@ -409,6 +430,9 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         hid.primitives.push(hid_prim);
         hid.settings = hidden();
         let items: Vec<GpuImplicitItem> = vec![vis, hid];
+        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
+            vec![Box::new(items)];
+        let items = crate::plugin_api::ItemCollections::new(&collections);
 
         let fd = empty_frame();
         let resources = renderer.resources();
@@ -425,7 +449,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             clip_objects: &[],
             quality_reduced: false,
             decal_excluded_surfaces: &[],
-            ref_items: [None, None],
+            collections: &collections,
         };
         let mut plugin = GpuImplicitPlugin::default();
         let _ = plugin.prepare(&device, &queue, &ctx, &items);

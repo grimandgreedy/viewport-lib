@@ -33,7 +33,7 @@ fn decal_frame(
     let mut decal = DecalItem::default();
     decal.texture_id = texture;
     decal.transform = glam::Mat4::from_scale(glam::Vec3::splat(3.0)).to_cols_array_2d();
-    fd.scene.decals.push(decal);
+    fd.scene.items_mut::<viewport_lib::DecalItem>().push(decal);
     fd.effects.post_process.ssaa_factor = ssaa_factor;
     fd.viewport.show_axes_indicator = false;
     fd

@@ -50,7 +50,7 @@ impl ViewportInstance {
     ///
     /// ```rust,ignore
     /// session.update_orbit_with(&mut orbit, |frame| {
-    ///     frame.scene.point_clouds.push(cloud);
+    ///     frame.scene.items_mut::<crate::PointCloudItem>().push(cloud);
     ///     frame.overlays.labels.push(label);
     /// });
     /// ```

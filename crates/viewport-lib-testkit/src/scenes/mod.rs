@@ -13,8 +13,8 @@
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
 pub mod item_types;
-pub mod overlays;
 pub mod meshes;
+pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
@@ -188,23 +188,23 @@ pub const TEST_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
 pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -> FrameData {
     let mut sf = SceneFrame::from_surface_items(scene.items.clone());
     sf.generation = scene.generation;
-    sf.point_clouds = scene.point_clouds.clone();
-    sf.polylines = scene.polylines.clone();
-    sf.glyphs = scene.glyphs.clone();
-    sf.tensor_glyphs = scene.tensor_glyphs.clone();
-    sf.tube_items = scene.tube_items.clone();
-    sf.streamtube_items = scene.streamtube_items.clone();
-    sf.ribbon_items = scene.ribbon_items.clone();
-    sf.sprite_items = scene.sprite_items.clone();
-    sf.gpu_particle_systems = scene.gpu_particle_systems.clone();
-    sf.volumes = scene.volumes.clone();
-    sf.gaussian_splats = scene.gaussian_splats.clone();
-    sf.image_slices = scene.image_slices.clone();
-    sf.volume_surface_slices = scene.volume_surface_slices.clone();
-    sf.gpu_implicit = scene.gpu_implicit.clone();
-    sf.gpu_mc_items = scene.gpu_mc_items.clone();
-    sf.scatter_volumes = scene.scatter_volumes.clone();
-    sf.decals = scene.decals.clone();
+    *sf.items_mut::<viewport_lib::PointCloudItem>() = scene.point_clouds.clone();
+    *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
+    *sf.items_mut::<viewport_lib::GlyphItem>() = scene.glyphs.clone();
+    *sf.items_mut::<viewport_lib::TensorGlyphItem>() = scene.tensor_glyphs.clone();
+    *sf.items_mut::<viewport_lib::TubeItem>() = scene.tube_items.clone();
+    *sf.items_mut::<viewport_lib::StreamtubeItem>() = scene.streamtube_items.clone();
+    *sf.items_mut::<viewport_lib::RibbonItem>() = scene.ribbon_items.clone();
+    *sf.items_mut::<viewport_lib::SpriteItem>() = scene.sprite_items.clone();
+    *sf.items_mut::<viewport_lib::GpuParticleSystemItem>() = scene.gpu_particle_systems.clone();
+    *sf.items_mut::<viewport_lib::VolumeItem>() = scene.volumes.clone();
+    *sf.items_mut::<viewport_lib::GaussianSplatItem>() = scene.gaussian_splats.clone();
+    *sf.items_mut::<viewport_lib::ImageSliceItem>() = scene.image_slices.clone();
+    *sf.items_mut::<viewport_lib::VolumeSurfaceSliceItem>() = scene.volume_surface_slices.clone();
+    *sf.items_mut::<viewport_lib::GpuImplicitItem>() = scene.gpu_implicit.clone();
+    *sf.items_mut::<viewport_lib::GpuMarchingCubesItem>() = scene.gpu_mc_items.clone();
+    *sf.items_mut::<viewport_lib::ScatterVolumeItem>() = scene.scatter_volumes.clone();
+    *sf.items_mut::<viewport_lib::DecalItem>() = scene.decals.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();

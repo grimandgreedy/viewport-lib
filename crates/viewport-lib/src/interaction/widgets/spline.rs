@@ -7,7 +7,7 @@ use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
 /// An interactive spline widget with N draggable Catmull-Rom control points.
 ///
 /// Each frame call `update()` to advance state, then push `polyline_item()` into
-/// `fd.scene.polylines` and `handle_glyphs()` into `fd.scene.glyphs`.
+/// `fd.scene.items_mut::<crate::PolylineItem>()` and `handle_glyphs()` into `fd.scene.items_mut::<crate::GlyphItem>()`.
 pub struct SplineWidget {
     /// Control point positions.
     pub points: Vec<glam::Vec3>,

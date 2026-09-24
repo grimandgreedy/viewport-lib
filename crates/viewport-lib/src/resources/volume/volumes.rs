@@ -325,7 +325,7 @@ impl DeviceResources {
 #[cfg(test)]
 mod tests {
     use crate::DeviceResources;
-    use crate::geometry::marching_cubes::VolumeData;
+
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {

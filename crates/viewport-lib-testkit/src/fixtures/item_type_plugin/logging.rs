@@ -2,8 +2,8 @@
 
 use crate::fixtures::CallLog;
 use viewport_lib::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickPassContext, PickRay,
-    PluginItemCollection, SharedBindings,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickPassContext, PickRay, SharedBindings,
 };
 use viewport_lib::renderer::PickHit;
 use viewport_lib::wgpu;
@@ -57,7 +57,7 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         _device: &wgpu::Device,
         _queue: &wgpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
         self.log.record(format!(
             "prepare:{}:items={}:vp={}",
@@ -72,7 +72,7 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         &self,
         _pass: &mut wgpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.log.record(format!(
             "paint:{}:items={}:vp={}",
@@ -86,7 +86,7 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         &self,
         _pass: &mut wgpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         self.log.record(format!("outline_mask:{}", self.type_name));
     }
@@ -95,7 +95,7 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         &self,
         _pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         self.log.record(format!("render_pick:{}", self.type_name));
     }

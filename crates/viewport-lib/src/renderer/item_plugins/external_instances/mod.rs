@@ -19,22 +19,18 @@ mod pipeline;
 pub(crate) mod store;
 pub(crate) mod types;
 
-use crate::plugin_api::{ItemFrameContext, ItemTypePlugin, PaintContext, PluginItemCollection};
+use crate::plugin_api::{ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext};
 use crate::renderer::ExternalInstancesItem;
 use store::{ExternalInstanceSetStore, ExternalInstancesGpuData};
 use types::{ExternalInstanceSetConfig, ExternalInstanceSetId};
 
 pub(crate) const TYPE_NAME: &str = "vpl.external_instances";
 
-impl PluginItemCollection for Vec<ExternalInstancesItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl crate::plugin_api::PluginItem for ExternalInstancesItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -169,13 +165,10 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         device: &crate::gpu::Device,
         _queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<ExternalInstancesItem>>()
-            .expect("external instances collection is the SceneFrame field");
+        let items = items.of::<ExternalInstancesItem>();
         if items.is_empty() {
             return Vec::new();
         }
@@ -201,7 +194,7 @@ impl ItemTypePlugin for ExternalInstancesPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.frame.is_empty() {

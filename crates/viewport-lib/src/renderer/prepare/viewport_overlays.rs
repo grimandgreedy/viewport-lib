@@ -748,7 +748,7 @@ impl ViewportRenderer {
                     // filled path, over the stroke when the stroke is all the
                     // item covers.
                     let filled = poly.closed && poly.style.fill.is_set();
-                    let mut inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                    let inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
                         for layer in poly
                             .style
                             .inner_shadows

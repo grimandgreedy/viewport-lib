@@ -24,8 +24,8 @@ use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point
 ///                           drag_started, dragging, released };
 /// probe.update(&ctx);
 ///
-/// fd.scene.polylines.push(probe.polyline_item(LINE_ID));
-/// fd.scene.glyphs.push(probe.handle_glyphs(HANDLE_ID_BASE, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(probe.polyline_item(LINE_ID));
+/// fd.scene.items_mut::<crate::GlyphItem>().push(probe.handle_glyphs(HANDLE_ID_BASE, &ctx));
 ///
 /// // Suppress orbit while dragging:
 /// if probe.is_active() { orbit.resolve(); } else { orbit.apply_to_camera(&mut camera); }

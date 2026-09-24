@@ -91,6 +91,108 @@ pub struct RectPickContext<'a> {
     pub meshes: crate::resources::MeshGeometry<'a>,
 }
 
+/// One submittable item of an item type, tying the item struct to the type
+/// name its plugin registered under.
+///
+/// Implementing this is what lets a `Vec<T>` be submitted with
+/// [`SceneFrame::items_mut`](crate::renderer::SceneFrame::items_mut) and read
+/// back by a plugin with [`ItemFrameContext::items_of`], with no per-type
+/// wiring in the lib. An item type may have several item structs sharing one
+/// `TYPE_NAME`: an inline form carrying its data and a reference form naming
+/// pre-uploaded content, say, or a second reference form. They travel together
+/// under the name and the plugin tells them apart by downcasting.
+pub trait PluginItem: Any + Send + Sync + 'static {
+    /// The registering plugin's [`ItemTypePlugin::type_name`].
+    const TYPE_NAME: &'static str;
+
+    /// Shared per-item flags (`hidden`, `selected`, `pick_id`, ...).
+    fn settings(&self) -> &ItemSettings;
+}
+
+impl<T: PluginItem> PluginItemCollection for Vec<T> {
+    fn len(&self) -> usize {
+        <[T]>::len(self)
+    }
+
+    fn item_settings(&self, index: usize) -> &ItemSettings {
+        self[index].settings()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Every collection submitted under one item type's name this frame.
+///
+/// An item type may have several item forms sharing a type name: an inline
+/// form carrying its data, a reference form naming pre-uploaded content, a
+/// second reference form. They arrive together and a hook picks the one it
+/// wants by type with [`of`](Self::of), so submission order does not matter.
+#[derive(Clone, Copy)]
+pub struct ItemCollections<'a>(&'a [Box<dyn PluginItemCollection>]);
+
+impl<'a> ItemCollections<'a> {
+    /// Wrap the collections submitted under one name.
+    pub fn new(collections: &'a [Box<dyn PluginItemCollection>]) -> Self {
+        Self(collections)
+    }
+
+    /// This frame's items of type `T`, or an empty slice if none were
+    /// submitted.
+    pub fn of<T: 'static>(&self) -> &'a [T] {
+        self.0
+            .iter()
+            .find_map(|c| c.as_any().downcast_ref::<Vec<T>>())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The submitted collection whose concrete type is `C`, for an item type
+    /// that submits its own collection type rather than a plain `Vec`.
+    pub fn downcast<C: PluginItemCollection>(&self) -> Option<&'a C> {
+        self.0.iter().find_map(|c| c.as_any().downcast_ref::<C>())
+    }
+
+    /// Total items across every form.
+    pub fn len(&self) -> usize {
+        self.0.iter().map(|c| c.len()).sum()
+    }
+
+    /// `true` when no form carried anything.
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|c| c.is_empty())
+    }
+
+    /// Each submitted collection in turn.
+    pub fn iter(&self) -> impl Iterator<Item = &'a dyn PluginItemCollection> {
+        self.0.iter().map(|b| b.as_ref())
+    }
+
+    /// Settings for the item at `index`, counting across every form in
+    /// submission order, so the range `0..len()` addresses each item once.
+    pub fn item_settings(&self, index: usize) -> &'a ItemSettings {
+        let mut rest = index;
+        for c in self.0 {
+            if rest < c.len() {
+                return c.item_settings(rest);
+            }
+            rest -= c.len();
+        }
+        panic!("item index {index} out of range for {} items", self.len());
+    }
+
+    /// Pick id for the item at `index`, indexed as
+    /// [`item_settings`](Self::item_settings).
+    pub fn pick_id(&self, index: usize) -> PickId {
+        self.item_settings(index).pick_id
+    }
+}
+
 /// Per-frame item collection owned by the consumer and read by the lib.
 ///
 /// A plugin defines its own collection type (typically a wrapper around a
@@ -133,6 +235,10 @@ pub trait PluginItemCollection: Any + Send + Sync {
     /// back to its concrete collection type. Implementations should
     /// return `self`.
     fn as_any(&self) -> &dyn Any;
+
+    /// Cast to `&mut dyn Any`, so a host can reach a submitted collection
+    /// again to push into it. Implementations should return `self`.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// Information forwarded to a plugin's per-frame `prepare`.
@@ -207,7 +313,7 @@ pub struct ItemFrameContext<'a> {
     /// The opaque surfaces that opted out of decal projection this frame, as
     /// `(mesh_id, model)` pairs, with hidden items already dropped.
     ///
-    /// Crate-internal, like [`ref_items`](Self::ref_items), and for the same
+    /// Crate-internal, unlike [`collections`](Self::collections), and for a
     /// reason: the opt-out is `SceneRenderItem::receives_decals`, a field on
     /// the mesh family that nothing outside this crate can populate for an
     /// item type of its own. Exposing it would be public surface no external
@@ -216,35 +322,30 @@ pub struct ItemFrameContext<'a> {
     /// question to settle first is what the general opt-out looks like on
     /// `SceneRenderItem`, not how to widen this field.
     pub(crate) decal_excluded_surfaces: &'a [(crate::MeshId, [[f32; 4]; 4])],
-    /// Per-frame references to pre-uploaded content of this same item type,
-    /// for the built-in types that have a reference form (`point_clouds` has
-    /// `point_cloud_refs`, and so on). The reference items carry their own
-    /// `ItemSettings` and a per-frame model matrix; the payload lives in the
-    /// upload store. A type may have more than one reference form: a sprite
-    /// batch can name a pre-uploaded sprite set or a pre-uploaded instance
-    /// set, which are different item types over the same draw. Read them with
-    /// [`refs_of`](Self::refs_of) rather than by index, since which slot a
-    /// form occupies is not meaningful. Empty for an externally registered
-    /// plugin, whose items all arrive on one collection; the whole field goes
-    /// away when `SceneFrame` merges items and references.
-    pub(crate) ref_items: [Option<&'a dyn PluginItemCollection>; MAX_REF_COLLECTIONS],
+    /// Every collection submitted under this item type's name this frame.
+    ///
+    /// One item type may submit several: an inline form carrying its data, a
+    /// reference form naming pre-uploaded content, and so on. Sprite submits
+    /// three. Read them by type with [`items_of`](Self::items_of) rather than
+    /// by index; the order they were submitted in is not meaningful.
+    pub collections: &'a [Box<dyn PluginItemCollection>],
 }
 
-/// How many reference collections one item type may submit in a frame. Two
-/// today, for sprite; raise it if a type grows a third form.
-pub(crate) const MAX_REF_COLLECTIONS: usize = 2;
-
 impl<'a> ItemFrameContext<'a> {
-    /// This frame's reference items of type `T`, or an empty slice if the
-    /// frame carried none. A type with two reference forms calls this once per
-    /// form; the order the forms were routed in does not matter.
-    pub(crate) fn refs_of<T: 'static>(&self) -> &'a [T] {
-        self.ref_items
+    /// This frame's items of type `T`, or an empty slice if the frame carried
+    /// none. A type with several item forms calls this once per form.
+    pub fn items_of<T: 'static>(&self) -> &'a [T] {
+        self.collections
             .iter()
-            .flatten()
             .find_map(|c| c.as_any().downcast_ref::<Vec<T>>())
             .map(|v| v.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Alias of [`items_of`](Self::items_of), for reading a reference form.
+    /// The two are the same lookup: a reference item is an item.
+    pub fn refs_of<T: 'static>(&self) -> &'a [T] {
+        self.items_of::<T>()
     }
 }
 
@@ -648,7 +749,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// vector (the default) for a type that emits nothing.
     fn contribute_lights(
         &self,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
         _ctx: &LightContext<'_>,
     ) -> Vec<crate::renderer::LightSource> {
         Vec::new()
@@ -705,7 +806,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         _device: &crate::gpu::Device,
         _queue: &crate::gpu::Queue,
         _ctx: &ItemFrameContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         Vec::new()
     }
@@ -728,7 +829,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -766,7 +867,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -807,7 +908,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &DepthReadContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -838,7 +939,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -888,7 +989,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// a data polyline gets.
     fn wireframe_polylines(
         &self,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
         _ctx: &ItemFrameContext<'_>,
     ) -> Vec<crate::renderer::PolylineItem> {
         Vec::new()
@@ -922,12 +1023,12 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// frame:
     ///
     /// ```no_run
-    /// # use viewport_lib::{FrameData, Aabb, aabb_wireframe_polyline};
+    /// # use viewport_lib::{FrameData, Aabb, PolylineItem, aabb_wireframe_polyline};
     /// # fn example(fd: &mut FrameData, bounds: &Aabb, selected: bool) {
     /// if selected {
     ///     // The same yellow the built-in bounds outlines use.
     ///     fd.scene
-    ///         .polylines
+    ///         .items_mut::<PolylineItem>()
     ///         .push(aabb_wireframe_polyline(bounds, [1.0, 0.9, 0.2, 1.0]));
     /// }
     /// # }
@@ -941,7 +1042,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -981,7 +1082,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _encoder: &mut crate::gpu::CommandEncoder,
         _ctx: &EncoderScopeContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -999,7 +1100,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &mut self,
         _frustum: &crate::camera::frustum::Frustum,
         _ctx: &ItemFrameContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -1019,7 +1120,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &ShadowCastContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -1108,7 +1209,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -1174,7 +1275,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// point-like feature to snap to.
     fn sub_object_position(
         &self,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
         _pick_id: PickId,
         _sub_object: crate::renderer::SubObjectRef,
     ) -> Option<glam::Vec3> {

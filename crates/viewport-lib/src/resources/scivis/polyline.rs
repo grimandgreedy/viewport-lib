@@ -637,7 +637,6 @@ mod tests {
     use super::PolylineKey;
     use crate::DeviceResources;
     use crate::renderer::PolylineItem;
-    use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();

@@ -17,8 +17,8 @@ use super::pipeline::{CurveFrame, CurvePickGpu, draw_mesh, draw_solid_indexed};
 use super::types::RibbonId;
 use crate::plugin_api::pick_helpers::{project_to_screen, ray_triangle, segment_in_rect};
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext, ShadowCastContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, RectPickContext, ShadowCastContext,
 };
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, RibbonItem, RibbonRefItem, SpriteBlend, SubObjectRef,
@@ -390,14 +390,11 @@ impl ItemTypePlugin for RibbonPlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
         self.revalidate_store(device, queue, ctx.resources);
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<RibbonItem>>()
-            .expect("ribbon collection is the SceneFrame field");
+        let items = items.of::<RibbonItem>();
         let refs = ctx.refs_of::<RibbonRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
@@ -472,7 +469,7 @@ impl ItemTypePlugin for RibbonPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
@@ -505,7 +502,7 @@ impl ItemTypePlugin for RibbonPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         for entry in self.frame.iter().filter(|f| f.gpu.oit_eligible) {
@@ -523,7 +520,7 @@ impl ItemTypePlugin for RibbonPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &ShadowCastContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         // No per-item cascade-frustum cull: the uploaded data carries no world
@@ -548,7 +545,7 @@ impl ItemTypePlugin for RibbonPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         outline_mask_curve_mesh(pass, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
     }
@@ -681,7 +678,7 @@ impl ItemTypePlugin for RibbonPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         render_pick_curve_mesh(pass, ctx, self.gpu.as_ref().map(|g| &g.pick), &self.frame);
     }
@@ -697,7 +694,7 @@ impl ItemTypePlugin for RibbonPlugin {
     }
     fn sub_object_position(
         &self,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         pick_id: PickId,
         sub_object: SubObjectRef,
     ) -> Option<glam::Vec3> {

@@ -466,6 +466,10 @@ fn plugin_paint_foreground_draws_into_pass() {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
     }
 
     struct FgPlugin {
@@ -482,7 +486,7 @@ fn plugin_paint_foreground_draws_into_pass() {
             &self,
             pass: &mut wgpu::RenderPass<'_>,
             _ctx: &viewport_lib::plugin_api::PaintContext<'_>,
-            _items: &dyn PluginItemCollection,
+            _items: &viewport_lib::plugin_api::ItemCollections<'_>,
         ) {
             pass.set_pipeline(&self.pipeline);
             pass.draw(0..3, 0..1);

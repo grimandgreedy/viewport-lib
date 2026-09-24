@@ -30,7 +30,10 @@ fn gpu_pick_hits_implicit_surface() {
     let mut item = viewport_lib::GpuImplicitItem::default();
     item.primitives.push(prim);
     item.settings.pick_id = PickId(909);
-    frame.scene.gpu_implicit.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GpuImplicitItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -60,7 +63,10 @@ fn cpu_pick_hits_implicit_surface() {
     let mut item = viewport_lib::GpuImplicitItem::default();
     item.primitives.push(prim);
     item.settings.pick_id = PickId(910);
-    frame.scene.gpu_implicit.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GpuImplicitItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);
@@ -93,7 +99,10 @@ fn rect_pick_hits_implicit_surface() {
     let mut item = viewport_lib::GpuImplicitItem::default();
     item.primitives.push(prim);
     item.settings.pick_id = PickId(911);
-    frame.scene.gpu_implicit.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GpuImplicitItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);

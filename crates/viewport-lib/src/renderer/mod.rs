@@ -1953,7 +1953,10 @@ impl ViewportRenderer {
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
                 // Constructed per plugin because `Jobs` borrows `&resources`
                 // and the borrow only needs to live for this iteration.
                 let ctx = crate::plugin_api::ItemFrameContext {
@@ -1969,9 +1972,11 @@ impl ViewportRenderer {
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     decal_excluded_surfaces: &self.decal_excluded_surfaces,
-                    ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
+                    collections: crate::renderer::item_plugins::plugin_collections_slice(
+                        frame, name,
+                    ),
                 };
-                bufs.extend(plugin.prepare(device, queue, &ctx, items));
+                bufs.extend(plugin.prepare(device, queue, &ctx, &items));
             }
         }
         bufs
@@ -1996,9 +2001,12 @@ impl ViewportRenderer {
         }
         let mut polylines: Vec<crate::renderer::PolylineItem> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter() {
-            let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) else {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if items.is_empty() {
                 continue;
-            };
+            }
             if items.is_empty() {
                 continue;
             }
@@ -2015,9 +2023,9 @@ impl ViewportRenderer {
                 clip_objects: &frame.effects.clip.objects,
                 quality_reduced: self.degradation_volume_quality_reduced,
                 decal_excluded_surfaces: &self.decal_excluded_surfaces,
-                ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
+                collections: crate::renderer::item_plugins::plugin_collections_slice(frame, name),
             };
-            polylines.extend(plugin.wireframe_polylines(items, &ctx));
+            polylines.extend(plugin.wireframe_polylines(&items, &ctx));
         }
         if polylines.is_empty() {
             return;
@@ -2073,8 +2081,11 @@ impl ViewportRenderer {
             if !is_hdr && !plugin.draws_ldr() {
                 continue;
             }
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.paint(pass, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint(pass, &ctx, &items);
             }
         }
     }
@@ -2132,8 +2143,11 @@ impl ViewportRenderer {
             if !plugin.draws_foreground() {
                 continue;
             }
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.paint_foreground(pass, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint_foreground(pass, &ctx, &items);
             }
         }
     }
@@ -2184,8 +2198,11 @@ impl ViewportRenderer {
             if !plugin.draws_depth_read() {
                 continue;
             }
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.paint_depth_read(pass, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint_depth_read(pass, &ctx, &items);
             }
         }
     }
@@ -2251,8 +2268,11 @@ impl ViewportRenderer {
             if !plugin.encoder_scopes().contains(&scope) {
                 continue;
             }
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.encode(encoder, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.encode(encoder, &ctx, &items);
             }
         }
     }
@@ -2281,8 +2301,11 @@ impl ViewportRenderer {
             meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.render_pick(pass, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.render_pick(pass, &ctx, &items);
             }
         }
     }
@@ -2309,8 +2332,11 @@ impl ViewportRenderer {
             meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.paint_transparent(pass, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.paint_transparent(pass, &ctx, &items);
             }
         }
     }
@@ -2342,8 +2368,11 @@ impl ViewportRenderer {
             frame_index: self.plugin_frame_index,
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.cast_shadow_pass(pass, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.cast_shadow_pass(pass, &ctx, &items);
             }
         }
     }
@@ -2362,7 +2391,10 @@ impl ViewportRenderer {
             return;
         }
         for (name, plugin) in self.item_type_plugins.iter_mut() {
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
                 let ctx = crate::plugin_api::ItemFrameContext {
                     camera: &frame.camera.render_camera,
                     viewport_size: glam::Vec2::from(frame.camera.viewport_size),
@@ -2376,9 +2408,11 @@ impl ViewportRenderer {
                     clip_objects: &frame.effects.clip.objects,
                     quality_reduced: self.degradation_volume_quality_reduced,
                     decal_excluded_surfaces: &self.decal_excluded_surfaces,
-                    ref_items: crate::renderer::item_plugins::plugin_ref_items_for(frame, name),
+                    collections: crate::renderer::item_plugins::plugin_collections_slice(
+                        frame, name,
+                    ),
                 };
-                plugin.cull(frustum, &ctx, items);
+                plugin.cull(frustum, &ctx, &items);
             }
         }
     }
@@ -2432,8 +2466,11 @@ impl ViewportRenderer {
             meshes: crate::resources::MeshDraw::new(&self.resources),
         };
         for (name, plugin) in self.item_type_plugins.iter() {
-            if let Some(items) = crate::renderer::item_plugins::plugin_items_for(frame, name) {
-                plugin.outline_mask(pass, &ctx, items);
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            if !items.is_empty() {
+                plugin.outline_mask(pass, &ctx, &items);
             }
         }
     }

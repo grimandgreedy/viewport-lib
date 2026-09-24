@@ -20,8 +20,8 @@ mod pipeline;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext,
-    PickPassContext, PickRay, PluginItemCollection,
+    EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext, ItemTypePlugin,
+    PickContext, PickPassContext, PickRay, PluginItem,
 };
 use crate::renderer::{PickHit, PickId, PickMask, ScatterVolumeItem};
 use crate::scene::scatter_volume::{ScatterShape, ScatterVolume};
@@ -32,15 +32,11 @@ pub(crate) const TYPE_NAME: &str = "vpl.scatter_volume";
 /// HDR; the pass has no LDR form.
 const TARGET_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rgba16Float;
 
-impl PluginItemCollection for Vec<ScatterVolumeItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for ScatterVolumeItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -78,15 +74,10 @@ impl ItemTypePlugin for ScatterVolumePlugin {
     /// is built before any `prepare` runs.
     fn contribute_lights(
         &self,
-        items: &dyn crate::plugin_api::PluginItemCollection,
+        items: &crate::plugin_api::ItemCollections<'_>,
         ctx: &crate::plugin_api::LightContext<'_>,
     ) -> Vec<crate::renderer::LightSource> {
-        let Some(items) = items
-            .as_any()
-            .downcast_ref::<Vec<crate::renderer::ScatterVolumeItem>>()
-        else {
-            return Vec::new();
-        };
+        let items = items.of::<crate::renderer::ScatterVolumeItem>();
         derive_virtual_lights(items, ctx.resources)
     }
 
@@ -95,13 +86,9 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        let volumes = items
-            .as_any()
-            .downcast_ref::<Vec<ScatterVolumeItem>>()
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
+        let volumes = items.of::<ScatterVolumeItem>();
 
         self.draws.clear();
         self.refraction_draws.clear();
@@ -205,7 +192,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         &self,
         encoder: &mut crate::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if self.draws.is_empty() {
             return;
@@ -280,12 +267,10 @@ impl ItemTypePlugin for ScatterVolumePlugin {
     /// the surface-mesh outline, which is a different affordance.
     fn wireframe_polylines(
         &self,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         ctx: &ItemFrameContext<'_>,
     ) -> Vec<crate::renderer::PolylineItem> {
-        let Some(volumes) = items.as_any().downcast_ref::<Vec<ScatterVolumeItem>>() else {
-            return Vec::new();
-        };
+        let volumes = items.of::<ScatterVolumeItem>();
         volumes
             .iter()
             .filter(|item| !item.settings.hidden)
@@ -318,7 +303,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return;

@@ -210,7 +210,7 @@ fn gpu_pick_hits_box_scatter_volume() {
     };
     let mut item = ScatterVolumeItem::new(ScatterVolume::box_uniform(aabb, 1.0, [1.0, 1.0, 1.0]));
     item.settings.pick_id = PickId(41);
-    frame.scene.scatter_volumes = vec![item];
+    *frame.scene.items_mut::<viewport_lib::ScatterVolumeItem>() = vec![item];
 
     // The volume's pick binding is built during prepare, like every other item
     // type that answers the id pass with geometry of its own.
@@ -237,7 +237,7 @@ fn gpu_pick_hits_sphere_scatter_volume() {
         [1.0, 1.0, 1.0],
     ));
     item.settings.pick_id = PickId(42);
-    frame.scene.scatter_volumes = vec![item];
+    *frame.scene.items_mut::<viewport_lib::ScatterVolumeItem>() = vec![item];
 
     // The volume's pick binding is built during prepare, like every other item
     // type that answers the id pass with geometry of its own.
@@ -271,7 +271,7 @@ fn gpu_pick_hits_decal_box() {
     // box in the pick pass and reads back its pick_id.
     let mut decal = DecalItem::default();
     decal.settings.pick_id = PickId(77);
-    frame.scene.decals = vec![decal];
+    *frame.scene.items_mut::<viewport_lib::DecalItem>() = vec![decal];
 
     // The decal's pick binding is built during prepare, like every other item
     // type that answers the id pass with geometry of its own.
@@ -401,7 +401,10 @@ fn gpu_pick_hits_glyph_set() {
     glyph.scale_by_magnitude = false;
     glyph.glyph_type = GlyphType::Sphere;
     glyph.settings.pick_id = PickId(555);
-    frame.scene.glyphs.push(glyph);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphItem>()
+        .push(glyph);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -435,7 +438,10 @@ fn gpu_pick_hits_sprite_set() {
     sprite.default_size = 4.0;
     sprite.size_mode = SpriteSizeMode::WorldSpace;
     sprite.settings.pick_id = PickId(777);
-    frame.scene.sprite_items.push(sprite);
+    frame
+        .scene
+        .items_mut::<viewport_lib::SpriteItem>()
+        .push(sprite);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -461,7 +467,10 @@ fn gpu_pick_glyph_resolves_instance() {
     glyph.scale_by_magnitude = false;
     glyph.glyph_type = GlyphType::Sphere;
     glyph.settings.pick_id = PickId(555);
-    frame.scene.glyphs.push(glyph);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphItem>()
+        .push(glyph);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -907,6 +916,10 @@ impl PluginItemCollection for MockPickCollection {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 /// Vertex stage: a fullscreen triangle that reads its pick id from a group-1
@@ -1036,9 +1049,9 @@ impl ItemTypePlugin for MockPickPlugin {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return Vec::new();
         };
         let Some(id_bgl) = self.id_bgl.as_ref() else {
@@ -1067,12 +1080,12 @@ impl ItemTypePlugin for MockPickPlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;
         };
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return;
         };
         if coll.settings.hidden || coll.settings.pick_id == PickId::NONE {
@@ -1305,9 +1318,9 @@ impl ItemTypePlugin for SubPickPlugin {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return Vec::new();
         };
         let Some(id_bgl) = self.id_bgl.as_ref() else {
@@ -1336,12 +1349,12 @@ impl ItemTypePlugin for SubPickPlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;
         };
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return;
         };
         if coll.settings.hidden || coll.settings.pick_id == PickId::NONE {
@@ -1556,7 +1569,10 @@ fn gpu_pick_splat_resolves_splat() {
     let mut item = GaussianSplatItem::default();
     item.source = splat_id;
     item.settings.pick_id = PickId(777);
-    frame.scene.gaussian_splats.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GaussianSplatItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -1592,7 +1608,10 @@ fn gpu_pick_hits_image_slice() {
     slice.bbox_min = [-1.0, -1.0, -1.0];
     slice.bbox_max = [1.0, 1.0, 1.0];
     slice.settings.pick_id = PickId(222);
-    frame.scene.image_slices.push(slice);
+    frame
+        .scene
+        .items_mut::<viewport_lib::ImageSliceItem>()
+        .push(slice);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(

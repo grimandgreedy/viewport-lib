@@ -23,7 +23,6 @@ crate::resources::handle::slot_handle! {
 
 use crate::renderer::SpriteBlend;
 use crate::renderer::types::items::IDENTITY_MAT4;
-use crate::resources::ColourmapId;
 use crate::scene::material::ItemSettings;
 
 /// A streamtube item: polyline strips rendered as instanced 3D cylinder segments.

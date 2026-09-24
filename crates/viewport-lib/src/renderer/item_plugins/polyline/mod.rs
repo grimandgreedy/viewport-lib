@@ -15,8 +15,8 @@ mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, PolylineItem, PolylineRefItem, SubObjectRef,
@@ -25,27 +25,19 @@ use crate::resources::{HDR_COLOR_FORMAT, PolylineKey};
 
 pub(crate) const TYPE_NAME: &str = "vpl.polyline";
 
-impl PluginItemCollection for Vec<PolylineItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for PolylineItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
-impl PluginItemCollection for Vec<PolylineRefItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for PolylineRefItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -88,14 +80,11 @@ impl ItemTypePlugin for PolylinePlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
         self.decoration.clear_frame();
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<PolylineItem>>()
-            .expect("polyline collection is the SceneFrame field");
+        let items = items.of::<PolylineItem>();
         let refs = ctx.refs_of::<PolylineRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
@@ -166,7 +155,7 @@ impl ItemTypePlugin for PolylinePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
@@ -206,7 +195,7 @@ impl ItemTypePlugin for PolylinePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = false;
@@ -437,7 +426,7 @@ impl ItemTypePlugin for PolylinePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx.mask.intersects(
             PickMask::OBJECT | PickMask::POLY_NODE | PickMask::SEGMENT | PickMask::STRIP,

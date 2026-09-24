@@ -7,8 +7,8 @@ mod pipeline;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use crate::renderer::{
     GpuImplicitItem, ImplicitBlendMode, ImplicitPrimitive, PickHit, PickId, PickMask,
@@ -17,15 +17,11 @@ use crate::resources::HDR_COLOR_FORMAT;
 
 pub(crate) const TYPE_NAME: &str = "vpl.gpu_implicit";
 
-impl PluginItemCollection for Vec<GpuImplicitItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for GpuImplicitItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -68,15 +64,12 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
         self.pick_items.clear();
         self.outline_active = ctx.outline_selected;
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<GpuImplicitItem>>()
-            .expect("gpu implicit collection is the SceneFrame field");
+        let items = items.of::<GpuImplicitItem>();
         if items.is_empty() {
             return Vec::new();
         }
@@ -107,7 +100,7 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.frame.is_empty() {
@@ -131,7 +124,7 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if !self.outline_active {
@@ -247,7 +240,7 @@ impl ItemTypePlugin for GpuImplicitPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return;

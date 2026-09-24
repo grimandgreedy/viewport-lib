@@ -747,14 +747,20 @@ mod tests {
         pc.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let id = session.add_point_cloud(pc);
         let frame = session.update_orbit(&mut orbit);
-        assert_eq!(frame.scene.point_clouds.len(), 1, "retained extra injected");
+        assert_eq!(
+            frame.scene.items_of::<crate::PointCloudItem>().len(),
+            1,
+            "retained extra injected"
+        );
 
         // The injection closure runs after assembly, so per-frame items land.
         let frame = session.update_orbit_with(&mut orbit, |f| {
-            f.scene.point_clouds.push(PointCloudItem::default());
+            f.scene
+                .items_mut::<crate::PointCloudItem>()
+                .push(PointCloudItem::default());
         });
         assert_eq!(
-            frame.scene.point_clouds.len(),
+            frame.scene.items_of::<crate::PointCloudItem>().len(),
             2,
             "retained + per-frame injected item"
         );
@@ -762,6 +768,10 @@ mod tests {
         // Removing the retained extra drops it from later frames.
         assert!(session.remove_extra(id));
         let frame = session.update_orbit(&mut orbit);
-        assert_eq!(frame.scene.point_clouds.len(), 0, "removed extra gone");
+        assert_eq!(
+            frame.scene.items_of::<crate::PointCloudItem>().len(),
+            0,
+            "removed extra gone"
+        );
     }
 }

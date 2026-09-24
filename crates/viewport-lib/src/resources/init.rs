@@ -2312,7 +2312,7 @@ impl DeviceResources {
 
         // `deform` is constructed earlier (before the mesh pipeline layout).
 
-        let mut resources = Self {
+        let resources = Self {
             target_format,
             sample_count,
             debug_vis_shaders: false,

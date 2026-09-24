@@ -1725,15 +1725,25 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
     if !app.sprite_state.built {
         return;
     }
-    fd.scene.sprite_items.extend(sprite_items(app));
-    fd.scene.polylines.extend(ring_polylines(app));
+    fd.scene
+        .items_mut::<viewport_lib::SpriteItem>()
+        .extend(sprite_items(app));
+    fd.scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .extend(ring_polylines(app));
     fd.scene.mesh_instances.extend(mesh_instance_items(app));
-    fd.scene.ribbon_items.extend(trail_ribbon_items(app));
+    fd.scene
+        .items_mut::<viewport_lib::RibbonItem>()
+        .extend(trail_ribbon_items(app));
     if let Some(item) = gpu_particle_item(app, dt) {
-        fd.scene.gpu_particle_systems.push(item);
+        fd.scene
+            .items_mut::<viewport_lib::GpuParticleSystemItem>()
+            .push(item);
     }
     if let Some(item) = gpu_mesh_particle_item(app, dt) {
-        fd.scene.gpu_particle_systems.push(item);
+        fd.scene
+            .items_mut::<viewport_lib::GpuParticleSystemItem>()
+            .push(item);
     }
 
     // Lit sub-mode: rewrite the scene-graph directional light each frame so
@@ -1772,8 +1782,12 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
             .extend(app.sprite_state.lit_scene.collect_lights());
         let (glyphs, polylines) =
             build_light_glyphs(&app.sprite_state.lit_scene, &Selection::new());
-        fd.scene.glyphs.extend(glyphs);
-        fd.scene.polylines.extend(polylines);
+        fd.scene
+            .items_mut::<viewport_lib::GlyphItem>()
+            .extend(glyphs);
+        fd.scene
+            .items_mut::<viewport_lib::PolylineItem>()
+            .extend(polylines);
     }
 }
 

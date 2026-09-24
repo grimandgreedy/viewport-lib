@@ -285,7 +285,7 @@ pub fn ray_triangle(
 ///
 /// [`ItemTypePlugin::sub_object_position`]: crate::plugin_api::ItemTypePlugin::sub_object_position
 pub(crate) fn inline_point_position<T: 'static>(
-    items: &dyn crate::plugin_api::PluginItemCollection,
+    items: &crate::plugin_api::ItemCollections<'_>,
     pick_id: crate::renderer::PickId,
     sub_object: crate::renderer::SubObjectRef,
     parts: impl Fn(&T) -> (crate::renderer::PickId, &[[f32; 3]], &[[f32; 4]; 4]),
@@ -293,7 +293,7 @@ pub(crate) fn inline_point_position<T: 'static>(
     let crate::renderer::SubObjectRef::Point(index) = sub_object else {
         return None;
     };
-    let items = items.as_any().downcast_ref::<Vec<T>>()?;
+    let items = items.of::<T>();
     let (_, positions, model) = items.iter().map(&parts).find(|(id, _, _)| *id == pick_id)?;
     let p = positions.get(index as usize)?;
     Some(glam::Mat4::from_cols_array_2d(model).transform_point3(glam::Vec3::from(*p)))

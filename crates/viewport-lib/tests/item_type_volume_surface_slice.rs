@@ -32,7 +32,10 @@ fn gpu_pick_hits_volume_surface_slice() {
     slice.bbox_min = [-1.0, -1.0, -1.0];
     slice.bbox_max = [1.0, 1.0, 1.0];
     slice.settings.pick_id = PickId(333);
-    frame.scene.volume_surface_slices.push(slice);
+    frame
+        .scene
+        .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
+        .push(slice);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -70,7 +73,10 @@ fn cpu_pick_hits_volume_surface_slice() {
     slice.bbox_min = [-1.0, -1.0, -1.0];
     slice.bbox_max = [1.0, 1.0, 1.0];
     slice.settings.pick_id = PickId(334);
-    frame.scene.volume_surface_slices.push(slice);
+    frame
+        .scene
+        .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
+        .push(slice);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);
@@ -108,7 +114,10 @@ fn rect_pick_hits_volume_surface_slice() {
     slice.bbox_min = [-1.0, -1.0, -1.0];
     slice.bbox_max = [1.0, 1.0, 1.0];
     slice.settings.pick_id = PickId(335);
-    frame.scene.volume_surface_slices.push(slice);
+    frame
+        .scene
+        .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
+        .push(slice);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);

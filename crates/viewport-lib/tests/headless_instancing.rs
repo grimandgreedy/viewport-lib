@@ -205,7 +205,7 @@ fn mc_external_scalar_drives_isosurface() {
         frame.viewport.show_axes_indicator = false;
         frame
             .scene
-            .gpu_mc_items
+            .items_mut::<viewport_lib::GpuMarchingCubesItem>()
             .push(viewport_lib::GpuMarchingCubesItem {
                 volume_id,
                 isovalue: 1.5,
@@ -217,7 +217,10 @@ fn mc_external_scalar_drives_isosurface() {
     };
     let empty_frame = || -> FrameData {
         let mut frame = make_frame();
-        frame.scene.gpu_mc_items.clear();
+        frame
+            .scene
+            .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+            .clear();
         frame
     };
     let diff_count = |a: &[u8], b: &[u8]| -> usize {
@@ -319,7 +322,9 @@ fn external_instances_render_with_instance_range_slice() {
         item.first_instance = first;
         item.scale = 0.4;
         item.colour = [1.0, 0.2, 0.2, 1.0].into();
-        frame.scene.external_instances = vec![item];
+        *frame
+            .scene
+            .items_mut::<viewport_lib::ExternalInstancesItem>() = vec![item];
         frame
     };
 

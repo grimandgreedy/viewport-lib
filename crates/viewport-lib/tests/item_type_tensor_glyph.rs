@@ -34,7 +34,10 @@ fn gpu_pick_tensor_glyph_resolves_instance() {
 
     let mut item = three_tensors();
     item.settings.pick_id = PickId(700);
-    frame.scene.tensor_glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::TensorGlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -66,7 +69,10 @@ fn cpu_pick_tensor_glyph_resolves_instance() {
 
     let mut item = three_tensors();
     item.settings.pick_id = PickId(701);
-    frame.scene.tensor_glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::TensorGlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -100,7 +106,10 @@ fn an_object_query_drops_the_instance_sub_object() {
 
     let mut item = three_tensors();
     item.settings.pick_id = PickId(702);
-    frame.scene.tensor_glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::TensorGlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     for backend in [PickBackend::Gpu, PickBackend::Cpu] {
@@ -134,7 +143,10 @@ fn rect_pick_collects_tensor_glyph_instances() {
 
     let mut item = three_tensors();
     item.settings.pick_id = PickId(703);
-    frame.scene.tensor_glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::TensorGlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let result = renderer.pick_rect_objects(
@@ -178,7 +190,10 @@ fn a_reference_item_picks_like_an_inline_one() {
 
     let mut item = TensorGlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(704);
-    frame.scene.tensor_glyph_set_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::TensorGlyphSetRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -213,7 +228,10 @@ fn a_hidden_reference_item_is_skipped() {
     let mut item = TensorGlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(705);
     item.settings.hidden = true;
-    frame.scene.tensor_glyph_set_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::TensorGlyphSetRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(

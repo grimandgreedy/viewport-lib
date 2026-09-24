@@ -144,9 +144,10 @@ pub mod target_desc;
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{
-    AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemFrameContext,
-    ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext, ShadowCastContext,
+    AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
+    ItemFrameContext, ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
+    ShadowCastContext,
 };
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,

@@ -311,7 +311,9 @@ impl App {
             hit_threshold: 5e-4,
             max_distance: self.camera.zfar,
         };
-        fd.scene.gpu_implicit.push(item);
+        fd.scene
+            .items_mut::<viewport_lib::GpuImplicitItem>()
+            .push(item);
     }
 
     /// Submit a GPU marching cubes item for the gyroid field.
@@ -328,13 +330,15 @@ impl App {
         let mut mat = Material::from_colour([0.45, 0.48, 0.52]);
         mat.roughness = 0.4;
 
-        fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
-            volume_id,
-            isovalue: self.is_state.gmc_isovalue,
-            material: mat,
-            settings: Default::default(),
-            cpu_data: None,
-        });
+        fd.scene
+            .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+            .push(GpuMarchingCubesItem {
+                volume_id,
+                isovalue: self.is_state.gmc_isovalue,
+                material: mat,
+                settings: Default::default(),
+                cpu_data: None,
+            });
     }
 
     /// Lighting for Showcase 30.

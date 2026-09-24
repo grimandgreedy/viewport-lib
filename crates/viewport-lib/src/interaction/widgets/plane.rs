@@ -28,8 +28,8 @@ enum PlaneHandle {
 ///
 /// // Each frame:
 /// plane.update(&ctx);
-/// fd.scene.polylines.push(plane.plane_item(PLANE_ID));
-/// fd.scene.glyphs.push(plane.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(plane.plane_item(PLANE_ID));
+/// fd.scene.items_mut::<crate::GlyphItem>().push(plane.handle_glyphs(HANDLE_ID, &ctx));
 ///
 /// // Suppress orbit while dragging:
 /// if plane.is_active() { orbit.resolve(); } else { orbit.apply_to_camera(&mut camera); }

@@ -1876,7 +1876,9 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
         pc.scalar_range = Some((-1.5, 1.5));
         pc.colourmap_id = Some(vpl::ColourmapId(app.ovl_state.colourmap as usize));
         pc.point_size = 4.0;
-        fd.scene.point_clouds.push(pc);
+        fd.scene
+            .items_mut::<viewport_lib::PointCloudItem>()
+            .push(pc);
     }
 }
 

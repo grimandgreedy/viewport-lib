@@ -368,7 +368,7 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
         return;
     }
     fd.scene
-        .polylines
+        .items_mut::<viewport_lib::PolylineItem>()
         .push(app.interact_state.spline.polyline_item(9900));
     let render_cam = CameraFrame::from_camera(&app.camera, [w, h]).render_camera;
     let spline_ctx = vpl::WidgetContext {
@@ -381,7 +381,7 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
         double_clicked: false,
     };
     fd.scene
-        .glyphs
+        .items_mut::<viewport_lib::GlyphItem>()
         .push(app.interact_state.spline.handle_glyphs(9901, &spline_ctx));
 }
 
@@ -529,7 +529,6 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
 
-
 /// Advance this showcase's own camera animation or object motion for the frame.
 pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
     // ----- Advance camera animator (Showcases 4 and 10) -----
@@ -558,7 +557,6 @@ pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
 }
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
 
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -739,13 +737,23 @@ impl crate::Showcase for ScInteraction {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn overlay(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+    fn overlay(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) {
         overlay(app, ui, cx)
     }
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -763,7 +771,12 @@ impl crate::Showcase for ScInteraction {
     fn cache_gizmo(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         cache_gizmo(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -772,7 +785,12 @@ impl crate::Showcase for ScInteraction {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_interaction(app, ui)
     }
 }

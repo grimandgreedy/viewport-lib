@@ -29,8 +29,8 @@ enum DiskHandle {
 ///
 /// // Each frame:
 /// disk.update(&ctx);
-/// fd.scene.polylines.push(disk.wireframe_item(DISK_ID));
-/// fd.scene.glyphs.push(disk.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(disk.wireframe_item(DISK_ID));
+/// fd.scene.items_mut::<crate::GlyphItem>().push(disk.handle_glyphs(HANDLE_ID, &ctx));
 /// ```
 pub struct DiskWidget {
     /// World-space center of the disk.

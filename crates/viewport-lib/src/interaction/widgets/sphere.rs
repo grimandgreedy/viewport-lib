@@ -17,7 +17,7 @@ enum SphereHandle {
 ///
 /// Use `clip_object()` to get the visual fill/outline (push into
 /// `fd.effects.clip.objects` with `clip_geometry: false`), and `handle_glyphs()`
-/// for the draggable handle spheres (push into `fd.scene.glyphs`).
+/// for the draggable handle spheres (push into `fd.scene.items_mut::<crate::GlyphItem>()`).
 ///
 /// # Usage
 ///
@@ -27,7 +27,7 @@ enum SphereHandle {
 /// // Each frame:
 /// sphere.update(&ctx);
 /// fd.effects.clip.objects.push(sphere.clip_object());
-/// fd.scene.glyphs.push(sphere.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::GlyphItem>().push(sphere.handle_glyphs(HANDLE_ID, &ctx));
 /// ```
 pub struct SphereWidget {
     /// World-space center of the sphere.
@@ -153,7 +153,7 @@ impl SphereWidget {
 
     /// Build a `PolylineItem` of three great circle rings (XY, XZ, YZ planes).
     ///
-    /// Push into `fd.scene.polylines` for a scene-pass outline consistent with
+    /// Push into `fd.scene.items_mut::<crate::PolylineItem>()` for a scene-pass outline consistent with
     /// how `BoxWidget::wireframe_item` is used. `id` is the pick ID (0 = not pickable).
     pub fn wireframe_item(&self, id: u64) -> PolylineItem {
         const STEPS: usize = 64;

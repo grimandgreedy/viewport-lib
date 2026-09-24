@@ -336,7 +336,9 @@ pub(crate) fn submit_wave_items(
                 .min((BUOY_GRID * BUOY_GRID) as u32),
         );
         item.colour = [1.0, 0.40, 0.04, 1.0].into();
-        fd.scene.external_instances.push(item);
+        fd.scene
+            .items_mut::<viewport_lib::ExternalInstancesItem>()
+            .push(item);
     }
 
     // Keep the outline pass on while the surface is selected so the halo

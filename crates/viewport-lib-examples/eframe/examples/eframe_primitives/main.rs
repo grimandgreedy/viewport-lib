@@ -5,9 +5,9 @@
 //!   Right drag                : pan
 //!   Scroll                    : zoom
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
     Material, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem,
@@ -178,7 +178,7 @@ impl eframe::App for App {
 
 impl App {
     fn frame_ui(&mut self, ui: &mut egui::Ui, eframe_frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
+        let _ctx = ui.ctx().clone();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {

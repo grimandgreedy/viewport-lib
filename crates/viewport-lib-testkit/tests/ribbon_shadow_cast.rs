@@ -41,7 +41,9 @@ fn frame(ground: &SceneRenderItem, ribbon: RibbonItem) -> FrameData {
         CameraFrame::from_camera(&camera, [200.0, 150.0]),
         SceneFrame::from_surface_items(vec![ground.clone()]),
     );
-    fd.scene.ribbon_items.push(ribbon);
+    fd.scene
+        .items_mut::<viewport_lib::RibbonItem>()
+        .push(ribbon);
     let mut light = LightSource::default();
     light.kind = LightKind::Directional {
         direction: [0.2, 0.3, 1.0],

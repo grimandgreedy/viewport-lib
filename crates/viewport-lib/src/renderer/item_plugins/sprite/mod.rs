@@ -23,9 +23,9 @@ pub(crate) mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    DepthReadContext, EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin,
-    OutlineMaskContext, PaintContext, PickContext, PickPassContext, PickRay, PluginItemCollection,
-    RectPickContext,
+    DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext,
+    ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext, PickPassContext, PickRay,
+    PluginItem, RectPickContext,
 };
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, SpriteInstanceSetRefItem, SpriteItem,
@@ -40,39 +40,27 @@ pub(crate) use types::{SpriteInstanceSetId, SpriteSetId};
 
 pub(crate) const TYPE_NAME: &str = "vpl.sprite";
 
-impl PluginItemCollection for Vec<SpriteItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for SpriteItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
-impl PluginItemCollection for Vec<SpriteSetRefItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for SpriteSetRefItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
-impl PluginItemCollection for Vec<SpriteInstanceSetRefItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for SpriteInstanceSetRefItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -396,16 +384,13 @@ impl ItemTypePlugin for SpritePlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
         self.outlines.clear();
         self.pick_bind_groups.clear();
         self.revalidate_stores(device, queue, ctx.resources);
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<SpriteItem>>()
-            .expect("sprite collection is the SceneFrame field");
+        let items = items.of::<SpriteItem>();
         let set_refs = ctx.refs_of::<SpriteSetRefItem>();
         let instance_refs = ctx.refs_of::<SpriteInstanceSetRefItem>();
         self.pick_items.clear();
@@ -505,7 +490,7 @@ impl ItemTypePlugin for SpritePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if !self.frame.iter().any(is_opaque) {
@@ -530,7 +515,7 @@ impl ItemTypePlugin for SpritePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &DepthReadContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if self.gpu.is_none() {
             return;
@@ -545,7 +530,7 @@ impl ItemTypePlugin for SpritePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         for sprite in self.frame.iter().filter(|s| s.oit_eligible && !s.wireframe) {
@@ -577,7 +562,7 @@ impl ItemTypePlugin for SpritePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.outlines.is_empty() {
@@ -611,7 +596,7 @@ impl ItemTypePlugin for SpritePlugin {
         &self,
         encoder: &mut crate::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if !self
@@ -797,7 +782,7 @@ impl ItemTypePlugin for SpritePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx.mask.intersects(PickMask::OBJECT | PickMask::INSTANCE) {
             return;
@@ -826,15 +811,13 @@ impl ItemTypePlugin for SpritePlugin {
     /// always drawn.
     fn wireframe_polylines(
         &self,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         ctx: &ItemFrameContext<'_>,
     ) -> Vec<crate::renderer::PolylineItem> {
         /// Above this many sprites a quad each stops being readable.
         const MAX_OUTLINED_SPRITES: usize = 100;
 
-        let Some(sprites) = items.as_any().downcast_ref::<Vec<SpriteItem>>() else {
-            return Vec::new();
-        };
+        let sprites = items.of::<SpriteItem>();
         sprites
             .iter()
             .filter(|item| !item.settings.hidden && (ctx.wireframe_mode || item.settings.wireframe))

@@ -1208,11 +1208,13 @@ pub(crate) fn vm_configure_frame(app: &App, fd: &mut FrameData) {
     for co in clip_objects.iter().filter(|c| c.enabled) {
         // Half-extent of the section-plane indicator quad (world units).
         let extent = 3.5;
-        fd.scene.polylines.push(vpl::clip_plane::visual::outline(
-            &co.shape,
-            extent,
-            [0.75, 0.85, 1.0, 1.0],
-        ));
+        fd.scene
+            .items_mut::<viewport_lib::PolylineItem>()
+            .push(vpl::clip_plane::visual::outline(
+                &co.shape,
+                extent,
+                [0.75, 0.85, 1.0, 1.0],
+            ));
     }
     fd.effects.clip.objects.extend(clip_objects);
 }

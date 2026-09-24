@@ -16,11 +16,11 @@
 //!
 //! // Attach tangent arrows at every node.
 //! let node_glyph = polyline_node_vectors_to_glyphs(&polyline);
-//! frame.scene.glyphs.push(node_glyph);
+//! frame.scene.items_mut::<crate::GlyphItem>().push(node_glyph);
 //!
 //! // Attach normal arrows at every edge midpoint.
 //! let edge_glyph = polyline_edge_vectors_to_glyphs(&polyline);
-//! frame.scene.glyphs.push(edge_glyph);
+//! frame.scene.items_mut::<crate::GlyphItem>().push(edge_glyph);
 //! ```
 
 use crate::{GlyphItem, PolylineItem};

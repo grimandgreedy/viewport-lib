@@ -67,7 +67,10 @@ fn gpu_pick_hits_ribbon() {
     ribbon.strip_lengths = vec![3];
     ribbon.width = 2.0;
     ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
+    frame
+        .scene
+        .items_mut::<viewport_lib::RibbonItem>()
+        .push(ribbon);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -91,7 +94,10 @@ fn gpu_pick_ribbon_resolves_segment_and_node() {
     ribbon.strip_lengths = vec![3];
     ribbon.width = 2.0;
     ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
+    frame
+        .scene
+        .items_mut::<viewport_lib::RibbonItem>()
+        .push(ribbon);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
@@ -142,7 +148,10 @@ fn gpu_pick_curve_node_fills_snap_world_pos() {
     ribbon.strip_lengths = vec![3];
     ribbon.width = 2.0;
     ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
+    frame
+        .scene
+        .items_mut::<viewport_lib::RibbonItem>()
+        .push(ribbon);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
@@ -183,7 +192,10 @@ fn gpu_pick_rect_resolves_curve_node() {
     ribbon.strip_lengths = vec![3];
     ribbon.width = 2.0;
     ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
+    frame
+        .scene
+        .items_mut::<viewport_lib::RibbonItem>()
+        .push(ribbon);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
@@ -241,7 +253,10 @@ fn gpu_pick_hits_streamtube() {
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
     tube.settings.pick_id = PickId(5151);
-    frame.scene.streamtube_items.push(tube);
+    frame
+        .scene
+        .items_mut::<viewport_lib::StreamtubeItem>()
+        .push(tube);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -263,7 +278,7 @@ fn gpu_pick_hits_tube() {
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
     tube.settings.pick_id = PickId(5252);
-    frame.scene.tube_items.push(tube);
+    frame.scene.items_mut::<viewport_lib::TubeItem>().push(tube);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -287,7 +302,10 @@ fn gpu_pick_streamtube_resolves_strip_without_cpu_cache() {
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
     tube.settings.pick_id = PickId(5151);
-    frame.scene.streamtube_items.push(tube);
+    frame
+        .scene
+        .items_mut::<viewport_lib::StreamtubeItem>()
+        .push(tube);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -326,7 +344,7 @@ fn cpu_pick_tube_resolves_segment() {
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
     tube.settings.pick_id = PickId(5252);
-    frame.scene.tube_items.push(tube);
+    frame.scene.items_mut::<viewport_lib::TubeItem>().push(tube);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -362,7 +380,10 @@ fn rect_pick_collects_ribbon_segments() {
     ribbon.strip_lengths = strip_lengths;
     ribbon.width = 2.0;
     ribbon.settings.pick_id = PickId(4242);
-    frame.scene.ribbon_items.push(ribbon);
+    frame
+        .scene
+        .items_mut::<viewport_lib::RibbonItem>()
+        .push(ribbon);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let result = renderer.pick_rect_objects(
@@ -414,7 +435,10 @@ fn a_reference_streamtube_picks_under_its_own_id() {
 
     let mut reference = StreamtubeRefItem::new(source);
     reference.settings.pick_id = PickId(7171);
-    frame.scene.streamtube_refs.push(reference);
+    frame
+        .scene
+        .items_mut::<viewport_lib::StreamtubeRefItem>()
+        .push(reference);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -440,7 +464,10 @@ fn a_hidden_reference_tube_is_skipped() {
     let mut reference = TubeRefItem::new(source);
     reference.settings.pick_id = PickId(7272);
     reference.settings.hidden = true;
-    frame.scene.tube_refs.push(reference);
+    frame
+        .scene
+        .items_mut::<viewport_lib::TubeRefItem>()
+        .push(reference);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -465,7 +492,10 @@ fn a_reference_ribbon_draws_and_picks() {
 
     let mut reference = RibbonRefItem::new(source);
     reference.settings.pick_id = PickId(7373);
-    frame.scene.ribbon_refs.push(reference);
+    frame
+        .scene
+        .items_mut::<viewport_lib::RibbonRefItem>()
+        .push(reference);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);

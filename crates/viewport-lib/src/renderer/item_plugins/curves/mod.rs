@@ -26,30 +26,25 @@ pub(crate) use ribbon::{RibbonPlugin, TYPE_NAME as RIBBON_TYPE_NAME};
 pub(crate) use streamtube::{StreamtubePlugin, TYPE_NAME as STREAMTUBE_TYPE_NAME};
 pub(crate) use tube::{TYPE_NAME as TUBE_TYPE_NAME, TubePlugin};
 
-use crate::plugin_api::PluginItemCollection;
 use crate::renderer::{
     RibbonItem, RibbonRefItem, StreamtubeItem, StreamtubeRefItem, TubeItem, TubeRefItem,
 };
 
 macro_rules! item_collection {
-    ($ty:ty) => {
-        impl PluginItemCollection for Vec<$ty> {
-            fn len(&self) -> usize {
-                self.len()
-            }
-            fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-                &self[index].settings
-            }
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
+    ($ty:ty, $name:expr) => {
+        impl crate::plugin_api::PluginItem for $ty {
+            const TYPE_NAME: &'static str = $name;
+
+            fn settings(&self) -> &crate::scene::material::ItemSettings {
+                &self.settings
             }
         }
     };
 }
 
-item_collection!(StreamtubeItem);
-item_collection!(StreamtubeRefItem);
-item_collection!(TubeItem);
-item_collection!(TubeRefItem);
-item_collection!(RibbonItem);
-item_collection!(RibbonRefItem);
+item_collection!(StreamtubeItem, STREAMTUBE_TYPE_NAME);
+item_collection!(StreamtubeRefItem, STREAMTUBE_TYPE_NAME);
+item_collection!(TubeItem, TUBE_TYPE_NAME);
+item_collection!(TubeRefItem, TUBE_TYPE_NAME);
+item_collection!(RibbonItem, RIBBON_TYPE_NAME);
+item_collection!(RibbonRefItem, RIBBON_TYPE_NAME);

@@ -409,7 +409,9 @@ impl App {
             item.settings.selected = s.show_global_outline;
             item.settings.unlit = s.global_unlit;
             item.settings.receive_shadows = s.global_receive_shadows;
-            fd.scene.scatter_volumes.push(item);
+            fd.scene
+                .items_mut::<viewport_lib::ScatterVolumeItem>()
+                .push(item);
         }
 
         if matches!(s.preset, SvolPreset::StressTest) {
@@ -429,7 +431,9 @@ impl App {
                     idx += 1;
                     let mut v = ScatterVolume::sphere_uniform(centre, 1.2, 0.5, colour);
                     v.anisotropy = 0.2;
-                    fd.scene.scatter_volumes.push(ScatterVolumeItem::new(v));
+                    fd.scene
+                        .items_mut::<viewport_lib::ScatterVolumeItem>()
+                        .push(ScatterVolumeItem::new(v));
                 }
             }
         }
@@ -474,7 +478,9 @@ impl App {
             // a discrete sphere silhouette. The emission contribution alone
             // carries the look.
             item.settings.unlit = true;
-            fd.scene.scatter_volumes.push(item);
+            fd.scene
+                .items_mut::<viewport_lib::ScatterVolumeItem>()
+                .push(item);
         }
         if s.sphere_enabled {
             let mut v = ScatterVolume::sphere_uniform(
@@ -489,7 +495,9 @@ impl App {
             v.anisotropy = s.sphere_anisotropy;
             let mut item = ScatterVolumeItem::new(v);
             item.settings.selected = s.show_sphere_outline;
-            fd.scene.scatter_volumes.push(item);
+            fd.scene
+                .items_mut::<viewport_lib::ScatterVolumeItem>()
+                .push(item);
         }
     }
 }

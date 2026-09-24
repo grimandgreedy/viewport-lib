@@ -26,7 +26,10 @@ fn gpu_pick_point_cloud_resolves_point() {
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
     cloud.settings.pick_id = PickId(444);
-    frame.scene.point_clouds.push(cloud);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PointCloudItem>()
+        .push(cloud);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -66,7 +69,10 @@ fn gpu_pick_rect_resolves_point_cloud_elements() {
     pc.positions = vec![[-1.2, 0.0, 0.0], [0.0, 0.0, 0.0], [1.2, 0.0, 0.0]];
     pc.point_size = 24.0;
     pc.settings.pick_id = PickId(500);
-    frame.scene.point_clouds.push(pc);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PointCloudItem>()
+        .push(pc);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
@@ -113,7 +119,10 @@ fn cpu_pick_hits_point_cloud() {
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
     cloud.settings.pick_id = PickId(445);
-    frame.scene.point_clouds.push(cloud);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PointCloudItem>()
+        .push(cloud);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -145,7 +154,10 @@ fn an_object_query_drops_the_point_sub_object() {
     cloud.positions = vec![[0.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
     cloud.settings.pick_id = PickId(446);
-    frame.scene.point_clouds.push(cloud);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PointCloudItem>()
+        .push(cloud);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     for backend in [PickBackend::Gpu, PickBackend::Cpu] {
@@ -182,7 +194,10 @@ fn a_reference_item_picks_like_an_inline_one() {
 
     let mut item = viewport_lib::PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(447);
-    frame.scene.point_cloud_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PointCloudRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -216,7 +231,10 @@ fn a_hidden_reference_item_is_skipped() {
     let mut item = viewport_lib::PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(448);
     item.settings.hidden = true;
-    frame.scene.point_cloud_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PointCloudRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(

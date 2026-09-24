@@ -11,23 +11,19 @@ mod pipeline;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use crate::renderer::{PickHit, PickId, PickMask, SubObjectRef, VolumeItem};
 use crate::resources::HDR_COLOR_FORMAT;
 
 pub(crate) const TYPE_NAME: &str = "vpl.volume";
 
-impl PluginItemCollection for Vec<VolumeItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for VolumeItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -59,14 +55,11 @@ impl ItemTypePlugin for VolumePlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
         self.outline_active = ctx.outline_selected;
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<VolumeItem>>()
-            .expect("volume collection is the SceneFrame field");
+        let items = items.of::<VolumeItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
         if items.is_empty() {
@@ -100,7 +93,7 @@ impl ItemTypePlugin for VolumePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.frame.is_empty() {
@@ -131,7 +124,7 @@ impl ItemTypePlugin for VolumePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if !self.outline_active {
@@ -262,7 +255,7 @@ impl ItemTypePlugin for VolumePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         // Wireframe volumes render an OBB polyline instead of the ray-march,
         // so they are picked as polylines, not here.
@@ -305,12 +298,10 @@ impl ItemTypePlugin for VolumePlugin {
     /// when selected, its only selection affordance.
     fn wireframe_polylines(
         &self,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         ctx: &ItemFrameContext<'_>,
     ) -> Vec<crate::renderer::PolylineItem> {
-        let Some(volumes) = items.as_any().downcast_ref::<Vec<VolumeItem>>() else {
-            return Vec::new();
-        };
+        let volumes = items.of::<VolumeItem>();
         volumes
             .iter()
             .filter(|item| !item.settings.hidden && (ctx.wireframe_mode || item.settings.wireframe))

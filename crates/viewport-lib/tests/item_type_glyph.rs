@@ -43,7 +43,10 @@ fn gpu_pick_glyph_resolves_instance() {
 
     let mut item = three_arrows(&frame);
     item.settings.pick_id = PickId(710);
-    frame.scene.glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -75,7 +78,10 @@ fn cpu_pick_glyph_resolves_instance() {
 
     let mut item = three_arrows(&frame);
     item.settings.pick_id = PickId(711);
-    frame.scene.glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -109,7 +115,10 @@ fn an_object_query_drops_the_instance_sub_object() {
 
     let mut item = three_arrows(&frame);
     item.settings.pick_id = PickId(712);
-    frame.scene.glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     for backend in [PickBackend::Gpu, PickBackend::Cpu] {
@@ -143,7 +152,10 @@ fn rect_pick_collects_glyph_instances() {
 
     let mut item = three_arrows(&frame);
     item.settings.pick_id = PickId(713);
-    frame.scene.glyphs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let result = renderer.pick_rect_objects(
@@ -187,7 +199,10 @@ fn a_reference_item_picks_like_an_inline_one() {
 
     let mut item = GlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(714);
-    frame.scene.glyph_set_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphSetRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -222,7 +237,10 @@ fn a_hidden_reference_item_is_skipped() {
     let mut item = GlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(715);
     item.settings.hidden = true;
-    frame.scene.glyph_set_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GlyphSetRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(

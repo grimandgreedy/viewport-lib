@@ -22,8 +22,8 @@ use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point
 ///
 /// // Each frame:
 /// let result = pw.update(&ctx);
-/// fd.scene.polylines.push(pw.polyline_item(PL_ID));
-/// fd.scene.glyphs.push(pw.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(pw.polyline_item(PL_ID));
+/// fd.scene.items_mut::<crate::GlyphItem>().push(pw.handle_glyphs(HANDLE_ID, &ctx));
 /// ```
 pub struct PolylineWidget {
     /// Control point positions in world space.

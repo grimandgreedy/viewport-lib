@@ -10,8 +10,8 @@ mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, PointCloudItem, PointCloudRefItem, SubObjectRef,
@@ -23,27 +23,19 @@ pub(crate) use types::PointCloudId;
 
 pub(crate) const TYPE_NAME: &str = "vpl.point_cloud";
 
-impl PluginItemCollection for Vec<PointCloudItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for PointCloudItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
-impl PluginItemCollection for Vec<PointCloudRefItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for PointCloudRefItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -96,14 +88,11 @@ impl ItemTypePlugin for PointCloudPlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
         self.outlines.clear();
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<PointCloudItem>>()
-            .expect("point cloud collection is the SceneFrame field");
+        let items = items.of::<PointCloudItem>();
         let refs = ctx.refs_of::<PointCloudRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
@@ -163,7 +152,7 @@ impl ItemTypePlugin for PointCloudPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.frame.is_empty() {
@@ -189,7 +178,7 @@ impl ItemTypePlugin for PointCloudPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         if self.outlines.is_empty() {
@@ -286,7 +275,7 @@ impl ItemTypePlugin for PointCloudPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx
             .mask
@@ -328,7 +317,7 @@ impl ItemTypePlugin for PointCloudPlugin {
     }
     fn sub_object_position(
         &self,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         pick_id: PickId,
         sub_object: SubObjectRef,
     ) -> Option<glam::Vec3> {

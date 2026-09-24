@@ -54,7 +54,10 @@ fn gpu_pick_hits_marching_cubes() {
         cpu_data: None,
     };
     job.settings.pick_id = PickId(717);
-    frame.scene.gpu_mc_items.push(job);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+        .push(job);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -86,7 +89,10 @@ fn cpu_pick_hits_marching_cubes() {
         cpu_data: Some(vol),
     };
     job.settings.pick_id = PickId(718);
-    frame.scene.gpu_mc_items.push(job);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+        .push(job);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);
@@ -122,7 +128,10 @@ fn rect_pick_hits_marching_cubes() {
         cpu_data: Some(vol),
     };
     job.settings.pick_id = PickId(719);
-    frame.scene.gpu_mc_items.push(job);
+    frame
+        .scene
+        .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+        .push(job);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);

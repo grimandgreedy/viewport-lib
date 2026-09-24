@@ -1905,37 +1905,51 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
     if let Some(id) = app.async_uploads_state.loaded_polyline_id {
         let mut ref_item = PolylineRefItem::new(id);
         ref_item.model = translate(0.0, 2.4);
-        fd.scene.polyline_refs.push(ref_item);
+        fd.scene
+            .items_mut::<viewport_lib::PolylineRefItem>()
+            .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_streamtube_id {
         let mut ref_item = StreamtubeRefItem::new(id);
         ref_item.model = translate(-2.4, 2.4);
-        fd.scene.streamtube_refs.push(ref_item);
+        fd.scene
+            .items_mut::<viewport_lib::StreamtubeRefItem>()
+            .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_tube_id {
         let mut ref_item = TubeRefItem::new(id);
         ref_item.model = translate(2.4, 2.4);
-        fd.scene.tube_refs.push(ref_item);
+        fd.scene
+            .items_mut::<viewport_lib::TubeRefItem>()
+            .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_ribbon_id {
         let mut ref_item = RibbonRefItem::new(id);
         ref_item.model = translate(0.0, 4.8);
-        fd.scene.ribbon_refs.push(ref_item);
+        fd.scene
+            .items_mut::<viewport_lib::RibbonRefItem>()
+            .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_point_cloud_id {
         let mut ref_item = PointCloudRefItem::new(id);
         ref_item.model = translate(-4.8, 2.4);
-        fd.scene.point_cloud_refs.push(ref_item);
+        fd.scene
+            .items_mut::<viewport_lib::PointCloudRefItem>()
+            .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_glyph_set_id {
         let mut ref_item = GlyphSetRefItem::new(id);
         ref_item.model = translate(4.8, 2.4);
-        fd.scene.glyph_set_refs.push(ref_item);
+        fd.scene
+            .items_mut::<viewport_lib::GlyphSetRefItem>()
+            .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_tensor_glyph_set_id {
         let mut ref_item = TensorGlyphSetRefItem::new(id);
         ref_item.model = translate(-2.4, 4.8);
-        fd.scene.tensor_glyph_set_refs.push(ref_item);
+        fd.scene
+            .items_mut::<viewport_lib::TensorGlyphSetRefItem>()
+            .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_volume_id {
         let mut item = VolumeItem::default();
@@ -1947,7 +1961,7 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         // Sit the volume to the far right of the showcase grid.
         item.bbox_min = [4.0, -1.5, -1.5];
         item.bbox_max = [7.0, 1.5, 1.5];
-        fd.scene.volumes.push(item);
+        fd.scene.items_mut::<viewport_lib::VolumeItem>().push(item);
     }
 }
 

@@ -204,8 +204,10 @@ impl ViewportRenderer {
             item_type_plugins
                 .iter()
                 .filter_map(|(name, plugin)| {
-                    let items = crate::renderer::item_plugins::plugin_items_for(frame, name)?;
-                    Some(plugin.contribute_lights(items, &ctx))
+                    let items = crate::plugin_api::ItemCollections::new(
+                        crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+                    );
+                    Some(plugin.contribute_lights(&items, &ctx))
                 })
                 .flatten()
                 .collect()
