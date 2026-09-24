@@ -4,6 +4,7 @@
 
 ### Breaking
 
+- **Six item types moved to `viewport-lib-item-types`** - gaussian splat, GPU implicit, image slice, volume surface slice and external instances join point cloud in that crate. Their item structs, options enums, handles and upload calls come from there now: `GaussianSplatItem`, `GpuImplicitItem` / `GpuImplicitOptions` / `ImplicitPrimitive` / `ImplicitBlendMode`, `ImageSliceItem` / `SliceAxis`, `VolumeSurfaceSliceItem`, `ExternalInstancesItem` / `ExternalInstanceSetConfig` / `ExternalInstanceSetId`, plus `GaussianSplatData`, `GaussianSplatId` and `ShDegree` re-exported for convenience. `install(&mut renderer, &device)` registers the lot. The renderer's `upload_gaussian_splat` and friends move onto the `GaussianSplatUploads` trait, and `create_external_instance_set` and friends onto `ExternalInstanceUploads`; bring the trait into scope and the calls read the same.
 - **Point clouds moved to `viewport-lib-item-types`** - `PointCloudItem`, `PointCloudRefItem`, `PointCloudId` and `PointRenderMode` now come from that crate, which registers the type with `viewport_lib_item_types::install(&mut renderer, &device)`. Submission is unchanged (`frame.scene.items_mut::<PointCloudItem>()`), the renderer's `upload_point_cloud` and friends move onto the `PointCloudUploads` trait, and `pick_point_cloud_cpu` is gone: call `pick_gaussian_splat_cpu` with the item's positions and model matrix.
 - **`DebugDraw::to_point_cloud` is `PointCloudItem::from_debug_draw`** - the conversion moved with the type it builds. `to_polylines` and `to_labels` are unchanged.
 - **The retained-extra `add_*` methods are one `add_item`** - `ViewportInstance::add_point_cloud`, `add_glyphs`, `add_volume` and `add_gaussian_splat` become `add_item(item)`, which takes anything implementing `PluginItem`, so a retained extra no longer has to be a type the session knows by name.
@@ -103,6 +104,8 @@
 
 ### Features
 
+- **`shared_wgsl::SHARED_SCENE_LIGHTING_WGSL`** - the clustered scene-light loop the built-in lit item types draw with, so a plugin can match their shading exactly rather than approximating it with `viewport_apply_scene_lighting`. It carries its own group-0 declarations for the light bindings, which overlap `SHARED_BINDINGS_WGSL` on bindings 13 and 17, so compose one or the other.
+- **`builders::mesh_vertex_layout`** - the vertex buffer layout of the shared mesh arena, which a plugin drawing a `MeshId` through `MeshGeometry` needs to declare on its pipeline.
 - **`plugin_api::builders`** - the pipeline and bind-group helpers the built-in item types use, published so a plugin crate that follows viewport-lib's wgpu legs does not have to carry the per-leg descriptor differences itself. Covers `render_pipeline`, `build_dual_pipeline`, `pipeline_layout`, `standard_scene_layout`, the bind-group entry and sampler helpers, and `depth_stencil` / `dwrite` / `dcompare` / `dmipmap`.
 - **`SlotStore` and `slot_handle!` are public** - `resources::handle::SlotStore` is the generational store the built-in content stores wrap, and a plugin crate holding its own uploads now has the same primitive rather than an ad-hoc `Vec<Option<T>>`.
 - **`pick_helpers::inline_point_position`** - the world position of one point sub-object, found by scanning the frame's items for the one carrying a pick id. What a point-set item type's `sub_object_position` needs.

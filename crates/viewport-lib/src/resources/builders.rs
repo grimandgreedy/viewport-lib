@@ -1044,3 +1044,14 @@ mod strip_debug_vis_tests {
         );
     }
 }
+
+/// Vertex buffer layout of the meshes in the shared arena.
+///
+/// A plugin that draws a [`MeshId`](crate::resources::MeshId) through
+/// [`MeshGeometry`](crate::resources::MeshGeometry) binds those buffers
+/// directly, so its pipeline has to declare the layout they were uploaded
+/// with. Locations 0 to 4 are position, normal, colour, uv and tangent.
+pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
+    use crate::resources::types::VertexBufferLayoutExt as _;
+    crate::resources::types::Vertex::buffer_layout()
+}

@@ -10,92 +10,15 @@
 //! plus downcast every call here needs. One per type, rather than one per
 //! method.
 //!
-//! Those lookups cannot fail. A built-in type registers at construction, there
-//! is no call that unregisters one, and
-//! [`RESERVED_TYPE_NAME_PREFIX`](crate::renderer::RESERVED_TYPE_NAME_PREFIX)
-//! stops anything else claiming its name, so the name resolves and the downcast
-//! is to the type that put itself there. The two that return
-//! `ItemTypePluginMissing` instead of asserting do so because the public calls
-//! in front of them already return a `Result` for other reasons, not because
-//! they are more careful.
+//! Those lookups cannot fail. A type the renderer installs registers at
+//! construction, there is no call that unregisters one, and
+//! [`with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin)
+//! refuses a plugin claiming one of their names, so the name resolves and the
+//! downcast is to the type that put itself there.
 
 use super::*;
 
 impl ViewportRenderer {
-    /// Upload a Gaussian splat set to the GPU.
-    ///
-    /// Call once per splat set at startup or when it changes. The returned
-    /// [`GaussianSplatId`] is valid until [`free_gaussian_splat`](Self::free_gaussian_splat) is called.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ViewportError::InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
-    /// if `data.positions` is empty or if `positions`, `scales`, `rotations`, and `opacities`
-    /// differ in length.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use viewport_lib::error::ViewportError;
-    /// # use viewport_lib::renderer::{GaussianSplatData, ViewportRenderer};
-    /// # fn demo(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device, queue: &viewport_lib::wgpu::Queue) {
-    /// let result = renderer.upload_gaussian_splat(device, queue, &GaussianSplatData::default());
-    /// assert!(matches!(result, Err(ViewportError::InvalidGaussianSplatData { .. })));
-    /// # }
-    /// ```
-    pub fn upload_gaussian_splat(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        data: &GaussianSplatData,
-    ) -> crate::error::ViewportResult<GaussianSplatId> {
-        self.gaussian_splat_plugin_mut()?
-            .upload(device, queue, data)
-    }
-
-    /// Replace the splats behind a live [`GaussianSplatId`], keeping the handle.
-    ///
-    /// Items already holding the handle pick up the new set on the next frame.
-    /// Use this for content that changes over time, such as a streamed or
-    /// re-trained splat set.
-    ///
-    /// # Errors
-    ///
-    /// [`InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
-    /// when `data` is empty or its per-attribute vectors disagree in length, or
-    /// [`StaleHandle`](crate::error::ViewportError::StaleHandle) if `id` no
-    /// longer resolves to a live set.
-    pub fn replace_gaussian_splat(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: GaussianSplatId,
-        data: &GaussianSplatData,
-    ) -> crate::error::ViewportResult<()> {
-        self.gaussian_splat_plugin_mut()?
-            .replace(device, queue, id, data)
-    }
-
-    /// Remove an uploaded Gaussian splat set by handle.
-    ///
-    /// After this call the `id` is invalid and must not be submitted in `SceneFrame`.
-    pub fn free_gaussian_splat(&mut self, id: GaussianSplatId) {
-        if let Ok(plugin) = self.gaussian_splat_plugin_mut() {
-            plugin.free(id);
-        }
-    }
-
-    /// The registered Gaussian splat item type, which holds the uploaded sets.
-    fn gaussian_splat_plugin_mut(
-        &mut self,
-    ) -> crate::error::ViewportResult<
-        &mut crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin,
-    > {
-        let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
-        self.item_type_plugin_mut(name)
-            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })
-    }
-
     /// Upload a polyline for reuse across frames, returning its handle.
     ///
     /// Prefer this over the [`DeviceResources`] method of the same name: it is
@@ -729,45 +652,6 @@ impl ViewportRenderer {
         self.item_type_plugin_host(crate::renderer::item_plugins::gpu_particles::TYPE_NAME)
             .expect(
                 "the built-in GPU particle item type registers at construction, under a name nothing else can take",
-            )
-    }
-
-    /// Create an instance set drawn from a caller-owned positions buffer.
-    pub fn create_external_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        config: &crate::resources::ExternalInstanceSetConfig,
-    ) -> crate::error::ViewportResult<crate::resources::ExternalInstanceSetId> {
-        let host = self.external_instances_host();
-        host.plugin.create_set(device, host.resources, config)
-    }
-
-    /// Release an external instance set. Items still naming it are skipped.
-    pub fn drop_external_instance_set(&mut self, id: crate::resources::ExternalInstanceSetId) {
-        self.external_instances_host().plugin.drop_set(id)
-    }
-
-    /// Re-point an external instance set at a different positions buffer.
-    pub fn set_external_instance_set_buffer(
-        &mut self,
-        id: crate::resources::ExternalInstanceSetId,
-        positions: crate::gpu::Buffer,
-    ) -> crate::error::ViewportResult<()> {
-        self.external_instances_host()
-            .plugin
-            .set_buffer(id, positions)
-    }
-
-    /// The registered external instances item type, which holds the sets.
-    fn external_instances_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<
-        '_,
-        crate::renderer::item_plugins::external_instances::ExternalInstancesPlugin,
-    > {
-        self.item_type_plugin_host(crate::renderer::item_plugins::external_instances::TYPE_NAME)
-            .expect(
-                "the built-in external instances item type registers at construction, under a name nothing else can take",
             )
     }
 }

@@ -10,6 +10,7 @@ use viewport_lib::wgpu;
 pub use viewport_lib::{
     Camera, PickBackend, PickId, PickMask,
     renderer::{FrameData, RenderCamera, ViewportRenderer},
+    resources::MeshData,
 };
 
 use viewport_lib_testkit::{DeviceProfile, headless_device_with};
@@ -33,4 +34,38 @@ pub fn sub_object_pick_frame() -> FrameData {
 /// Create a headless wgpu device + queue for testing.
 pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     headless_device_with(&DeviceProfile::low_power("test"))
+}
+
+/// A unit cube, the stand-in geometry for a draw that only has to put pixels
+/// on the screen.
+pub fn box_mesh() -> MeshData {
+    let positions = vec![
+        [-0.5, -0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, 0.5, -0.5],
+        [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5],
+        [0.5, -0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [-0.5, 0.5, 0.5],
+    ];
+    let normals = vec![
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+    ];
+    let indices = vec![
+        0, 1, 2, 2, 3, 0, 4, 6, 5, 6, 4, 7, 0, 3, 7, 7, 4, 0, 1, 5, 6, 6, 2, 1, 3, 2, 6, 6, 7, 3,
+        0, 4, 5, 5, 1, 0,
+    ];
+    let mut mesh = MeshData::default();
+    mesh.positions = positions;
+    mesh.normals = normals;
+    mesh.indices = indices;
+    mesh
 }

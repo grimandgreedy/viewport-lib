@@ -18,10 +18,12 @@ use crate::eframe::egui;
 use crate::{App, MeshId};
 use glam::Vec3;
 use viewport_lib as vpl;
+use viewport_lib_item_types::{
+    GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
+};
 use vpl::{
-    Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
-    ImplicitPrimitive, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
-    VolumeData, extract_isosurface, primitives,
+    Camera, GpuMarchingCubesItem, LightKind, LightSource, LightingSettings, Material,
+    SceneRenderItem, VolumeData, extract_isosurface, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -311,9 +313,7 @@ impl App {
             hit_threshold: 5e-4,
             max_distance: self.camera.zfar,
         };
-        fd.scene
-            .items_mut::<viewport_lib::GpuImplicitItem>()
-            .push(item);
+        fd.scene.items_mut::<GpuImplicitItem>().push(item);
     }
 
     /// Submit a GPU marching cubes item for the gyroid field.

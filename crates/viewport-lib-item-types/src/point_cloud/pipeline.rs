@@ -7,22 +7,11 @@
 //! the layout to build pipelines over it.
 
 use super::store::PointCloudGpuData;
+use crate::point_disc_mask::PointDiscMaskUniform;
 use crate::shader::{scene_shader, wgsl_source};
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::builders;
 use viewport_lib::resources::DeviceResources;
-
-/// Group-1 uniform of `point_disc_mask.wgsl`: the model matrix, the viewport
-/// size the screen-space expansion divides by, and the disc radius in pixels.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct PointDiscMaskUniform {
-    model: [[f32; 4]; 4],
-    viewport_w: f32,
-    viewport_h: f32,
-    pixel_radius: f32,
-    _pad: [f32; 9],
-}
 
 /// Pipelines and layouts, built on the first prepare with items.
 pub(super) struct PointCloudGpu {

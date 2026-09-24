@@ -19,17 +19,19 @@ use crate::eframe;
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem,
+    GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+};
 
 use crate::eframe::egui;
 use vpl::{
-    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData,
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
-    LightingSettings, Material, McVolumeId, MeshId, NodeId, PickBackend, PickId, PickMask,
-    PickRectResult, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneFrame, SceneRenderItem,
-    ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef, TensorGlyphItem,
-    TextureId, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData, VolumeMeshItem,
-    VolumeSurfaceSliceItem,
+    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData, GlyphItem,
+    GlyphType, GpuMarchingCubesItem, ItemSettings, LightingSettings, Material, McVolumeId, MeshId,
+    NodeId, PickBackend, PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo,
+    RibbonItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, SubObjectRef,
+    SubSelectionRef, TensorGlyphItem, TextureId, TubeItem, ViewportRenderer, VolumeData,
+    VolumeMeshData, VolumeMeshItem,
 };
 
 use crate::App;
@@ -1824,9 +1826,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.pick_id = PickId(10);
         item.settings.selected = app.pl_state.selection.contains(10);
         item.settings.unlit = false;
-        fd.scene
-            .items_mut::<viewport_lib::GaussianSplatItem>()
-            .push(item);
+        fd.scene.items_mut::<GaussianSplatItem>().push(item);
     }
     // Hex cylinder: rendered through projected-tet (pick_id=12).
     if let (Some(tet_mesh_id), Some(tet_data)) = (
@@ -2149,9 +2149,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.pick_id = PickId(51);
         item.settings.selected = app.pl_state.selection.contains(51);
         item.settings.unlit = false;
-        fd.scene
-            .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
-            .push(item);
+        fd.scene.items_mut::<VolumeSurfaceSliceItem>().push(item);
     }
     // GPU implicit (pick_id=53): two smooth-blended spheres.
     {
@@ -2179,9 +2177,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.pick_id = PickId(53);
         item.settings.selected = app.pl_state.selection.contains(53);
         item.settings.unlit = false;
-        fd.scene
-            .items_mut::<viewport_lib::GpuImplicitItem>()
-            .push(item);
+        fd.scene.items_mut::<GpuImplicitItem>().push(item);
     }
     // GPU marching cubes (pick_id=54): gyroid surface.
     if let Some(mc_vol_id) = app.pl_state.mc_volume_id {

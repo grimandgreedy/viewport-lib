@@ -23,13 +23,15 @@ pub mod textures;
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GaussianSplatItem, GlyphItem,
-    GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, LightingSettings, Material, MeshData,
-    MeshId, MeshInstanceItem, PolylineItem, RibbonItem, ScatterSettings, ScatterVolumeItem,
-    SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem,
-    ViewportRenderer, VolumeItem, VolumeSurfaceSliceItem, primitives,
+    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GlyphItem, GpuMarchingCubesItem,
+    LightingSettings, Material, MeshData, MeshId, MeshInstanceItem, PolylineItem, RibbonItem,
+    ScatterSettings, ScatterVolumeItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem,
+    TensorGlyphItem, TubeItem, ViewportRenderer, VolumeItem, primitives,
 };
 use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::{
+    GaussianSplatItem, GpuImplicitItem, ImageSliceItem, VolumeSurfaceSliceItem,
+};
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
@@ -199,10 +201,10 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<viewport_lib::SpriteItem>() = scene.sprite_items.clone();
     *sf.items_mut::<viewport_lib::GpuParticleSystemItem>() = scene.gpu_particle_systems.clone();
     *sf.items_mut::<viewport_lib::VolumeItem>() = scene.volumes.clone();
-    *sf.items_mut::<viewport_lib::GaussianSplatItem>() = scene.gaussian_splats.clone();
-    *sf.items_mut::<viewport_lib::ImageSliceItem>() = scene.image_slices.clone();
-    *sf.items_mut::<viewport_lib::VolumeSurfaceSliceItem>() = scene.volume_surface_slices.clone();
-    *sf.items_mut::<viewport_lib::GpuImplicitItem>() = scene.gpu_implicit.clone();
+    *sf.items_mut::<GaussianSplatItem>() = scene.gaussian_splats.clone();
+    *sf.items_mut::<ImageSliceItem>() = scene.image_slices.clone();
+    *sf.items_mut::<VolumeSurfaceSliceItem>() = scene.volume_surface_slices.clone();
+    *sf.items_mut::<GpuImplicitItem>() = scene.gpu_implicit.clone();
     *sf.items_mut::<viewport_lib::GpuMarchingCubesItem>() = scene.gpu_mc_items.clone();
     *sf.items_mut::<viewport_lib::ScatterVolumeItem>() = scene.scatter_volumes.clone();
     *sf.items_mut::<viewport_lib::DecalItem>() = scene.decals.clone();

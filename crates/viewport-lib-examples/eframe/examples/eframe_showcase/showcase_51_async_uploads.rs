@@ -19,17 +19,17 @@ use crate::eframe;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use viewport_lib as vpl;
+use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId, GaussianSplatUploads};
 use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem, PointCloudUploads};
 
 use crate::eframe::egui;
 use vpl::{
-    ColourmapId, GaussianSplatData, GaussianSplatId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId,
-    LightKind, LightSource, LightingSettings, Material, MeshData, MeshId, OverlayTextureId,
-    PolylineId, PolylineItem, PolylineRefItem, RibbonId, RibbonItem, RibbonRefItem,
-    SceneRenderItem, SpriteInstanceSetId, SpriteItem, SpriteSetId, StreamtubeId, StreamtubeItem,
-    StreamtubeRefItem, TensorGlyphItem, TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem,
-    TubeRefItem, UploadStatus, ViewportRenderer, VolumeId, VolumeItem,
-    plugins::skinning::SkinWeights,
+    ColourmapId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId, LightKind, LightSource,
+    LightingSettings, Material, MeshData, MeshId, OverlayTextureId, PolylineId, PolylineItem,
+    PolylineRefItem, RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem, SpriteInstanceSetId,
+    SpriteItem, SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
+    TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem, UploadStatus,
+    ViewportRenderer, VolumeId, VolumeItem, plugins::skinning::SkinWeights,
 };
 
 use crate::App;
@@ -1934,9 +1934,7 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
     if let Some(id) = app.async_uploads_state.loaded_point_cloud_id {
         let mut ref_item = PointCloudRefItem::new(id);
         ref_item.model = translate(-4.8, 2.4);
-        fd.scene
-            .items_mut::<PointCloudRefItem>()
-            .push(ref_item);
+        fd.scene.items_mut::<PointCloudRefItem>().push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_glyph_set_id {
         let mut ref_item = GlyphSetRefItem::new(id);

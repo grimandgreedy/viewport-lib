@@ -79,9 +79,6 @@ pub use self::plugin_builders::{
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
-pub use crate::renderer::item_plugins::external_instances::types::{
-    ExternalInstanceSetConfig, ExternalInstanceSetId,
-};
 pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
 pub use crate::renderer::item_plugins::gpu_particles::types::{
     GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender,
@@ -112,9 +109,9 @@ pub(crate) use self::types::{
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
     OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
-    OverlayTextVertex, PickInstance, PointDiscMaskUniform, ProjectedTetUniform, SHADOW_ATLAS_SIZE,
-    ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform,
-    ViewportCullState, ViewportHdrState,
+    OverlayTextVertex, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform,
+    ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform, ViewportCullState,
+    ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
@@ -139,6 +136,3 @@ pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
 pub use crate::renderer::GpuMarchingCubesItem;
 pub use crate::renderer::item_plugins::gpu_marching_cubes::types::McVolumeId;
-pub use crate::renderer::{
-    GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
-};

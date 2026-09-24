@@ -9,15 +9,17 @@
 
 use glam::{Mat4, Vec3};
 use viewport_lib::{
-    Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, GaussianSplatData,
-    GaussianSplatItem, GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, ImplicitBlendMode,
-    ImplicitPrimitive, Material, MeshInstanceItem, PickId, RibbonItem, ScatterQuality,
-    ScatterSettings, ScatterVolume, ScatterVolumeItem, ShDegree, SliceAxis, SpriteBlend,
-    SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData, TubeItem, VolumeData,
-    VolumeItem, VolumeSurfaceSliceItem, primitives,
+    Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, GpuMarchingCubesItem, Material,
+    MeshInstanceItem, PickId, RibbonItem, ScatterQuality, ScatterSettings, ScatterVolume,
+    ScatterVolumeItem, SpriteBlend, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem,
+    TextureData, TubeItem, VolumeData, VolumeItem, primitives,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem, ImageSliceItem,
+    ImplicitBlendMode, ImplicitPrimitive, ShDegree, SliceAxis, VolumeSurfaceSliceItem,
+};
 
 /// The item-type scenes appended to the main catalogue.
 pub fn scenes() -> Vec<NamedScene> {

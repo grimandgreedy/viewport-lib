@@ -13,19 +13,14 @@ pub(crate) mod registry;
 
 pub(crate) mod curves;
 pub(crate) mod decal;
-pub(crate) mod external_instances;
-pub(crate) mod gaussian_splat;
 pub(crate) mod glyph;
-pub(crate) mod gpu_implicit;
 pub(crate) mod gpu_marching_cubes;
 pub(crate) mod gpu_particles;
-pub(crate) mod image_slice;
 pub(crate) mod polyline;
 pub(crate) mod scatter_volume;
 pub(crate) mod sprite;
 pub(crate) mod tensor_glyph;
 pub(crate) mod volume;
-pub(crate) mod volume_surface_slice;
 
 use crate::plugin_api::PluginItemCollection;
 use crate::renderer::types::FrameData;
@@ -90,19 +85,9 @@ impl crate::renderer::ViewportRenderer {
         self.install_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
         self.install_item_type_plugin(device, Box::new(curves::StreamtubePlugin::default()));
         self.install_item_type_plugin(device, Box::new(curves::TubePlugin::default()));
-        self.install_item_type_plugin(device, Box::new(image_slice::ImageSlicePlugin::default()));
         self.install_item_type_plugin(device, Box::new(tensor_glyph::TensorGlyphPlugin::default()));
-        self.install_item_type_plugin(
-            device,
-            Box::new(volume_surface_slice::VolumeSurfaceSlicePlugin::default()),
-        );
         self.install_item_type_plugin(device, Box::new(curves::RibbonPlugin::default()));
         // Then the types that always had a draw site of their own.
-        self.install_item_type_plugin(
-            device,
-            Box::new(gaussian_splat::GaussianSplatPlugin::default()),
-        );
-        self.install_item_type_plugin(device, Box::new(gpu_implicit::GpuImplicitPlugin::default()));
         self.install_item_type_plugin(
             device,
             Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
@@ -113,12 +98,6 @@ impl crate::renderer::ViewportRenderer {
         self.install_item_type_plugin(
             device,
             Box::new(gpu_particles::GpuParticlesPlugin::default()),
-        );
-        // External instances drew after every plugin paint when they had a pass
-        // of their own, so they register after the last type that paints.
-        self.install_item_type_plugin(
-            device,
-            Box::new(external_instances::ExternalInstancesPlugin::default()),
         );
         self.install_item_type_plugin(
             device,

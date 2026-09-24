@@ -19,10 +19,10 @@ use crate::App;
 use crate::eframe;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::{ImageSliceItem, SliceAxis, VolumeSurfaceSliceItem};
 use vpl::{
-    BuiltinColourmap, ColourmapId, FrameData, ImageSliceItem, LightingSettings, Material, MeshData,
-    MeshId, SceneRenderItem, SliceAxis, VolumeData, VolumeId, VolumeItem, VolumeSurfaceSliceItem,
-    extract_isosurface,
+    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, Material, MeshData, MeshId,
+    SceneRenderItem, VolumeData, VolumeId, VolumeItem, extract_isosurface,
 };
 
 // ---------------------------------------------------------------------------
@@ -538,16 +538,12 @@ pub(crate) fn submit_vol_items(app: &mut App, fd: &mut FrameData) {
     }
     if app.vol_state.show_slice {
         if let Some(slice_item) = app.make_image_slice_item() {
-            fd.scene
-                .items_mut::<viewport_lib::ImageSliceItem>()
-                .push(slice_item);
+            fd.scene.items_mut::<ImageSliceItem>().push(slice_item);
         }
     }
     if app.vol_state.show_surface_slice {
         if let Some(item) = app.make_volume_surface_slice_item() {
-            fd.scene
-                .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
-                .push(item);
+            fd.scene.items_mut::<VolumeSurfaceSliceItem>().push(item);
         }
     }
 }

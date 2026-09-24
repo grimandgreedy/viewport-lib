@@ -16,18 +16,20 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
 use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem,
+    GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+};
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GaussianSplatData,
-    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
-    GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings, Material, McVolumeId,
-    MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem,
-    PolylineSelectionInfo, RibbonItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef,
-    SubSelection, SubSelectionRef, TensorGlyphItem, TextureId, TubeItem, VolumeData, VolumeId,
-    VolumeItem, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, VolumeSurfaceSliceItem,
-    primitives,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GlyphItem, GlyphType,
+    GpuMarchingCubesItem, ItemSettings, Material, McVolumeId, MeshId, NodeId, OverlayFill,
+    OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem, PolylineSelectionInfo,
+    RibbonItem, SpriteItem, StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef,
+    TensorGlyphItem, TextureId, TubeItem, VolumeData, VolumeId, VolumeItem, VolumeMeshData,
+    VolumeMeshItem, VolumeSelectionInfo, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -285,9 +287,7 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(SPLAT);
             item.settings.selected = sel(SPLAT);
             item.settings.unlit = false;
-            fd.scene
-                .items_mut::<viewport_lib::GaussianSplatItem>()
-                .push(item);
+            fd.scene.items_mut::<GaussianSplatItem>().push(item);
         }
 
         // Volume mesh (capsule): opaque boundary surface, so point-like picking
@@ -315,9 +315,7 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(SLICE);
             item.settings.selected = sel(SLICE);
             item.settings.unlit = false;
-            fd.scene
-                .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
-                .push(item);
+            fd.scene.items_mut::<VolumeSurfaceSliceItem>().push(item);
         }
 
         // GPU implicit: two smooth-blended spheres.
@@ -346,9 +344,7 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(IMPLICIT);
             item.settings.selected = sel(IMPLICIT);
             item.settings.unlit = false;
-            fd.scene
-                .items_mut::<viewport_lib::GpuImplicitItem>()
-                .push(item);
+            fd.scene.items_mut::<GpuImplicitItem>().push(item);
         }
 
         // GPU marching cubes: gyroid surface.

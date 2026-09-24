@@ -212,6 +212,29 @@ fn viewport_clip_test(world_pos: vec3<f32>) -> bool {
 // `viewport_sample_csm`.
 "#;
 
+/// The clustered scene-light loop the built-in lit item types draw with.
+///
+/// Provides `apply_scene_lighting(normal, base_colour, two_sided, world_pos,
+/// lights)`, the per-light `eval_light`, the cluster lookup, and the
+/// environment-zone and probe-volume declarations they read. Unlike
+/// [`SHARED_PBR_WGSL`]'s `viewport_apply_scene_lighting`, which is a
+/// self-contained Lambert loop over `lights_storage`, this is the same code
+/// path the renderer's own mesh and item shaders take: clustered iteration,
+/// physical inverse-square falloff with a source-radius clamp, and light
+/// channel masks. Compose it when an item has to match a built-in type's
+/// shading exactly.
+///
+/// It brings its own group-0 declarations for the lighting bindings (13 to 18
+/// and 20) along with the `SingleLight` and `Lights` structs, which overlap
+/// [`SHARED_BINDINGS_WGSL`] on bindings 13 and 17. Compose one or the other,
+/// not both: a body using this declares its own camera at binding 0 and the
+/// `Lights` uniform at binding 3.
+///
+/// It applies no shadow term. Multiply by
+/// [`viewport_sample_csm`](SHARED_PBR_WGSL) yourself if the item casts into
+/// the cascade atlas.
+pub const SHARED_SCENE_LIGHTING_WGSL: &str = include_str!("../shaders/helpers/scene_lighting.wgsl");
+
 /// Shared PBR shading helper.
 ///
 /// Provides:

@@ -13,9 +13,10 @@
 pub use crate::resources::builders::{DualPipelineDesc, build_dual_pipeline};
 pub use crate::resources::builders::{
     RenderPipelineDesc, clamp_linear_sampler, clamp_nearest_sampler, compute_pipeline, dcompare,
-    depth_stencil, dmipmap, dwrite, pipeline_layout, render_pipeline, repeat_linear_sampler,
-    sampler_entry, scene_depth_stencil, standard_scene_layout, texture_entry, texture_sampler_bgl,
-    uniform_bgl, uniform_entry, uniform_texture_sampler_bgl, wgsl_module, write_mapped,
+    depth_stencil, dmipmap, dwrite, mesh_vertex_layout, pipeline_layout, render_pipeline,
+    repeat_linear_sampler, sampler_entry, scene_depth_stencil, standard_scene_layout,
+    texture_entry, texture_sampler_bgl, uniform_bgl, uniform_entry, uniform_texture_sampler_bgl,
+    wgsl_module, write_mapped,
 };
 pub use crate::resources::device_resources::DualPipeline;
 

@@ -12,8 +12,12 @@ publish = true
 
 [dependencies]
 viewport-lib = { path = "../viewport-lib", version = "0.22", default-features = false }
+viewport-lib-types = { path = "../viewport-lib-types", version = "0.2" }
 glam = { workspace = true }
 bytemuck = { version = "1.25", features = ["derive"] }
+# Ray/trimesh cast for the volume-surface-slice CPU pick, the same version
+# viewport-lib uses so the two agree on hit geometry.
+parry3d = "0.26"
 
 [dev-dependencies]
 viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }

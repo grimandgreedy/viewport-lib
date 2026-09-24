@@ -73,28 +73,27 @@ pub use self::types::{
     ComputeFilterKind, ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity,
     DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings,
     DofSettings, EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode,
-    ExposureSettings, ExternalInstancesItem, FillRule, FilterMode, ForceField, ForegroundPass,
-    ForegroundProjection, FrameData, GaussianSplatItem, GlyphItem, GlyphRunItem, GlyphSetRefItem,
-    GlyphType, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, GpuParticleSystemItem,
-    GradientStop, GroundPlane, GroundPlaneMode, ImageSliceItem, ImplicitBlendMode,
-    ImplicitPrimitive, IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem,
-    LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap,
-    LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice,
-    OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring,
-    OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId,
-    OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
-    OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE,
+    ExposureSettings, FillRule, FilterMode, ForceField, ForegroundPass, ForegroundProjection,
+    FrameData, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType, GpuMarchingCubesItem,
+    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
+    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
+    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE,
     ParticleMeshAlign, PathSegment, PathTrack, PipelineMode, PointShadowMode, PolylineCap,
     PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
     RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem,
     SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings,
-    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
+    SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
     SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
     StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
     TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
     TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
-    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
-    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
+    obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -2905,53 +2904,6 @@ impl ViewportRenderer {
         id: crate::resources::JobId,
     ) -> crate::error::ViewportResult<crate::resources::mesh::mesh_store::MeshId> {
         self.resources.upload_result_sparse_volume_grid(id)
-    }
-
-    /// Start an asynchronous Gaussian splat upload.
-    ///
-    /// Returns a [`JobId`](crate::resources::JobId) immediately. The vec4
-    /// padding and the storage-buffer writes run on a worker thread against
-    /// cloned `Device` and `Queue` handles. Poll
-    /// [`upload_status`](crate::resources::DeviceResources::upload_status) and
-    /// call [`upload_result_gaussian_splat`](Self::upload_result_gaussian_splat)
-    /// once it reads `Ready`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InvalidGaussianSplatData`](crate::error::ViewportError::InvalidGaussianSplatData)
-    /// before any job is submitted when `data.positions` is empty or the
-    /// per-attribute vectors disagree in length.
-    pub fn begin_upload_gaussian_splat(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        data: crate::renderer::GaussianSplatData,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
-        let host = self
-            .item_type_plugin_host::<crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin>(
-                name,
-            )
-            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
-        host.plugin.begin_upload(&host.jobs, device, queue, data)
-    }
-
-    /// Take the [`GaussianSplatId`](crate::renderer::GaussianSplatId) produced by a
-    /// completed [`begin_upload_gaussian_splat`](Self::begin_upload_gaussian_splat) job.
-    ///
-    /// The set enters the store here, so a handle is minted on the call that
-    /// collects the job rather than on a background thread.
-    pub fn upload_result_gaussian_splat(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::renderer::GaussianSplatId> {
-        let name = crate::renderer::item_plugins::gaussian_splat::TYPE_NAME;
-        let host = self
-            .item_type_plugin_host::<crate::renderer::item_plugins::gaussian_splat::GaussianSplatPlugin>(
-                name,
-            )
-            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
-        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Start an asynchronous overlay texture upload. See

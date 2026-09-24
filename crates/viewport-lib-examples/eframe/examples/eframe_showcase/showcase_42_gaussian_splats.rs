@@ -21,10 +21,10 @@ use crate::App;
 use crate::eframe::egui;
 use std::f32::consts::PI;
 use viewport_lib as vpl;
-use vpl::{
-    FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, LightingSettings,
-    SceneRenderItem, ShDegree, ViewportRenderer,
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatUploads, ShDegree,
 };
+use vpl::{FrameData, LightingSettings, SceneRenderItem, ViewportRenderer};
 
 // ---------------------------------------------------------------------------
 // State
@@ -392,7 +392,7 @@ pub(crate) fn submit_splat_items(app: &App, fd: &mut FrameData) {
         return;
     }
     fd.scene
-        .items_mut::<viewport_lib::GaussianSplatItem>()
+        .items_mut::<GaussianSplatItem>()
         .extend(gaussian_splat_items(app));
 }
 

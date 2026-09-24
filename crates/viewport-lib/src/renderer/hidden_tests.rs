@@ -18,14 +18,11 @@ use super::{
 };
 use crate::camera::Camera;
 use crate::plugin_api::ItemTypePlugin as _;
-use crate::renderer::ImplicitPrimitive;
 use crate::renderer::PickId;
 use crate::renderer::item_plugins::curves::{RibbonPlugin, StreamtubePlugin, TubePlugin};
 use crate::renderer::item_plugins::glyph::GlyphPlugin;
-use crate::renderer::item_plugins::gpu_implicit::GpuImplicitPlugin;
 use crate::renderer::item_plugins::polyline::PolylinePlugin;
 use crate::renderer::item_plugins::tensor_glyph::TensorGlyphPlugin;
-use crate::resources::GpuImplicitItem;
 use crate::scene::material::ItemSettings;
 
 fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
@@ -361,56 +358,6 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             plugin.drawn_count(),
             1,
             "ribbon: hidden item must not produce gpu data"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // GPU implicit
-    // -----------------------------------------------------------------
-    //
-    // The implicit item type is an `ItemTypePlugin`, so the check drives the
-    // plugin's prepare directly instead of reading a renderer field.
-    {
-        let mut vis_prim = ImplicitPrimitive::zeroed();
-        vis_prim.kind = 1; // sphere
-        vis_prim.params[3] = 1.0;
-        let mut vis = GpuImplicitItem::default();
-        vis.primitives.push(vis_prim);
-        vis.settings = visible();
-        let mut hid_prim = ImplicitPrimitive::zeroed();
-        hid_prim.kind = 1;
-        hid_prim.params[3] = 1.0;
-        let mut hid = GpuImplicitItem::default();
-        hid.primitives.push(hid_prim);
-        hid.settings = hidden();
-        let items: Vec<GpuImplicitItem> = vec![vis, hid];
-        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
-            vec![Box::new(items)];
-        let items = crate::plugin_api::ItemCollections::new(&collections);
-
-        let fd = empty_frame();
-        let resources = renderer.resources();
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &fd.camera.render_camera,
-            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
-            viewport_index: 0,
-            frame_index: 0,
-            jobs: crate::resources::Jobs::new(resources),
-            resources,
-            wireframe_mode: false,
-            outline_selected: false,
-            sub_selection: None,
-            clip_objects: &[],
-            quality_reduced: false,
-            decal_excluded_surfaces: &[],
-            collections: &collections,
-        };
-        let mut plugin = GpuImplicitPlugin::default();
-        let _ = plugin.prepare(&device, &queue, &ctx, &items);
-        assert_eq!(
-            plugin.drawn_count(),
-            1,
-            "gpu_implicit: hidden item must not produce gpu data"
         );
     }
 }

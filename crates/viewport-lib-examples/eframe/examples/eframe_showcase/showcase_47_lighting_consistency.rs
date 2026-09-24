@@ -24,12 +24,14 @@
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem,
+    GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+};
 use vpl::{
-    ColourmapId, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem,
-    GlyphType, GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
-    ItemSettings, LightSource, LightingSettings, Material, MeshId, PolylineItem, RibbonItem,
-    SceneRenderItem, ShDegree, StreamtubeItem, TensorGlyphItem, TubeItem, ViewportRenderer,
-    VolumeId, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    ColourmapId, FrameData, GlyphItem, GlyphType, ItemSettings, LightSource, LightingSettings,
+    Material, MeshId, PolylineItem, RibbonItem, SceneRenderItem, StreamtubeItem, TensorGlyphItem,
+    TubeItem, ViewportRenderer, VolumeId, VolumeItem, VolumeMeshItem, VolumeTransparency,
 };
 
 use crate::App;
@@ -591,9 +593,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             max_distance: 60.0,
         };
         broadcast(s, &mut item.settings);
-        fd.scene
-            .items_mut::<viewport_lib::GpuImplicitItem>()
-            .push(item);
+        fd.scene.items_mut::<GpuImplicitItem>().push(item);
     }
 
     // Cell (4, 1): Gaussian splats.
@@ -603,9 +603,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         item.source = sid;
         item.model = glam::Mat4::from_translation(p).to_cols_array_2d();
         broadcast(s, &mut item.settings);
-        fd.scene
-            .items_mut::<viewport_lib::GaussianSplatItem>()
-            .push(item);
+        fd.scene.items_mut::<GaussianSplatItem>().push(item);
     }
 
     // Cell (0, 2): volume (ray-march). `settings.unlit` flows into the
@@ -650,9 +648,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             * glam::Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2))
         .to_cols_array_2d();
         broadcast(s, &mut ss.settings);
-        fd.scene
-            .items_mut::<viewport_lib::VolumeSurfaceSliceItem>()
-            .push(ss);
+        fd.scene.items_mut::<VolumeSurfaceSliceItem>().push(ss);
     }
 
     // Cell (2, 2): transparent volume mesh (single tet). The projected-tet

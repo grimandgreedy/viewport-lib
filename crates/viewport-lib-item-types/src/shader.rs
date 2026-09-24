@@ -43,6 +43,21 @@ pub(crate) fn scene_shader(extra: &[&str], body: &str) -> String {
     out
 }
 
+/// The source of a shader that draws with the clustered scene-light loop.
+///
+/// The lighting catalogue entry brings its own group-0 declarations for the
+/// light bindings, which overlap the shared ones, so a body composing it
+/// declares the camera and the `Lights` uniform itself rather than taking
+/// `SHARED_BINDINGS_WGSL`.
+pub(crate) fn lit_shader(body: &str) -> String {
+    let mut out =
+        String::with_capacity(shared_wgsl::SHARED_SCENE_LIGHTING_WGSL.len() + body.len() + 1);
+    out.push_str(shared_wgsl::SHARED_SCENE_LIGHTING_WGSL);
+    out.push('\n');
+    out.push_str(body);
+    out
+}
+
 /// The text of one `.wgsl` file in this crate, by bare file name and without
 /// the extension. `build.rs` flattens every shader into `OUT_DIR`, so the name
 /// is unique across the crate.
