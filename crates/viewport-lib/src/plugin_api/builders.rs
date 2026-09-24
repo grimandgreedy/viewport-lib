@@ -18,7 +18,9 @@ pub use crate::resources::builders::{
     texture_entry, texture_sampler_bgl, uniform_bgl, uniform_entry, uniform_texture_sampler_bgl,
     wgsl_module, write_mapped,
 };
-pub use crate::resources::builders::{DualPipelineDesc, build_dual_pipeline};
+pub use crate::resources::builders::{
+    DualPipelineDesc, build_dual_pipeline, build_fullscreen_pipeline,
+};
 
 pub use crate::resources::device_resources::DualPipeline;
 /// The depth bias the renderer's own two-sided surfaces cast shadows with.

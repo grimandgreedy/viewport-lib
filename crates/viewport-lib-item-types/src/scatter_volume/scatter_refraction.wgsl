@@ -7,16 +7,8 @@
 // from the local density gradient and writes the distorted result back to
 // the HDR target with replace blend, so the scatter pass that follows
 // integrates absorption and in-scattering on top of the shimmered scene.
-
-struct Camera {
-    view_proj:     mat4x4<f32>,
-    eye_pos:       vec3<f32>,
-    _pad:          f32,
-    forward:       vec3<f32>,
-    _pad1:         f32,
-    inv_view_proj: mat4x4<f32>,
-    view:          mat4x4<f32>,
-};
+//
+// Group 0 is the shared scene bind group; the camera comes from there.
 
 struct GpuRefractionVolume {
     shape_pack: vec4<u32>,
@@ -25,8 +17,7 @@ struct GpuRefractionVolume {
     params:     vec4<f32>, // strength, threshold, noise_scale, time
 };
 
-@group(0) @binding(0) var<uniform> camera: Camera;
-@group(1) @binding(0) var<uniform> vol:    GpuRefractionVolume;
+@group(1) @binding(0) var<uniform> vol: GpuRefractionVolume;
 
 @group(2) @binding(0) var scene_src:     texture_2d<f32>;
 @group(2) @binding(1) var scene_sampler: sampler;

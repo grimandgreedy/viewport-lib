@@ -10,7 +10,6 @@ pub mod light_glyphs;
 /// Per-object material parameters (colour, shading, textures).
 pub mod material;
 /// Participating-media volume primitive (fog, smoke, clouds).
-pub mod scatter_volume;
 pub use light_glyphs::build_light_glyphs;
 /// Loose octree spatial index for frustum culling acceleration.
 pub(crate) mod spatial_index;

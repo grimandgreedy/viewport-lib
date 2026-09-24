@@ -1,8 +1,7 @@
 //! The scatter-volume item type as an [`ItemTypePlugin`]: participating media
 //! (fog, smoke, fire) ray-marched through a box or sphere and composited over
-//! the lit scene. Consumers submit [`ScatterVolumeItem`]s on
-//! `SceneFrame::scatter_volumes`; the renderer routes that field to this
-//! plugin.
+//! the lit scene. Consumers submit [`ScatterVolumeItem`]s with
+//! `frame.scene.submit::<ScatterVolumeItem>(..)`.
 //!
 //! Every pass is encoded from [`ItemTypePlugin::encode`] at
 //! [`EncoderScope::AfterTransparent`], in the order they have to run: the
@@ -11,37 +10,71 @@
 //! history, and the composite onto the scene colour.
 //!
 //! Two things a scatter volume does are deliberately not here, because they
-//! are not rendering. An emissive volume contributes a virtual point light to
-//! the lighting prepare, and a selected volume gets a bounds wireframe through
-//! the line substrate. Both are other parts of the lib reading the item list,
-//! and both stay where they are.
+//! are not rendering. An emissive volume contributes a virtual point light
+//! through [`ItemTypePlugin::contribute_lights`], and a selected volume gets a
+//! bounds wireframe through the renderer's line substrate.
 
 mod pipeline;
-pub(crate) mod types;
+mod types;
+pub(crate) mod volume;
 
-use crate::plugin_api::{
+use viewport_lib::plugin_api::{
     EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext, ItemTypePlugin,
     PickContext, PickPassContext, PickRay, PluginItem,
 };
-use crate::renderer::{PickHit, PickId, PickMask, ScatterVolumeItem};
-use crate::scene::scatter_volume::{ScatterShape, ScatterVolume};
+use viewport_lib::renderer::{PickHit, PickId, PickMask};
 
-pub(crate) const TYPE_NAME: &str = "vpl.scatter_volume";
+pub use types::ScatterVolumeItem;
+use volume::{ScatterShape, ScatterVolume};
+
+/// This type's shaders as the pipelines compile them, shared sections already
+/// spliced in front of each body.
+pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
+    use crate::shader::{lit_shader, scene_shader, wgsl_source};
+    vec![
+        (
+            "scatter_volume.wgsl",
+            lit_shader(&[], wgsl_source!("scatter_volume")),
+        ),
+        (
+            "scatter_refraction.wgsl",
+            scene_shader(&[], wgsl_source!("scatter_refraction")),
+        ),
+        (
+            "scatter_pick.wgsl",
+            scene_shader(&[], wgsl_source!("scatter_pick")),
+        ),
+        (
+            "scatter_composite.wgsl",
+            wgsl_source!("scatter_composite").to_string(),
+        ),
+        (
+            "scatter_temporal_resolve.wgsl",
+            wgsl_source!("scatter_temporal_resolve").to_string(),
+        ),
+    ]
+}
+
+/// Stable name this item type submits and registers under.
+pub const TYPE_NAME: &str = "vpl.scatter_volume";
 
 /// The scatter intermediates and the scene colour they composite onto are both
 /// HDR; the pass has no LDR form.
-const TARGET_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureFormat::Rgba16Float;
+const TARGET_FORMAT: viewport_lib::gpu::TextureFormat =
+    viewport_lib::gpu::TextureFormat::Rgba16Float;
 
 impl PluginItem for ScatterVolumeItem {
     const TYPE_NAME: &'static str = TYPE_NAME;
 
-    fn settings(&self) -> &crate::scene::material::ItemSettings {
+    fn settings(&self) -> &viewport_lib::ItemSettings {
         &self.settings
     }
 }
 
+/// The registered item type. `install` builds one; a consumer taking only
+/// this type registers it with `with_item_type_plugin`.
 #[derive(Default)]
-pub(crate) struct ScatterVolumePlugin {
+pub struct ScatterVolumePlugin {
     gpu: pipeline::ScatterGpu,
     /// This frame's visible volumes with their per-item opacity and flags, in
     /// the back-to-front order the per-volume draws composite in.
@@ -50,14 +83,14 @@ pub(crate) struct ScatterVolumePlugin {
     refraction_draws: Vec<(ScatterVolume, f32)>,
     /// Group 2 bind groups, one per entry in `draws`, resolved in `prepare`
     /// because that is where the texture stores are reachable.
-    per_volume_tex_bgs: Vec<crate::gpu::BindGroup>,
+    per_volume_tex_bgs: Vec<viewport_lib::gpu::BindGroup>,
     /// Items retained from `prepare` for the out-of-band CPU pick answers.
     pick_items: Vec<ScatterVolumeItem>,
     /// Group 1 bind groups for the id pass, one per pickable volume, with the
     /// shape each one draws. Built in `prepare`, where a device is reachable.
-    pick_draws: Vec<(crate::gpu::BindGroup, ScatterProxyShape)>,
+    pick_draws: Vec<(viewport_lib::gpu::BindGroup, ScatterProxyShape)>,
     /// Retained so the uniforms outlive the bind groups in `pick_draws`.
-    _pick_uniforms: Vec<crate::gpu::Buffer>,
+    _pick_uniforms: Vec<viewport_lib::gpu::Buffer>,
     /// Per-viewport accumulation and history targets. Behind a lock because
     /// `encode` runs from a shared borrow but allocates on resize and advances
     /// the history ping-pong.
@@ -74,20 +107,20 @@ impl ItemTypePlugin for ScatterVolumePlugin {
     /// is built before any `prepare` runs.
     fn contribute_lights(
         &self,
-        items: &crate::plugin_api::ItemCollections<'_>,
-        ctx: &crate::plugin_api::LightContext<'_>,
-    ) -> Vec<crate::renderer::LightSource> {
-        let items = items.of::<crate::renderer::ScatterVolumeItem>();
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
+        ctx: &viewport_lib::plugin_api::LightContext<'_>,
+    ) -> Vec<viewport_lib::renderer::LightSource> {
+        let items = items.of::<ScatterVolumeItem>();
         derive_virtual_lights(items, ctx.resources)
     }
 
     fn prepare(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
-    ) -> Vec<crate::gpu::CommandBuffer> {
+    ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         let volumes = items.of::<ScatterVolumeItem>();
 
         self.draws.clear();
@@ -121,10 +154,10 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             }
             let mut flags: u32 = 0;
             if item.settings.unlit {
-                flags |= crate::scene::scatter_volume::SCATTER_FLAG_UNLIT;
+                flags |= volume::SCATTER_FLAG_UNLIT;
             }
             if item.settings.receive_shadows {
-                flags |= crate::scene::scatter_volume::SCATTER_FLAG_RECEIVE_SHADOWS;
+                flags |= volume::SCATTER_FLAG_RECEIVE_SHADOWS;
             }
             self.draws
                 .push((item.volume.clone(), item.settings.opacity, flags));
@@ -190,7 +223,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
 
     fn encode(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -269,7 +302,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
         &self,
         items: &ItemCollections<'_>,
         ctx: &ItemFrameContext<'_>,
-    ) -> Vec<crate::renderer::PolylineItem> {
+    ) -> Vec<viewport_lib::renderer::PolylineItem> {
         let volumes = items.of::<ScatterVolumeItem>();
         volumes
             .iter()
@@ -282,9 +315,13 @@ impl ItemTypePlugin for ScatterVolumePlugin {
                     [0.8_f32, 0.85, 0.95, 1.0]
                 };
                 let mut polyline = match item.volume.shape {
-                    ScatterShape::Box(b) => crate::renderer::aabb_wireframe_polyline(&b, colour),
+                    ScatterShape::Box(b) => {
+                        viewport_lib::renderer::aabb_wireframe_polyline(&b, colour)
+                    }
                     ScatterShape::Sphere { center, radius } => {
-                        crate::renderer::sphere_wireframe_polyline(center, radius, 48, colour)
+                        viewport_lib::renderer::sphere_wireframe_polyline(
+                            center, radius, 48, colour,
+                        )
                     }
                 };
                 // Thin single-pixel lines, as the bounds outlines have always
@@ -301,7 +338,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
     /// places either, matching the CPU analytic pick.
     fn render_pick(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -328,7 +365,7 @@ impl ItemTypePlugin for ScatterVolumePlugin {
                     ScatterProxyShape::Sphere => sphere,
                 };
                 pass.set_vertex_buffer(0, mesh.vbuf.slice(..));
-                pass.set_index_buffer(mesh.ibuf.slice(..), crate::gpu::IndexFormat::Uint32);
+                pass.set_index_buffer(mesh.ibuf.slice(..), viewport_lib::gpu::IndexFormat::Uint32);
                 current = Some(*shape);
             }
             let count = match shape {
@@ -351,11 +388,9 @@ impl ItemTypePlugin for ScatterVolumePlugin {
             if item.settings.hidden || item.settings.pick_id == PickId::NONE {
                 continue;
             }
-            let Some((toi, _)) = crate::scene::scatter_volume::ray_intersect(
-                &item.volume.shape,
-                ray.origin,
-                ray.direction,
-            ) else {
+            let Some((toi, _)) =
+                volume::ray_intersect(&item.volume.shape, ray.origin, ray.direction)
+            else {
                 continue;
             };
             if best.as_ref().is_some_and(|(b, _)| toi >= *b) {
@@ -413,7 +448,7 @@ impl ScatterVolumePlugin {
     /// back over each refractive volume's screen footprint.
     fn encode_refraction(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         state: &mut pipeline::ScatterViewportState,
     ) {
@@ -443,16 +478,18 @@ impl ScatterVolumePlugin {
                 .make_refraction_source_bg(ctx.device, source_view, ctx.scene_depth_only);
 
         if let Some(blit_pipeline) = self.gpu.refraction_blit_pipeline.as_ref() {
-            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
+            let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+                #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                 multiview_mask: None,
                 label: Some("scatter_refraction_blit_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                     view: source_view,
                     resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-                        store: crate::gpu::StoreOp::Store,
+                    ops: viewport_lib::gpu::Operations {
+                        load: viewport_lib::gpu::LoadOp::Clear(
+                            viewport_lib::gpu::Color::TRANSPARENT,
+                        ),
+                        store: viewport_lib::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -469,16 +506,16 @@ impl ScatterVolumePlugin {
             self.gpu.refraction_pipeline.as_ref(),
             self.gpu.refraction_per_volume_bg.as_ref(),
         ) {
-            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
+            let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+                #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                 multiview_mask: None,
                 label: Some("scatter_refraction_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                     view: ctx.scene_colour,
                     resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Load,
-                        store: crate::gpu::StoreOp::Store,
+                    ops: viewport_lib::gpu::Operations {
+                        load: viewport_lib::gpu::LoadOp::Load,
+                        store: viewport_lib::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -500,26 +537,26 @@ impl ScatterVolumePlugin {
     /// back to front, each covering only that volume's projected footprint.
     fn encode_march(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         state: &pipeline::ScatterViewportState,
-        frame_bg: &crate::gpu::BindGroup,
+        frame_bg: &viewport_lib::gpu::BindGroup,
     ) {
         let (Some(pipeline), Some(per_vol_bg)) =
             (self.gpu.pipeline.as_ref(), self.gpu.per_volume_bg.as_ref())
         else {
             return;
         };
-        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
+        let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+            #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
             multiview_mask: None,
             label: Some("scatter_volume_pass"),
-            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+            color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                 view: &state.raw_current_view,
                 resolve_target: None,
-                ops: crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-                    store: crate::gpu::StoreOp::Store,
+                ops: viewport_lib::gpu::Operations {
+                    load: viewport_lib::gpu::LoadOp::Clear(viewport_lib::gpu::Color::TRANSPARENT),
+                    store: viewport_lib::gpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],
@@ -541,10 +578,10 @@ impl ScatterVolumePlugin {
     /// into the other history slot, and return the composite source to read.
     fn encode_temporal_resolve<'s>(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
         state: &'s pipeline::ScatterViewportState,
-    ) -> &'s crate::gpu::BindGroup {
+    ) -> &'s viewport_lib::gpu::BindGroup {
         // `parity` names the slot to write next, so the other slot holds the
         // previous frame.
         let (history_view, previous_view, source) = if state.parity == 0 {
@@ -567,16 +604,18 @@ impl ScatterVolumePlugin {
                 previous_view,
                 ctx.scene_depth_only,
             );
-            let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-                #[cfg(any(wgpu29, wgpu30))]
+            let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+                #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
                 multiview_mask: None,
                 label: Some("scatter_temporal_resolve_pass"),
-                color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+                color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                     view: history_view,
                     resolve_target: None,
-                    ops: crate::gpu::Operations {
-                        load: crate::gpu::LoadOp::Clear(crate::gpu::Color::TRANSPARENT),
-                        store: crate::gpu::StoreOp::Store,
+                    ops: viewport_lib::gpu::Operations {
+                        load: viewport_lib::gpu::LoadOp::Clear(
+                            viewport_lib::gpu::Color::TRANSPARENT,
+                        ),
+                        store: viewport_lib::gpu::StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
@@ -595,23 +634,23 @@ impl ScatterVolumePlugin {
     /// alpha-over, upscaling when the intermediates are half-resolution.
     fn encode_composite(
         &self,
-        encoder: &mut crate::gpu::CommandEncoder,
+        encoder: &mut viewport_lib::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
-        source: &crate::gpu::BindGroup,
+        source: &viewport_lib::gpu::BindGroup,
     ) {
         let Some(composite_pipeline) = self.gpu.composite_pipeline.as_ref() else {
             return;
         };
-        let mut pass = encoder.begin_render_pass(&crate::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
+        let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
+            #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
             multiview_mask: None,
             label: Some("scatter_composite_pass"),
-            color_attachments: &[Some(crate::gpu::RenderPassColorAttachment {
+            color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {
                 view: ctx.scene_colour,
                 resolve_target: None,
-                ops: crate::gpu::Operations {
-                    load: crate::gpu::LoadOp::Load,
-                    store: crate::gpu::StoreOp::Store,
+                ops: viewport_lib::gpu::Operations {
+                    load: viewport_lib::gpu::LoadOp::Load,
+                    store: viewport_lib::gpu::StoreOp::Store,
                 },
                 depth_slice: None,
             })],
@@ -636,8 +675,12 @@ impl ScatterVolumePlugin {
     /// Build one group-1 binding per pickable volume: the transform that puts
     /// the unit shape on the volume, plus the id it answers with. A degenerate
     /// shape (non-positive extent or radius) is skipped, as the CPU pick does.
-    fn build_pick_bindings(&mut self, device: &crate::gpu::Device, volumes: &[ScatterVolumeItem]) {
-        use crate::gpu::util::DeviceExt as _;
+    fn build_pick_bindings(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        volumes: &[ScatterVolumeItem],
+    ) {
+        use viewport_lib::gpu::util::DeviceExt as _;
         let Some(bgl) = self.gpu.pick_bgl.as_ref() else {
             return;
         };
@@ -646,7 +689,7 @@ impl ScatterVolumePlugin {
                 continue;
             }
             let (model, shape) = match item.volume.shape {
-                crate::scene::scatter_volume::ScatterShape::Box(b) => {
+                volume::ScatterShape::Box(b) => {
                     let extent = b.max - b.min;
                     if extent.min_element() <= 0.0 {
                         continue;
@@ -657,7 +700,7 @@ impl ScatterVolumePlugin {
                         ScatterProxyShape::Box,
                     )
                 }
-                crate::scene::scatter_volume::ScatterShape::Sphere { center, radius } => {
+                volume::ScatterShape::Sphere { center, radius } => {
                     if radius <= 0.0 {
                         continue;
                     }
@@ -673,15 +716,16 @@ impl ScatterVolumePlugin {
                 object_id: item.settings.pick_id.0 as u32,
                 _pad: [0; 3],
             };
-            let uniform_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                label: Some("scatter_pick_uniform_buf"),
-                contents: bytemuck::bytes_of(&raw),
-                usage: crate::gpu::BufferUsages::UNIFORM,
-            });
-            let bind_group = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            let uniform_buf =
+                device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
+                    label: Some("scatter_pick_uniform_buf"),
+                    contents: bytemuck::bytes_of(&raw),
+                    usage: viewport_lib::gpu::BufferUsages::UNIFORM,
+                });
+            let bind_group = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
                 label: Some("scatter_pick_bg"),
                 layout: bgl,
-                entries: &[crate::gpu::BindGroupEntry {
+                entries: &[viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform_buf.as_entire_binding(),
                 }],
@@ -702,10 +746,10 @@ impl ScatterVolumePlugin {
 /// from the CPU-side LUT at the "hot end" of the ramp (the point
 /// where emission contributes most), then multiplied by the tint.
 fn derive_virtual_lights(
-    items: &[crate::renderer::ScatterVolumeItem],
-    resources: &crate::resources::DeviceResources,
-) -> Vec<crate::renderer::LightSource> {
-    use crate::scene::scatter_volume::{ColourSource, Emission, EmissionCurve, ScatterShape};
+    items: &[ScatterVolumeItem],
+    resources: &viewport_lib::resources::DeviceResources,
+) -> Vec<viewport_lib::renderer::LightSource> {
+    use volume::{ColourSource, Emission, EmissionCurve, ScatterShape};
     // Sample the LUT at the value where emission peaks. For Linear
     // and Power curves emission grows with density, so the centre
     // of the volume (highest local density, typically remap = 1)
@@ -719,12 +763,12 @@ fn derive_virtual_lights(
         // linear here so this CPU tint matches the GPU sampler, which
         // decodes an `Rgba8UnormSrgb` LUT on read.
         [
-            crate::srgb_to_linear(p[0] as f32 / 255.0),
-            crate::srgb_to_linear(p[1] as f32 / 255.0),
-            crate::srgb_to_linear(p[2] as f32 / 255.0),
+            viewport_lib::srgb_to_linear(p[0] as f32 / 255.0),
+            viewport_lib::srgb_to_linear(p[1] as f32 / 255.0),
+            viewport_lib::srgb_to_linear(p[2] as f32 / 255.0),
         ]
     }
-    let mut lights: Vec<crate::renderer::LightSource> = Vec::new();
+    let mut lights: Vec<viewport_lib::renderer::LightSource> = Vec::new();
     for item in items {
         if item.settings.hidden {
             continue;
@@ -772,8 +816,8 @@ fn derive_virtual_lights(
             continue;
         }
         let range = (size * 4.0).max(extent * 2.0);
-        let mut light = crate::renderer::LightSource::default();
-        light.kind = crate::renderer::LightKind::Point {
+        let mut light = viewport_lib::renderer::LightSource::default();
+        light.kind = viewport_lib::renderer::LightKind::Point {
             position: centre,
             range,
             // Soft emitter: a volume is not a point source, so give it a

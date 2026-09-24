@@ -20,9 +20,10 @@
 //! the history slot (when temporal is on) or `raw_current` (when off) and
 //! composites onto the HDR target with premultiplied alpha-over.
 
-use crate::scene::scatter_volume::{
+use super::volume::{
     ColourSource, GpuRefractionVolume, GpuScatterVolume, MAX_SCATTER_VOLUMES, ScatterVolume,
 };
+use crate::shader::{lit_shader, scene_shader, wgsl_source};
 
 /// Scatter-volume (participating media) pipelines, layouts, and per-frame
 /// upload buffers. All device-shared and lazily built by the `ensure_scatter_*`
@@ -30,78 +31,80 @@ use crate::scene::scatter_volume::{
 /// Unit proxy geometry for the pick pass: positions, indices, and the index
 /// count to draw.
 pub(crate) struct PickProxyMesh {
-    pub(crate) vbuf: crate::gpu::Buffer,
-    pub(crate) ibuf: crate::gpu::Buffer,
+    pub(crate) vbuf: viewport_lib::gpu::Buffer,
+    pub(crate) ibuf: viewport_lib::gpu::Buffer,
     pub(crate) index_count: u32,
 }
 
 #[derive(Default)]
 pub(crate) struct ScatterGpu {
     /// Object-id pick pipeline: rasterises each volume's shape.
-    pub(crate) pick_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) pick_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Group 1 of the pick pass: one `ScatterProxyUniform` per volume.
-    pub(crate) pick_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) pick_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Unit cube, for box volumes.
     pub(crate) pick_cube: Option<PickProxyMesh>,
     /// Unit icosphere, for sphere volumes. Same subdivision the CPU pick's
     /// analytic sphere test approximates.
     pub(crate) pick_sphere: Option<PickProxyMesh>,
     /// Render pipeline for the scatter-volume pass. None until first item submitted.
-    pub(crate) pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Group 1 layout (per-volume uniform with dynamic offset).
-    pub(crate) per_volume_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) per_volume_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Group 2 layout (per-volume LUT + density texture + samplers).
-    pub(crate) per_volume_tex_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) per_volume_tex_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Group 3 layout (per-frame uniform + opaque depth + samplers).
-    pub(crate) frame_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) frame_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Per-volume uniform buffer holding the packed `GpuScatterVolume` array,
     /// stride-padded for dynamic offsetting.
-    pub(crate) per_volume_buffer: Option<crate::gpu::Buffer>,
+    pub(crate) per_volume_buffer: Option<viewport_lib::gpu::Buffer>,
     /// Bind group for the per-volume uniform (group 1).
-    pub(crate) per_volume_bg: Option<crate::gpu::BindGroup>,
+    pub(crate) per_volume_bg: Option<viewport_lib::gpu::BindGroup>,
     /// Stride between dynamic-offset uniform slots, in bytes.
     pub(crate) per_volume_stride: u32,
     /// Capacity of `per_volume_buffer` in slots.
     pub(crate) per_volume_capacity: u32,
     /// Per-frame uniform buffer (group 3 binding 0).
-    pub(crate) frame_uniform_buffer: Option<crate::gpu::Buffer>,
+    pub(crate) frame_uniform_buffer: Option<viewport_lib::gpu::Buffer>,
     /// Cache of group 2 bind groups, keyed by `(lut_id, density_id)`.
-    pub(crate) per_volume_tex_cache:
-        Vec<((usize, crate::resources::VolumeId), crate::gpu::BindGroup)>,
+    pub(crate) per_volume_tex_cache: Vec<(
+        (usize, viewport_lib::resources::VolumeId),
+        viewport_lib::gpu::BindGroup,
+    )>,
     /// Linear sampler used to read opaque depth in the scatter pass.
-    pub(crate) depth_sampler: Option<crate::gpu::Sampler>,
+    pub(crate) depth_sampler: Option<viewport_lib::gpu::Sampler>,
     /// Linear-clamp sampler used to read the colourmap LUT in the scatter pass.
-    pub(crate) colourmap_sampler: Option<crate::gpu::Sampler>,
+    pub(crate) colourmap_sampler: Option<viewport_lib::gpu::Sampler>,
     /// 1x1x1 R32Float fallback view bound at the per-volume 3D density slot.
-    pub(crate) density_fallback_view: Option<crate::gpu::TextureView>,
+    pub(crate) density_fallback_view: Option<viewport_lib::gpu::TextureView>,
     /// Composite pipeline that blends a scatter intermediate onto the HDR target.
-    pub(crate) composite_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) composite_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Bind group layout for the composite pass (one sampled RGBA16F + sampler).
-    pub(crate) composite_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) composite_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Bilinear-clamp sampler used by the composite pass.
-    pub(crate) composite_sampler: Option<crate::gpu::Sampler>,
+    pub(crate) composite_sampler: Option<viewport_lib::gpu::Sampler>,
     /// Temporal-resolve pipeline: mixes (raw_current, history_prev) into history_new.
-    pub(crate) temporal_resolve_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) temporal_resolve_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Bind group layout for the temporal-resolve pass.
-    pub(crate) temporal_resolve_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) temporal_resolve_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Per-frame uniform buffer for the temporal-resolve pass.
-    pub(crate) temporal_resolve_uniform_buffer: Option<crate::gpu::Buffer>,
+    pub(crate) temporal_resolve_uniform_buffer: Option<viewport_lib::gpu::Buffer>,
     /// Refraction pass: per-volume distortion using a noise-driven gradient.
-    pub(crate) refraction_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) refraction_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
     /// Bind group layout for the refraction pass's per-volume uniform.
-    pub(crate) refraction_per_volume_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) refraction_per_volume_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Bind group layout for the refraction pass's source-scene + depth bindings.
-    pub(crate) refraction_source_bgl: Option<crate::gpu::BindGroupLayout>,
+    pub(crate) refraction_source_bgl: Option<viewport_lib::gpu::BindGroupLayout>,
     /// Dynamic-offset uniform buffer holding every refractive volume's params.
-    pub(crate) refraction_per_volume_buffer: Option<crate::gpu::Buffer>,
+    pub(crate) refraction_per_volume_buffer: Option<viewport_lib::gpu::Buffer>,
     /// Stride between refractive-volume slots.
     pub(crate) refraction_per_volume_stride: u32,
     /// Capacity (slot count) the refraction per-volume buffer is sized for.
     pub(crate) refraction_per_volume_capacity: u32,
     /// Dynamic-offset bind group for the refraction per-volume uniform buffer.
-    pub(crate) refraction_per_volume_bg: Option<crate::gpu::BindGroup>,
+    pub(crate) refraction_per_volume_bg: Option<viewport_lib::gpu::BindGroup>,
     /// Blit pipeline that copies the HDR target into the refraction source texture.
-    pub(crate) refraction_blit_pipeline: Option<crate::gpu::RenderPipeline>,
+    pub(crate) refraction_blit_pipeline: Option<viewport_lib::gpu::RenderPipeline>,
 }
 
 /// Per-frame uniform layout shared across every per-volume draw.
@@ -139,35 +142,36 @@ impl ScatterGpu {
     /// two unit proxy shapes a scatter volume is picked as.
     pub(crate) fn ensure_pick(
         &mut self,
-        device: &crate::gpu::Device,
-        resources: &crate::resources::DeviceResources,
+        device: &viewport_lib::gpu::Device,
+        resources: &viewport_lib::resources::DeviceResources,
     ) {
         if self.pick_pipeline.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("scatter_pick_bgl"),
-            entries: &[crate::resources::builders::uniform_entry(
+            entries: &[viewport_lib::plugin_api::builders::uniform_entry(
                 0,
-                crate::gpu::ShaderStages::VERTEX | crate::gpu::ShaderStages::FRAGMENT,
+                viewport_lib::gpu::ShaderStages::VERTEX | viewport_lib::gpu::ShaderStages::FRAGMENT,
             )],
         });
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "scatter_pick_shader",
-            crate::resources::builders::wgsl_source!("scatter_pick"),
+            &scene_shader(&[], wgsl_source!("scatter_pick")),
         );
-        const POS_ATTRS: [crate::gpu::VertexAttribute; 1] = [crate::gpu::VertexAttribute {
-            offset: 0,
-            shader_location: 0,
-            format: crate::gpu::VertexFormat::Float32x3,
-        }];
-        let vertex_layout = crate::gpu::VertexBufferLayout {
+        const POS_ATTRS: [viewport_lib::gpu::VertexAttribute; 1] =
+            [viewport_lib::gpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: viewport_lib::gpu::VertexFormat::Float32x3,
+            }];
+        let vertex_layout = viewport_lib::gpu::VertexBufferLayout {
             array_stride: 12,
-            step_mode: crate::gpu::VertexStepMode::Vertex,
+            step_mode: viewport_lib::gpu::VertexStepMode::Vertex,
             attributes: &POS_ATTRS,
         };
-        let mut opts = crate::resources::PluginPipelineOpts::new(
+        let mut opts = viewport_lib::resources::PluginPipelineOpts::new(
             Some("scatter_pick_pipeline"),
             &shader,
             "vs_main",
@@ -177,7 +181,7 @@ impl ScatterGpu {
         // Two-sided: the camera is often inside a scatter volume, and a click
         // from in there still selects it.
         opts.primitive.cull_mode = None;
-        let extra: [&crate::gpu::BindGroupLayout; 1] = [&bgl];
+        let extra: [&viewport_lib::gpu::BindGroupLayout; 1] = [&bgl];
         opts.extra_bind_group_layouts = &extra;
         self.pick_pipeline = Some(resources.build_pick_pipeline(device, &opts));
         self.pick_bgl = Some(bgl);
@@ -203,7 +207,7 @@ impl ScatterGpu {
             &cube_indices,
         ));
 
-        let sphere = crate::geometry::primitives::icosphere(1.0, 2);
+        let sphere = viewport_lib_geometry::primitives::icosphere(1.0, 2);
         self.pick_sphere = Some(upload_proxy(
             device,
             "scatter_pick_sphere",
@@ -216,17 +220,17 @@ impl ScatterGpu {
     // Bind group layouts
     // ---------------------------------------------------------------------
 
-    fn ensure_per_volume_bgl(&mut self, device: &crate::gpu::Device) {
+    fn ensure_per_volume_bgl(&mut self, device: &viewport_lib::gpu::Device) {
         if self.per_volume_bgl.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("scatter_per_volume_bgl"),
-            entries: &[crate::gpu::BindGroupLayoutEntry {
+            entries: &[viewport_lib::gpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: crate::gpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Uniform,
+                visibility: viewport_lib::gpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: viewport_lib::gpu::BindingType::Buffer {
+                    ty: viewport_lib::gpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
                     // GpuScatterVolume = 144 bytes; the actual slot stride is
                     // padded to `min_uniform_buffer_offset_alignment`. The
@@ -241,48 +245,54 @@ impl ScatterGpu {
         self.per_volume_bgl = Some(bgl);
     }
 
-    fn ensure_per_volume_tex_bgl(&mut self, device: &crate::gpu::Device) {
+    fn ensure_per_volume_tex_bgl(&mut self, device: &viewport_lib::gpu::Device) {
         if self.per_volume_tex_bgl.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("scatter_per_volume_tex_bgl"),
             entries: &[
                 // 0: colourmap LUT (256x1 RGBA, used when FLAG_USE_RAMP).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: true,
+                        },
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 1: LUT sampler.
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Sampler(
+                        viewport_lib::gpu::SamplerBindingType::Filtering,
+                    ),
                     count: None,
                 },
                 // 2: 3D density texture (used when FLAG_USE_DENSITY_TEXTURE).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: crate::gpu::TextureViewDimension::D3,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: false,
+                        },
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D3,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 3: 3D density sampler.
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::NonFiltering,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Sampler(
+                        viewport_lib::gpu::SamplerBindingType::NonFiltering,
                     ),
                     count: None,
                 },
@@ -291,19 +301,19 @@ impl ScatterGpu {
         self.per_volume_tex_bgl = Some(bgl);
     }
 
-    fn ensure_frame_bgl(&mut self, device: &crate::gpu::Device) {
+    fn ensure_frame_bgl(&mut self, device: &viewport_lib::gpu::Device) {
         if self.frame_bgl.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("scatter_frame_bgl"),
             entries: &[
                 // 0: per-frame uniform (time, blue noise, frame index).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Buffer {
+                        ty: viewport_lib::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
                             ScatterFrameUniformRaw,
@@ -313,22 +323,22 @@ impl ScatterGpu {
                     count: None,
                 },
                 // 1: opaque depth texture.
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Depth,
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 2: depth sampler (NonFiltering for the textureLoad path).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::NonFiltering,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Sampler(
+                        viewport_lib::gpu::SamplerBindingType::NonFiltering,
                     ),
                     count: None,
                 },
@@ -337,19 +347,19 @@ impl ScatterGpu {
         self.frame_bgl = Some(bgl);
     }
 
-    fn ensure_temporal_resolve_bgl(&mut self, device: &crate::gpu::Device) {
+    fn ensure_temporal_resolve_bgl(&mut self, device: &viewport_lib::gpu::Device) {
         if self.temporal_resolve_bgl.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("scatter_temporal_resolve_bgl"),
             entries: &[
                 // 0: temporal uniform (prev_view_proj + temporal_pack).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Buffer {
-                        ty: crate::gpu::BufferBindingType::Uniform,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Buffer {
+                        ty: viewport_lib::gpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
                             ScatterTemporalUniformRaw,
@@ -359,51 +369,57 @@ impl ScatterGpu {
                     count: None,
                 },
                 // 1: raw_current texture (this frame's scatter output).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: true,
+                        },
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 2: history_prev texture.
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: true,
+                        },
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 3: bilinear sampler (reuses scatter composite sampler).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Sampler(
+                        viewport_lib::gpu::SamplerBindingType::Filtering,
+                    ),
                     count: None,
                 },
                 // 4: opaque depth texture (for reprojection).
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Depth,
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
                 // 5: depth sampler.
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(
-                        crate::gpu::SamplerBindingType::NonFiltering,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Sampler(
+                        viewport_lib::gpu::SamplerBindingType::NonFiltering,
                     ),
                     count: None,
                 },
@@ -412,63 +428,68 @@ impl ScatterGpu {
         self.temporal_resolve_bgl = Some(bgl);
     }
 
-    fn ensure_density_fallback(&mut self, device: &crate::gpu::Device, queue: &crate::gpu::Queue) {
+    fn ensure_density_fallback(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+    ) {
         if self.density_fallback_view.is_some() {
             return;
         }
-        let tex = device.create_texture(&crate::gpu::TextureDescriptor {
+        let tex = device.create_texture(&viewport_lib::gpu::TextureDescriptor {
             label: Some("scatter_density_fallback"),
-            size: crate::gpu::Extent3d {
+            size: viewport_lib::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D3,
-            format: crate::gpu::TextureFormat::R32Float,
-            usage: crate::gpu::TextureUsages::TEXTURE_BINDING | crate::gpu::TextureUsages::COPY_DST,
+            dimension: viewport_lib::gpu::TextureDimension::D3,
+            format: viewport_lib::gpu::TextureFormat::R32Float,
+            usage: viewport_lib::gpu::TextureUsages::TEXTURE_BINDING
+                | viewport_lib::gpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let data: [f32; 1] = [1.0];
         queue.write_texture(
-            crate::gpu::TexelCopyTextureInfo {
+            viewport_lib::gpu::TexelCopyTextureInfo {
                 texture: &tex,
                 mip_level: 0,
-                origin: crate::gpu::Origin3d::ZERO,
-                aspect: crate::gpu::TextureAspect::All,
+                origin: viewport_lib::gpu::Origin3d::ZERO,
+                aspect: viewport_lib::gpu::TextureAspect::All,
             },
             bytemuck::cast_slice(&data),
-            crate::gpu::TexelCopyBufferLayout {
+            viewport_lib::gpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
                 rows_per_image: Some(1),
             },
-            crate::gpu::Extent3d {
+            viewport_lib::gpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
         );
         self.density_fallback_view =
-            Some(tex.create_view(&crate::gpu::TextureViewDescriptor::default()));
+            Some(tex.create_view(&viewport_lib::gpu::TextureViewDescriptor::default()));
     }
 
-    fn ensure_depth_sampler(&mut self, device: &crate::gpu::Device) {
+    fn ensure_depth_sampler(&mut self, device: &viewport_lib::gpu::Device) {
         if self.depth_sampler.is_some() {
             return;
         }
-        self.depth_sampler = Some(crate::resources::builders::clamp_nearest_sampler(
+        self.depth_sampler = Some(viewport_lib::plugin_api::builders::clamp_nearest_sampler(
             device,
             "scatter_depth_sampler",
         ));
     }
 
-    fn ensure_colourmap_sampler(&mut self, device: &crate::gpu::Device) {
+    fn ensure_colourmap_sampler(&mut self, device: &viewport_lib::gpu::Device) {
         if self.colourmap_sampler.is_some() {
             return;
         }
-        self.colourmap_sampler = Some(crate::resources::builders::clamp_linear_sampler(
+        self.colourmap_sampler = Some(viewport_lib::plugin_api::builders::clamp_linear_sampler(
             device,
             "scatter_colourmap_sampler",
         ));
@@ -480,9 +501,9 @@ impl ScatterGpu {
 
     pub(crate) fn ensure_pipeline(
         &mut self,
-        device: &crate::gpu::Device,
-        camera_bgl: &crate::gpu::BindGroupLayout,
-        colour_format: crate::gpu::TextureFormat,
+        device: &viewport_lib::gpu::Device,
+        camera_bgl: &viewport_lib::gpu::BindGroupLayout,
+        colour_format: viewport_lib::gpu::TextureFormat,
     ) {
         if self.pipeline.is_some() {
             return;
@@ -495,13 +516,13 @@ impl ScatterGpu {
         let per_tex = self.per_volume_tex_bgl.as_ref().unwrap();
         let frame_bgl = self.frame_bgl.as_ref().unwrap();
 
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "scatter_volume_shader",
-            crate::resources::builders::wgsl_source!("scatter_volume"),
+            &lit_shader(&[], wgsl_source!("scatter_volume")),
         );
 
-        let layout = crate::resources::builders::pipeline_layout(
+        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "scatter_volume_pipeline_layout",
             &[camera_bgl, per_vol, per_tex, frame_bgl],
@@ -509,44 +530,44 @@ impl ScatterGpu {
 
         // Premultiplied alpha-over: per-volume draws composite into the
         // (cleared) raw_current target in back-to-front order.
-        let blend = crate::gpu::BlendState {
-            color: crate::gpu::BlendComponent {
-                src_factor: crate::gpu::BlendFactor::One,
-                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: crate::gpu::BlendOperation::Add,
+        let blend = viewport_lib::gpu::BlendState {
+            color: viewport_lib::gpu::BlendComponent {
+                src_factor: viewport_lib::gpu::BlendFactor::One,
+                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+                operation: viewport_lib::gpu::BlendOperation::Add,
             },
-            alpha: crate::gpu::BlendComponent {
-                src_factor: crate::gpu::BlendFactor::One,
-                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: crate::gpu::BlendOperation::Add,
+            alpha: viewport_lib::gpu::BlendComponent {
+                src_factor: viewport_lib::gpu::BlendFactor::One,
+                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+                operation: viewport_lib::gpu::BlendOperation::Add,
             },
         };
 
-        let pipeline = crate::resources::builders::render_pipeline(
+        let pipeline = viewport_lib::plugin_api::builders::render_pipeline(
             device,
-            crate::resources::builders::RenderPipelineDesc {
+            viewport_lib::plugin_api::builders::RenderPipelineDesc {
                 label: "scatter_volume_pipeline",
                 layout: &layout,
                 vertex_module: &shader,
                 vertex_entry: "vs_main",
                 vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
+                fragment: Some(viewport_lib::gpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
+                    targets: &[Some(viewport_lib::gpu::ColorTargetState {
                         format: colour_format,
                         blend: Some(blend),
-                        write_mask: crate::gpu::ColorWrites::ALL,
+                        write_mask: viewport_lib::gpu::ColorWrites::ALL,
                     })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
+                    compilation_options: viewport_lib::gpu::PipelineCompilationOptions::default(),
                 }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
+                primitive: viewport_lib::gpu::PrimitiveState {
+                    topology: viewport_lib::gpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: None,
-                multisample: crate::gpu::MultisampleState {
+                multisample: viewport_lib::gpu::MultisampleState {
                     count: 1,
                     ..Default::default()
                 },
@@ -559,42 +580,44 @@ impl ScatterGpu {
 
     pub(crate) fn ensure_composite_pipeline(
         &mut self,
-        device: &crate::gpu::Device,
-        colour_format: crate::gpu::TextureFormat,
+        device: &viewport_lib::gpu::Device,
+        colour_format: viewport_lib::gpu::TextureFormat,
     ) {
         if self.composite_pipeline.is_some() {
             return;
         }
-        let bgl = crate::resources::builders::texture_sampler_bgl(
+        let bgl = viewport_lib::plugin_api::builders::texture_sampler_bgl(
             device,
             "scatter_composite_bgl",
-            crate::gpu::ShaderStages::FRAGMENT,
+            viewport_lib::gpu::ShaderStages::FRAGMENT,
         );
-        let sampler =
-            crate::resources::builders::clamp_linear_sampler(device, "scatter_composite_sampler");
-        let shader = crate::resources::builders::wgsl_module(
+        let sampler = viewport_lib::plugin_api::builders::clamp_linear_sampler(
+            device,
+            "scatter_composite_sampler",
+        );
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "scatter_composite_shader",
-            crate::resources::builders::wgsl_source!("scatter_composite"),
+            wgsl_source!("scatter_composite"),
         );
-        let layout = crate::resources::builders::pipeline_layout(
+        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "scatter_composite_pipeline_layout",
             &[&bgl],
         );
-        let blend = crate::gpu::BlendState {
-            color: crate::gpu::BlendComponent {
-                src_factor: crate::gpu::BlendFactor::One,
-                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: crate::gpu::BlendOperation::Add,
+        let blend = viewport_lib::gpu::BlendState {
+            color: viewport_lib::gpu::BlendComponent {
+                src_factor: viewport_lib::gpu::BlendFactor::One,
+                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+                operation: viewport_lib::gpu::BlendOperation::Add,
             },
-            alpha: crate::gpu::BlendComponent {
-                src_factor: crate::gpu::BlendFactor::One,
-                dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
-                operation: crate::gpu::BlendOperation::Add,
+            alpha: viewport_lib::gpu::BlendComponent {
+                src_factor: viewport_lib::gpu::BlendFactor::One,
+                dst_factor: viewport_lib::gpu::BlendFactor::OneMinusSrcAlpha,
+                operation: viewport_lib::gpu::BlendOperation::Add,
             },
         };
-        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
             device,
             "scatter_composite_pipeline",
             &layout,
@@ -607,30 +630,30 @@ impl ScatterGpu {
         self.composite_sampler = Some(sampler);
     }
 
-    pub(crate) fn ensure_temporal_resolve_pipeline(&mut self, device: &crate::gpu::Device) {
+    pub(crate) fn ensure_temporal_resolve_pipeline(&mut self, device: &viewport_lib::gpu::Device) {
         if self.temporal_resolve_pipeline.is_some() {
             return;
         }
         self.ensure_temporal_resolve_bgl(device);
         let bgl = self.temporal_resolve_bgl.as_ref().unwrap();
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "scatter_temporal_resolve_shader",
-            crate::resources::builders::wgsl_source!("scatter_temporal_resolve"),
+            wgsl_source!("scatter_temporal_resolve"),
         );
-        let layout = crate::resources::builders::pipeline_layout(
+        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "scatter_temporal_resolve_pipeline_layout",
             &[bgl],
         );
         // History textures are RGBA16F. Blend is None: this pass owns the new
         // history fully and overwrites it.
-        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
             device,
             "scatter_temporal_resolve_pipeline",
             &layout,
             &shader,
-            crate::gpu::TextureFormat::Rgba16Float,
+            viewport_lib::gpu::TextureFormat::Rgba16Float,
             None,
         );
         self.temporal_resolve_pipeline = Some(pipeline);
@@ -645,8 +668,8 @@ impl ScatterGpu {
     /// back-to-front sort). Returns the number of slots written.
     pub(crate) fn write_per_volume_buffer(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
         volumes: &[(ScatterVolume, f32, u32)],
     ) -> u32 {
         // Stride = aligned per-volume uniform slot size. Recomputed once.
@@ -660,10 +683,11 @@ impl ScatterGpu {
             || self.per_volume_stride != stride
             || self.per_volume_capacity < capacity;
         if need_realloc {
-            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            let buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("scatter_per_volume_uniform"),
                 size: buffer_size,
-                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                usage: viewport_lib::gpu::BufferUsages::UNIFORM
+                    | viewport_lib::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             self.per_volume_buffer = Some(buf);
@@ -677,16 +701,18 @@ impl ScatterGpu {
             self.ensure_per_volume_bgl(device);
             let bgl = self.per_volume_bgl.as_ref().unwrap();
             let buf = self.per_volume_buffer.as_ref().unwrap();
-            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            let bg = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
                 label: Some("scatter_per_volume_bg"),
                 layout: bgl,
-                entries: &[crate::gpu::BindGroupEntry {
+                entries: &[viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
-                        buffer: buf,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(struct_size),
-                    }),
+                    resource: viewport_lib::gpu::BindingResource::Buffer(
+                        viewport_lib::gpu::BufferBinding {
+                            buffer: buf,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(struct_size),
+                        },
+                    ),
                 }],
             });
             self.per_volume_bg = Some(bg);
@@ -718,23 +744,25 @@ impl ScatterGpu {
 
     /// Allocate the per-frame uniform buffer. Its size is fixed, so this runs
     /// once and the frame write below only fills it.
-    pub(crate) fn ensure_frame_uniform_buffer(&mut self, device: &crate::gpu::Device) {
+    pub(crate) fn ensure_frame_uniform_buffer(&mut self, device: &viewport_lib::gpu::Device) {
         self.ensure_frame_bgl(device);
         self.ensure_depth_sampler(device);
         if self.frame_uniform_buffer.is_none() {
-            self.frame_uniform_buffer = Some(device.create_buffer(&crate::gpu::BufferDescriptor {
-                label: Some("scatter_frame_uniform"),
-                size: std::mem::size_of::<ScatterFrameUniformRaw>() as u64,
-                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
+            self.frame_uniform_buffer =
+                Some(device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
+                    label: Some("scatter_frame_uniform"),
+                    size: std::mem::size_of::<ScatterFrameUniformRaw>() as u64,
+                    usage: viewport_lib::gpu::BufferUsages::UNIFORM
+                        | viewport_lib::gpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
         }
     }
 
     /// Write this frame's time / blue noise / frame index into the uniform.
     pub(crate) fn write_frame_uniform(
         &self,
-        queue: &crate::gpu::Queue,
+        queue: &viewport_lib::gpu::Queue,
         time_seconds: f32,
         global_steps: u32,
         blue_noise_jitter: bool,
@@ -759,27 +787,27 @@ impl ScatterGpu {
     /// size, which a size-derived cache key cannot see.
     pub(crate) fn make_frame_bg(
         &self,
-        device: &crate::gpu::Device,
-        depth_view: &crate::gpu::TextureView,
-    ) -> crate::gpu::BindGroup {
+        device: &viewport_lib::gpu::Device,
+        depth_view: &viewport_lib::gpu::TextureView,
+    ) -> viewport_lib::gpu::BindGroup {
         let bgl = self.frame_bgl.as_ref().unwrap();
         let buf = self.frame_uniform_buffer.as_ref().unwrap();
         let sampler = self.depth_sampler.as_ref().unwrap();
-        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("scatter_frame_bg"),
             layout: bgl,
             entries: &[
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
                     resource: buf.as_entire_binding(),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(depth_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(depth_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::Sampler(sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(sampler),
                 },
             ],
         })
@@ -792,12 +820,12 @@ impl ScatterGpu {
     /// not hit a bind group built against the previous occupant.
     pub(crate) fn ensure_per_volume_tex_bg(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        res: &crate::resources::DeviceResources,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        res: &viewport_lib::resources::DeviceResources,
         lut_id: usize,
-        density: crate::resources::VolumeId,
-    ) -> crate::gpu::BindGroup {
+        density: viewport_lib::resources::VolumeId,
+    ) -> viewport_lib::gpu::BindGroup {
         self.ensure_per_volume_tex_bgl(device);
         self.ensure_colourmap_sampler(device);
         self.ensure_density_fallback(device, queue);
@@ -809,38 +837,38 @@ impl ScatterGpu {
         let bgl = self.per_volume_tex_bgl.as_ref().unwrap();
         let lut_sampler = self.colourmap_sampler.as_ref().unwrap();
         let density_sampler = self.depth_sampler.as_ref().unwrap();
-        let lut_view: &crate::gpu::TextureView = if lut_id == usize::MAX {
+        let lut_view: &viewport_lib::gpu::TextureView = if lut_id == usize::MAX {
             res.fallback_colourmap_view()
         } else {
-            res.colourmap_view(crate::ColourmapId(lut_id))
+            res.colourmap_view(viewport_lib::ColourmapId(lut_id))
                 .unwrap_or(res.fallback_colourmap_view())
         };
         let density_fallback = self.density_fallback_view.as_ref().unwrap();
-        let density_view: &crate::gpu::TextureView =
-            if density == crate::resources::VolumeId::INVALID {
+        let density_view: &viewport_lib::gpu::TextureView =
+            if density == viewport_lib::resources::VolumeId::INVALID {
                 density_fallback
             } else {
                 res.volume_view(density).unwrap_or(density_fallback)
             };
-        let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        let bg = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("scatter_per_volume_tex_bg"),
             layout: bgl,
             entries: &[
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(lut_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(lut_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(lut_sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(lut_sampler),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::TextureView(density_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(density_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: crate::gpu::BindingResource::Sampler(density_sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(density_sampler),
                 },
             ],
         });
@@ -850,14 +878,16 @@ impl ScatterGpu {
 
     /// Resolve a volume's `(lut_id, density)` pair. `usize::MAX` / [`VolumeId::INVALID`]
     /// indicate the fallback should be bound.
-    pub(crate) fn volume_tex_ids(volume: &ScatterVolume) -> (usize, crate::resources::VolumeId) {
+    pub(crate) fn volume_tex_ids(
+        volume: &ScatterVolume,
+    ) -> (usize, viewport_lib::resources::VolumeId) {
         let lut_id = match volume.colour {
             ColourSource::Ramp(id) => id.0,
             _ => usize::MAX,
         };
         let density = volume
             .density_texture
-            .unwrap_or(crate::resources::VolumeId::INVALID);
+            .unwrap_or(viewport_lib::resources::VolumeId::INVALID);
         (lut_id, density)
     }
 
@@ -873,22 +903,22 @@ impl ScatterGpu {
 
     pub(crate) fn make_composite_bg(
         &self,
-        device: &crate::gpu::Device,
-        source_view: &crate::gpu::TextureView,
-    ) -> crate::gpu::BindGroup {
+        device: &viewport_lib::gpu::Device,
+        source_view: &viewport_lib::gpu::TextureView,
+    ) -> viewport_lib::gpu::BindGroup {
         let bgl = self.composite_bgl.as_ref().unwrap();
         let sampler = self.composite_sampler.as_ref().unwrap();
-        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("scatter_composite_bg"),
             layout: bgl,
             entries: &[
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(source_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(source_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(sampler),
                 },
             ],
         })
@@ -898,42 +928,42 @@ impl ScatterGpu {
     /// alongside the bound depth and uniform.
     pub(crate) fn make_temporal_resolve_bg(
         &self,
-        device: &crate::gpu::Device,
-        raw_view: &crate::gpu::TextureView,
-        history_view: &crate::gpu::TextureView,
-        depth_view: &crate::gpu::TextureView,
-    ) -> crate::gpu::BindGroup {
+        device: &viewport_lib::gpu::Device,
+        raw_view: &viewport_lib::gpu::TextureView,
+        history_view: &viewport_lib::gpu::TextureView,
+        depth_view: &viewport_lib::gpu::TextureView,
+    ) -> viewport_lib::gpu::BindGroup {
         let bgl = self.temporal_resolve_bgl.as_ref().unwrap();
         let buf = self.temporal_resolve_uniform_buffer.as_ref().unwrap();
         let bilinear = self.composite_sampler.as_ref().unwrap();
         let depth_sampler = self.depth_sampler.as_ref().unwrap();
-        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("scatter_temporal_resolve_bg"),
             layout: bgl,
             entries: &[
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
                     resource: buf.as_entire_binding(),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::TextureView(raw_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(raw_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::TextureView(history_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(history_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: crate::gpu::BindingResource::Sampler(bilinear),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(bilinear),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 4,
-                    resource: crate::gpu::BindingResource::TextureView(depth_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(depth_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 5,
-                    resource: crate::gpu::BindingResource::Sampler(depth_sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(depth_sampler),
                 },
             ],
         })
@@ -943,17 +973,17 @@ impl ScatterGpu {
     // Refraction pass
     // ---------------------------------------------------------------------
 
-    fn ensure_refraction_per_volume_bgl(&mut self, device: &crate::gpu::Device) {
+    fn ensure_refraction_per_volume_bgl(&mut self, device: &viewport_lib::gpu::Device) {
         if self.refraction_per_volume_bgl.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("scatter_refraction_per_volume_bgl"),
-            entries: &[crate::gpu::BindGroupLayoutEntry {
+            entries: &[viewport_lib::gpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: crate::gpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: crate::gpu::BindingType::Buffer {
-                    ty: crate::gpu::BufferBindingType::Uniform,
+                visibility: viewport_lib::gpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: viewport_lib::gpu::BindingType::Buffer {
+                    ty: viewport_lib::gpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
                     min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
                         GpuRefractionVolume,
@@ -965,35 +995,39 @@ impl ScatterGpu {
         self.refraction_per_volume_bgl = Some(bgl);
     }
 
-    fn ensure_refraction_source_bgl(&mut self, device: &crate::gpu::Device) {
+    fn ensure_refraction_source_bgl(&mut self, device: &viewport_lib::gpu::Device) {
         if self.refraction_source_bgl.is_some() {
             return;
         }
-        let bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
+        let bgl = device.create_bind_group_layout(&viewport_lib::gpu::BindGroupLayoutDescriptor {
             label: Some("scatter_refraction_source_bgl"),
             entries: &[
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Float {
+                            filterable: true,
+                        },
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 },
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Sampler(crate::gpu::SamplerBindingType::Filtering),
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Sampler(
+                        viewport_lib::gpu::SamplerBindingType::Filtering,
+                    ),
                     count: None,
                 },
-                crate::gpu::BindGroupLayoutEntry {
+                viewport_lib::gpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: crate::gpu::ShaderStages::FRAGMENT,
-                    ty: crate::gpu::BindingType::Texture {
-                        sample_type: crate::gpu::TextureSampleType::Depth,
-                        view_dimension: crate::gpu::TextureViewDimension::D2,
+                    visibility: viewport_lib::gpu::ShaderStages::FRAGMENT,
+                    ty: viewport_lib::gpu::BindingType::Texture {
+                        sample_type: viewport_lib::gpu::TextureSampleType::Depth,
+                        view_dimension: viewport_lib::gpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -1005,9 +1039,9 @@ impl ScatterGpu {
 
     pub(crate) fn ensure_refraction_pipeline(
         &mut self,
-        device: &crate::gpu::Device,
-        camera_bgl: &crate::gpu::BindGroupLayout,
-        colour_format: crate::gpu::TextureFormat,
+        device: &viewport_lib::gpu::Device,
+        camera_bgl: &viewport_lib::gpu::BindGroupLayout,
+        colour_format: viewport_lib::gpu::TextureFormat,
     ) {
         if self.refraction_pipeline.is_some() {
             return;
@@ -1019,13 +1053,13 @@ impl ScatterGpu {
         let per_vol = self.refraction_per_volume_bgl.as_ref().unwrap();
         let source_bgl = self.refraction_source_bgl.as_ref().unwrap();
 
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "scatter_refraction_shader",
-            crate::resources::builders::wgsl_source!("scatter_refraction"),
+            &scene_shader(&[], wgsl_source!("scatter_refraction")),
         );
 
-        let layout = crate::resources::builders::pipeline_layout(
+        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "scatter_refraction_pipeline_layout",
             &[camera_bgl, per_vol, source_bgl],
@@ -1033,7 +1067,7 @@ impl ScatterGpu {
 
         // Replace blend: the distorted sample overwrites the HDR pixel before
         // the scatter pass composites on top.
-        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
             device,
             "scatter_refraction_pipeline",
             &layout,
@@ -1051,25 +1085,25 @@ impl ScatterGpu {
     /// before the per-volume distortion runs.
     pub(crate) fn ensure_refraction_blit_pipeline(
         &mut self,
-        device: &crate::gpu::Device,
-        colour_format: crate::gpu::TextureFormat,
+        device: &viewport_lib::gpu::Device,
+        colour_format: viewport_lib::gpu::TextureFormat,
     ) {
         if self.refraction_blit_pipeline.is_some() {
             return;
         }
         self.ensure_composite_pipeline(device, colour_format);
         let bgl = self.composite_bgl.as_ref().unwrap();
-        let shader = crate::resources::builders::wgsl_module(
+        let shader = viewport_lib::plugin_api::builders::wgsl_module(
             device,
             "scatter_refraction_blit_shader",
-            crate::resources::builders::wgsl_source!("scatter_composite"),
+            wgsl_source!("scatter_composite"),
         );
-        let layout = crate::resources::builders::pipeline_layout(
+        let layout = viewport_lib::plugin_api::builders::pipeline_layout(
             device,
             "scatter_refraction_blit_pipeline_layout",
             &[bgl],
         );
-        let pipeline = crate::resources::builders::build_fullscreen_pipeline(
+        let pipeline = viewport_lib::plugin_api::builders::build_fullscreen_pipeline(
             device,
             "scatter_refraction_blit_pipeline",
             &layout,
@@ -1085,7 +1119,7 @@ impl ScatterGpu {
     /// frame's animation clock, can run from a shared borrow at encode time.
     pub(crate) fn ensure_refraction_per_volume_buffer(
         &mut self,
-        device: &crate::gpu::Device,
+        device: &viewport_lib::gpu::Device,
         count: usize,
     ) {
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
@@ -1098,10 +1132,11 @@ impl ScatterGpu {
             || self.refraction_per_volume_stride != stride
             || self.refraction_per_volume_capacity < capacity;
         if need_realloc {
-            let buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            let buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("scatter_refraction_per_volume_uniform"),
                 size: buffer_size,
-                usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                usage: viewport_lib::gpu::BufferUsages::UNIFORM
+                    | viewport_lib::gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             self.refraction_per_volume_buffer = Some(buf);
@@ -1114,16 +1149,18 @@ impl ScatterGpu {
             self.ensure_refraction_per_volume_bgl(device);
             let bgl = self.refraction_per_volume_bgl.as_ref().unwrap();
             let buf = self.refraction_per_volume_buffer.as_ref().unwrap();
-            let bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            let bg = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
                 label: Some("scatter_refraction_per_volume_bg"),
                 layout: bgl,
-                entries: &[crate::gpu::BindGroupEntry {
+                entries: &[viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: crate::gpu::BindingResource::Buffer(crate::gpu::BufferBinding {
-                        buffer: buf,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(struct_size),
-                    }),
+                    resource: viewport_lib::gpu::BindingResource::Buffer(
+                        viewport_lib::gpu::BufferBinding {
+                            buffer: buf,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(struct_size),
+                        },
+                    ),
                 }],
             });
             self.refraction_per_volume_bg = Some(bg);
@@ -1134,7 +1171,7 @@ impl ScatterGpu {
     /// at the frame's animation clock. Returns the number of slots written.
     pub(crate) fn write_refraction_per_volume_buffer(
         &self,
-        queue: &crate::gpu::Queue,
+        queue: &viewport_lib::gpu::Queue,
         volumes: &[(ScatterVolume, f32)],
         time_seconds: f32,
     ) -> u32 {
@@ -1169,27 +1206,27 @@ impl ScatterGpu {
     /// Build the bind group sampling the refraction source texture + depth.
     pub(crate) fn make_refraction_source_bg(
         &self,
-        device: &crate::gpu::Device,
-        source_view: &crate::gpu::TextureView,
-        depth_view: &crate::gpu::TextureView,
-    ) -> crate::gpu::BindGroup {
+        device: &viewport_lib::gpu::Device,
+        source_view: &viewport_lib::gpu::TextureView,
+        depth_view: &viewport_lib::gpu::TextureView,
+    ) -> viewport_lib::gpu::BindGroup {
         let bgl = self.refraction_source_bgl.as_ref().unwrap();
         let sampler = self.composite_sampler.as_ref().unwrap();
-        device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+        device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
             label: Some("scatter_refraction_source_bg"),
             layout: bgl,
             entries: &[
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 0,
-                    resource: crate::gpu::BindingResource::TextureView(source_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(source_view),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 1,
-                    resource: crate::gpu::BindingResource::Sampler(sampler),
+                    resource: viewport_lib::gpu::BindingResource::Sampler(sampler),
                 },
-                crate::gpu::BindGroupEntry {
+                viewport_lib::gpu::BindGroupEntry {
                     binding: 2,
-                    resource: crate::gpu::BindingResource::TextureView(depth_view),
+                    resource: viewport_lib::gpu::BindingResource::TextureView(depth_view),
                 },
             ],
         })
@@ -1197,13 +1234,14 @@ impl ScatterGpu {
 
     /// Allocate the temporal-resolve uniform buffer. Fixed size, so this runs
     /// once and the frame write below only fills it.
-    pub(crate) fn ensure_temporal_uniform_buffer(&mut self, device: &crate::gpu::Device) {
+    pub(crate) fn ensure_temporal_uniform_buffer(&mut self, device: &viewport_lib::gpu::Device) {
         if self.temporal_resolve_uniform_buffer.is_none() {
             self.temporal_resolve_uniform_buffer =
-                Some(device.create_buffer(&crate::gpu::BufferDescriptor {
+                Some(device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                     label: Some("scatter_temporal_resolve_uniform"),
                     size: std::mem::size_of::<ScatterTemporalUniformRaw>() as u64,
-                    usage: crate::gpu::BufferUsages::UNIFORM | crate::gpu::BufferUsages::COPY_DST,
+                    usage: viewport_lib::gpu::BufferUsages::UNIFORM
+                        | viewport_lib::gpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }));
         }
@@ -1212,7 +1250,7 @@ impl ScatterGpu {
     /// Write the temporal-resolve uniform.
     pub(crate) fn write_temporal_uniform(
         &self,
-        queue: &crate::gpu::Queue,
+        queue: &viewport_lib::gpu::Queue,
         prev_view_proj: [[f32; 4]; 4],
         blend: f32,
         history_valid: bool,
@@ -1247,23 +1285,23 @@ pub(crate) struct ScatterViewportState {
     /// Per-volume scatter draws accumulate into this target each frame.
     /// Cleared at the start of the scatter pass.
     #[allow(dead_code)]
-    pub raw_current_texture: crate::gpu::Texture,
-    pub raw_current_view: crate::gpu::TextureView,
+    pub raw_current_texture: viewport_lib::gpu::Texture,
+    pub raw_current_view: viewport_lib::gpu::TextureView,
     /// History ping-pong. The temporal-resolve pass reads one slot
     /// (history_prev) and writes the other (history_new). `parity` selects.
     #[allow(dead_code)]
-    pub history_a_texture: crate::gpu::Texture,
-    pub history_a_view: crate::gpu::TextureView,
+    pub history_a_texture: viewport_lib::gpu::Texture,
+    pub history_a_view: viewport_lib::gpu::TextureView,
     #[allow(dead_code)]
-    pub history_b_texture: crate::gpu::Texture,
-    pub history_b_view: crate::gpu::TextureView,
+    pub history_b_texture: viewport_lib::gpu::Texture,
+    pub history_b_view: viewport_lib::gpu::TextureView,
     /// Composite bind group reading the raw-current texture.
     /// Used when temporal accumulation is disabled.
-    pub composite_bg_raw: crate::gpu::BindGroup,
+    pub composite_bg_raw: viewport_lib::gpu::BindGroup,
     /// Composite bind groups reading either history slot, used as the source
     /// after the temporal-resolve pass has written history_new.
-    pub composite_bg_history_a: crate::gpu::BindGroup,
-    pub composite_bg_history_b: crate::gpu::BindGroup,
+    pub composite_bg_history_a: viewport_lib::gpu::BindGroup,
+    pub composite_bg_history_b: viewport_lib::gpu::BindGroup,
     /// Current allocated intermediate size, [width, height].
     pub size: [u32; 2],
     /// Whether `size` reflects the downsampled (half-res) allocation.
@@ -1280,11 +1318,11 @@ pub(crate) struct ScatterViewportState {
     /// when at least one volume has refraction enabled. Matches the HDR
     /// target's size and format.
     #[allow(dead_code)]
-    pub refraction_source_texture: Option<crate::gpu::Texture>,
+    pub refraction_source_texture: Option<viewport_lib::gpu::Texture>,
     /// View paired with `refraction_source_texture`. Bound as the source
     /// during the refraction pass and as the render target during the
     /// preceding blit-copy of the HDR scene.
-    pub refraction_source_view: Option<crate::gpu::TextureView>,
+    pub refraction_source_view: Option<viewport_lib::gpu::TextureView>,
     /// Allocated size of the refraction source, matched to the HDR target.
     pub refraction_source_size: [u32; 2],
 }
@@ -1293,25 +1331,25 @@ impl ScatterViewportState {
     /// Allocate the accumulation and history targets at `size`, along with the
     /// composite bind groups that read them.
     pub(crate) fn new(
-        device: &crate::gpu::Device,
+        device: &viewport_lib::gpu::Device,
         gpu: &ScatterGpu,
         size: [u32; 2],
         downsampled: bool,
     ) -> Self {
         let make_tex = |label: &str| {
-            device.create_texture(&crate::gpu::TextureDescriptor {
+            device.create_texture(&viewport_lib::gpu::TextureDescriptor {
                 label: Some(label),
-                size: crate::gpu::Extent3d {
+                size: viewport_lib::gpu::Extent3d {
                     width: size[0],
                     height: size[1],
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
-                dimension: crate::gpu::TextureDimension::D2,
-                format: crate::gpu::TextureFormat::Rgba16Float,
-                usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                    | crate::gpu::TextureUsages::TEXTURE_BINDING,
+                dimension: viewport_lib::gpu::TextureDimension::D2,
+                format: viewport_lib::gpu::TextureFormat::Rgba16Float,
+                usage: viewport_lib::gpu::TextureUsages::RENDER_ATTACHMENT
+                    | viewport_lib::gpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })
         };
@@ -1319,11 +1357,11 @@ impl ScatterViewportState {
         let history_a_texture = make_tex("scatter_history_a");
         let history_b_texture = make_tex("scatter_history_b");
         let raw_current_view =
-            raw_current_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+            raw_current_texture.create_view(&viewport_lib::gpu::TextureViewDescriptor::default());
         let history_a_view =
-            history_a_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+            history_a_texture.create_view(&viewport_lib::gpu::TextureViewDescriptor::default());
         let history_b_view =
-            history_b_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+            history_b_texture.create_view(&viewport_lib::gpu::TextureViewDescriptor::default());
         Self {
             composite_bg_raw: gpu.make_composite_bg(device, &raw_current_view),
             composite_bg_history_a: gpu.make_composite_bg(device, &history_a_view),
@@ -1348,27 +1386,31 @@ impl ScatterViewportState {
     /// Allocate (or resize) the scene-colour copy the refraction pass reads.
     /// Sized to the HDR target rather than to the scatter intermediates, which
     /// may be half-resolution.
-    pub(crate) fn ensure_refraction_source(&mut self, device: &crate::gpu::Device, size: [u32; 2]) {
+    pub(crate) fn ensure_refraction_source(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        size: [u32; 2],
+    ) {
         if self.refraction_source_view.is_some() && self.refraction_source_size == size {
             return;
         }
-        let tex = device.create_texture(&crate::gpu::TextureDescriptor {
+        let tex = device.create_texture(&viewport_lib::gpu::TextureDescriptor {
             label: Some("scatter_refraction_source"),
-            size: crate::gpu::Extent3d {
+            size: viewport_lib::gpu::Extent3d {
                 width: size[0].max(1),
                 height: size[1].max(1),
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Rgba16Float,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
+            dimension: viewport_lib::gpu::TextureDimension::D2,
+            format: viewport_lib::gpu::TextureFormat::Rgba16Float,
+            usage: viewport_lib::gpu::TextureUsages::RENDER_ATTACHMENT
+                | viewport_lib::gpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         self.refraction_source_view =
-            Some(tex.create_view(&crate::gpu::TextureViewDescriptor::default()));
+            Some(tex.create_view(&viewport_lib::gpu::TextureViewDescriptor::default()));
         self.refraction_source_texture = Some(tex);
         self.refraction_source_size = size;
     }
@@ -1376,21 +1418,21 @@ impl ScatterViewportState {
 
 /// Upload one unit proxy shape's positions and indices.
 fn upload_proxy(
-    device: &crate::gpu::Device,
+    device: &viewport_lib::gpu::Device,
     label: &str,
     positions: &[[f32; 3]],
     indices: &[u32],
 ) -> PickProxyMesh {
-    use crate::gpu::util::DeviceExt as _;
-    let vbuf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+    use viewport_lib::gpu::util::DeviceExt as _;
+    let vbuf = device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
         label: Some(label),
         contents: bytemuck::cast_slice(positions),
-        usage: crate::gpu::BufferUsages::VERTEX,
+        usage: viewport_lib::gpu::BufferUsages::VERTEX,
     });
-    let ibuf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+    let ibuf = device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
         label: Some(label),
         contents: bytemuck::cast_slice(indices),
-        usage: crate::gpu::BufferUsages::INDEX,
+        usage: viewport_lib::gpu::BufferUsages::INDEX,
     });
     PickProxyMesh {
         vbuf,

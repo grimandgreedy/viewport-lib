@@ -35,6 +35,7 @@ mod gpu_particles;
 mod helpers;
 mod image_slice;
 mod point_cloud;
+mod scatter_volume;
 mod shader;
 mod sprite;
 mod tensor_glyph;
@@ -63,6 +64,11 @@ pub use image_slice::{ImageSliceItem, ImageSlicePlugin, SliceAxis};
 pub use point_cloud::{
     PointCloudId, PointCloudItem, PointCloudPlugin, PointCloudRefItem, PointRenderMode,
 };
+pub use scatter_volume::volume::{
+    ColourSource, DensityRemap, Emission, EmissionCurve, MAX_SCATTER_VOLUMES, NoiseDriver,
+    RefractionParams, ScatterShape, ScatterVolume,
+};
+pub use scatter_volume::{ScatterVolumeItem, ScatterVolumePlugin};
 pub use sprite::{
     SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
     SpriteOrientation, SpritePlugin, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
@@ -83,6 +89,8 @@ pub const EXTERNAL_INSTANCES_TYPE_NAME: &str = external_instances::TYPE_NAME;
 pub const GPU_PARTICLES_TYPE_NAME: &str = gpu_particles::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const RIBBON_TYPE_NAME: &str = curves::RIBBON_TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const SCATTER_VOLUME_TYPE_NAME: &str = scatter_volume::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const SPRITE_TYPE_NAME: &str = sprite::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
@@ -122,6 +130,7 @@ pub fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(gpu_particles::shader_sources());
     all.extend(image_slice::shader_sources());
     all.extend(point_cloud::shader_sources());
+    all.extend(scatter_volume::shader_sources());
     all.extend(sprite::shader_sources());
     all.extend(tensor_glyph::shader_sources());
     all.extend(volume::shader_sources());
@@ -155,6 +164,9 @@ pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     renderer.with_item_type_plugin(device, Box::new(ExternalInstancesPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(SpritePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(GpuParticlesPlugin::default()));
+    // Scatter composites over the finished scene, so it registers after every
+    // type whose pixels it absorbs.
+    renderer.with_item_type_plugin(device, Box::new(ScatterVolumePlugin::default()));
 }
 
 impl viewport_lib::plugin_api::Uploads<PointCloudItem> for ViewportRenderer {

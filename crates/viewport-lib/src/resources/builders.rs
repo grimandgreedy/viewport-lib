@@ -552,7 +552,7 @@ pub fn build_dual_pipeline(
 /// composite passes (tone map, bloom, SSAO, FXAA, OIT composite, upscales, the
 /// scatter composites) all share this shape and differ only in target format
 /// and blend.
-pub(crate) fn build_fullscreen_pipeline(
+pub fn build_fullscreen_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,

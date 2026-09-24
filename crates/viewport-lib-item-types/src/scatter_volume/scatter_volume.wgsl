@@ -23,16 +23,8 @@ struct Camera {
     view:          mat4x4<f32>,
 };
 
-// Shared light struct definitions and `lights_storage` binding 13 of group 0.
-// #include "helpers/scene_lighting.wgsl"
-
-struct ClipPlanes {
-    planes:          array<vec4<f32>, 6>,
-    count:           u32,
-    _pad0:           u32,
-    viewport_width:  f32,
-    viewport_height: f32,
-};
+// `SingleLight`, `Lights` and the `lights_storage` binding at group 0 binding
+// 13 come from the shared scene lighting section spliced in front of this.
 
 struct ShadowAtlas {
     cascade_vp:        array<mat4x4<f32>, 4>,
@@ -79,7 +71,6 @@ const EMISSION_THRESHOLD: u32 = 3u;
 @group(0) @binding(1) var          shadow_map:     texture_depth_2d;
 @group(0) @binding(2) var          shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var<uniform> lights_uniform: Lights;
-@group(0) @binding(4) var<uniform> clip_planes:    ClipPlanes;
 @group(0) @binding(5) var<uniform> shadow_atlas:   ShadowAtlas;
 
 @group(1) @binding(0) var<uniform> vol: GpuScatterVolume;

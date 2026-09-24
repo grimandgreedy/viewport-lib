@@ -17,9 +17,12 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::{
+    ColourSource, DensityRemap, Emission, EmissionCurve, NoiseDriver, RefractionParams,
+    ScatterVolume, ScatterVolumeItem,
+};
 use vpl::{
-    BuiltinColourmap, ColourSource, DensityRemap, Emission, EmissionCurve, Material, NoiseDriver,
-    RefractionParams, ScatterQuality, ScatterVolume, ScatterVolumeItem, ViewportRenderer,
+    BuiltinColourmap, Material, ScatterQuality, ViewportRenderer,
     scene::{Scene, aabb::Aabb},
 };
 
@@ -409,9 +412,7 @@ impl App {
             item.settings.selected = s.show_global_outline;
             item.settings.unlit = s.global_unlit;
             item.settings.receive_shadows = s.global_receive_shadows;
-            fd.scene
-                .items_mut::<viewport_lib::ScatterVolumeItem>()
-                .push(item);
+            fd.scene.items_mut::<ScatterVolumeItem>().push(item);
         }
 
         if matches!(s.preset, SvolPreset::StressTest) {
@@ -432,7 +433,7 @@ impl App {
                     let mut v = ScatterVolume::sphere_uniform(centre, 1.2, 0.5, colour);
                     v.anisotropy = 0.2;
                     fd.scene
-                        .items_mut::<viewport_lib::ScatterVolumeItem>()
+                        .items_mut::<ScatterVolumeItem>()
                         .push(ScatterVolumeItem::new(v));
                 }
             }
@@ -478,9 +479,7 @@ impl App {
             // a discrete sphere silhouette. The emission contribution alone
             // carries the look.
             item.settings.unlit = true;
-            fd.scene
-                .items_mut::<viewport_lib::ScatterVolumeItem>()
-                .push(item);
+            fd.scene.items_mut::<ScatterVolumeItem>().push(item);
         }
         if s.sphere_enabled {
             let mut v = ScatterVolume::sphere_uniform(
@@ -495,9 +494,7 @@ impl App {
             v.anisotropy = s.sphere_anisotropy;
             let mut item = ScatterVolumeItem::new(v);
             item.settings.selected = s.show_sphere_outline;
-            fd.scene
-                .items_mut::<viewport_lib::ScatterVolumeItem>()
-                .push(item);
+            fd.scene.items_mut::<ScatterVolumeItem>().push(item);
         }
     }
 }

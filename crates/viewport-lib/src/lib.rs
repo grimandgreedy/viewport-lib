@@ -192,11 +192,6 @@ pub use interaction::widgets::axes_indicator;
 pub use renderer::sub_object;
 pub use scene::aabb;
 pub use scene::material;
-pub use scene::scatter_volume;
-pub use scene::scatter_volume::{
-    ColourSource, DensityRemap, Emission, EmissionCurve, MAX_SCATTER_VOLUMES, NoiseDriver,
-    RefractionParams, ScatterShape, ScatterVolume,
-};
 pub use scene::traits;
 
 // ---------------------------------------------------------------------------
@@ -314,13 +309,12 @@ pub use renderer::{
     OverlayTransform, OwnedPath, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit,
     PickId, PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap, PolylineItem,
     PolylineRefItem, PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera,
-    RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
-    SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
-    StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig,
-    SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
-    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem,
-    VolumeSelectionInfo, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame,
+    SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern,
+    SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig, SurfaceSubmission,
+    TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame,
+    ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo,
+    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 

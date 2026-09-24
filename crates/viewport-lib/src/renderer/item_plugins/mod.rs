@@ -14,7 +14,6 @@ pub(crate) mod registry;
 pub(crate) mod decal;
 pub(crate) mod glyph;
 pub(crate) mod polyline;
-pub(crate) mod scatter_volume;
 
 use crate::plugin_api::PluginItemCollection;
 use crate::renderer::types::FrameData;
@@ -79,12 +78,6 @@ impl crate::renderer::ViewportRenderer {
         self.install_item_type_plugin(
             device,
             Box::new(decal::DecalPlugin::new(self.decal_cache_stats.clone())),
-        );
-        // Scatter composites over the finished scene, so it registers after
-        // every type whose pixels it absorbs.
-        self.install_item_type_plugin(
-            device,
-            Box::new(scatter_volume::ScatterVolumePlugin::default()),
         );
     }
 }

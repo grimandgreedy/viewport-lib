@@ -6,13 +6,13 @@
 //! accumulates absorption (Beer-Lambert) plus a lit / emissive scattered
 //! colour, and composites the result over the opaque scene.
 
-use crate::scene::aabb::Aabb;
+use viewport_lib::aabb::Aabb;
 
 /// A ray-marched participating-media region.
 ///
-/// Add to a frame via [`ScatterVolumeItem`](crate::renderer::ScatterVolumeItem)
-/// and push into `SceneFrame::scatter_volumes`. No upload step is required;
-/// the renderer packs visible volumes into a storage buffer each frame.
+/// Add to a frame via [`ScatterVolumeItem`](crate::ScatterVolumeItem) and
+/// `frame.scene.submit::<ScatterVolumeItem>(..)`. No upload step is required;
+/// the item type packs visible volumes into a storage buffer each frame.
 /// Hard cap on the number of scatter volumes drawn in one frame. Volumes past
 /// this many are skipped for the frame; the per-volume draw flow handles up to
 /// this many active volumes.
@@ -49,13 +49,13 @@ pub struct ScatterVolume {
     pub step_budget: Option<u32>,
     /// External 3D density texture (typically baked sim output) that
     /// modulates per-step density instead of procedural noise. Uploaded
-    /// via [`upload_volume`](crate::resources::DeviceResources::upload_volume).
+    /// via [`upload_volume`](viewport_lib::resources::DeviceResources::upload_volume).
     /// The texture is sampled at normalized coordinates inside the volume's
     /// world-space AABB. When both `noise` and `density_texture` are set
     /// the texture takes precedence (noise is ignored for that volume).
     /// Only one density texture can be bound per frame; the first volume
     /// in `SceneFrame::scatter_volumes` with a texture wins for the pass.
-    pub density_texture: Option<crate::resources::VolumeId>,
+    pub density_texture: Option<viewport_lib::resources::VolumeId>,
     /// Refractive distortion of the scene behind the volume. `None` is the
     /// default and skips the refraction pass entirely. When `Some`, the
     /// renderer copies the scene colour, samples it at a UV offset derived
@@ -87,7 +87,7 @@ impl Default for ScatterVolume {
 
 impl ScatterVolume {
     /// Convenience: a uniform-density box volume with flat colour.
-    pub fn box_uniform(aabb: Aabb, density: f32, colour: impl Into<crate::Colour>) -> Self {
+    pub fn box_uniform(aabb: Aabb, density: f32, colour: impl Into<viewport_lib::Colour>) -> Self {
         Self {
             shape: ScatterShape::Box(aabb),
             density,
@@ -101,7 +101,7 @@ impl ScatterVolume {
         center: [f32; 3],
         radius: f32,
         density: f32,
-        colour: impl Into<crate::Colour>,
+        colour: impl Into<viewport_lib::Colour>,
     ) -> Self {
         Self {
             shape: ScatterShape::Sphere { center, radius },
@@ -158,9 +158,9 @@ pub enum ScatterShape {
 #[non_exhaustive]
 pub enum ColourSource {
     /// Single RGB colour applied uniformly throughout the volume.
-    Flat(crate::Colour),
+    Flat(viewport_lib::Colour),
     /// Density-indexed lookup through a colourmap LUT.
-    Ramp(crate::resources::ColourmapId),
+    Ramp(viewport_lib::resources::ColourmapId),
 }
 
 /// Self-emission specification for a [`ScatterVolume`].

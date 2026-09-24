@@ -715,7 +715,7 @@ impl ItemTypePlugin for SpritePlugin {
                 ],
             });
         let mut pass = encoder.begin_render_pass(&viewport_lib::gpu::RenderPassDescriptor {
-            #[cfg(any(wgpu29, wgpu30))]
+            #[cfg(any(feature = "wgpu29", feature = "wgpu30"))]
             multiview_mask: None,
             label: Some("sprite_refraction_pass"),
             color_attachments: &[Some(viewport_lib::gpu::RenderPassColorAttachment {

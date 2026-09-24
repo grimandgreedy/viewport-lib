@@ -11,8 +11,7 @@ use glam::{Mat4, Vec3};
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
     Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, Material, MeshInstanceItem,
-    PickId, ScatterQuality, ScatterSettings, ScatterVolume, ScatterVolumeItem, SpriteBlend,
-    TextureData, VolumeData, primitives,
+    PickId, ScatterQuality, ScatterSettings, SpriteBlend, TextureData, VolumeData, primitives,
 };
 use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
@@ -20,6 +19,7 @@ use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TubeItem,
 };
+use viewport_lib_item_types::{ScatterVolume, ScatterVolumeItem};
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
 use viewport_lib_item_types::{
@@ -958,10 +958,10 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // it in the wrong order is obvious rather than subtle.
     let mut core = ScatterVolume::sphere_uniform([-0.8, 0.6, 1.3], 1.5, 0.9, [1.0, 0.72, 0.4]);
     core.anisotropy = 0.6;
-    core.density_remap = viewport_lib::DensityRemap::Smoothstep { lo: 0.0, hi: 0.8 };
-    core.emission = viewport_lib::Emission::Strength {
+    core.density_remap = viewport_lib_item_types::DensityRemap::Smoothstep { lo: 0.0, hi: 0.8 };
+    core.emission = viewport_lib_item_types::Emission::Strength {
         strength: 0.8,
-        curve: viewport_lib::EmissionCurve::Power(2.0),
+        curve: viewport_lib_item_types::EmissionCurve::Power(2.0),
     };
 
     let mut fog_item = ScatterVolumeItem::new(fog);
@@ -1014,8 +1014,8 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         [1.0, 1.0, 1.0],
     );
     textured.density_texture = Some(vid);
-    textured.colour = viewport_lib::ColourSource::Ramp(ColourmapId(0));
-    textured.density_remap = viewport_lib::DensityRemap::Smoothstep { lo: 0.1, hi: 0.7 };
+    textured.colour = viewport_lib_item_types::ColourSource::Ramp(ColourmapId(0));
+    textured.density_remap = viewport_lib_item_types::DensityRemap::Smoothstep { lo: 0.1, hi: 0.7 };
 
     // Static noise: scroll velocity and time scale are both zero, so the
     // field does not move and a still frame repeats exactly.
@@ -1027,7 +1027,7 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.85,
         [0.55, 0.85, 1.0],
     );
-    let mut noise = viewport_lib::NoiseDriver::default();
+    let mut noise = viewport_lib_item_types::NoiseDriver::default();
     noise.scale = 1.4;
     noise.octaves = 4;
     noise.scroll_velocity = [0.0; 3];
@@ -1099,7 +1099,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.9,
         [0.72, 0.76, 0.85],
     );
-    let mut noise = viewport_lib::NoiseDriver::default();
+    let mut noise = viewport_lib_item_types::NoiseDriver::default();
     noise.scale = 1.1;
     noise.octaves = 3;
     noise.scroll_velocity = [0.9, 0.0, 0.35];
@@ -1116,7 +1116,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.35,
         [1.0, 0.85, 0.7],
     );
-    let mut refraction = viewport_lib::RefractionParams::default();
+    let mut refraction = viewport_lib_item_types::RefractionParams::default();
     refraction.strength = 0.035;
     refraction.density_threshold = 0.0;
     refraction.noise_scale = 1.6;

@@ -18,10 +18,8 @@
 //! rather than against a recorded image.
 
 use glam::Vec3;
-use viewport_lib::{
-    Aabb, Material, RefractionParams, ScatterQuality, ScatterSettings, ScatterVolume,
-    ScatterVolumeItem, primitives,
-};
+use viewport_lib::{Aabb, Material, ScatterQuality, ScatterSettings, primitives};
+use viewport_lib_item_types::{RefractionParams, ScatterVolume, ScatterVolumeItem};
 use viewport_lib_testkit::{Harness, scenes::BuiltScene};
 
 const W: u32 = 200;
