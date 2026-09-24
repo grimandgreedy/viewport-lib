@@ -20,6 +20,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
+use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId};
 use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem};
 use viewport_lib_item_types::{
@@ -32,7 +33,7 @@ use crate::eframe::egui;
 use vpl::{
     ColourmapId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId, LightKind, LightSource,
     LightingSettings, Material, MeshData, MeshId, OverlayTextureId, PolylineId, PolylineItem,
-    PolylineRefItem, SceneRenderItem, UploadStatus, ViewportRenderer, VolumeId, VolumeItem,
+    PolylineRefItem, SceneRenderItem, UploadStatus, ViewportRenderer, VolumeId,
     plugins::skinning::SkinWeights,
 };
 
@@ -1981,7 +1982,9 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         // Sit the volume to the far right of the showcase grid.
         item.bbox_min = [4.0, -1.5, -1.5];
         item.bbox_max = [7.0, 1.5, 1.5];
-        fd.scene.items_mut::<viewport_lib::VolumeItem>().push(item);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::VolumeItem>()
+            .push(item);
     }
 }
 

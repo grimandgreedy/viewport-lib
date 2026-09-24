@@ -1040,7 +1040,7 @@ impl App {
                     .volume_id
                     .zip(self.pl_state.volume_data.as_ref())
                     .and_then(|(vol_id, vol_data)| {
-                        let mut item = vpl::VolumeItem::default();
+                        let mut item = viewport_lib_item_types::VolumeItem::default();
                         item.volume_id = vol_id;
                         item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                             .to_cols_array_2d();
@@ -1049,7 +1049,7 @@ impl App {
                         item.scalar_range = (0.0, 1.0);
                         item.threshold_min = 0.15;
                         item.threshold_max = 1.0;
-                        vpl::pick_volume_cpu(ray_origin, ray_dir, 20, &item, vol_data)
+                        vpl::pick_volume_cpu(ray_origin, ray_dir, 20, &item.region(), vol_data)
                     });
 
                 if let Some(hit) = hit {
@@ -1298,7 +1298,7 @@ impl App {
                 if let (Some(vol_id), Some(vol_data)) =
                     (self.pl_state.volume_id, self.pl_state.volume_data.as_ref())
                 {
-                    let mut item = vpl::VolumeItem::default();
+                    let mut item = viewport_lib_item_types::VolumeItem::default();
                     item.volume_id = vol_id;
                     item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                         .to_cols_array_2d();
@@ -1307,7 +1307,13 @@ impl App {
                     item.threshold_min = 0.15;
                     item.threshold_max = 1.0;
                     let result = vpl::pick_volume_rect(
-                        r_min, r_max, 20, &item, vol_data, view_proj, vp_size,
+                        r_min,
+                        r_max,
+                        20,
+                        &item.region(),
+                        vol_data,
+                        view_proj,
+                        vp_size,
                     );
                     for (_, subs) in &result.hits {
                         for &sub in subs {
@@ -1993,7 +1999,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     }
     // Volume (pick_id=20).
     if let Some(vol_id) = app.pl_state.volume_id {
-        let mut vol = vpl::VolumeItem::default();
+        let mut vol = viewport_lib_item_types::VolumeItem::default();
         vol.volume_id = vol_id;
         vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
         vol.bbox_min = [0.0, 0.0, 0.0];
@@ -2011,7 +2017,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .volume_data
             .as_ref()
             .map(|d| std::sync::Arc::new(d.clone()));
-        fd.scene.items_mut::<viewport_lib::VolumeItem>().push(vol);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::VolumeItem>()
+            .push(vol);
     }
     // Polyline: 3 spiral strips (pick_id=30).
     if !app.pl_state.polyline_positions.is_empty() {

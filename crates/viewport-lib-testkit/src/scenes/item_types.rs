@@ -12,9 +12,10 @@ use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
     Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, GpuMarchingCubesItem, Material,
     MeshInstanceItem, PickId, ScatterQuality, ScatterSettings, ScatterVolume, ScatterVolumeItem,
-    SpriteBlend, TextureData, VolumeData, VolumeItem, primitives,
+    SpriteBlend, TextureData, VolumeData, primitives,
 };
 use viewport_lib_item_types::GpuParticleSystems;
+use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TubeItem,
 };

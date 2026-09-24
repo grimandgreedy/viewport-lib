@@ -99,7 +99,7 @@ impl Default for ParticleRender {
 
 /// Per-particle rotation rule used by the mesh render route.
 ///
-/// Used by [`ParticleRender::Mesh`](viewport_lib::resources::ParticleRender::Mesh).
+/// Used by [`ParticleRender::Mesh`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParticleMeshAlign {
     /// No rotation. The mesh keeps its authored orientation.

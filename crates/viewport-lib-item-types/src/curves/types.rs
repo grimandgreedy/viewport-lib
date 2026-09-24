@@ -214,7 +214,7 @@ impl Default for RibbonItem {
     }
 }
 
-/// Per-frame reference to a pre-uploaded streamtube. See [`PolylineRefItem`].
+/// Per-frame reference to a pre-uploaded streamtube. See `PolylineRefItem`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct StreamtubeRefItem {
@@ -239,7 +239,7 @@ impl StreamtubeRefItem {
     }
 }
 
-/// Per-frame reference to a pre-uploaded tube. See [`PolylineRefItem`].
+/// Per-frame reference to a pre-uploaded tube. See `PolylineRefItem`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct TubeRefItem {
@@ -264,7 +264,7 @@ impl TubeRefItem {
     }
 }
 
-/// Per-frame reference to a pre-uploaded ribbon. See [`PolylineRefItem`].
+/// Per-frame reference to a pre-uploaded ribbon. See `PolylineRefItem`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RibbonRefItem {

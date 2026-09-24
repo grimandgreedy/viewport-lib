@@ -45,7 +45,7 @@ pub enum SpriteSizeMode {
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct SpriteItem {
-    /// Texture ID from [`DeviceResources::upload_texture`].
+    /// Texture ID from `DeviceResources::upload_texture`.
     /// `None` renders solid-colour quads using `colours` / `default_colour` only.
     ///
     /// Colour, so upload it sRGB

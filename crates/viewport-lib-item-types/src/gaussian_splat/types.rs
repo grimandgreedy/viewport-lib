@@ -37,12 +37,12 @@ impl ShDegree {
     }
 }
 
-/// Upload data for a Gaussian splat set. Submitted once via
-/// `renderer.upload_gaussian_splat(device, queue, data)`.
+/// Upload data for a Gaussian splat set. Submitted once through
+/// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
 pub struct GaussianSplatData {
-    /// Object-space center positions, one [f32;3] per splat.
+    /// Object-space center positions, one `[f32; 3]` per splat.
     pub positions: Vec<[f32; 3]>,
-    /// Scale (positive floats, world-space metres) per splat, one [f32;3].
+    /// Scale (positive floats, world-space metres) per splat, one `[f32; 3]`.
     pub scales: Vec<[f32; 3]>,
     /// Unit quaternion rotation per splat [x, y, z, w].
     pub rotations: Vec<[f32; 4]>,

@@ -11,10 +11,11 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::VolumeItem;
 use vpl::{
     AlphaMode, BackfacePolicy, BuiltinColourmap, ClipObject, ColourmapId, FrameData, Gizmo,
     ItemSettings, LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem,
-    ViewportRenderer, VolumeId, VolumeItem, scene::Scene, selection::Selection,
+    ViewportRenderer, VolumeId, scene::Scene, selection::Selection,
 };
 
 /// Colour for the clip-object outlines and the plane fill.
@@ -620,7 +621,9 @@ pub(crate) fn submit_clipvol_items(app: &mut App, fd: &mut FrameData) {
     fd.effects.clip.objects.extend(clip_objects);
     if app.clipvol_state.scene_mode == SceneMode::Volume {
         if let Some(vol) = app.make_clipvol_volume_item() {
-            fd.scene.items_mut::<viewport_lib::VolumeItem>().push(vol);
+            fd.scene
+                .items_mut::<viewport_lib_item_types::VolumeItem>()
+                .push(vol);
         }
     }
 }

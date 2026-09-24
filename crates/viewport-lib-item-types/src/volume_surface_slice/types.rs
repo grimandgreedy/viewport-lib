@@ -4,12 +4,12 @@ use viewport_lib::ItemSettings;
 
 /// A volume slice sampled on an arbitrary surface mesh.
 ///
-/// Unlike [`ImageSliceItem`] which is restricted to axis-aligned flat quads,
+/// Unlike [`ImageSliceItem`](crate::ImageSliceItem) which is restricted to axis-aligned flat quads,
 /// this item renders any uploaded mesh and colours each fragment by the volume
 /// scalar at that world-space position. The slice surface can be a flat plane,
 /// a disk, a saddle, a paraboloid -- any shape that can be expressed as a mesh.
 ///
-/// Upload the surface mesh once with [`DeviceResources::upload_mesh_data`]
+/// Upload the surface mesh once with `DeviceResources::upload_mesh_data`
 /// to get a [`MeshId`](viewport_lib::resources::mesh::mesh_store::MeshId), then submit a
 /// `VolumeSurfaceSliceItem` referencing that mesh each frame.
 ///

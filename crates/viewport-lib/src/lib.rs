@@ -318,7 +318,7 @@ pub use renderer::{
     SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
     StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig,
     SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
-    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeItem, VolumeMeshItem,
+    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem,
     VolumeSelectionInfo, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
     sphere_wireframe_polyline,
 };

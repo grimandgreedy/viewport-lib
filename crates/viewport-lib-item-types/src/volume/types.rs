@@ -1,10 +1,10 @@
-use crate::resources::ColourmapId;
-use crate::scene::material::ItemSettings;
+use viewport_lib::ItemSettings;
+use viewport_lib::resources::ColourmapId;
 
 /// A volume item to render via GPU ray-marching.
 ///
-/// The caller uploads a 3D scalar field via [`DeviceResources::upload_volume`](crate::resources::DeviceResources::upload_volume) and
-/// receives a [`VolumeId`](crate::resources::VolumeId). Each frame, submit a `VolumeItem` referencing that id plus
+/// The caller uploads a 3D scalar field via [`DeviceResources::upload_volume`](viewport_lib::resources::DeviceResources::upload_volume) and
+/// receives a [`VolumeId`](viewport_lib::resources::VolumeId). Each frame, submit a `VolumeItem` referencing that id plus
 /// transfer function and display parameters.
 ///
 /// # Picking
@@ -18,12 +18,12 @@ use crate::scene::material::ItemSettings;
 #[non_exhaustive]
 pub struct VolumeItem {
     /// Reference to a previously uploaded 3D texture.
-    pub volume_id: crate::resources::VolumeId,
+    pub volume_id: viewport_lib::resources::VolumeId,
     /// CPU scalar data for voxel picking.
     ///
     /// Must match the data passed to `upload_volume` for `volume_id`.
     /// `None` disables voxel-level picking regardless of `settings.pick_id`.
-    pub volume_data: Option<std::sync::Arc<crate::geometry::marching_cubes::VolumeData>>,
+    pub volume_data: Option<std::sync::Arc<viewport_lib_geometry::marching_cubes::VolumeData>>,
     /// Colour transfer function LUT. `None` = use default builtin (viridis).
     pub colour_lut: Option<ColourmapId>,
     /// Opacity transfer function LUT. `None` = linear ramp (0 at min, 1 at max).
@@ -51,15 +51,32 @@ pub struct VolumeItem {
     /// Colour and opacity to use for NaN scalar samples. `None` = skip NaN samples entirely
     /// (same as current behaviour: discard). `Some([r, g, b, a])` = render NaN voxels with
     /// this fixed RGBA colour instead of sampling the transfer function.
-    pub nan_colour: Option<crate::Colour>,
+    pub nan_colour: Option<viewport_lib::Colour>,
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
+}
+
+impl VolumeItem {
+    /// The placement and scalar window this item picks against.
+    ///
+    /// The CPU volume picks in
+    /// [`viewport_lib::picking`](viewport_lib::picking) take that rather than
+    /// the whole item, so this is the conversion.
+    pub fn region(&self) -> viewport_lib::picking::VolumeRegion {
+        viewport_lib::picking::VolumeRegion {
+            model: self.model,
+            bbox_min: self.bbox_min,
+            bbox_max: self.bbox_max,
+            threshold_min: self.threshold_min,
+            threshold_max: self.threshold_max,
+        }
+    }
 }
 
 impl Default for VolumeItem {
     fn default() -> Self {
         Self {
-            volume_id: crate::resources::VolumeId::INVALID,
+            volume_id: viewport_lib::resources::VolumeId::INVALID,
             volume_data: None,
             colour_lut: None,
             opacity_lut: None,

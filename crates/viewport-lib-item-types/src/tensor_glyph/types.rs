@@ -16,7 +16,7 @@ viewport_lib::resources::handle::slot_handle! {
 
 const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
-/// Per-frame reference to a pre-uploaded tensor glyph set. See [`PolylineRefItem`].
+/// Per-frame reference to a pre-uploaded tensor glyph set. See `PolylineRefItem`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct TensorGlyphSetRefItem {

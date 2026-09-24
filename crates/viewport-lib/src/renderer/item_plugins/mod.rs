@@ -16,7 +16,6 @@ pub(crate) mod glyph;
 pub(crate) mod gpu_marching_cubes;
 pub(crate) mod polyline;
 pub(crate) mod scatter_volume;
-pub(crate) mod volume;
 
 use crate::plugin_api::PluginItemCollection;
 use crate::renderer::types::FrameData;
@@ -78,7 +77,6 @@ impl crate::renderer::ViewportRenderer {
         // order that loop drew them.
         self.install_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
         self.install_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
-        self.install_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
         // Then the types that always had a draw site of their own.
         self.install_item_type_plugin(
             device,

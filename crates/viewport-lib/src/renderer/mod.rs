@@ -86,9 +86,8 @@ pub use self::types::{
     ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
     ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
     SurfaceLICConfig, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings, VolumeItem,
-    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
-    sphere_wireframe_polyline,
+    TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem,
+    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.

@@ -1,34 +1,54 @@
 //! The volume item type as an [`ItemTypePlugin`]: an uploaded 3D scalar field
 //! ray-marched through its bounding box with colour and opacity transfer
-//! functions. Consumers submit [`VolumeItem`]s on `SceneFrame::volumes`; the
-//! renderer routes that field to this plugin.
+//! functions. Consumers submit [`VolumeItem`]s with
+//! `frame.scene.submit::<VolumeItem>(..)`.
 //!
 //! A wireframe volume draws no ray-march at all: the core line substrate
 //! renders an oriented bounding box polyline for it instead, so this plugin
 //! only skips the item.
 
 mod pipeline;
-pub(crate) mod types;
+mod types;
 
-use crate::plugin_api::{
+use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
-use crate::renderer::{PickHit, PickId, PickMask, SubObjectRef, VolumeItem};
-use crate::resources::HDR_COLOR_FORMAT;
+use viewport_lib::renderer::{PickHit, PickId, PickMask, SubObjectRef};
+use viewport_lib::resources::HDR_COLOR_FORMAT;
 
-pub(crate) const TYPE_NAME: &str = "vpl.volume";
+/// Stable name this item type submits and registers under.
+pub const TYPE_NAME: &str = "vpl.volume";
+
+pub use types::VolumeItem;
+
+/// This type's shaders as the pipelines compile them, shared sections already
+/// spliced in front of each body.
+pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
+    use crate::shader::{scene_shader, wgsl_source};
+    vec![
+        ("volume.wgsl", scene_shader(&[], wgsl_source!("volume"))),
+        (
+            "volume_outline_mask.wgsl",
+            scene_shader(&[], wgsl_source!("volume_outline_mask")),
+        ),
+        (
+            "volume_pick.wgsl",
+            scene_shader(&[], wgsl_source!("volume_pick")),
+        ),
+    ]
+}
 
 impl PluginItem for VolumeItem {
     const TYPE_NAME: &'static str = TYPE_NAME;
 
-    fn settings(&self) -> &crate::scene::material::ItemSettings {
+    fn settings(&self) -> &viewport_lib::ItemSettings {
         &self.settings
     }
 }
 
 #[derive(Default)]
-pub(crate) struct VolumePlugin {
+pub struct VolumePlugin {
     gpu: Option<pipeline::VolumeGpu>,
     /// Per drawn item, rebuilt each prepare.
     frame: Vec<pipeline::VolumeFrame>,
@@ -45,18 +65,22 @@ impl ItemTypePlugin for VolumePlugin {
         TYPE_NAME
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn on_device_recreated(
+        &mut self,
+        _device: &viewport_lib::gpu::Device,
+        _queue: &viewport_lib::gpu::Queue,
+    ) {
         self.gpu = None;
         self.frame.clear();
     }
 
     fn prepare(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
-    ) -> Vec<crate::gpu::CommandBuffer> {
+    ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         self.frame.clear();
         self.outline_active = ctx.outline_selected;
         let items = items.of::<VolumeItem>();
@@ -91,7 +115,7 @@ impl ItemTypePlugin for VolumePlugin {
 
     fn paint(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -122,7 +146,7 @@ impl ItemTypePlugin for VolumePlugin {
 
     fn outline_mask(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -157,11 +181,11 @@ impl ItemTypePlugin for VolumePlugin {
             let Some(vol_data) = item.volume_data.as_deref() else {
                 continue;
             };
-            let Some(mut hit) = crate::interaction::query::picking::pick_volume_cpu(
+            let Some(mut hit) = viewport_lib::picking::pick_volume_cpu(
                 ray.origin,
                 ray.direction,
                 item.settings.pick_id.0,
-                item,
+                &item.region(),
                 vol_data,
             ) else {
                 continue;
@@ -180,8 +204,8 @@ impl ItemTypePlugin for VolumePlugin {
     /// Project every in-threshold voxel centre and hit the item when any of
     /// them lands in the rect. Exact rather than conservative, at the cost of
     /// walking the grid.
-    fn pick_rect(&self, ctx: &RectPickContext) -> crate::renderer::PickRectResult {
-        let mut result = crate::renderer::PickRectResult::default();
+    fn pick_rect(&self, ctx: &RectPickContext) -> viewport_lib::renderer::PickRectResult {
+        let mut result = viewport_lib::renderer::PickRectResult::default();
         let wants_voxel = ctx.mask.intersects(PickMask::VOXEL);
         let wants_object = ctx.mask.intersects(PickMask::OBJECT);
         if !wants_voxel && !wants_object {
@@ -223,7 +247,7 @@ impl ItemTypePlugin for VolumePlugin {
                                     iy as f32 + 0.5,
                                     iz as f32 + 0.5,
                                 );
-                        let projected = crate::plugin_api::pick_helpers::project_to_screen(
+                        let projected = viewport_lib::plugin_api::pick_helpers::project_to_screen(
                             centre,
                             mvp,
                             ctx.viewport_size,
@@ -253,7 +277,7 @@ impl ItemTypePlugin for VolumePlugin {
 
     fn render_pick(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -300,7 +324,7 @@ impl ItemTypePlugin for VolumePlugin {
         &self,
         items: &ItemCollections<'_>,
         ctx: &ItemFrameContext<'_>,
-    ) -> Vec<crate::renderer::PolylineItem> {
+    ) -> Vec<viewport_lib::renderer::PolylineItem> {
         let volumes = items.of::<VolumeItem>();
         volumes
             .iter()
@@ -312,12 +336,12 @@ impl ItemTypePlugin for VolumePlugin {
 
 /// Bind the per-item group-1 data and the cube proxy buffers shared by the
 /// render, mask, and pick draws.
-fn bind_cube(pass: &mut crate::gpu::RenderPass<'_>, entry: &pipeline::VolumeFrame) {
+fn bind_cube(pass: &mut viewport_lib::gpu::RenderPass<'_>, entry: &pipeline::VolumeFrame) {
     pass.set_bind_group(1, &entry.bind_group, &[]);
     pass.set_vertex_buffer(0, entry.vertex_buffer.slice(..));
     pass.set_index_buffer(
         entry.index_buffer.slice(..),
-        crate::gpu::IndexFormat::Uint32,
+        viewport_lib::gpu::IndexFormat::Uint32,
     );
 }
 
@@ -325,8 +349,8 @@ fn bind_cube(pass: &mut crate::gpu::RenderPass<'_>, entry: &pipeline::VolumeFram
 ///
 /// A `VolumeItem`'s bounds are axis-aligned in object space but its model may
 /// rotate them, so this walks the eight corners through the matrix rather than
-/// using [`aabb_wireframe_polyline`](crate::aabb_wireframe_polyline).
-fn obb_polyline(item: &VolumeItem) -> crate::renderer::PolylineItem {
+/// using [`aabb_wireframe_polyline`](viewport_lib::renderer::aabb_wireframe_polyline).
+fn obb_polyline(item: &VolumeItem) -> viewport_lib::renderer::PolylineItem {
     let model = glam::Mat4::from_cols_array_2d(&item.model);
     let mn = glam::Vec3::from(item.bbox_min);
     let mx = glam::Vec3::from(item.bbox_max);
@@ -342,5 +366,5 @@ fn obb_polyline(item: &VolumeItem) -> crate::renderer::PolylineItem {
     ];
     let corners: [[f32; 3]; 8] =
         std::array::from_fn(|i| model.transform_point3(local[i]).to_array());
-    crate::renderer::obb_wireframe_polyline(&corners, [0.75, 0.75, 0.75, 1.0])
+    viewport_lib::renderer::obb_wireframe_polyline(&corners, [0.75, 0.75, 0.75, 1.0])
 }

@@ -25,6 +25,7 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
@@ -32,8 +33,8 @@ use viewport_lib_item_types::{
 use viewport_lib_item_types::{RibbonItem, StreamtubeItem, TensorGlyphItem, TubeItem};
 use vpl::{
     ColourmapId, FrameData, GlyphItem, GlyphType, ItemSettings, LightSource, LightingSettings,
-    Material, MeshId, PolylineItem, SceneRenderItem, ViewportRenderer, VolumeId, VolumeItem,
-    VolumeMeshItem, VolumeTransparency,
+    Material, MeshId, PolylineItem, SceneRenderItem, ViewportRenderer, VolumeId, VolumeMeshItem,
+    VolumeTransparency,
 };
 
 use crate::App;
@@ -631,7 +632,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
             .mul_mat4(&glam::Mat4::from_scale(glam::Vec3::splat(0.9)))
             .to_cols_array_2d();
         broadcast(s, &mut v.settings);
-        fd.scene.items_mut::<viewport_lib::VolumeItem>().push(v);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::VolumeItem>()
+            .push(v);
     }
 
     // Cell (1, 2): volume surface slice (disk through the small scalar field).

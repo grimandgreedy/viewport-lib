@@ -61,7 +61,7 @@ impl DeviceResources {
     /// `data` must be a flat array of `dims[0] * dims[1] * dims[2]` scalars in
     /// x-fastest order (index = x + y*nx + z*nx*ny).
     ///
-    /// Returns a [`VolumeId`](crate::resources::VolumeId) that can be stored in [`VolumeItem::volume_id`](crate::renderer::VolumeItem::volume_id).
+    /// Returns a [`VolumeId`](crate::resources::VolumeId) that can be stored in `VolumeItem::volume_id`.
     pub fn upload_volume(
         &mut self,
         device: &crate::gpu::Device,

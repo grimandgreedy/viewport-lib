@@ -5,9 +5,8 @@
 //! prepare, so a frame that hits a cold pipeline reads non-zero.
 
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib::{
-    CameraFrame, DecalItem, FrameData, Material, SceneFrame, SceneRenderItem, VolumeItem,
-};
+use viewport_lib::{CameraFrame, DecalItem, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{PointCloudItem, PointCloudRefItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
@@ -168,7 +167,7 @@ fn volume_pipelines_are_owned_by_the_plugin() {
     let mut with_volume = mesh_frame(item, [200.0, 150.0]);
     with_volume
         .scene
-        .items_mut::<viewport_lib::VolumeItem>()
+        .items_mut::<viewport_lib_item_types::VolumeItem>()
         .push(volume);
     let _ = h.render(&with_volume, 200, 150);
     assert_eq!(

@@ -25,9 +25,10 @@ use viewport_lib::wgpu;
 use viewport_lib::{
     BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GlyphItem, GpuMarchingCubesItem,
     LightingSettings, Material, MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings,
-    ScatterVolumeItem, SceneFrame, SceneRenderItem, ViewportRenderer, VolumeItem, primitives,
+    ScatterVolumeItem, SceneFrame, SceneRenderItem, ViewportRenderer, primitives,
 };
 use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
     GaussianSplatItem, GpuImplicitItem, ImageSliceItem, VolumeSurfaceSliceItem,
 };
@@ -201,7 +202,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<viewport_lib_item_types::SpriteItem>() = scene.sprite_items.clone();
     *sf.items_mut::<viewport_lib_item_types::GpuParticleSystemItem>() =
         scene.gpu_particle_systems.clone();
-    *sf.items_mut::<viewport_lib::VolumeItem>() = scene.volumes.clone();
+    *sf.items_mut::<viewport_lib_item_types::VolumeItem>() = scene.volumes.clone();
     *sf.items_mut::<GaussianSplatItem>() = scene.gaussian_splats.clone();
     *sf.items_mut::<ImageSliceItem>() = scene.image_slices.clone();
     *sf.items_mut::<VolumeSurfaceSliceItem>() = scene.volume_surface_slices.clone();

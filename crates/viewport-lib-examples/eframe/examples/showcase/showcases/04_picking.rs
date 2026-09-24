@@ -17,6 +17,7 @@ use std::sync::Arc;
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
@@ -29,8 +30,8 @@ use vpl::{
     BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GlyphItem, GlyphType,
     GpuMarchingCubesItem, ItemSettings, Material, McVolumeId, MeshId, NodeId, OverlayFill,
     OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem, PolylineSelectionInfo,
-    SubObjectRef, SubSelection, SubSelectionRef, TextureId, VolumeData, VolumeId, VolumeItem,
-    VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, primitives,
+    SubObjectRef, SubSelection, SubSelectionRef, TextureId, VolumeData, VolumeId, VolumeMeshData,
+    VolumeMeshItem, VolumeSelectionInfo, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -281,7 +282,9 @@ impl PickingShowcase {
             vol.settings.pick_id = PickId(VOLUME);
             vol.settings.selected = sel(VOLUME);
             vol.volume_data = Some(data.clone());
-            fd.scene.items_mut::<viewport_lib::VolumeItem>().push(vol);
+            fd.scene
+                .items_mut::<viewport_lib_item_types::VolumeItem>()
+                .push(vol);
         }
 
         // Gaussian splats.

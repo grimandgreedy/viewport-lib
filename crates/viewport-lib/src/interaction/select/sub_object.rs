@@ -337,11 +337,11 @@ impl SubSelection {
 pub struct VolumeSelectionInfo {
     /// Grid dimensions `[nx, ny, nz]`: same as [`VolumeData::dims`].
     pub dims: [u32; 3],
-    /// Local-space bounding-box minimum corner (matches [`VolumeItem::bbox_min`]).
+    /// Local-space bounding-box minimum corner (matches `VolumeItem::bbox_min`).
     pub bbox_min: [f32; 3],
-    /// Local-space bounding-box maximum corner (matches [`VolumeItem::bbox_max`]).
+    /// Local-space bounding-box maximum corner (matches `VolumeItem::bbox_max`).
     pub bbox_max: [f32; 3],
-    /// World-space transform (matches [`VolumeItem::model`]).
+    /// World-space transform (matches `VolumeItem::model`).
     pub model: [[f32; 4]; 4],
 }
 

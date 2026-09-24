@@ -37,6 +37,7 @@ mod point_cloud;
 mod shader;
 mod sprite;
 mod tensor_glyph;
+mod volume;
 mod volume_surface_slice;
 
 pub use curves::{
@@ -67,6 +68,7 @@ pub use sprite::{
 pub use tensor_glyph::{
     TensorGlyphItem, TensorGlyphPlugin, TensorGlyphSetId, TensorGlyphSetRefItem,
 };
+pub use volume::{VolumeItem, VolumePlugin};
 pub use volume_surface_slice::{VolumeSurfaceSliceItem, VolumeSurfaceSlicePlugin};
 
 /// A handle the renderer's own id crate owns, re-exported so a consumer of this
@@ -96,6 +98,8 @@ pub const IMAGE_SLICE_TYPE_NAME: &str = image_slice::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const POINT_CLOUD_TYPE_NAME: &str = point_cloud::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const VOLUME_TYPE_NAME: &str = volume::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const VOLUME_SURFACE_SLICE_TYPE_NAME: &str = volume_surface_slice::TYPE_NAME;
 
 /// Every shader this crate compiles, as `(name, source)`, with the shared
@@ -115,6 +119,7 @@ pub fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(point_cloud::shader_sources());
     all.extend(sprite::shader_sources());
     all.extend(tensor_glyph::shader_sources());
+    all.extend(volume::shader_sources());
     all.extend(volume_surface_slice::shader_sources());
     all.extend(helpers::shader_sources());
     all
@@ -136,6 +141,7 @@ pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     renderer.with_item_type_plugin(device, Box::new(PointCloudPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(GaussianSplatPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(GpuImplicitPlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(VolumePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(StreamtubePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(TubePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(TensorGlyphPlugin::default()));
@@ -180,7 +186,6 @@ impl viewport_lib::plugin_api::Uploads<PointCloudItem> for ViewportRenderer {
         let host = host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME);
         host.plugin.replace(device, queue, host.resources, id, item)
     }
-
 }
 
 impl viewport_lib::plugin_api::Handles<PointCloudId> for ViewportRenderer {
@@ -206,7 +211,8 @@ impl viewport_lib::plugin_api::Uploads<GaussianSplatData> for ViewportRenderer {
         queue: &gpu::Queue,
         data: &GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
-        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME).upload(device, queue, data)
+        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME)
+            .upload(device, queue, data)
     }
 
     fn begin_upload(

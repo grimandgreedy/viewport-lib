@@ -3,11 +3,10 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
-#[cfg(feature = "wgpu29")]
-use viewport_lib::wgpu;
-
 mod common;
 use common::*;
+use viewport_lib::SurfaceSubmission;
+use viewport_lib_item_types::VolumeItem;
 
 #[test]
 fn gpu_pick_hits_voxel_volume() {
@@ -15,7 +14,7 @@ fn gpu_pick_hits_voxel_volume() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
 
     // A fully dense 8^3 volume: every voxel is in-threshold, so the raymarch pick
     // hits on the first sample anywhere the bounding cube covers.
@@ -46,7 +45,9 @@ fn gpu_pick_hits_voxel_volume() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(63);
-    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
+    *frame
+        .scene
+        .items_mut::<viewport_lib_item_types::VolumeItem>() = vec![vol];
 
     // prepare builds the per-volume GPU data (bind group + cube) the pick reuses.
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -68,7 +69,7 @@ fn gpu_pick_voxel_volume_resolves_voxel() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
 
     // A fully dense 8^3 volume centred on the origin: the raymarch pick hits a
     // voxel wherever the bounding cube covers, and the primitive channel carries
@@ -99,7 +100,9 @@ fn gpu_pick_voxel_volume_resolves_voxel() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(63);
-    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
+    *frame
+        .scene
+        .items_mut::<viewport_lib_item_types::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
@@ -144,7 +147,7 @@ fn gpu_pick_hits_showcase_style_voxel_volume() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
 
     // Replicate showcase 33's volume: a 16^3 sphere-shaped scalar field, a bbox
     // offset from the origin, an off-origin model, and a 0.15 threshold. This is
@@ -206,7 +209,9 @@ fn gpu_pick_hits_showcase_style_voxel_volume() {
     vol.threshold_min = 0.15;
     vol.threshold_max = 1.0;
     vol.settings.pick_id = PickId(20);
-    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
+    *frame
+        .scene
+        .items_mut::<viewport_lib_item_types::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -226,7 +231,7 @@ fn cpu_pick_hits_voxel_volume() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
 
     // The CPU path marches `volume_data`, not the uploaded texture, so the item
@@ -252,7 +257,9 @@ fn cpu_pick_hits_voxel_volume() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(64);
-    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
+    *frame
+        .scene
+        .items_mut::<viewport_lib_item_types::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);
@@ -283,7 +290,7 @@ fn rect_pick_hits_voxel_volume() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
 
     let dims = [4u32, 4, 4];
@@ -307,7 +314,9 @@ fn rect_pick_hits_voxel_volume() {
     vol.bbox_min = [-0.5, -0.5, -0.5];
     vol.bbox_max = [0.5, 0.5, 0.5];
     vol.settings.pick_id = PickId(65);
-    *frame.scene.items_mut::<viewport_lib::VolumeItem>() = vec![vol];
+    *frame
+        .scene
+        .items_mut::<viewport_lib_item_types::VolumeItem>() = vec![vol];
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);

@@ -896,10 +896,7 @@ pub(crate) fn comparison_sampler(
 /// Linear-filtered sampler clamped to edge on all axes, with linear mip
 /// filtering. Like [`clamp_linear_sampler`] but samples across the mip chain
 /// (used by the volume LUT lookups).
-pub(crate) fn clamp_linear_mip_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_linear_mip_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,

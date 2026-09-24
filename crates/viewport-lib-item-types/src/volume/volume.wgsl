@@ -13,20 +13,6 @@
 // Vertex input: unit cube [0,1]^3 positions (location 0).
 // The model matrix maps the unit cube to the world-space bounding box.
 
-struct Camera {
-    view_proj: mat4x4<f32>,
-    eye_pos:   vec3<f32>,
-    _pad:      f32,
-};
-
-struct ClipPlanes {
-    planes: array<vec4<f32>, 6>,
-    count:  u32,
-    _pad0:  u32,
-    viewport_width:  f32,
-    viewport_height: f32,
-};
-
 struct VolumeUniform {
     model:           mat4x4<f32>,  // unit cube -> world space
     inv_model:       mat4x4<f32>,  // world space -> unit cube [0,1]^3
@@ -46,36 +32,6 @@ struct VolumeUniform {
     clip_planes:     array<vec4<f32>, 6>,  // normal.xyz + distance
 };
 
-struct ClipVolumeEntry {
-    volume_type: u32,
-    _pad_a: u32,
-    _pad_b: u32,
-    _pad_c: u32,
-    center: vec3<f32>,
-    radius: f32,
-    half_extents: vec3<f32>,
-    _pad1: f32,
-    col0: vec3<f32>,
-    _pad2: f32,
-    col1: vec3<f32>,
-    _pad3: f32,
-    col2: vec3<f32>,
-    _pad4: f32,
-}
-
-struct ClipVolumeUB {
-    count: u32,
-    _pad_a: u32,
-    _pad_b: u32,
-    _pad_c: u32,
-    volumes: array<ClipVolumeEntry, 4>,
-};
-
-@group(0) @binding(0) var<uniform> camera: Camera;
-@group(0) @binding(4) var<uniform> clip_planes_ub: ClipPlanes;
-@group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
-
-// #include "helpers/clip_volume_test.wgsl"
 
 @group(1) @binding(0) var<uniform> volume: VolumeUniform;
 @group(1) @binding(1) var volume_tex: texture_3d<f32>;

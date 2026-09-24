@@ -460,7 +460,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
 
 impl GaussianSplatPlugin {
     /// Upload one splat set and return its handle. Reached from
-    /// [`ViewportRenderer::upload_gaussian_splat`](viewport_lib::renderer::ViewportRenderer::upload_gaussian_splat).
+    /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     pub fn upload(
         &mut self,
         device: &gpu::Device,

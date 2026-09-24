@@ -27,7 +27,6 @@ pub use crate::renderer::item_plugins::glyph::types::*;
 pub use crate::renderer::item_plugins::gpu_marching_cubes::types::*;
 pub use crate::renderer::item_plugins::polyline::types::*;
 pub use crate::renderer::item_plugins::scatter_volume::types::*;
-pub use crate::renderer::item_plugins::volume::types::*;
 // The glyph structs are wgpu-free and carry no store id, so they live in
 // `viewport-lib-types` rather than in the plugin directory. The reference form
 // does sit with the plugin, above.
