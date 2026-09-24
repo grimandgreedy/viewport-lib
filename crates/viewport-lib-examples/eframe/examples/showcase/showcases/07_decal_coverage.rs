@@ -15,10 +15,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem,
-    GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
+    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
 
 use crate::eframe::egui;
@@ -660,7 +661,7 @@ impl Showcase for DecalCoverageShowcase {
             if let Ok(id) = ctx
                 .session
                 .renderer_mut()
-                .upload_gaussian_splat(ctx.device, ctx.queue, &data)
+                .upload(ctx.device, ctx.queue, &data)
             {
                 self.splat_id = Some(id);
                 self.instance_lookup.insert(SPLAT, positions.clone());

@@ -18,10 +18,11 @@
 use crate::eframe;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem,
-    GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
+    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
 
 use crate::eframe::egui;
@@ -653,7 +654,7 @@ impl App {
         }
         let splat_data = make_pl_splat_data(&splat_positions);
         let splat_id = renderer
-            .upload_gaussian_splat(&self.device, &self.queue, &splat_data)
+            .upload(&self.device, &self.queue, &splat_data)
             .expect("example: splat data is validated at construction");
         self.pl_state.splat_positions = splat_positions;
         self.pl_state.splat_id = Some(splat_id);

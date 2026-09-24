@@ -2,7 +2,7 @@
 //! points drawn as screen-space thick lines. Consumers submit [`PolylineItem`]s
 //! on `SceneFrame::polylines`, or [`PolylineRefItem`]s on
 //! `SceneFrame::polyline_refs` to draw a polyline uploaded once through
-//! `upload_polyline`; the renderer routes both fields to this plugin.
+//! `Uploads::upload`; the renderer routes both forms to this plugin.
 //!
 //! The pipelines this draws with belong to `resources`, not to the plugin: they
 //! are the shared line substrate that isolines, scatter-volume bounds, volume
@@ -517,12 +517,13 @@ impl PolylinePlugin {
         resources: &crate::resources::DeviceResources,
         id: types::PolylineId,
         item: &crate::renderer::PolylineItem,
-    ) -> bool {
+    ) -> crate::error::ViewportResult<()> {
         if !self.stored.contains(id) {
-            return false;
+            return Err(self.stored.stale(id));
         }
         let gpu = build(device, queue, resources, item);
-        self.stored.replace_sized(id, gpu).is_some()
+        self.stored.replace_sized(id, gpu);
+        Ok(())
     }
 
     /// Hand a built polyline to the job runner so the handle is minted by the

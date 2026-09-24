@@ -23,7 +23,9 @@ use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
 
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib::renderer::{CameraFrame, SceneFrame};
 use viewport_lib::resources::{TextureData, TextureId};
 
@@ -136,7 +138,9 @@ fn a_replaced_texture_reaches_a_stored_sprite_set() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
-    let id = renderer.upload_sprite_set(&device, &queue, &sprite_batch(tex));
+    let id = renderer
+        .upload(&device, &queue, &sprite_batch(tex))
+        .unwrap();
 
     let before = render_set(&mut renderer, &device, &queue, id);
     renderer
@@ -170,7 +174,9 @@ fn a_freed_texture_leaves_a_stored_sprite_set_untextured() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
-    let id = renderer.upload_sprite_set(&device, &queue, &sprite_batch(tex));
+    let id = renderer
+        .upload(&device, &queue, &sprite_batch(tex))
+        .unwrap();
 
     let before = render_set(&mut renderer, &device, &queue, id);
     assert!(renderer.resources_mut().free_texture(tex));
@@ -182,7 +188,7 @@ fn a_freed_texture_leaves_a_stored_sprite_set_untextured() {
     );
     // And the batch is still there to be drawn and dropped: a free of something
     // it names is not a free of the batch.
-    assert!(renderer.drop_sprite_set(id));
+    assert!(renderer.release(id));
 }
 
 /// A free of an unrelated texture must not disturb a batch that does not name
@@ -198,7 +204,9 @@ fn an_unrelated_free_leaves_a_stored_sprite_set_alone() {
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
     let other = solid_texture(&mut renderer, &device, &queue, C_SWAP);
-    let id = renderer.upload_sprite_set(&device, &queue, &sprite_batch(tex));
+    let id = renderer
+        .upload(&device, &queue, &sprite_batch(tex))
+        .unwrap();
 
     let before = render_set(&mut renderer, &device, &queue, id);
     assert!(renderer.resources_mut().free_texture(other));
@@ -252,7 +260,9 @@ fn a_replaced_texture_reaches_a_stored_ribbon() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
-    let id = renderer.upload_ribbon(&device, &queue, &ribbon_batch(tex));
+    let id = renderer
+        .upload(&device, &queue, &ribbon_batch(tex))
+        .unwrap();
 
     let before = render_ribbon(&mut renderer, &device, &queue, id);
     // The ribbon has to be covering pixels, or the comparisons below pass by
@@ -287,7 +297,9 @@ fn a_freed_texture_leaves_a_stored_ribbon_untextured() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
     let tex = solid_texture(&mut renderer, &device, &queue, C_START);
-    let id = renderer.upload_ribbon(&device, &queue, &ribbon_batch(tex));
+    let id = renderer
+        .upload(&device, &queue, &ribbon_batch(tex))
+        .unwrap();
 
     let before = render_ribbon(&mut renderer, &device, &queue, id);
     assert!(renderer.resources_mut().free_texture(tex));
@@ -297,7 +309,7 @@ fn a_freed_texture_leaves_a_stored_ribbon_untextured() {
         before, after,
         "a stored ribbon must stop sampling a texture the host freed"
     );
-    assert!(renderer.drop_ribbon(id));
+    assert!(renderer.release(id));
 }
 
 // ---------------------------------------------------------------------------

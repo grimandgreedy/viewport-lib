@@ -23,10 +23,11 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem,
-    GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
+    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
 use vpl::{
     ColourmapId, FrameData, GlyphItem, GlyphType, ItemSettings, LightSource, LightingSettings,
@@ -183,7 +184,7 @@ impl App {
                     (b - 0.5) / SH0_C,
                 ]);
             }
-            if let Ok(sid) = renderer.upload_gaussian_splat(&self.device, &self.queue, &sd) {
+            if let Ok(sid) = renderer.upload(&self.device, &self.queue, &sd) {
                 self.lc_state.splat_id = Some(sid);
             }
         }

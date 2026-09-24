@@ -19,8 +19,10 @@ use crate::eframe;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use viewport_lib as vpl;
-use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId, GaussianSplatUploads};
-use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem, PointCloudUploads};
+use viewport_lib::plugin_api::Uploads;
+use viewport_lib::renderer::SpriteInstanceUploads;
+use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId};
+use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem};
 
 use crate::eframe::egui;
 use vpl::{
@@ -33,6 +35,7 @@ use vpl::{
 };
 
 use crate::App;
+use viewport_lib::plugin_api::Handles;
 
 // ---------------------------------------------------------------------------
 // State
@@ -447,7 +450,7 @@ impl App {
             self.async_uploads_state.polyline_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_polyline(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_polyline_id = Some(id);
@@ -488,7 +491,7 @@ impl App {
             self.async_uploads_state.streamtube_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_streamtube(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_streamtube_id = Some(id);
@@ -529,7 +532,7 @@ impl App {
             self.async_uploads_state.tube_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_tube(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_tube_id = Some(id);
@@ -569,7 +572,7 @@ impl App {
             self.async_uploads_state.ribbon_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_ribbon(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_ribbon_id = Some(id);
@@ -609,7 +612,7 @@ impl App {
             self.async_uploads_state.point_cloud_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_point_cloud(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_point_cloud_id = Some(id);
@@ -650,7 +653,7 @@ impl App {
             self.async_uploads_state.glyph_set_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_glyph_set(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_glyph_set_id = Some(id);
@@ -691,7 +694,7 @@ impl App {
             self.async_uploads_state.tensor_glyph_set_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_tensor_glyph_set(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_tensor_glyph_set_id = Some(id);
@@ -772,7 +775,7 @@ impl App {
             self.async_uploads_state.gaussian_splat_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_gaussian_splat(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_gaussian_splat_id = Some(id);
@@ -854,7 +857,7 @@ impl App {
             self.async_uploads_state.sprite_set_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_sprite_set(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_sprite_set_id = Some(id);
@@ -895,7 +898,7 @@ impl App {
             self.async_uploads_state.sprite_instance_set_state.clone()
         {
             match renderer.upload_status(job) {
-                UploadStatus::Ready => match renderer.upload_result_sprite_instance_set(job) {
+                UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
                         self.async_uploads_state.loaded_sprite_instance_set_id = Some(id);
@@ -1591,13 +1594,15 @@ impl App {
         let item = demo_polyline(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_polyline(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_polyline_id = Some(id);
             self.async_uploads_state.polyline_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_polyline(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.polyline_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1610,13 +1615,15 @@ impl App {
         let item = demo_streamtube(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_streamtube(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_streamtube_id = Some(id);
             self.async_uploads_state.streamtube_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_streamtube(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.streamtube_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1629,13 +1636,15 @@ impl App {
         let item = demo_tube(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_tube(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_tube_id = Some(id);
             self.async_uploads_state.tube_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_tube(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.tube_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1648,13 +1657,15 @@ impl App {
         let item = demo_ribbon(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_ribbon(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_ribbon_id = Some(id);
             self.async_uploads_state.ribbon_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_ribbon(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.ribbon_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1667,13 +1678,15 @@ impl App {
         let item = demo_point_cloud(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_point_cloud(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_point_cloud_id = Some(id);
             self.async_uploads_state.point_cloud_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_point_cloud(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.point_cloud_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1686,13 +1699,15 @@ impl App {
         let item = demo_glyph_set();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_glyph_set(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_glyph_set_id = Some(id);
             self.async_uploads_state.glyph_set_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_glyph_set(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.glyph_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1705,13 +1720,15 @@ impl App {
         let item = demo_tensor_glyph_set();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_tensor_glyph_set(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_tensor_glyph_set_id = Some(id);
             self.async_uploads_state.tensor_glyph_set_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_tensor_glyph_set(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.tensor_glyph_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
@@ -1754,7 +1771,7 @@ impl App {
         let data = demo_gaussian_splats(self.async_uploads_state.payload_size);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            match renderer.upload_gaussian_splat(&self.device, &self.queue, &data) {
+            match renderer.upload(&self.device, &self.queue, &data) {
                 Ok(id) => {
                     self.async_uploads_state.loaded_gaussian_splat_id = Some(id);
                     self.async_uploads_state.gaussian_splat_state = AssetState::Loaded {
@@ -1769,7 +1786,7 @@ impl App {
                 }
             }
         } else {
-            match renderer.begin_upload_gaussian_splat(&self.device, &self.queue, data) {
+            match renderer.begin_upload(&self.device, &self.queue, data) {
                 Ok(job) => {
                     self.async_uploads_state.gaussian_splat_state = AssetState::InFlight {
                         job,
@@ -1825,13 +1842,15 @@ impl App {
         let item = demo_sprite_set();
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
-            let id = renderer.upload_sprite_set(&self.device, &self.queue, &item);
+            let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
             self.async_uploads_state.loaded_sprite_set_id = Some(id);
             self.async_uploads_state.sprite_set_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
-            let job = renderer.begin_upload_sprite_set(&self.device, &self.queue, item);
+            let job = renderer
+                .begin_upload(&self.device, &self.queue, item)
+                .unwrap();
             self.async_uploads_state.sprite_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,

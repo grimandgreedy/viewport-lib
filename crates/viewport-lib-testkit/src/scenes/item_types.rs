@@ -8,6 +8,7 @@
 //! settings that make a still frame repeatable (see the scatter scene).
 
 use glam::{Mat4, Vec3};
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
     Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, GpuMarchingCubesItem, Material,
     MeshInstanceItem, PickId, RibbonItem, ScatterQuality, ScatterSettings, ScatterVolume,
@@ -17,8 +18,8 @@ use viewport_lib::{
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
 use viewport_lib_item_types::{
-    GaussianSplatData, GaussianSplatItem, GaussianSplatUploads, GpuImplicitItem, ImageSliceItem,
-    ImplicitBlendMode, ImplicitPrimitive, ShDegree, SliceAxis, VolumeSurfaceSliceItem,
+    GaussianSplatData, GaussianSplatItem, GpuImplicitItem, ImageSliceItem, ImplicitBlendMode,
+    ImplicitPrimitive, ShDegree, SliceAxis, VolumeSurfaceSliceItem,
 };
 
 /// The item-type scenes appended to the main catalogue.
@@ -707,7 +708,7 @@ fn build_gaussian_splats(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     let sid = ctx
         .renderer
-        .upload_gaussian_splat(ctx.device, ctx.queue, &sd)
+        .upload(ctx.device, ctx.queue, &sd)
         .expect("splat upload");
     let mut item = GaussianSplatItem::default();
     item.source = sid;
@@ -1186,7 +1187,7 @@ fn build_item_wireframes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     let splat_id = ctx
         .renderer
-        .upload_gaussian_splat(ctx.device, ctx.queue, &sd)
+        .upload(ctx.device, ctx.queue, &sd)
         .expect("splat upload");
     let mut splats = GaussianSplatItem::default();
     splats.source = splat_id;

@@ -5,9 +5,11 @@
 //! One file per item type, so a type's coverage travels with it.
 
 use viewport_lib::gpu;
+use viewport_lib::plugin_api::Uploads;
 
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
 use viewport_lib_item_types::*;
 
 /// A renderer with this crate's item types registered, which is what a
@@ -186,7 +188,7 @@ fn a_reference_item_picks_like_an_inline_one() {
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
-    let source = renderer.upload_point_cloud(&device, &queue, &cloud);
+    let source = renderer.upload(&device, &queue, &cloud).unwrap();
 
     let mut item = PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(447);
@@ -219,7 +221,7 @@ fn a_hidden_reference_item_is_skipped() {
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
-    let source = renderer.upload_point_cloud(&device, &queue, &cloud);
+    let source = renderer.upload(&device, &queue, &cloud).unwrap();
 
     let mut item = PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(448);
@@ -263,17 +265,25 @@ fn an_uploaded_cloud_resolves_until_it_is_dropped() {
     let mut renderer = renderer_with_item_types(&device);
     let baseline = renderer.resident_bytes().plugin_bytes;
 
-    let id = renderer.upload_point_cloud(&device, &queue, &sample_point_cloud());
+    let id = renderer
+        .upload(&device, &queue, &sample_point_cloud())
+        .unwrap();
     assert!(
         renderer.resident_bytes().plugin_bytes > baseline,
         "an uploaded cloud counts toward the plugin working set"
     );
-    assert!(renderer.replace_point_cloud(&device, &queue, id, &sample_point_cloud()));
-
-    assert!(renderer.drop_point_cloud(id));
-    assert!(!renderer.drop_point_cloud(id), "a handle drops once");
     assert!(
-        !renderer.replace_point_cloud(&device, &queue, id, &sample_point_cloud()),
+        renderer
+            .replace(&device, &queue, id, &sample_point_cloud())
+            .is_ok()
+    );
+
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
+    assert!(
+        renderer
+            .replace(&device, &queue, id, &sample_point_cloud())
+            .is_err(),
         "a dropped handle must not resolve"
     );
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
@@ -287,7 +297,9 @@ fn begin_upload_point_cloud_drains_to_a_handle() {
     };
     let mut renderer = renderer_with_item_types(&device);
 
-    let job = renderer.begin_upload_point_cloud(&device, &queue, sample_point_cloud());
+    let job = renderer
+        .begin_upload(&device, &queue, sample_point_cloud())
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -300,12 +312,12 @@ fn begin_upload_point_cloud_drains_to_a_handle() {
         }
     }
 
-    let id = renderer
-        .upload_result_point_cloud(job)
+    let id: PointCloudId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_point_cloud(id));
+    assert!(renderer.release(id));
     assert!(matches!(
-        renderer.upload_result_point_cloud(job),
+        Handles::<PointCloudId>::upload_result(&mut renderer, job),
         Err(viewport_lib::error::ViewportError::JobResultMissing { .. })
     ));
 }
@@ -330,7 +342,9 @@ fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
         "the built-in LUT views are resident before any frame has run"
     );
 
-    let id = renderer.upload_point_cloud(&device, &queue, &sample_point_cloud());
+    let id = renderer
+        .upload(&device, &queue, &sample_point_cloud())
+        .unwrap();
 
     assert_eq!(
         viridis,
@@ -339,7 +353,7 @@ fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
             .builtin_colourmap_id(viewport_lib::resources::BuiltinColourmap::Viridis),
         "the upload resolved the same id a later frame would"
     );
-    assert!(renderer.drop_point_cloud(id));
+    assert!(renderer.release(id));
 }
 
 /// A hidden item produces no draw data, so hiding one costs nothing beyond the

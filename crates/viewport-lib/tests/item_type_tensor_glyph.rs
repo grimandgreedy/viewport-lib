@@ -9,7 +9,9 @@ use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
 
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{TensorGlyphItem, TensorGlyphSetRefItem};
 
 /// Three unit-sphere tensors spread along X; the centre one sits at the origin,
@@ -186,7 +188,7 @@ fn a_reference_item_picks_like_an_inline_one() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mut frame = sub_object_pick_frame();
 
-    let source = renderer.upload_tensor_glyph_set(&device, &queue, &three_tensors());
+    let source = renderer.upload(&device, &queue, &three_tensors()).unwrap();
 
     let mut item = TensorGlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(704);
@@ -223,7 +225,7 @@ fn a_hidden_reference_item_is_skipped() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let mut frame = sub_object_pick_frame();
 
-    let source = renderer.upload_tensor_glyph_set(&device, &queue, &three_tensors());
+    let source = renderer.upload(&device, &queue, &three_tensors()).unwrap();
 
     let mut item = TensorGlyphSetRefItem::new(source);
     item.settings.pick_id = PickId(705);
@@ -269,12 +271,18 @@ fn an_uploaded_tensor_glyph_set_resolves_until_it_is_dropped() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let baseline = renderer.resident_bytes().plugin_bytes;
 
-    let id = renderer.upload_tensor_glyph_set(&device, &queue, &sample_tensor_glyph_set());
+    let id = renderer
+        .upload(&device, &queue, &sample_tensor_glyph_set())
+        .unwrap();
     assert!(renderer.resident_bytes().plugin_bytes > baseline);
-    assert!(renderer.replace_tensor_glyph_set(&device, &queue, id, &sample_tensor_glyph_set()));
+    assert!(
+        renderer
+            .replace(&device, &queue, id, &sample_tensor_glyph_set())
+            .is_ok()
+    );
 
-    assert!(renderer.drop_tensor_glyph_set(id));
-    assert!(!renderer.drop_tensor_glyph_set(id), "a handle drops once");
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -286,7 +294,9 @@ fn begin_upload_tensor_glyph_set_drains_to_a_handle() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let job = renderer.begin_upload_tensor_glyph_set(&device, &queue, sample_tensor_glyph_set());
+    let job = renderer
+        .begin_upload(&device, &queue, sample_tensor_glyph_set())
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -298,8 +308,8 @@ fn begin_upload_tensor_glyph_set_drains_to_a_handle() {
             viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
         }
     }
-    let id = renderer
-        .upload_result_tensor_glyph_set(job)
+    let id: viewport_lib::resources::TensorGlyphSetId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_tensor_glyph_set(id));
+    assert!(renderer.release(id));
 }

@@ -16,14 +16,12 @@
 //! the scene pass, and occlude like ordinary opaque geometry. HDR path only;
 //! no shadows, no picking, no culling.
 
-mod item;
 mod pipeline;
 pub(crate) mod store;
 mod types;
 
-pub use item::ExternalInstancesItem;
 use store::{ExternalInstanceSetStore, ExternalInstancesGpuData};
-pub use types::{ExternalInstanceSetConfig, ExternalInstanceSetId};
+pub use types::{ExternalInstanceSetConfig, ExternalInstanceSetId, ExternalInstancesItem};
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::{ItemCollections, ItemFrameContext, ItemTypePlugin, PaintContext};
 pub const TYPE_NAME: &str = "vpl.external_instances";

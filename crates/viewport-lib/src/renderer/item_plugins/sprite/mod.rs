@@ -154,12 +154,13 @@ impl SpritePlugin {
         resources: &crate::resources::DeviceResources,
         id: SpriteSetId,
         item: &SpriteItem,
-    ) -> bool {
+    ) -> crate::error::ViewportResult<()> {
         if !self.sets.contains(id) {
-            return false;
+            return Err(self.sets.stale(id));
         }
         let gpu = self.build(device, queue, resources, item);
-        self.sets.replace_sized(id, gpu).is_some()
+        self.sets.replace_sized(id, gpu);
+        Ok(())
     }
 
     /// Pre-upload an entity sprite set and return its handle.
@@ -187,12 +188,13 @@ impl SpritePlugin {
         resources: &crate::resources::DeviceResources,
         id: SpriteInstanceSetId,
         item: &SpriteItem,
-    ) -> bool {
+    ) -> crate::error::ViewportResult<()> {
         if !self.instance_sets.contains(id) {
-            return false;
+            return Err(self.instance_sets.stale(id));
         }
         let gpu = self.build(device, queue, resources, item);
-        self.instance_sets.replace_sized(id, gpu).is_some()
+        self.instance_sets.replace_sized(id, gpu);
+        Ok(())
     }
 
     /// Build a batch's buffers on a worker thread. The handle is minted when

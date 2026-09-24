@@ -2,6 +2,7 @@
 //! per-type file does not already cover.
 
 use viewport_lib::gpu;
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::*;
 
 mod common;
@@ -37,7 +38,7 @@ fn gpu_pick_splat_resolves_splat() {
     data.sh_coefficients = vec![0.0; 9];
     data.sh_degree = ShDegree::Zero;
     let splat_id = renderer
-        .upload_gaussian_splat(&device, &queue, &data)
+        .upload(&device, &queue, &data)
         .expect("upload splat set");
 
     let mut item = GaussianSplatItem::default();

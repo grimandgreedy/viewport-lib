@@ -10,7 +10,10 @@ use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
 
+use viewport_lib::plugin_api::Uploads;
+use viewport_lib::renderer::SpriteInstanceUploads;
 use viewport_lib::renderer::SpriteItem;
 use viewport_lib::resources::UploadStatus;
 
@@ -30,15 +33,19 @@ fn an_uploaded_sprite_set_resolves_until_it_is_dropped() {
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
     let baseline = renderer.resident_bytes().plugin_bytes;
 
-    let id = renderer.upload_sprite_set(&device, &queue, &sample_sprites());
+    let id = renderer.upload(&device, &queue, &sample_sprites()).unwrap();
     assert!(
         renderer.resident_bytes().plugin_bytes > baseline,
         "an uploaded batch counts toward the plugin working set"
     );
-    assert!(renderer.replace_sprite_set(&device, &queue, id, &sample_sprites()));
+    assert!(
+        renderer
+            .replace(&device, &queue, id, &sample_sprites())
+            .is_ok()
+    );
 
-    assert!(renderer.drop_sprite_set(id));
-    assert!(!renderer.drop_sprite_set(id), "a handle drops once");
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -52,13 +59,17 @@ fn the_two_sprite_handle_spaces_do_not_alias() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let set = renderer.upload_sprite_set(&device, &queue, &sample_sprites());
+    let set = renderer.upload(&device, &queue, &sample_sprites()).unwrap();
     let instance_set = renderer.upload_sprite_instance_set(&device, &queue, &sample_sprites());
 
     // Dropping one leaves the other live.
-    assert!(renderer.drop_sprite_set(set));
-    assert!(renderer.replace_sprite_instance_set(&device, &queue, instance_set, &sample_sprites()));
-    assert!(renderer.drop_sprite_instance_set(instance_set));
+    assert!(renderer.release(set));
+    assert!(
+        renderer
+            .replace_sprite_instance_set(&device, &queue, instance_set, &sample_sprites())
+            .is_ok()
+    );
+    assert!(renderer.release(instance_set));
 }
 
 #[test]
@@ -69,7 +80,9 @@ fn begin_upload_sprite_set_drains_to_a_handle() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let job = renderer.begin_upload_sprite_set(&device, &queue, sample_sprites());
+    let job = renderer
+        .begin_upload(&device, &queue, sample_sprites())
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -80,12 +93,12 @@ fn begin_upload_sprite_set_drains_to_a_handle() {
         }
     }
 
-    let id = renderer
-        .upload_result_sprite_set(job)
+    let id: viewport_lib::resources::SpriteSetId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_sprite_set(id));
+    assert!(renderer.release(id));
     assert!(matches!(
-        renderer.upload_result_sprite_set(job),
+        Handles::<viewport_lib::resources::SpriteSetId>::upload_result(&mut renderer, job),
         Err(viewport_lib::error::ViewportError::JobResultMissing { .. })
     ));
 }

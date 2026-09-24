@@ -4,7 +4,7 @@ use crate::renderer::types::items::IDENTITY_MAT4;
 
 crate::resources::handle::slot_handle! {
     /// Handle to a glyph set uploaded once through
-    /// [`ViewportRenderer::upload_glyph_set`](crate::renderer::ViewportRenderer::upload_glyph_set).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     ///
     /// Name it from a [`GlyphSetRefItem`] to draw the stored set without
     /// rebuilding its instance buffer.
@@ -17,8 +17,8 @@ use crate::scene::material::ItemSettings;
 #[non_exhaustive]
 pub struct GlyphSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_glyph_set`](crate::renderer::ViewportRenderer::upload_glyph_set)
-    /// or `begin_upload_glyph_set`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::GlyphSetId,
     /// Per-frame model matrix. Composes on top of the per-instance
     /// transforms baked at upload time.

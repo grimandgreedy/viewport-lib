@@ -5,19 +5,19 @@
 
 crate::resources::handle::slot_handle! {
     /// Handle to a streamtube uploaded once through
-    /// [`ViewportRenderer::upload_streamtube`](crate::renderer::ViewportRenderer::upload_streamtube).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     pub struct StreamtubeId;
 }
 
 crate::resources::handle::slot_handle! {
     /// Handle to a tube uploaded once through
-    /// [`ViewportRenderer::upload_tube`](crate::renderer::ViewportRenderer::upload_tube).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     pub struct TubeId;
 }
 
 crate::resources::handle::slot_handle! {
     /// Handle to a ribbon uploaded once through
-    /// [`ViewportRenderer::upload_ribbon`](crate::renderer::ViewportRenderer::upload_ribbon).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     pub struct RibbonId;
 }
 
@@ -218,8 +218,8 @@ impl Default for RibbonItem {
 #[non_exhaustive]
 pub struct StreamtubeRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_streamtube`](crate::renderer::ViewportRenderer::upload_streamtube)
-    /// or `begin_upload_streamtube`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::StreamtubeId,
     /// Per-frame model matrix.
     pub model: [[f32; 4]; 4],
@@ -243,8 +243,8 @@ impl StreamtubeRefItem {
 #[non_exhaustive]
 pub struct TubeRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_tube`](crate::renderer::ViewportRenderer::upload_tube)
-    /// or `begin_upload_tube`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::TubeId,
     /// Per-frame model matrix.
     pub model: [[f32; 4]; 4],
@@ -268,8 +268,8 @@ impl TubeRefItem {
 #[non_exhaustive]
 pub struct RibbonRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_ribbon`](crate::renderer::ViewportRenderer::upload_ribbon)
-    /// or `begin_upload_ribbon`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::RibbonId,
     /// Per-frame model matrix.
     pub model: [[f32; 4]; 4],

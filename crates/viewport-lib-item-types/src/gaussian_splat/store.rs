@@ -6,10 +6,10 @@
 //! [`ViewportRenderer`](viewport_lib::renderer::ViewportRenderer), which find this
 //! plugin by name and call through to the methods below.
 
-use viewport_lib::resources::GaussianSplatId;
+use super::types::GaussianSplatId;
 
+pub use super::types::{GaussianSplatData, ShDegree};
 use viewport_lib::gpu;
-pub use viewport_lib::{GaussianSplatData, ShDegree};
 
 /// Check that a splat set is non-empty and its per-attribute vectors agree in
 /// length. Shared by the sync, async, and replace upload paths.

@@ -10,7 +10,9 @@ use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
 
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
     RibbonRefItem, StreamtubeItem, StreamtubeRefItem, SubObjectRef, TubeItem, TubeRefItem,
 };
@@ -431,7 +433,7 @@ fn a_reference_streamtube_picks_under_its_own_id() {
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
     tube.settings.pick_id = PickId(1);
-    let source = renderer.upload_streamtube(&device, &queue, &tube);
+    let source = renderer.upload(&device, &queue, &tube).unwrap();
 
     let mut reference = StreamtubeRefItem::new(source);
     reference.settings.pick_id = PickId(7171);
@@ -459,7 +461,7 @@ fn a_hidden_reference_tube_is_skipped() {
     tube.positions = positions;
     tube.strip_lengths = strip_lengths;
     tube.radius = 0.5;
-    let source = renderer.upload_tube(&device, &queue, &tube);
+    let source = renderer.upload(&device, &queue, &tube).unwrap();
 
     let mut reference = TubeRefItem::new(source);
     reference.settings.pick_id = PickId(7272);
@@ -488,7 +490,7 @@ fn a_reference_ribbon_draws_and_picks() {
     ribbon.positions = positions;
     ribbon.strip_lengths = strip_lengths;
     ribbon.width = 2.0;
-    let source = renderer.upload_ribbon(&device, &queue, &ribbon);
+    let source = renderer.upload(&device, &queue, &ribbon).unwrap();
 
     let mut reference = RibbonRefItem::new(source);
     reference.settings.pick_id = PickId(7373);
@@ -522,21 +524,21 @@ fn an_uploaded_streamtube_resolves_until_it_is_dropped() {
         item.radius = 0.2;
         item
     };
-    let id = renderer.upload_streamtube(&device, &queue, &item);
+    let id = renderer.upload(&device, &queue, &item).unwrap();
     assert!(
         renderer.resident_bytes().plugin_bytes > baseline,
         "an uploaded streamtube counts toward the plugin working set"
     );
-    assert!(renderer.replace_streamtube(&device, &queue, id, &item));
+    assert!(renderer.replace(&device, &queue, id, &item).is_ok());
 
     // A dropped handle stops resolving, and the freed slot comes back at a new
     // generation so it cannot alias its successor.
-    assert!(renderer.drop_streamtube(id));
-    assert!(!renderer.drop_streamtube(id), "a handle drops once");
-    let reused = renderer.upload_streamtube(&device, &queue, &item);
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
+    let reused = renderer.upload(&device, &queue, &item).unwrap();
     assert_ne!(id, reused, "the reused slot carries a new generation");
-    assert!(!renderer.replace_streamtube(&device, &queue, id, &item));
-    assert!(renderer.drop_streamtube(reused));
+    assert!(renderer.replace(&device, &queue, id, &item).is_err());
+    assert!(renderer.release(reused));
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -548,13 +550,15 @@ fn begin_upload_streamtube_drains_to_a_handle() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let job = renderer.begin_upload_streamtube(&device, &queue, {
-        let mut item = viewport_lib::renderer::StreamtubeItem::default();
-        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-        item.strip_lengths = vec![3];
-        item.radius = 0.2;
-        item
-    });
+    let job = renderer
+        .begin_upload(&device, &queue, {
+            let mut item = viewport_lib::renderer::StreamtubeItem::default();
+            item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+            item.strip_lengths = vec![3];
+            item.radius = 0.2;
+            item
+        })
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -566,10 +570,10 @@ fn begin_upload_streamtube_drains_to_a_handle() {
             viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
         }
     }
-    let id = renderer
-        .upload_result_streamtube(job)
+    let id: viewport_lib::resources::StreamtubeId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_streamtube(id));
+    assert!(renderer.release(id));
 }
 
 // ---------------------------------------------------------------------------
@@ -592,21 +596,21 @@ fn an_uploaded_tube_resolves_until_it_is_dropped() {
         item.radius = 0.2;
         item
     };
-    let id = renderer.upload_tube(&device, &queue, &item);
+    let id = renderer.upload(&device, &queue, &item).unwrap();
     assert!(
         renderer.resident_bytes().plugin_bytes > baseline,
         "an uploaded tube counts toward the plugin working set"
     );
-    assert!(renderer.replace_tube(&device, &queue, id, &item));
+    assert!(renderer.replace(&device, &queue, id, &item).is_ok());
 
     // A dropped handle stops resolving, and the freed slot comes back at a new
     // generation so it cannot alias its successor.
-    assert!(renderer.drop_tube(id));
-    assert!(!renderer.drop_tube(id), "a handle drops once");
-    let reused = renderer.upload_tube(&device, &queue, &item);
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
+    let reused = renderer.upload(&device, &queue, &item).unwrap();
     assert_ne!(id, reused, "the reused slot carries a new generation");
-    assert!(!renderer.replace_tube(&device, &queue, id, &item));
-    assert!(renderer.drop_tube(reused));
+    assert!(renderer.replace(&device, &queue, id, &item).is_err());
+    assert!(renderer.release(reused));
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -618,13 +622,15 @@ fn begin_upload_tube_drains_to_a_handle() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let job = renderer.begin_upload_tube(&device, &queue, {
-        let mut item = viewport_lib::renderer::TubeItem::default();
-        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-        item.strip_lengths = vec![3];
-        item.radius = 0.2;
-        item
-    });
+    let job = renderer
+        .begin_upload(&device, &queue, {
+            let mut item = viewport_lib::renderer::TubeItem::default();
+            item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+            item.strip_lengths = vec![3];
+            item.radius = 0.2;
+            item
+        })
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -636,10 +642,10 @@ fn begin_upload_tube_drains_to_a_handle() {
             viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
         }
     }
-    let id = renderer
-        .upload_result_tube(job)
+    let id: viewport_lib::resources::TubeId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_tube(id));
+    assert!(renderer.release(id));
 }
 
 // ---------------------------------------------------------------------------
@@ -662,21 +668,21 @@ fn an_uploaded_ribbon_resolves_until_it_is_dropped() {
         item.width = 0.3;
         item
     };
-    let id = renderer.upload_ribbon(&device, &queue, &item);
+    let id = renderer.upload(&device, &queue, &item).unwrap();
     assert!(
         renderer.resident_bytes().plugin_bytes > baseline,
         "an uploaded ribbon counts toward the plugin working set"
     );
-    assert!(renderer.replace_ribbon(&device, &queue, id, &item));
+    assert!(renderer.replace(&device, &queue, id, &item).is_ok());
 
     // A dropped handle stops resolving, and the freed slot comes back at a new
     // generation so it cannot alias its successor.
-    assert!(renderer.drop_ribbon(id));
-    assert!(!renderer.drop_ribbon(id), "a handle drops once");
-    let reused = renderer.upload_ribbon(&device, &queue, &item);
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
+    let reused = renderer.upload(&device, &queue, &item).unwrap();
     assert_ne!(id, reused, "the reused slot carries a new generation");
-    assert!(!renderer.replace_ribbon(&device, &queue, id, &item));
-    assert!(renderer.drop_ribbon(reused));
+    assert!(renderer.replace(&device, &queue, id, &item).is_err());
+    assert!(renderer.release(reused));
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -688,13 +694,15 @@ fn begin_upload_ribbon_drains_to_a_handle() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let job = renderer.begin_upload_ribbon(&device, &queue, {
-        let mut item = viewport_lib::renderer::RibbonItem::default();
-        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
-        item.strip_lengths = vec![3];
-        item.width = 0.3;
-        item
-    });
+    let job = renderer
+        .begin_upload(&device, &queue, {
+            let mut item = viewport_lib::renderer::RibbonItem::default();
+            item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+            item.strip_lengths = vec![3];
+            item.width = 0.3;
+            item
+        })
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -706,8 +714,8 @@ fn begin_upload_ribbon_drains_to_a_handle() {
             viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
         }
     }
-    let id = renderer
-        .upload_result_ribbon(job)
+    let id: viewport_lib::resources::RibbonId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_ribbon(id));
+    assert!(renderer.release(id));
 }

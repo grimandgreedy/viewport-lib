@@ -4,7 +4,7 @@ use crate::renderer::types::items::IDENTITY_MAT4;
 
 crate::resources::handle::slot_handle! {
     /// Handle to a tensor glyph set uploaded once through
-    /// [`ViewportRenderer::upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_tensor_glyph_set).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     ///
     /// Name it from a [`TensorGlyphSetRefItem`] to draw the stored set without
     /// rebuilding its instance buffer.
@@ -17,8 +17,8 @@ use crate::scene::material::ItemSettings;
 #[non_exhaustive]
 pub struct TensorGlyphSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_tensor_glyph_set`](crate::renderer::ViewportRenderer::upload_tensor_glyph_set)
-    /// or `begin_upload_tensor_glyph_set`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::TensorGlyphSetId,
     /// Per-frame model matrix. Composes on top of the per-instance
     /// transforms baked at upload time.

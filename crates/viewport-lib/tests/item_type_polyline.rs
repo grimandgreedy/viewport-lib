@@ -9,6 +9,8 @@ use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
+use viewport_lib::plugin_api::Uploads;
 
 use viewport_lib::PolylineRefItem;
 
@@ -234,7 +236,7 @@ fn a_reference_item_picks_like_an_inline_one() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    let source = renderer.upload_polyline(&device, &queue, &polyline);
+    let source = renderer.upload(&device, &queue, &polyline).unwrap();
 
     let mut item = PolylineRefItem::new(source);
     item.settings.pick_id = PickId(892);
@@ -269,7 +271,7 @@ fn a_hidden_reference_item_is_skipped() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    let source = renderer.upload_polyline(&device, &queue, &polyline);
+    let source = renderer.upload(&device, &queue, &polyline).unwrap();
 
     let mut item = PolylineRefItem::new(source);
     item.settings.pick_id = PickId(893);
@@ -346,21 +348,21 @@ fn an_uploaded_polyline_resolves_until_it_is_dropped() {
         item.line_width = 2.0;
         item
     };
-    let id = renderer.upload_polyline(&device, &queue, &item);
+    let id = renderer.upload(&device, &queue, &item).unwrap();
     assert!(
         renderer.resident_bytes().plugin_bytes > baseline,
         "an uploaded polyline counts toward the plugin working set"
     );
-    assert!(renderer.replace_polyline(&device, &queue, id, &item));
+    assert!(renderer.replace(&device, &queue, id, &item).is_ok());
 
     // A dropped handle stops resolving, and the freed slot comes back at a new
     // generation so it cannot alias its successor.
-    assert!(renderer.drop_polyline(id));
-    assert!(!renderer.drop_polyline(id), "a handle drops once");
-    let reused = renderer.upload_polyline(&device, &queue, &item);
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
+    let reused = renderer.upload(&device, &queue, &item).unwrap();
     assert_ne!(id, reused, "the reused slot carries a new generation");
-    assert!(!renderer.replace_polyline(&device, &queue, id, &item));
-    assert!(renderer.drop_polyline(reused));
+    assert!(renderer.replace(&device, &queue, id, &item).is_err());
+    assert!(renderer.release(reused));
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -372,13 +374,15 @@ fn begin_upload_polyline_drains_to_a_handle() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let job = renderer.begin_upload_polyline(&device, &queue, {
-        let mut item = viewport_lib::renderer::PolylineItem::default();
-        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]];
-        item.strip_lengths = vec![3];
-        item.line_width = 2.0;
-        item
-    });
+    let job = renderer
+        .begin_upload(&device, &queue, {
+            let mut item = viewport_lib::renderer::PolylineItem::default();
+            item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]];
+            item.strip_lengths = vec![3];
+            item.line_width = 2.0;
+            item
+        })
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -390,8 +394,8 @@ fn begin_upload_polyline_drains_to_a_handle() {
             viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
         }
     }
-    let id = renderer
-        .upload_result_polyline(job)
+    let id: viewport_lib::resources::PolylineId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_polyline(id));
+    assert!(renderer.release(id));
 }

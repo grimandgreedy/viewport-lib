@@ -10,7 +10,7 @@
 //! because a set's draw data is built against it during `prepare`, before the
 //! pass that binds the pipeline has begun.
 
-use super::item::ExternalInstancesItem;
+use super::types::ExternalInstancesItem;
 use bytemuck::{Pod, Zeroable};
 use gpu::util::DeviceExt;
 use viewport_lib::gpu;

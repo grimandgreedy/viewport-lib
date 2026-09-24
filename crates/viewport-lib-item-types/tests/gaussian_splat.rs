@@ -8,6 +8,8 @@
 //! One file per item type, so a type's coverage travels with it.
 
 use viewport_lib::gpu;
+use viewport_lib::plugin_api::Handles;
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::*;
 
 mod common;
@@ -22,7 +24,6 @@ fn renderer_with_item_types(device: &gpu::Device) -> ViewportRenderer {
 }
 
 use viewport_lib::error::ViewportError;
-use viewport_lib::renderer::GaussianSplatData;
 use viewport_lib::resources::UploadStatus;
 
 fn sample_splats(n: usize) -> GaussianSplatData {
@@ -43,23 +44,23 @@ fn a_stale_splat_handle_does_not_alias_after_slot_reuse() {
     let mut renderer = renderer_with_item_types(&device);
 
     let id1 = renderer
-        .upload_gaussian_splat(&device, &queue, &sample_splats(8))
+        .upload(&device, &queue, &sample_splats(8))
         .expect("upload a splat set");
-    renderer.free_gaussian_splat(id1);
+    renderer.release(id1);
 
     // The next upload reuses the freed slot at a new generation.
     let id2 = renderer
-        .upload_gaussian_splat(&device, &queue, &sample_splats(4))
+        .upload(&device, &queue, &sample_splats(4))
         .expect("upload a second splat set");
     assert_ne!(id1, id2, "the reused slot must carry a new generation");
 
     // The live handle resolves; the stale one does not, so it cannot overwrite
     // the set now occupying its slot.
     renderer
-        .replace_gaussian_splat(&device, &queue, id2, &sample_splats(2))
+        .replace(&device, &queue, id2, &sample_splats(2))
         .expect("replace on a live handle succeeds");
     assert!(matches!(
-        renderer.replace_gaussian_splat(&device, &queue, id1, &sample_splats(2)),
+        renderer.replace(&device, &queue, id1, &sample_splats(2)),
         Err(ViewportError::StaleHandle { .. })
     ));
 }
@@ -74,7 +75,7 @@ fn splat_bytes_are_reported_and_reclaimed() {
     let baseline = renderer.resident_bytes().plugin_bytes;
 
     let id = renderer
-        .upload_gaussian_splat(&device, &queue, &sample_splats(8))
+        .upload(&device, &queue, &sample_splats(8))
         .expect("upload a splat set");
     let after_upload = renderer.resident_bytes().plugin_bytes;
     assert!(
@@ -84,7 +85,7 @@ fn splat_bytes_are_reported_and_reclaimed() {
 
     // Replacing with a smaller set keeps the handle and shrinks the charge.
     renderer
-        .replace_gaussian_splat(&device, &queue, id, &sample_splats(2))
+        .replace(&device, &queue, id, &sample_splats(2))
         .expect("replace on a live handle succeeds");
     let after_replace = renderer.resident_bytes().plugin_bytes;
     assert!(
@@ -92,7 +93,7 @@ fn splat_bytes_are_reported_and_reclaimed() {
         "replacing with fewer splats must reduce resident bytes"
     );
 
-    renderer.free_gaussian_splat(id);
+    renderer.release(id);
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -104,7 +105,7 @@ fn begin_upload_gaussian_splat_validates_before_submitting() {
     };
     let mut renderer = renderer_with_item_types(&device);
     let err = renderer
-        .begin_upload_gaussian_splat(&device, &queue, GaussianSplatData::default())
+        .begin_upload(&device, &queue, GaussianSplatData::default())
         .expect_err("an empty splat list is rejected");
     assert!(matches!(
         err,
@@ -121,7 +122,7 @@ fn begin_upload_gaussian_splat_drains_to_a_handle() {
     let mut renderer = renderer_with_item_types(&device);
 
     let job = renderer
-        .begin_upload_gaussian_splat(&device, &queue, sample_splats(8))
+        .begin_upload(&device, &queue, sample_splats(8))
         .expect("job submitted");
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
@@ -135,8 +136,8 @@ fn begin_upload_gaussian_splat_drains_to_a_handle() {
         }
     }
 
-    let id = renderer
-        .upload_result_gaussian_splat(job)
+    let id: GaussianSplatId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
     assert!(
         renderer.resident_bytes().plugin_bytes > 0,
@@ -145,8 +146,8 @@ fn begin_upload_gaussian_splat_drains_to_a_handle() {
 
     // The result is taken once; a second take has nothing to hand back.
     assert!(matches!(
-        renderer.upload_result_gaussian_splat(job),
+        Handles::<GaussianSplatId>::upload_result(&mut renderer, job),
         Err(ViewportError::JobResultMissing { .. })
     ));
-    renderer.free_gaussian_splat(id);
+    renderer.release(id);
 }

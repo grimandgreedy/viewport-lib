@@ -10,7 +10,7 @@ use crate::scene::material::ItemSettings;
 
 crate::resources::handle::slot_handle! {
     /// Handle to a polyline uploaded once through
-    /// [`ViewportRenderer::upload_polyline`](crate::renderer::ViewportRenderer::upload_polyline).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     ///
     /// Name it from a [`PolylineRefItem`] to draw the stored curve at a
     /// per-frame model transform without rebuilding its segment buffer.
@@ -247,8 +247,8 @@ pub fn sphere_wireframe_polyline(
 #[non_exhaustive]
 pub struct PolylineRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_polyline`](crate::renderer::ViewportRenderer::upload_polyline)
-    /// or `begin_upload_polyline`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::PolylineId,
     /// Per-frame model matrix. Identity uses the polyline's own world-space
     /// positions.

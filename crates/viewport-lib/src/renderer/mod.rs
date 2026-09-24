@@ -12,6 +12,7 @@ mod indirect;
 mod instancing_state;
 mod item_plugin_uploads;
 use instancing_state::InstancingState;
+pub use item_plugin_uploads::SpriteInstanceUploads;
 mod per_object_state;
 use per_object_state::PerObjectState;
 mod shadow_state;
@@ -38,7 +39,6 @@ mod readback;
 pub use readback::ExposureReadback;
 // Gaussian splat upload vocabulary lives in `resources`; re-exported here so the
 // public `renderer::GaussianSplat*` path and its doc links stay stable.
-pub use crate::resources::{GaussianSplatData, GaussianSplatId, ShDegree};
 pub(crate) mod pipeline_key;
 use pipeline_key::{PipelineKey, select_opaque_solid, select_two_sided};
 mod point_shadow_pool;
@@ -1648,7 +1648,7 @@ impl ViewportRenderer {
     /// # Panics
     ///
     /// If a type the renderer installed itself already answers to
-    /// `type_name()`. The per-type calls on this renderer (`upload_sprite_set`,
+    /// `type_name()`. The store-backed calls on this renderer (`Uploads`,
     /// `create_gpu_particle_system`, and the rest) resolve their plugin by name
     /// and downcast it, so replacing one would leave those calls looking at a
     /// type that is not what they expect. The collision is refused where it is

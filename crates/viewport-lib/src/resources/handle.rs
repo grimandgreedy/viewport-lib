@@ -57,6 +57,19 @@ pub struct SlotStore<T, H: ContentHandle> {
 }
 
 impl<T, H: ContentHandle> SlotStore<T, H> {
+    /// The error a handle this store cannot resolve should report, filled in
+    /// from the store's own state.
+    ///
+    /// A store-backed call that takes a handle and finds nothing returns this
+    /// rather than a bare `false`, so the caller can tell a stale handle from
+    /// bad content.
+    pub fn stale(&self, id: H) -> viewport_lib_types::error::ViewportError {
+        viewport_lib_types::error::ViewportError::StaleHandle {
+            index: id.index(),
+            count: self.live_count,
+        }
+    }
+
     /// Insert a value charging `bytes` against it, reusing a free slot if one is
     /// available. Returns the handle carrying the slot's current generation.
     pub fn insert(&mut self, value: T, bytes: u64) -> H {

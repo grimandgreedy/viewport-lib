@@ -3,7 +3,7 @@ use crate::scene::material::{ItemSettings, Material};
 crate::resources::handle::slot_handle! {
     /// Handle to a volume scalar field uploaded for GPU marching cubes.
     ///
-    /// Returned by [`ViewportRenderer::upload_volume_for_mc`](crate::renderer::ViewportRenderer::upload_volume_for_mc). Pass to
+    /// Returned by [`Uploads::upload`](crate::plugin_api::Uploads::upload). Pass to
     /// [`GpuMarchingCubesItem`](crate::renderer::GpuMarchingCubesItem) to select which volume to triangulate each frame.
     ///
     /// Carries the slot index plus the generation the slot had when the handle

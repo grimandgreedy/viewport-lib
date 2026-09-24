@@ -312,12 +312,13 @@ impl StreamtubePlugin {
         resources: &crate::resources::DeviceResources,
         id: StreamtubeId,
         item: &StreamtubeItem,
-    ) -> bool {
+    ) -> crate::error::ViewportResult<()> {
         if !self.stored.contains(id) {
-            return false;
+            return Err(self.stored.stale(id));
         }
         let gpu = self.build(device, queue, resources, item);
-        self.stored.replace_sized(id, gpu).is_some()
+        self.stored.replace_sized(id, gpu);
+        Ok(())
     }
 
     /// Sweep the curve mesh on a worker thread. The handle is minted when

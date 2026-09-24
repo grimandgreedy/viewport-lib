@@ -385,14 +385,15 @@ impl PointCloudPlugin {
         resources: &viewport_lib::resources::DeviceResources,
         id: PointCloudId,
         item: &PointCloudItem,
-    ) -> bool {
+    ) -> viewport_lib::error::ViewportResult<()> {
         if !self.stored.contains(id) {
-            return false;
+            return Err(self.stored.stale(id));
         }
         let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
         let binds = resolve_bindings(resources, bgl, item);
         let gpu = build_point_cloud(device, queue, &binds, item);
-        self.stored.replace_sized(id, gpu).is_some()
+        self.stored.replace_sized(id, gpu);
+        Ok(())
     }
 
     /// Build a cloud's buffers on a worker thread. The handle is minted when

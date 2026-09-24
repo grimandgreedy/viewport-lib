@@ -38,7 +38,9 @@ mod volume_surface_slice;
 pub use external_instances::{
     ExternalInstanceSetConfig, ExternalInstancesItem, ExternalInstancesPlugin,
 };
-pub use gaussian_splat::{GaussianSplatItem, GaussianSplatPlugin};
+pub use gaussian_splat::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GaussianSplatPlugin, ShDegree,
+};
 pub use gpu_implicit::{
     GpuImplicitItem, GpuImplicitOptions, GpuImplicitPlugin, ImplicitBlendMode, ImplicitPrimitive,
 };
@@ -48,9 +50,8 @@ pub use point_cloud::{
 };
 pub use volume_surface_slice::{VolumeSurfaceSliceItem, VolumeSurfaceSlicePlugin};
 
-/// Handles and upload data the renderer's own id crate owns, re-exported so a
-/// consumer of this crate does not have to name two crates to submit one item.
-pub use viewport_lib::{GaussianSplatData, GaussianSplatId, ShDegree};
+/// A handle the renderer's own id crate owns, re-exported so a consumer of this
+/// crate does not have to name two crates to submit one item.
 pub use viewport_lib_types::ids::ExternalInstanceSetId;
 
 /// The name each item type registers and submits under.
@@ -103,179 +104,71 @@ pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     renderer.with_item_type_plugin(device, Box::new(ExternalInstancesPlugin::default()));
 }
 
-/// The point cloud upload surface, on the renderer.
-///
-/// A pre-uploaded cloud is drawn by naming its [`PointCloudId`] from a
-/// [`PointCloudRefItem`], which costs nothing per frame beyond the model
-/// matrix. Inline [`PointCloudItem`]s rebuild their buffers every frame
-/// instead, which is what you want for data that changes every frame and not
-/// for data that does not.
-pub trait PointCloudUploads {
-    /// Upload a point cloud for reuse across frames, returning its handle.
-    fn upload_point_cloud(
+impl viewport_lib::plugin_api::Uploads<PointCloudItem> for ViewportRenderer {
+    type Id = PointCloudId;
+
+    fn upload(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         item: &PointCloudItem,
-    ) -> PointCloudId;
-
-    /// Start an off-thread upload. Poll the returned job with the renderer's
-    /// `upload_status` and take the handle from
-    /// [`upload_result_point_cloud`](Self::upload_result_point_cloud).
-    fn begin_upload_point_cloud(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        item: PointCloudItem,
-    ) -> viewport_lib::resources::JobId;
-
-    /// Take the handle from a finished
-    /// [`begin_upload_point_cloud`](Self::begin_upload_point_cloud) job.
-    fn upload_result_point_cloud(
-        &mut self,
-        id: viewport_lib::resources::JobId,
-    ) -> viewport_lib::error::ViewportResult<PointCloudId>;
-
-    /// Replace the points behind a handle, keeping the handle valid. `false`
-    /// when the handle does not resolve.
-    fn replace_point_cloud(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        id: PointCloudId,
-        item: &PointCloudItem,
-    ) -> bool;
-
-    /// Release a point cloud. `false` when the handle does not resolve.
-    fn drop_point_cloud(&mut self, id: PointCloudId) -> bool;
-}
-
-impl PointCloudUploads for ViewportRenderer {
-    fn upload_point_cloud(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        item: &PointCloudItem,
-    ) -> PointCloudId {
-        let host = host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME);
-        host.plugin.upload(device, queue, host.resources, item)
-    }
-
-    fn begin_upload_point_cloud(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        item: PointCloudItem,
-    ) -> viewport_lib::resources::JobId {
-        let host = host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME);
-        host.plugin
-            .begin_upload(&host.jobs, device, queue, host.resources, item)
-    }
-
-    fn upload_result_point_cloud(
-        &mut self,
-        id: viewport_lib::resources::JobId,
     ) -> viewport_lib::error::ViewportResult<PointCloudId> {
         let host = host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME);
-        host.plugin.take_upload_result(&host.jobs, id)
+        Ok(host.plugin.upload(device, queue, host.resources, item))
     }
 
-    fn replace_point_cloud(
+    fn begin_upload(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        item: PointCloudItem,
+    ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
+        let host = host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME);
+        Ok(host
+            .plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item))
+    }
+
+    fn replace(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         id: PointCloudId,
         item: &PointCloudItem,
-    ) -> bool {
+    ) -> viewport_lib::error::ViewportResult<()> {
         let host = host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME);
         host.plugin.replace(device, queue, host.resources, id, item)
     }
 
-    fn drop_point_cloud(&mut self, id: PointCloudId) -> bool {
-        host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME)
-            .plugin
-            .drop_stored(id)
+}
+
+impl viewport_lib::plugin_api::Handles<PointCloudId> for ViewportRenderer {
+    fn upload_result(
+        &mut self,
+        job: viewport_lib::resources::JobId,
+    ) -> viewport_lib::error::ViewportResult<PointCloudId> {
+        let host = host::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME);
+        host.plugin.take_upload_result(&host.jobs, job)
+    }
+
+    fn release(&mut self, id: PointCloudId) -> bool {
+        plugin_mut::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME).drop_stored(id)
     }
 }
 
-/// The Gaussian splat upload surface, on the renderer.
-///
-/// A splat set is uploaded once and drawn by naming its [`GaussianSplatId`]
-/// from a [`GaussianSplatItem`]; there is no inline form, because the sets are
-/// large enough that rebuilding one per frame is never what you want.
-pub trait GaussianSplatUploads {
-    /// Upload a splat set, returning its handle.
-    ///
-    /// # Errors
-    ///
-    /// [`InvalidGaussianSplatData`](viewport_lib::error::ViewportError::InvalidGaussianSplatData)
-    /// when `data.positions` is empty or the per-attribute vectors disagree in
-    /// length.
-    fn upload_gaussian_splat(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        data: &GaussianSplatData,
-    ) -> viewport_lib::error::ViewportResult<GaussianSplatId>;
+impl viewport_lib::plugin_api::Uploads<GaussianSplatData> for ViewportRenderer {
+    type Id = GaussianSplatId;
 
-    /// Replace the splats behind a live handle, keeping the handle.
-    fn replace_gaussian_splat(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        id: GaussianSplatId,
-        data: &GaussianSplatData,
-    ) -> viewport_lib::error::ViewportResult<()>;
-
-    /// Release a set. After this the handle is invalid and must not be
-    /// submitted.
-    fn free_gaussian_splat(&mut self, id: GaussianSplatId);
-
-    /// Start an off-thread upload. Poll with the renderer's `upload_status`
-    /// and take the handle from
-    /// [`upload_result_gaussian_splat`](Self::upload_result_gaussian_splat).
-    fn begin_upload_gaussian_splat(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        data: GaussianSplatData,
-    ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId>;
-
-    /// Take the handle from a finished
-    /// [`begin_upload_gaussian_splat`](Self::begin_upload_gaussian_splat) job.
-    fn upload_result_gaussian_splat(
-        &mut self,
-        id: viewport_lib::resources::JobId,
-    ) -> viewport_lib::error::ViewportResult<GaussianSplatId>;
-}
-
-impl GaussianSplatUploads for ViewportRenderer {
-    fn upload_gaussian_splat(
+    fn upload(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         data: &GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
-        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME)
-            .upload(device, queue, data)
+        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME).upload(device, queue, data)
     }
 
-    fn replace_gaussian_splat(
-        &mut self,
-        device: &gpu::Device,
-        queue: &gpu::Queue,
-        id: GaussianSplatId,
-        data: &GaussianSplatData,
-    ) -> viewport_lib::error::ViewportResult<()> {
-        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME)
-            .replace(device, queue, id, data)
-    }
-
-    fn free_gaussian_splat(&mut self, id: GaussianSplatId) {
-        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME).free(id)
-    }
-
-    fn begin_upload_gaussian_splat(
+    fn begin_upload(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
@@ -285,12 +178,29 @@ impl GaussianSplatUploads for ViewportRenderer {
         host.plugin.begin_upload(&host.jobs, device, queue, data)
     }
 
-    fn upload_result_gaussian_splat(
+    fn replace(
         &mut self,
-        id: viewport_lib::resources::JobId,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: GaussianSplatId,
+        data: &GaussianSplatData,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME)
+            .replace(device, queue, id, data)
+    }
+}
+
+impl viewport_lib::plugin_api::Handles<GaussianSplatId> for ViewportRenderer {
+    fn upload_result(
+        &mut self,
+        job: viewport_lib::resources::JobId,
     ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
         let host = host::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME);
-        host.plugin.take_upload_result(&host.jobs, id)
+        host.plugin.take_upload_result(&host.jobs, job)
+    }
+
+    fn release(&mut self, id: GaussianSplatId) -> bool {
+        plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME).free(id)
     }
 }
 

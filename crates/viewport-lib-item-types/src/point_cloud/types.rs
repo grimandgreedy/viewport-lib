@@ -5,7 +5,7 @@ const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
 viewport_lib::resources::handle::slot_handle! {
     /// Handle to a point cloud uploaded once through
-    /// [`PointCloudUploads::upload_point_cloud`](crate::PointCloudUploads::upload_point_cloud).
+    /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload).
     ///
     /// Name it from a [`PointCloudRefItem`] to draw the stored cloud without
     /// resubmitting its points. Carries the slot index plus the generation the
@@ -96,8 +96,8 @@ impl Default for PointCloudItem {
 #[non_exhaustive]
 pub struct PointCloudRefItem {
     /// Handle to GPU buffers produced by
-    /// [`PointCloudUploads::upload_point_cloud`](crate::PointCloudUploads::upload_point_cloud)
-    /// or `begin_upload_point_cloud`.
+    /// [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: PointCloudId,
     /// Per-frame model matrix. Composes on top of the model baked into the
     /// upload, so identity here renders the points at their original

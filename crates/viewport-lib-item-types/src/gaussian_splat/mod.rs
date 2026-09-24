@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::helpers::point_disc_mask::PointDiscMaskUniform;
 use store::{GaussianSplatStore, build_gaussian_splat_set, validate_gaussian_splat_data};
-pub use types::GaussianSplatItem;
+pub use types::{GaussianSplatData, GaussianSplatId, GaussianSplatItem, ShDegree};
 use viewport_lib::gpu;
 use viewport_lib::plugin_api::pick_helpers::project_to_screen;
 use viewport_lib::plugin_api::{
@@ -26,9 +26,9 @@ use viewport_lib::plugin_api::{
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
-use viewport_lib::resources::{GaussianSplatId, HDR_COLOR_FORMAT};
+use viewport_lib::resources::HDR_COLOR_FORMAT;
 
-pub(crate) use store::{GaussianSplatData, GaussianSplatGpuSet};
+pub(crate) use store::GaussianSplatGpuSet;
 
 pub const TYPE_NAME: &str = "vpl.gaussian_splat";
 
@@ -495,8 +495,8 @@ impl GaussianSplatPlugin {
     }
 
     /// Drop an uploaded set. A stale handle is ignored.
-    pub fn free(&mut self, id: GaussianSplatId) {
-        self.sets.remove(id);
+    pub fn free(&mut self, id: GaussianSplatId) -> bool {
+        self.sets.remove(id).is_some()
     }
 
     /// Submit the buffer building to a worker thread. The set is inserted, and

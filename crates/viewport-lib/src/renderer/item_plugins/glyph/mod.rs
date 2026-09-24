@@ -455,12 +455,13 @@ impl GlyphPlugin {
         resources: &crate::resources::DeviceResources,
         id: GlyphSetId,
         item: &GlyphItem,
-    ) -> bool {
+    ) -> crate::error::ViewportResult<()> {
         if !self.stored.contains(id) {
-            return false;
+            return Err(self.stored.stale(id));
         }
         let gpu = self.build(device, queue, resources, item);
-        self.stored.replace_sized(id, gpu).is_some()
+        self.stored.replace_sized(id, gpu);
+        Ok(())
     }
 
     /// Build a set's buffers on a worker thread. The handle is minted when

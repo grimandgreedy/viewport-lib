@@ -215,7 +215,7 @@ pub use error::{ViewportError, ViewportResult};
 pub use plugin_api::{
     PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer, PostEffectProducerId,
     PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId,
-    build_post_effect_pipeline, install_plugin,
+    Handles, Uploads, build_post_effect_pipeline, install_plugin,
 };
 
 pub use camera::camera::{Camera, CameraTarget, Projection};
@@ -303,8 +303,8 @@ pub use renderer::{
     DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem,
     DecalProjection, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EmitterConfig,
     EnvironmentSettings, ExposureMode, ExposureReadback, ExposureSettings, FillRule, FilterMode,
-    ForceField, ForegroundPass, ForegroundProjection, FrameData, GaussianSplatData,
-    GaussianSplatId, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType, GpuContext,
+    ForceField, ForegroundPass, ForegroundProjection, FrameData,
+    GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType, GpuContext,
     GpuParticleSystemItem, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode,
     IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
     LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
@@ -316,7 +316,7 @@ pub use renderer::{
     PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap,
     PolylineItem, PolylineRefItem, PolylineSelectionInfo, PositionedGlyph, PostProcessSettings,
     RenderCamera, RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality,
-    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem, ShDegree,
+    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
     ShadowFilter, ShadowLayer, ShadowSettings, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
     SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem,
     SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SubObjectRef, SubPath,

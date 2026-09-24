@@ -2,14 +2,14 @@ use crate::scene::material::ItemSettings;
 
 crate::resources::handle::slot_handle! {
     /// Handle to a sprite batch uploaded once through
-    /// [`ViewportRenderer::upload_sprite_set`](crate::renderer::ViewportRenderer::upload_sprite_set).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     /// Backs static billboards such as foliage, signage and light flares.
     pub struct SpriteSetId;
 }
 
 crate::resources::handle::slot_handle! {
     /// Handle to a sprite instance set uploaded once through
-    /// [`ViewportRenderer::upload_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_sprite_instance_set).
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload).
     /// Backs entity sprites such as NPCs, item drops and damage numbers.
     pub struct SpriteInstanceSetId;
 }
@@ -313,8 +313,8 @@ mod lit_sprite_tests {
 #[non_exhaustive]
 pub struct SpriteSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_sprite_set`](crate::renderer::ViewportRenderer::upload_sprite_set)
-    /// or `begin_upload_sprite_set`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::SpriteSetId,
     /// Per-item render settings (visibility, wireframe, selection).
     pub settings: ItemSettings,
@@ -340,8 +340,8 @@ impl SpriteSetRefItem {
 #[non_exhaustive]
 pub struct SpriteInstanceSetRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_sprite_instance_set`](crate::renderer::ViewportRenderer::upload_sprite_instance_set)
-    /// or `begin_upload_sprite_instance_set`.
+    /// [`Uploads::upload`](crate::plugin_api::Uploads::upload)
+    /// or `Uploads::begin_upload`.
     pub source: crate::resources::SpriteInstanceSetId,
     /// Per-item render settings.
     pub settings: ItemSettings,

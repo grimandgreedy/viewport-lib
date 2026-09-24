@@ -78,6 +78,7 @@ pub use self::plugin_builders::{
     SHADOW_DEPTH_FORMAT,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
+pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
 pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
 pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
 pub use crate::renderer::item_plugins::gpu_particles::types::{
@@ -86,11 +87,6 @@ pub use crate::renderer::item_plugins::gpu_particles::types::{
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 pub use crate::renderer::item_plugins::sprite::types::{SpriteInstanceSetId, SpriteSetId};
 pub use crate::renderer::item_plugins::tensor_glyph::types::TensorGlyphSetId;
-// Gaussian splat upload vocabulary. Owned here (not in `renderer`) so nothing in
-// `resources` reaches up to `renderer` for these types.
-pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
-pub use viewport_lib_types::data::point::{GaussianSplatData, ShDegree};
-pub use viewport_lib_types::ids::GaussianSplatId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;

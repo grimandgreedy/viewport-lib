@@ -1,5 +1,80 @@
+//! The Gaussian splat submission types: the handle an upload mints, the data a
+//! consumer uploads, and the per-frame item that names one.
+
 use viewport_lib::ItemSettings;
-use viewport_lib::resources::GaussianSplatId;
+
+viewport_lib_types::slot_handle! {
+    /// Handle to an uploaded Gaussian splat set.
+    ///
+    /// Carries the slot index plus the generation the slot had when the handle
+    /// was issued. A handle whose splat set was removed (its slot freed and
+    /// reused by a later upload) resolves to no set on lookup, so it cannot
+    /// alias whatever now occupies the slot.
+    pub struct GaussianSplatId;
+}
+
+/// SH degree stored with a Gaussian splat set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ShDegree {
+    /// 3 floats per splat (base RGB only).
+    #[default]
+    Zero,
+    /// 12 floats per splat.
+    One,
+    /// 48 floats per splat.
+    Three,
+}
+
+impl ShDegree {
+    /// Number of SH coefficients per splat for this degree.
+    pub fn coeff_count(self) -> usize {
+        match self {
+            ShDegree::Zero => 3,
+            ShDegree::One => 12,
+            ShDegree::Three => 48,
+        }
+    }
+}
+
+/// Upload data for a Gaussian splat set. Submitted once via
+/// `renderer.upload_gaussian_splat(device, queue, data)`.
+pub struct GaussianSplatData {
+    /// Object-space center positions, one [f32;3] per splat.
+    pub positions: Vec<[f32; 3]>,
+    /// Scale (positive floats, world-space metres) per splat, one [f32;3].
+    pub scales: Vec<[f32; 3]>,
+    /// Unit quaternion rotation per splat [x, y, z, w].
+    pub rotations: Vec<[f32; 4]>,
+    /// Opacity per splat in [0, 1].
+    pub opacities: Vec<f32>,
+    /// SH coefficients. Length must equal `positions.len() * sh_degree.coeff_count()`.
+    /// For ShDegree::Zero these are [r, g, b] base colours per splat.
+    ///
+    /// The evaluated colour is sRGB-referred, matching how splat sets are
+    /// trained (from sRGB photographs), and the shader decodes it to linear
+    /// after evaluating the SH. Pass the coefficients exactly as the trainer
+    /// produced them; do not decode them first. This is the one colour in the
+    /// library converted in the shader rather than at the boundary: a
+    /// [`Colour`](viewport_lib::Colour) converts at construction, and a texture
+    /// converts in the sampler.
+    pub sh_coefficients: Vec<f32>,
+    /// SH degree for this splat set.
+    pub sh_degree: ShDegree,
+}
+
+impl Default for GaussianSplatData {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            scales: Vec::new(),
+            rotations: Vec::new(),
+            opacities: Vec::new(),
+            sh_coefficients: Vec::new(),
+            sh_degree: ShDegree::Zero,
+        }
+    }
+}
 
 /// Per-frame reference to an uploaded Gaussian splat set.
 #[derive(Clone)]
