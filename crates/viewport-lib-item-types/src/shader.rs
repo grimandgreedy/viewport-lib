@@ -48,11 +48,22 @@ pub(crate) fn scene_shader(extra: &[&str], body: &str) -> String {
 /// The lighting catalogue entry brings its own group-0 declarations for the
 /// light bindings, which overlap the shared ones, so a body composing it
 /// declares the camera and the `Lights` uniform itself rather than taking
-/// `SHARED_BINDINGS_WGSL`.
-pub(crate) fn lit_shader(body: &str) -> String {
-    let mut out =
-        String::with_capacity(shared_wgsl::SHARED_SCENE_LIGHTING_WGSL.len() + body.len() + 1);
+/// `SHARED_BINDINGS_WGSL`. That also means it cannot reach the clip and
+/// shadow helpers the shared bindings carry, so `extra` names the standalone
+/// catalogue constants that supply them: `SHARED_CLIP_VOLUME_WGSL` and
+/// `SHARED_CSM_WGSL`.
+pub(crate) fn lit_shader(extra: &[&str], body: &str) -> String {
+    let mut out = String::with_capacity(
+        shared_wgsl::SHARED_SCENE_LIGHTING_WGSL.len()
+            + extra.iter().map(|s| s.len()).sum::<usize>()
+            + body.len()
+            + 8,
+    );
     out.push_str(shared_wgsl::SHARED_SCENE_LIGHTING_WGSL);
+    for section in extra {
+        out.push('\n');
+        out.push_str(section);
+    }
     out.push('\n');
     out.push_str(body);
     out

@@ -213,9 +213,9 @@ pub use scene::traits;
 pub use error::{ViewportError, ViewportResult};
 
 pub use plugin_api::{
-    PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer, PostEffectProducerId,
-    PostEffectResizeContext, PostEffectSlot, PostEffectStage, PostEffectStageId,
-    Handles, Uploads, build_post_effect_pipeline, install_plugin,
+    Handles, PluginInstallCtx, PluginInstaller, PostEffectContext, PostEffectProducer,
+    PostEffectProducerId, PostEffectResizeContext, PostEffectSlot, PostEffectStage,
+    PostEffectStageId, Uploads, build_post_effect_pipeline, install_plugin,
 };
 
 pub use camera::camera::{Camera, CameraTarget, Projection};
@@ -301,30 +301,26 @@ pub use renderer::{
     BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject, ClipShape,
     ComputeFilterItem, ComputeFilterKind, ContactShadowSettings, CylindricalFacing,
     DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem,
-    DecalProjection, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EmitterConfig,
-    EnvironmentSettings, ExposureMode, ExposureReadback, ExposureSettings, FillRule, FilterMode,
-    ForceField, ForegroundPass, ForegroundProjection, FrameData,
-    GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType, GpuContext,
-    GpuParticleSystemItem, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode,
-    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
-    LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
-    Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
+    DecalProjection, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings,
+    ExposureMode, ExposureReadback, ExposureSettings, FillRule, FilterMode, ForegroundPass,
+    ForegroundProjection, FrameData, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType,
+    GpuContext, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
+    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
+    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
     OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill,
     OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
     OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
-    OverlayTransform, OwnedPath, ParticleMeshAlign, PassPath, PassView, PathSegment, PathTrack,
-    PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap,
-    PolylineItem, PolylineRefItem, PolylineSelectionInfo, PositionedGlyph, PostProcessSettings,
-    RenderCamera, RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality,
-    ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem,
-    SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetRefItem,
-    SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SubObjectRef, SubPath,
-    SubSelection, SubSelectionRef, SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem,
-    TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping, TriangleDirection, TubeItem,
-    TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
-    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
-    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    OverlayTransform, OwnedPath, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit,
+    PickId, PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap, PolylineItem,
+    PolylineRefItem, PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera,
+    RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects,
+    SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend,
+    StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig,
+    SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
+    ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeItem, VolumeMeshItem,
+    VolumeSelectionInfo, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 
@@ -372,10 +368,7 @@ pub use resources::{
     DEFORM_SLOT_COUNT_PUB as DEFORM_SLOT_COUNT, DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle,
     DeformSourceSlice, DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
 };
-pub use resources::{
-    GlyphSetId, GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender, PolylineId, RibbonId,
-    SpriteInstanceSetId, SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
-};
+pub use resources::{GlyphSetId, PolylineId};
 pub use resources::{
     MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
     ShadingHookDesc, ShadingHookId,

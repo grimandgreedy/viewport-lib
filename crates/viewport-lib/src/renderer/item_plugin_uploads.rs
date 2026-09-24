@@ -30,39 +30,6 @@ impl ViewportRenderer {
             )
     }
 
-    /// The registered streamtube item type, which holds the uploaded curves.
-    fn streamtube_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::StreamtubePlugin>
-    {
-        self.item_type_plugin_host(crate::renderer::item_plugins::curves::STREAMTUBE_TYPE_NAME)
-            .expect(
-                "the built-in streamtube item type registers at construction, under a name nothing else can take",
-            )
-    }
-
-    /// The registered tube item type, which holds the uploaded curves.
-    fn tube_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::TubePlugin>
-    {
-        self.item_type_plugin_host(crate::renderer::item_plugins::curves::TUBE_TYPE_NAME)
-            .expect(
-                "the built-in tube item type registers at construction, under a name nothing else can take",
-            )
-    }
-
-    /// The registered ribbon item type, which holds the uploaded curves.
-    fn ribbon_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::curves::RibbonPlugin>
-    {
-        self.item_type_plugin_host(crate::renderer::item_plugins::curves::RIBBON_TYPE_NAME)
-            .expect(
-                "the built-in ribbon item type registers at construction, under a name nothing else can take",
-            )
-    }
-
     /// The registered glyph item type, which holds the uploaded sets.
     fn glyph_host(
         &mut self,
@@ -71,30 +38,6 @@ impl ViewportRenderer {
         self.item_type_plugin_host(crate::renderer::item_plugins::glyph::TYPE_NAME)
             .expect(
                 "the built-in glyph item type registers at construction, under a name nothing else can take",
-            )
-    }
-
-    /// The registered tensor glyph item type, which holds the uploaded sets.
-    fn tensor_glyph_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<
-        '_,
-        crate::renderer::item_plugins::tensor_glyph::TensorGlyphPlugin,
-    > {
-        self.item_type_plugin_host(crate::renderer::item_plugins::tensor_glyph::TYPE_NAME)
-            .expect(
-                "the built-in tensor glyph item type registers at construction, under a name nothing else can take",
-            )
-    }
-
-    /// The registered sprite item type, which holds the uploaded batches.
-    fn sprite_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::sprite::SpritePlugin>
-    {
-        self.item_type_plugin_host(crate::renderer::item_plugins::sprite::TYPE_NAME)
-            .expect(
-                "the built-in sprite item type registers at construction, under a name nothing else can take",
             )
     }
 
@@ -180,37 +123,6 @@ impl ViewportRenderer {
         self.item_type_plugin_mut(name)
             .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })
     }
-
-    /// Create a persistent GPU particle system, returning its handle.
-    pub fn create_gpu_particle_system(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        config: &crate::resources::GpuParticleSystemConfig,
-    ) -> crate::resources::GpuParticleSystemId {
-        let host = self.gpu_particles_host();
-        host.plugin
-            .create_system(device, queue, host.resources, config)
-    }
-
-    /// Release a GPU particle system. The handle stops resolving and its
-    /// buffers are freed.
-    pub fn drop_gpu_particle_system(&mut self, id: crate::resources::GpuParticleSystemId) {
-        self.gpu_particles_host().plugin.drop_system(id)
-    }
-
-    /// The registered GPU particle item type, which holds the live systems.
-    fn gpu_particles_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<
-        '_,
-        crate::renderer::item_plugins::gpu_particles::GpuParticlesPlugin,
-    > {
-        self.item_type_plugin_host(crate::renderer::item_plugins::gpu_particles::TYPE_NAME)
-            .expect(
-                "the built-in GPU particle item type registers at construction, under a name nothing else can take",
-            )
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,165 +192,7 @@ standard_uploads!(
     polyline_host
 );
 standard_uploads!(
-    crate::renderer::StreamtubeItem,
-    crate::resources::StreamtubeId,
-    streamtube_host
-);
-standard_uploads!(
-    crate::renderer::TubeItem,
-    crate::resources::TubeId,
-    tube_host
-);
-standard_uploads!(
-    crate::renderer::RibbonItem,
-    crate::resources::RibbonId,
-    ribbon_host
-);
-standard_uploads!(
     crate::renderer::GlyphItem,
     crate::resources::GlyphSetId,
     glyph_host
 );
-standard_uploads!(
-    crate::renderer::TensorGlyphItem,
-    crate::resources::TensorGlyphSetId,
-    tensor_glyph_host
-);
-
-/// Sprites keep two stores behind one item struct: a batch drawn as one set,
-/// and an instance set drawn per transform. `Uploads` carries one `Id` per
-/// implementation, so it covers the plain set and the instance set keeps calls
-/// of its own on [`SpriteInstanceUploads`].
-impl crate::plugin_api::Uploads<crate::renderer::SpriteItem> for ViewportRenderer {
-    type Id = crate::resources::SpriteSetId;
-
-    fn upload(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::error::ViewportResult<crate::resources::SpriteSetId> {
-        let host = self.sprite_host();
-        Ok(host.plugin.upload_set(device, queue, host.resources, item))
-    }
-
-    fn begin_upload(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::SpriteItem,
-    ) -> crate::error::ViewportResult<crate::resources::JobId> {
-        let host = self.sprite_host();
-        Ok(host
-            .plugin
-            .begin_upload(&host.jobs, device, queue, host.resources, item))
-    }
-
-    fn replace(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::SpriteSetId,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::error::ViewportResult<()> {
-        let host = self.sprite_host();
-        host.plugin
-            .replace_set(device, queue, host.resources, id, item)
-    }
-}
-
-impl crate::plugin_api::Handles<crate::resources::SpriteSetId> for ViewportRenderer {
-    fn upload_result(
-        &mut self,
-        job: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::SpriteSetId> {
-        let host = self.sprite_host();
-        host.plugin.take_set_result(&host.jobs, job)
-    }
-
-    fn release(&mut self, id: crate::resources::SpriteSetId) -> bool {
-        self.sprite_host().plugin.drop_set(id)
-    }
-}
-
-/// The sprite instance-set store, which shares `SpriteItem` with the plain set
-/// store and so cannot share its `Uploads` implementation. Its handle type is
-/// its own, so taking a finished job and releasing a set go through
-/// [`Handles`](crate::plugin_api::Handles) like every other store.
-pub trait SpriteInstanceUploads {
-    /// Upload an instance set, returning a handle valid until
-    /// [`release`](crate::plugin_api::Handles::release).
-    fn upload_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::resources::SpriteInstanceSetId;
-
-    /// Start an off-thread upload of an instance set.
-    fn begin_upload_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::SpriteItem,
-    ) -> crate::resources::JobId;
-
-    /// Replace the sprites behind an instance-set handle, keeping the handle.
-    fn replace_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::SpriteInstanceSetId,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::error::ViewportResult<()>;
-}
-
-impl SpriteInstanceUploads for ViewportRenderer {
-    fn upload_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::resources::SpriteInstanceSetId {
-        let host = self.sprite_host();
-        host.plugin
-            .upload_instance_set(device, queue, host.resources, item)
-    }
-
-    fn begin_upload_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::SpriteItem,
-    ) -> crate::resources::JobId {
-        let host = self.sprite_host();
-        host.plugin
-            .begin_upload(&host.jobs, device, queue, host.resources, item)
-    }
-
-    fn replace_sprite_instance_set(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::SpriteInstanceSetId,
-        item: &crate::renderer::SpriteItem,
-    ) -> crate::error::ViewportResult<()> {
-        let host = self.sprite_host();
-        host.plugin
-            .replace_instance_set(device, queue, host.resources, id, item)
-    }
-}
-
-impl crate::plugin_api::Handles<crate::resources::SpriteInstanceSetId> for ViewportRenderer {
-    fn upload_result(
-        &mut self,
-        job: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::SpriteInstanceSetId> {
-        let host = self.sprite_host();
-        host.plugin.take_instance_set_result(&host.jobs, job)
-    }
-
-    fn release(&mut self, id: crate::resources::SpriteInstanceSetId) -> bool {
-        self.sprite_host().plugin.drop_instance_set(id)
-    }
-}

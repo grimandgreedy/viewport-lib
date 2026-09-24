@@ -9,9 +9,10 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::{RibbonItem, StreamtubeItem, TubeItem};
 use vpl::{
-    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, RibbonItem,
-    SceneRenderItem, SpriteBlend, StreamtubeItem, StrokePattern, TubeItem,
+    BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
+    SpriteBlend, StrokePattern,
 };
 
 // ---------------------------------------------------------------------------
@@ -565,17 +566,17 @@ pub(crate) fn submit_stream_items(app: &mut App, fd: &mut FrameData) {
         }
         StreamRenderMode::Streamtube => {
             fd.scene
-                .items_mut::<viewport_lib::StreamtubeItem>()
+                .items_mut::<viewport_lib_item_types::StreamtubeItem>()
                 .push(app.make_stream_tube_item());
         }
         StreamRenderMode::GeneralTube => {
             fd.scene
-                .items_mut::<viewport_lib::TubeItem>()
+                .items_mut::<viewport_lib_item_types::TubeItem>()
                 .push(app.make_stream_general_tube_item());
         }
         StreamRenderMode::Ribbon => {
             fd.scene
-                .items_mut::<viewport_lib::RibbonItem>()
+                .items_mut::<viewport_lib_item_types::RibbonItem>()
                 .push(app.make_stream_ribbon_item());
         }
     }

@@ -20,16 +20,18 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::GpuParticleSystems;
+use viewport_lib_item_types::{
+    ForceField, GpuParticleSystemConfig, GpuParticleSystemId, GpuParticleSystemItem,
+    ParticleMeshAlign, ParticleRender, RibbonItem, SpawnShape, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrientation, SpriteSizeMode, VelocityDist,
+};
 use vpl::Selection;
 #[allow(unused_imports)]
-use vpl::renderer::{SpriteLitParams, SpriteNormalMode};
 use vpl::scene::{Scene, build_light_glyphs};
 use vpl::{
-    BackfacePolicy, ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId,
-    GpuParticleSystemItem, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
-    ParticleMeshAlign, ParticleRender, PolylineItem, RibbonItem, SceneRenderItem, SpawnShape,
-    SpriteBlend, SpriteItem, SpriteOrientation, SpriteSizeMode, VelocityDist, ViewportRenderer,
-    primitives,
+    BackfacePolicy, FrameData, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
+    PolylineItem, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -1726,23 +1728,23 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
         return;
     }
     fd.scene
-        .items_mut::<viewport_lib::SpriteItem>()
+        .items_mut::<viewport_lib_item_types::SpriteItem>()
         .extend(sprite_items(app));
     fd.scene
         .items_mut::<viewport_lib::PolylineItem>()
         .extend(ring_polylines(app));
     fd.scene.mesh_instances.extend(mesh_instance_items(app));
     fd.scene
-        .items_mut::<viewport_lib::RibbonItem>()
+        .items_mut::<viewport_lib_item_types::RibbonItem>()
         .extend(trail_ribbon_items(app));
     if let Some(item) = gpu_particle_item(app, dt) {
         fd.scene
-            .items_mut::<viewport_lib::GpuParticleSystemItem>()
+            .items_mut::<viewport_lib_item_types::GpuParticleSystemItem>()
             .push(item);
     }
     if let Some(item) = gpu_mesh_particle_item(app, dt) {
         fd.scene
-            .items_mut::<viewport_lib::GpuParticleSystemItem>()
+            .items_mut::<viewport_lib_item_types::GpuParticleSystemItem>()
             .push(item);
     }
 

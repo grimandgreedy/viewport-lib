@@ -2,7 +2,12 @@
 
 use crate::resources::types::*;
 
-pub(crate) fn generate_edge_indices(triangle_indices: &[u32]) -> Vec<u32> {
+/// The unique edges of a triangle index buffer, as a line-list index buffer.
+///
+/// Each edge appears once, with the smaller vertex index first. An item type
+/// drawing its own wireframe from a triangle mesh builds its line indices with
+/// this so its edges match the ones the renderer's own wireframes draw.
+pub fn generate_edge_indices(triangle_indices: &[u32]) -> Vec<u32> {
     // Canonical form: smaller index first, packed into a u64 key so
     // (a,b) and (b,a) collapse to the same edge under sort+dedup. Sorting
     // is several times faster than hashing every edge, and this runs for

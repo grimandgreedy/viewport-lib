@@ -229,7 +229,7 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     let base = mesh_frame(item.clone(), [200.0, 150.0]);
     let _ = h.render_two_frames(&base, 200, 150);
 
-    let mut ribbon = viewport_lib::RibbonItem::default();
+    let mut ribbon = viewport_lib_item_types::RibbonItem::default();
     ribbon.positions = vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
     ribbon.strip_lengths = vec![3];
     ribbon.width = 0.5;
@@ -247,21 +247,21 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     let mut with_curves = mesh_frame(item, [200.0, 150.0]);
     with_curves
         .scene
-        .items_mut::<viewport_lib::RibbonRefItem>()
-        .push(viewport_lib::RibbonRefItem::new(source));
-    let mut streamtube = viewport_lib::StreamtubeItem::default();
+        .items_mut::<viewport_lib_item_types::RibbonRefItem>()
+        .push(viewport_lib_item_types::RibbonRefItem::new(source));
+    let mut streamtube = viewport_lib_item_types::StreamtubeItem::default();
     streamtube.positions = vec![[-1.0, 0.5, 0.0], [0.0, 0.5, 0.0], [1.0, 0.5, 0.0]];
     streamtube.strip_lengths = vec![3];
     with_curves
         .scene
-        .items_mut::<viewport_lib::StreamtubeItem>()
+        .items_mut::<viewport_lib_item_types::StreamtubeItem>()
         .push(streamtube);
-    let mut tube = viewport_lib::TubeItem::default();
+    let mut tube = viewport_lib_item_types::TubeItem::default();
     tube.positions = vec![[-1.0, -0.5, 0.0], [0.0, -0.5, 0.0], [1.0, -0.5, 0.0]];
     tube.strip_lengths = vec![3];
     with_curves
         .scene
-        .items_mut::<viewport_lib::TubeItem>()
+        .items_mut::<viewport_lib_item_types::TubeItem>()
         .push(tube);
     let _ = h.render(&with_curves, 200, 150);
     assert_eq!(

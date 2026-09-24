@@ -12,7 +12,6 @@ mod indirect;
 mod instancing_state;
 mod item_plugin_uploads;
 use instancing_state::InstancingState;
-pub use item_plugin_uploads::SpriteInstanceUploads;
 mod per_object_state;
 use per_object_state::PerObjectState;
 mod shadow_state;
@@ -72,28 +71,24 @@ pub use self::types::{
     BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem,
     ComputeFilterKind, ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity,
     DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings,
-    DofSettings, EdlSettings, EffectsFrame, EmitterConfig, EnvironmentSettings, ExposureMode,
-    ExposureSettings, FillRule, FilterMode, ForceField, ForegroundPass, ForegroundProjection,
-    FrameData, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType, GpuMarchingCubesItem,
-    GpuParticleSystemItem, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
-    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
-    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode, ExposureSettings,
+    FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData, GlyphItem, GlyphRunItem,
+    GlyphSetRefItem, GlyphType, GpuMarchingCubesItem, GradientStop, GroundPlane, GroundPlaneMode,
+    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
+    LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
+    Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
     OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
     OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE,
-    ParticleMeshAlign, PathSegment, PathTrack, PipelineMode, PointShadowMode, PolylineCap,
-    PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
-    RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem,
-    SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings,
-    SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
-    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
-    StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
-    TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
-    TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
-    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
-    obb_wireframe_polyline, sphere_wireframe_polyline,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
+    PathTrack, PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem,
+    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
+    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
+    SurfaceLICConfig, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
+    TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings, VolumeItem,
+    VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline,
+    sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.

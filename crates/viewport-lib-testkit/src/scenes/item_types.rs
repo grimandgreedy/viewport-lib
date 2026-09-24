@@ -11,9 +11,12 @@ use glam::{Mat4, Vec3};
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
     Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, GpuMarchingCubesItem, Material,
-    MeshInstanceItem, PickId, RibbonItem, ScatterQuality, ScatterSettings, ScatterVolume,
-    ScatterVolumeItem, SpriteBlend, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem,
-    TextureData, TubeItem, VolumeData, VolumeItem, primitives,
+    MeshInstanceItem, PickId, ScatterQuality, ScatterSettings, ScatterVolume, ScatterVolumeItem,
+    SpriteBlend, TextureData, VolumeData, VolumeItem, primitives,
+};
+use viewport_lib_item_types::GpuParticleSystems;
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TubeItem,
 };
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
@@ -573,9 +576,9 @@ fn build_supersampled_sprite_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// and the image would pin almost nothing.
 fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = checker_texture(ctx, [255, 170, 60], [90, 40, 150]);
-    let mut config = viewport_lib::GpuParticleSystemConfig::default();
+    let mut config = viewport_lib_item_types::GpuParticleSystemConfig::default();
     config.capacity = 2048;
-    config.render = viewport_lib::ParticleRender::Sprite {
+    config.render = viewport_lib_item_types::ParticleRender::Sprite {
         texture_id: Some(tex),
         blend: SpriteBlend::AlphaBlend,
         size_mode: SpriteSizeMode::WorldSpace,
@@ -588,16 +591,16 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .renderer
         .create_gpu_particle_system(ctx.device, ctx.queue, &config);
 
-    let mut item = viewport_lib::GpuParticleSystemItem::new(system, 0.4);
+    let mut item = viewport_lib_item_types::GpuParticleSystemItem::new(system, 0.4);
     item.emitter.rate = 400.0;
     item.emitter.lifetime = (4.0, 6.0);
     item.emitter.size = 0.3;
     item.emitter.colour = [1.0, 1.0, 1.0, 0.9].into();
-    item.emitter.spawn_shape = viewport_lib::SpawnShape::Sphere {
+    item.emitter.spawn_shape = viewport_lib_item_types::SpawnShape::Sphere {
         center: [0.0, 0.0, -1.8],
         radius: 0.25,
     };
-    item.emitter.initial_velocity = viewport_lib::VelocityDist::UniformCone {
+    item.emitter.initial_velocity = viewport_lib_item_types::VelocityDist::UniformCone {
         axis: [0.0, 0.0, 1.0],
         half_angle: 0.6,
         min_speed: 2.5,

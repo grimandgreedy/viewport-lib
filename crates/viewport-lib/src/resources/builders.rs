@@ -446,7 +446,7 @@ pub(crate) fn env_sampler(device: &crate::gpu::Device, label: &str) -> crate::gp
 
 /// Additive blend: `dst.rgb + src.rgb`, alpha unchanged. Used by the sprite and
 /// particle draw paths for glowing / emissive accumulation.
-pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+pub const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
     color: crate::gpu::BlendComponent {
         src_factor: crate::gpu::BlendFactor::One,
         dst_factor: crate::gpu::BlendFactor::One,
@@ -462,7 +462,7 @@ pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState
 /// Premultiplied-alpha blend: `src.rgb + dst.rgb * (1 - src.a)`. Used by the
 /// sprite and particle draw paths when the source colour already carries its
 /// alpha premultiplied.
-pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+pub const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
     color: crate::gpu::BlendComponent {
         src_factor: crate::gpu::BlendFactor::One,
         dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
@@ -601,7 +601,7 @@ pub(crate) fn build_fullscreen_pipeline(
 /// exactly the pixels that survived the depth test in the colour pass. `cull` is
 /// `Back` for closed solids and `None` otherwise; `depth_write` is off for
 /// billboards and screen-space items that do not own scene depth.
-pub(crate) fn build_outline_mask_pipeline(
+pub fn build_outline_mask_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,

@@ -21,6 +21,7 @@ use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
+use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
@@ -28,9 +29,8 @@ use vpl::{
     BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GlyphItem, GlyphType,
     GpuMarchingCubesItem, ItemSettings, Material, McVolumeId, MeshId, NodeId, OverlayFill,
     OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem, PolylineSelectionInfo,
-    RibbonItem, SpriteItem, StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef,
-    TensorGlyphItem, TextureId, TubeItem, VolumeData, VolumeId, VolumeItem, VolumeMeshData,
-    VolumeMeshItem, VolumeSelectionInfo, primitives,
+    SubObjectRef, SubSelection, SubSelectionRef, TextureId, VolumeData, VolumeId, VolumeItem,
+    VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -238,28 +238,32 @@ impl PickingShowcase {
         let mut tensor = self.tensor.clone();
         tensor.settings.selected = sel(TENSOR);
         fd.scene
-            .items_mut::<viewport_lib::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
             .push(tensor);
 
         // Sprites.
         let mut sprites = self.sprites.clone();
         sprites.settings.selected = sel(SPRITE);
         fd.scene
-            .items_mut::<viewport_lib::SpriteItem>()
+            .items_mut::<viewport_lib_item_types::SpriteItem>()
             .push(sprites);
 
         // Streamtube / tube / ribbon.
         let mut st = self.streamtube.clone();
         st.settings.selected = sel(STREAMTUBE);
         fd.scene
-            .items_mut::<viewport_lib::StreamtubeItem>()
+            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
             .push(st);
         let mut tb = self.tube.clone();
         tb.settings.selected = sel(TUBE);
-        fd.scene.items_mut::<viewport_lib::TubeItem>().push(tb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .push(tb);
         let mut rb = self.ribbon.clone();
         rb.settings.selected = sel(RIBBON);
-        fd.scene.items_mut::<viewport_lib::RibbonItem>().push(rb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .push(rb);
 
         // Ray-marched volume.
         if let (Some(vol_id), Some(data)) = (self.volume_id, self.volume_data.as_ref()) {

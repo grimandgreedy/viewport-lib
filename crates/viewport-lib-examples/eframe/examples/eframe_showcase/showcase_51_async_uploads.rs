@@ -20,18 +20,20 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use viewport_lib as vpl;
 use viewport_lib::plugin_api::Uploads;
-use viewport_lib::renderer::SpriteInstanceUploads;
 use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId};
 use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem};
+use viewport_lib_item_types::{
+    RibbonId, RibbonItem, RibbonRefItem, SpriteInstanceSetId, SpriteInstanceUploads, SpriteItem,
+    SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
+    TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem,
+};
 
 use crate::eframe::egui;
 use vpl::{
     ColourmapId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId, LightKind, LightSource,
     LightingSettings, Material, MeshData, MeshId, OverlayTextureId, PolylineId, PolylineItem,
-    PolylineRefItem, RibbonId, RibbonItem, RibbonRefItem, SceneRenderItem, SpriteInstanceSetId,
-    SpriteItem, SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
-    TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem, UploadStatus,
-    ViewportRenderer, VolumeId, VolumeItem, plugins::skinning::SkinWeights,
+    PolylineRefItem, SceneRenderItem, UploadStatus, ViewportRenderer, VolumeId, VolumeItem,
+    plugins::skinning::SkinWeights,
 };
 
 use crate::App;
@@ -1933,21 +1935,21 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         let mut ref_item = StreamtubeRefItem::new(id);
         ref_item.model = translate(-2.4, 2.4);
         fd.scene
-            .items_mut::<viewport_lib::StreamtubeRefItem>()
+            .items_mut::<viewport_lib_item_types::StreamtubeRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_tube_id {
         let mut ref_item = TubeRefItem::new(id);
         ref_item.model = translate(2.4, 2.4);
         fd.scene
-            .items_mut::<viewport_lib::TubeRefItem>()
+            .items_mut::<viewport_lib_item_types::TubeRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_ribbon_id {
         let mut ref_item = RibbonRefItem::new(id);
         ref_item.model = translate(0.0, 4.8);
         fd.scene
-            .items_mut::<viewport_lib::RibbonRefItem>()
+            .items_mut::<viewport_lib_item_types::RibbonRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_point_cloud_id {
@@ -1966,7 +1968,7 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         let mut ref_item = TensorGlyphSetRefItem::new(id);
         ref_item.model = translate(-2.4, 4.8);
         fd.scene
-            .items_mut::<viewport_lib::TensorGlyphSetRefItem>()
+            .items_mut::<viewport_lib_item_types::TensorGlyphSetRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_volume_id {

@@ -158,10 +158,12 @@ fn item_type_fixture_is_consulted_by_cpu_pick() {
 // resolves, matching the other test binaries in this crate.
 const _: Option<wgpu::TextureFormat> = None;
 
-/// The renderer's per-type calls (`upload_sprite_set` and the rest) resolve
-/// their plugin by name and downcast it. A plugin that took one of those names
-/// would leave those calls looking at a type that is not what they expect, so
-/// the registration is refused where the mistake is made.
+/// The renderer's per-type calls resolve their plugin by name and downcast it.
+/// A plugin that took the name of a type the renderer installs itself would
+/// leave those calls looking at a type that is not what they expect, so the
+/// registration is refused where the mistake is made. Only the names the
+/// renderer still owns are refused: a type that has moved to a crate of its own
+/// registers the way any other plugin does.
 #[test]
 #[should_panic(expected = "is taken by a type the renderer installed itself")]
 fn a_plugin_cannot_take_a_built_in_item_type_name() {
@@ -174,7 +176,7 @@ fn a_plugin_cannot_take_a_built_in_item_type_name() {
     };
     harness.renderer.with_item_type_plugin(
         &harness.device,
-        Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.sprite")),
+        Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.polyline")),
     );
 }
 

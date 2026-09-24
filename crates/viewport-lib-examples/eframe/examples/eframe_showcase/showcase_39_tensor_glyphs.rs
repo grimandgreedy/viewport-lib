@@ -22,11 +22,12 @@ use crate::App;
 use crate::eframe::egui;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib_item_types::TensorGlyphItem;
 
 use vpl::{
     AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourmapId,
     FrameData, MeshId, PickId, SceneRenderItem, SubObjectRef, SubSelection, SubSelectionRef,
-    TensorGlyphItem, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 const PICK_BEAM_MESH: u64 = 3901;
@@ -352,7 +353,7 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
         item.colourmap_id = Some(ColourmapId(state.colourmap as usize));
         item.settings.pick_id = PickId(PICK_TENSOR_GLYPHS);
         fd.scene
-            .items_mut::<viewport_lib::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
             .push(item);
     }
 }

@@ -24,15 +24,15 @@ use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
+use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
 
 use crate::eframe::egui;
 use vpl::{
     BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData, GlyphItem,
     GlyphType, GpuMarchingCubesItem, ItemSettings, LightingSettings, Material, McVolumeId, MeshId,
     NodeId, PickBackend, PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo,
-    RibbonItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, SubObjectRef,
-    SubSelectionRef, TensorGlyphItem, TextureId, TubeItem, ViewportRenderer, VolumeData,
-    VolumeMeshData, VolumeMeshItem,
+    SceneFrame, SceneRenderItem, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer,
+    VolumeData, VolumeMeshData, VolumeMeshItem,
 };
 
 use crate::App;
@@ -2053,7 +2053,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tg.settings.selected = app.pl_state.selection.contains(32);
         tg.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
             .push(tg);
     }
     // Sprites: arc of 8 (pick_id=33).
@@ -2074,7 +2074,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.settings.pick_id = PickId(33);
         s.settings.selected = app.pl_state.selection.contains(33);
         s.settings.unlit = false;
-        fd.scene.items_mut::<viewport_lib::SpriteItem>().push(s);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .push(s);
     }
     // XO sprites (pick_id=34).
     if !app.pl_state.xo_sprite_positions.is_empty() {
@@ -2094,7 +2096,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.settings.pick_id = PickId(34);
         s.settings.selected = app.pl_state.selection.contains(34);
         s.settings.unlit = false;
-        fd.scene.items_mut::<viewport_lib::SpriteItem>().push(s);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .push(s);
     }
     // Streamtube (pick_id=40).
     if !app.pl_state.streamtube_positions.is_empty() {
@@ -2107,7 +2111,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         st.settings.selected = app.pl_state.selection.contains(40);
         st.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib::StreamtubeItem>()
+            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
             .push(st);
     }
     // Tube (pick_id=41).
@@ -2120,7 +2124,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tb.settings.pick_id = PickId(41);
         tb.settings.selected = app.pl_state.selection.contains(41);
         tb.settings.unlit = false;
-        fd.scene.items_mut::<viewport_lib::TubeItem>().push(tb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .push(tb);
     }
     // Ribbon (pick_id=42).
     if !app.pl_state.ribbon_positions.is_empty() {
@@ -2132,7 +2138,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         rb.settings.pick_id = PickId(42);
         rb.settings.selected = app.pl_state.selection.contains(42);
         rb.settings.unlit = false;
-        fd.scene.items_mut::<viewport_lib::RibbonItem>().push(rb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .push(rb);
     }
     // Volume surface slice (pick_id=51): plane tilted 60 degrees inside the volume bbox.
     if let (Some(vol_id), Some(mesh_id)) =

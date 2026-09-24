@@ -12,14 +12,6 @@ use common::*;
 use viewport_lib::plugin_api::Handles;
 use viewport_lib_item_types::*;
 
-/// A renderer with this crate's item types registered, which is what a
-/// consumer of the crate builds.
-fn renderer_with_item_types(device: &gpu::Device) -> ViewportRenderer {
-    let mut renderer = ViewportRenderer::new(device, gpu::TextureFormat::Rgba8UnormSrgb);
-    install(&mut renderer, device);
-    renderer
-}
-
 #[test]
 fn gpu_pick_point_cloud_resolves_point() {
     let Some((device, queue)) = headless_device() else {

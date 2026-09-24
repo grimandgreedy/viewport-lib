@@ -52,7 +52,7 @@ impl GpuImplicitGpu {
         let shader = builders::wgsl_module(
             device,
             "implicit_shader",
-            lit_shader(wgsl_source!("implicit")),
+            lit_shader(&[], wgsl_source!("implicit")),
         );
         // Group 0 reuses the shared camera layout (CameraUniform + LightsUniform).
         let layout = builders::standard_scene_layout(

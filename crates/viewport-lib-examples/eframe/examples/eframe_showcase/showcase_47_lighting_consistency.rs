@@ -29,10 +29,11 @@ use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
+use viewport_lib_item_types::{RibbonItem, StreamtubeItem, TensorGlyphItem, TubeItem};
 use vpl::{
     ColourmapId, FrameData, GlyphItem, GlyphType, ItemSettings, LightSource, LightingSettings,
-    Material, MeshId, PolylineItem, RibbonItem, SceneRenderItem, StreamtubeItem, TensorGlyphItem,
-    TubeItem, ViewportRenderer, VolumeId, VolumeItem, VolumeMeshItem, VolumeTransparency,
+    Material, MeshId, PolylineItem, SceneRenderItem, ViewportRenderer, VolumeId, VolumeItem,
+    VolumeMeshItem, VolumeTransparency,
 };
 
 use crate::App;
@@ -476,7 +477,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         }
         broadcast(s, &mut tg.settings);
         fd.scene
-            .items_mut::<viewport_lib::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
             .push(tg);
     }
 
@@ -520,7 +521,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         st.radius = 0.08;
         broadcast(s, &mut st.settings);
         fd.scene
-            .items_mut::<viewport_lib::StreamtubeItem>()
+            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
             .push(st);
     }
 
@@ -545,7 +546,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         tb.radius_attribute = Some(radii);
         tb.colour = [0.62, 0.08, 0.35, 1.0].into();
         broadcast(s, &mut tb.settings);
-        fd.scene.items_mut::<viewport_lib::TubeItem>().push(tb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .push(tb);
     }
 
     // Cell (2, 1): ribbon along the X-Z loop. Twist vectors point radially outward
@@ -570,7 +573,9 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         rb.twist_attribute = Some(twists);
         rb.colour = [0.60, 0.35, 0.08, 1.0].into();
         broadcast(s, &mut rb.settings);
-        fd.scene.items_mut::<viewport_lib::RibbonItem>().push(rb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .push(rb);
     }
 
     // Cell (3, 1): GPU implicit (sphere).

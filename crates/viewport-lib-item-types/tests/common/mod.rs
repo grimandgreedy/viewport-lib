@@ -1,12 +1,15 @@
 //! Headless fixtures shared by this crate's item-type tests.
 
 #![allow(dead_code)]
+// Each test binary compiles this file and uses a different part of the
+// re-export list below, so the names one of them does not reach for are not a
+// problem to fix.
+#![allow(unused_imports)]
 
 use viewport_lib::wgpu;
 
 // Re-export the library types the test files reach for, so a single
-// `use common::*;` covers the common set. Unused names from a glob import do
-// not warn, so each file only pays for what it actually references.
+// `use common::*;` covers the common set.
 pub use viewport_lib::{
     Camera, PickBackend, PickId, PickMask,
     renderer::{FrameData, RenderCamera, ViewportRenderer},
@@ -31,9 +34,28 @@ pub fn sub_object_pick_frame() -> FrameData {
     frame
 }
 
+/// A renderer with this crate's item types registered, which is what a
+/// consumer of the crate builds. Nothing here draws without it: the types are
+/// plugins now, not built into the renderer.
+pub fn renderer_with_item_types(device: &wgpu::Device) -> ViewportRenderer {
+    let mut renderer = ViewportRenderer::new(device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    viewport_lib_item_types::install(&mut renderer, device);
+    renderer
+}
+
 /// Create a headless wgpu device + queue for testing.
 pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     headless_device_with(&DeviceProfile::low_power("test"))
+}
+
+/// The same device, but only when the adapter supports `primitive_index`.
+/// The curve types report the hit segment through that builtin, so the tests
+/// that check segment identity skip on an adapter without it.
+pub fn headless_device_with_primitive_index() -> Option<(wgpu::Device, wgpu::Queue)> {
+    headless_device_with(
+        &DeviceProfile::low_power("test-primitive-index")
+            .require(viewport_lib::gpu::PRIMITIVE_INDEX_FEATURE),
+    )
 }
 
 /// A unit cube, the stand-in geometry for a draw that only has to put pixels

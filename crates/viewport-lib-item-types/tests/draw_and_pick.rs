@@ -8,13 +8,6 @@ use viewport_lib_item_types::*;
 mod common;
 use common::*;
 
-/// A renderer with this crate's item types registered.
-fn renderer_with_item_types(device: &gpu::Device) -> ViewportRenderer {
-    let mut renderer = ViewportRenderer::new(device, gpu::TextureFormat::Rgba8UnormSrgb);
-    install(&mut renderer, device);
-    renderer
-}
-
 // ---------------------------------------------------------------------------
 // GPU pick: Gaussian splats, image slices and volume surface slices
 // ---------------------------------------------------------------------------
@@ -172,4 +165,28 @@ fn external_instances_render_with_instance_range_slice() {
         "instance range 0..2 selects only the behind-camera elements; the \
          image must match an empty scene.",
     );
+}
+
+/// A world-space sprite billboard resolves to its pick id. The billboard is
+/// expanded in the vertex stage that the pick pipeline reuses, so prepare has
+/// to run before the pick.
+#[test]
+fn gpu_pick_hits_sprite_set() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let mut frame = sub_object_pick_frame();
+
+    let mut sprite = SpriteItem::default();
+    sprite.positions = vec![[0.0, 0.0, 0.0]];
+    sprite.default_size = 4.0;
+    sprite.size_mode = SpriteSizeMode::WorldSpace;
+    sprite.settings.pick_id = PickId(777);
+    frame.scene.items_mut::<SpriteItem>().push(sprite);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
+    assert_eq!(hit.map(|h| h.object_id), Some(PickId(777)));
 }

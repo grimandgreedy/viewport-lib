@@ -13,16 +13,14 @@
 
 use super::types::FrameData;
 use super::{
-    CameraFrame, GlyphItem, LightingSettings, PolylineItem, RenderCamera, RibbonItem, SceneFrame,
-    StreamtubeItem, SurfaceSubmission, TensorGlyphItem, TubeItem, ViewportRenderer,
+    CameraFrame, GlyphItem, LightingSettings, PolylineItem, RenderCamera, SceneFrame,
+    SurfaceSubmission, ViewportRenderer,
 };
 use crate::camera::Camera;
 use crate::plugin_api::ItemTypePlugin as _;
 use crate::renderer::PickId;
-use crate::renderer::item_plugins::curves::{RibbonPlugin, StreamtubePlugin, TubePlugin};
 use crate::renderer::item_plugins::glyph::GlyphPlugin;
 use crate::renderer::item_plugins::polyline::PolylinePlugin;
-use crate::renderer::item_plugins::tensor_glyph::TensorGlyphPlugin;
 use crate::scene::material::ItemSettings;
 
 fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
@@ -129,55 +127,6 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
     }
 
     // -----------------------------------------------------------------
-    // Tensor glyph
-    // -----------------------------------------------------------------
-    //
-    // The tensor glyph item type is an `ItemTypePlugin`, so the check drives
-    // the plugin's prepare directly instead of reading a renderer field.
-    {
-        let eigenvectors = vec![[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]];
-        let mut vis = TensorGlyphItem::default();
-        vis.positions = vec![[0.0, 0.0, 0.0]];
-        vis.eigenvalues = vec![[1.0, 1.0, 1.0]];
-        vis.eigenvectors = eigenvectors.clone();
-        vis.settings = visible();
-        let mut hid = TensorGlyphItem::default();
-        hid.positions = vec![[1.0, 0.0, 0.0]];
-        hid.eigenvalues = vec![[1.0, 1.0, 1.0]];
-        hid.eigenvectors = eigenvectors;
-        hid.settings = hidden();
-        let items: Vec<TensorGlyphItem> = vec![vis, hid];
-        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
-            vec![Box::new(items)];
-        let items = crate::plugin_api::ItemCollections::new(&collections);
-
-        let fd = empty_frame();
-        let resources = renderer.resources();
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &fd.camera.render_camera,
-            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
-            viewport_index: 0,
-            frame_index: 0,
-            jobs: crate::resources::Jobs::new(resources),
-            resources,
-            wireframe_mode: false,
-            outline_selected: false,
-            sub_selection: None,
-            clip_objects: &[],
-            quality_reduced: false,
-            decal_excluded_surfaces: &[],
-            collections: &collections,
-        };
-        let mut plugin = TensorGlyphPlugin::default();
-        let _ = plugin.prepare(&device, &queue, &ctx, &items);
-        assert_eq!(
-            plugin.drawn_count(),
-            1,
-            "tensor_glyph: hidden item must not produce gpu data"
-        );
-    }
-
-    // -----------------------------------------------------------------
     // Polyline
     // -----------------------------------------------------------------
     //
@@ -220,144 +169,6 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             plugin.drawn_count(),
             1,
             "polyline: hidden item must not produce gpu data"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // Streamtube
-    // -----------------------------------------------------------------
-    //
-    // The streamtube item type is an `ItemTypePlugin`, so the check drives the
-    // plugin's prepare directly instead of reading a renderer field.
-    {
-        let mut vis = StreamtubeItem::default();
-        vis.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        vis.strip_lengths = vec![2];
-        vis.settings = visible();
-        let mut hid = StreamtubeItem::default();
-        hid.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        hid.strip_lengths = vec![2];
-        hid.settings = hidden();
-        let items: Vec<StreamtubeItem> = vec![vis, hid];
-        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
-            vec![Box::new(items)];
-        let items = crate::plugin_api::ItemCollections::new(&collections);
-
-        let fd = empty_frame();
-        let resources = renderer.resources();
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &fd.camera.render_camera,
-            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
-            viewport_index: 0,
-            frame_index: 0,
-            jobs: crate::resources::Jobs::new(resources),
-            resources,
-            wireframe_mode: false,
-            outline_selected: false,
-            sub_selection: None,
-            clip_objects: &[],
-            quality_reduced: false,
-            decal_excluded_surfaces: &[],
-            collections: &collections,
-        };
-        let mut plugin = StreamtubePlugin::default();
-        let _ = plugin.prepare(&device, &queue, &ctx, &items);
-        assert_eq!(
-            plugin.drawn_count(),
-            1,
-            "streamtube: hidden item must not produce gpu data"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // Tube
-    // -----------------------------------------------------------------
-    //
-    // The tube item type is an `ItemTypePlugin`, so the check drives the
-    // plugin's prepare directly instead of reading a renderer field.
-    {
-        let mut vis = TubeItem::default();
-        vis.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        vis.strip_lengths = vec![2];
-        vis.settings = visible();
-        let mut hid = TubeItem::default();
-        hid.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        hid.strip_lengths = vec![2];
-        hid.settings = hidden();
-        let items: Vec<TubeItem> = vec![vis, hid];
-        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
-            vec![Box::new(items)];
-        let items = crate::plugin_api::ItemCollections::new(&collections);
-
-        let fd = empty_frame();
-        let resources = renderer.resources();
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &fd.camera.render_camera,
-            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
-            viewport_index: 0,
-            frame_index: 0,
-            jobs: crate::resources::Jobs::new(resources),
-            resources,
-            wireframe_mode: false,
-            outline_selected: false,
-            sub_selection: None,
-            clip_objects: &[],
-            quality_reduced: false,
-            decal_excluded_surfaces: &[],
-            collections: &collections,
-        };
-        let mut plugin = TubePlugin::default();
-        let _ = plugin.prepare(&device, &queue, &ctx, &items);
-        assert_eq!(
-            plugin.drawn_count(),
-            1,
-            "tube: hidden item must not produce gpu data"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // Ribbon
-    // -----------------------------------------------------------------
-    //
-    // The ribbon item type is an `ItemTypePlugin`, so the check drives the
-    // plugin's prepare directly instead of reading a renderer field.
-    {
-        let mut vis = RibbonItem::default();
-        vis.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        vis.strip_lengths = vec![2];
-        vis.settings = visible();
-        let mut hid = RibbonItem::default();
-        hid.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        hid.strip_lengths = vec![2];
-        hid.settings = hidden();
-        let items: Vec<RibbonItem> = vec![vis, hid];
-        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
-            vec![Box::new(items)];
-        let items = crate::plugin_api::ItemCollections::new(&collections);
-
-        let fd = empty_frame();
-        let resources = renderer.resources();
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &fd.camera.render_camera,
-            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
-            viewport_index: 0,
-            frame_index: 0,
-            jobs: crate::resources::Jobs::new(resources),
-            resources,
-            wireframe_mode: false,
-            outline_selected: false,
-            sub_selection: None,
-            clip_objects: &[],
-            quality_reduced: false,
-            decal_excluded_surfaces: &[],
-            collections: &collections,
-        };
-        let mut plugin = RibbonPlugin::default();
-        let _ = plugin.prepare(&device, &queue, &ctx, &items);
-        assert_eq!(
-            plugin.drawn_count(),
-            1,
-            "ribbon: hidden item must not produce gpu data"
         );
     }
 }

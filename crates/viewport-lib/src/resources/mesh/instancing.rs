@@ -1998,13 +1998,19 @@ const _: () = assert!(std::mem::size_of::<InstanceData>() == 144);
 /// Total: 80 bytes
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct PickInstance {
-    pub(crate) model_c0: [f32; 4],
-    pub(crate) model_c1: [f32; 4],
-    pub(crate) model_c2: [f32; 4],
-    pub(crate) model_c3: [f32; 4],
-    pub(crate) object_id: u32,
-    pub(crate) _pad: [u32; 3],
+pub struct PickInstance {
+    /// Column 0 of the instance model matrix.
+    pub model_c0: [f32; 4],
+    /// Column 1 of the instance model matrix.
+    pub model_c1: [f32; 4],
+    /// Column 2 of the instance model matrix.
+    pub model_c2: [f32; 4],
+    /// Column 3 of the instance model matrix.
+    pub model_c3: [f32; 4],
+    /// The pick id written to the pick target for this instance.
+    pub object_id: u32,
+    /// Padding to the 80-byte stride the shader declares.
+    pub _pad: [u32; 3],
 }
 
 const _: () = assert!(std::mem::size_of::<PickInstance>() == 80);

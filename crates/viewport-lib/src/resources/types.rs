@@ -31,7 +31,7 @@ pub use crate::resources::mesh::instancing::BatchMeta;
 pub(crate) use crate::resources::mesh::instancing::InstanceAabb;
 pub(crate) use crate::resources::mesh::instancing::InstanceData;
 pub(crate) use crate::resources::mesh::instancing::ObjectUniform;
-pub(crate) use crate::resources::mesh::instancing::PickInstance;
+pub use crate::resources::mesh::instancing::PickInstance;
 pub use crate::resources::mesh::meshes::{MeshData, SubmeshRange};
 pub(crate) use crate::resources::overlay::highlight::OutlineEdgeUniform;
 pub(crate) use crate::resources::overlay::highlight::OutlineObjectBuffers;

@@ -20,8 +20,11 @@
 //!   screen-space proximity.
 //! - [`inline_point_position`]: the world position of one point sub-object,
 //!   found by scanning the frame's items for the one carrying a pick id.
+//! - [`strip_for_node`] / [`strip_for_segment`]: map a global node or segment
+//!   index back to the strip it belongs to, for an item type submitting
+//!   several strips in one flat buffer.
 
 pub use crate::renderer::picking::helpers::{
     inline_point_position, pick_closest_polyline_segment, project_to_screen, ray_triangle,
-    ray_unit_box_toi, segment_in_rect, world_radius_in_pixels,
+    ray_unit_box_toi, segment_in_rect, strip_for_node, strip_for_segment, world_radius_in_pixels,
 };

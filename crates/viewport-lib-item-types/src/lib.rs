@@ -26,15 +26,23 @@
 //! returns that same submission form. `PolylineItem` is the consumer-facing
 //! face of a renderer subsystem, so it stays in viewport-lib.
 
+mod curves;
 mod external_instances;
 mod gaussian_splat;
 mod gpu_implicit;
+mod gpu_particles;
+mod helpers;
 mod image_slice;
 mod point_cloud;
-mod helpers;
 mod shader;
+mod sprite;
+mod tensor_glyph;
 mod volume_surface_slice;
 
+pub use curves::{
+    RibbonId, RibbonItem, RibbonPlugin, RibbonRefItem, StreamtubeId, StreamtubeItem,
+    StreamtubePlugin, StreamtubeRefItem, TubeId, TubeItem, TubePlugin, TubeRefItem,
+};
 pub use external_instances::{
     ExternalInstanceSetConfig, ExternalInstancesItem, ExternalInstancesPlugin,
 };
@@ -44,18 +52,41 @@ pub use gaussian_splat::{
 pub use gpu_implicit::{
     GpuImplicitItem, GpuImplicitOptions, GpuImplicitPlugin, ImplicitBlendMode, ImplicitPrimitive,
 };
+pub use gpu_particles::{
+    EmitterConfig, ForceField, GpuParticleSystemConfig, GpuParticleSystemItem, GpuParticlesPlugin,
+    ParticleMeshAlign, ParticleRender, SpawnShape, VelocityDist,
+};
 pub use image_slice::{ImageSliceItem, ImageSlicePlugin, SliceAxis};
 pub use point_cloud::{
     PointCloudId, PointCloudItem, PointCloudPlugin, PointCloudRefItem, PointRenderMode,
+};
+pub use sprite::{
+    SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
+    SpriteOrientation, SpritePlugin, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
+};
+pub use tensor_glyph::{
+    TensorGlyphItem, TensorGlyphPlugin, TensorGlyphSetId, TensorGlyphSetRefItem,
 };
 pub use volume_surface_slice::{VolumeSurfaceSliceItem, VolumeSurfaceSlicePlugin};
 
 /// A handle the renderer's own id crate owns, re-exported so a consumer of this
 /// crate does not have to name two crates to submit one item.
-pub use viewport_lib_types::ids::ExternalInstanceSetId;
+pub use viewport_lib_types::ids::{ExternalInstanceSetId, GpuParticleSystemId};
 
 /// The name each item type registers and submits under.
 pub const EXTERNAL_INSTANCES_TYPE_NAME: &str = external_instances::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const GPU_PARTICLES_TYPE_NAME: &str = gpu_particles::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const RIBBON_TYPE_NAME: &str = curves::RIBBON_TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const SPRITE_TYPE_NAME: &str = sprite::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const STREAMTUBE_TYPE_NAME: &str = curves::STREAMTUBE_TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const TENSOR_GLYPH_TYPE_NAME: &str = tensor_glyph::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const TUBE_TYPE_NAME: &str = curves::TUBE_TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const GAUSSIAN_SPLAT_TYPE_NAME: &str = gaussian_splat::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
@@ -75,11 +106,15 @@ pub const VOLUME_SURFACE_SLICE_TYPE_NAME: &str = volume_surface_slice::TYPE_NAME
 /// hand to `create_shader_module`, which is what a validation pass wants.
 pub fn shader_sources() -> Vec<(&'static str, String)> {
     let mut all = Vec::new();
+    all.extend(curves::shader_sources());
     all.extend(external_instances::shader_sources());
     all.extend(gaussian_splat::shader_sources());
     all.extend(gpu_implicit::shader_sources());
+    all.extend(gpu_particles::shader_sources());
     all.extend(image_slice::shader_sources());
     all.extend(point_cloud::shader_sources());
+    all.extend(sprite::shader_sources());
+    all.extend(tensor_glyph::shader_sources());
     all.extend(volume_surface_slice::shader_sources());
     all.extend(helpers::shader_sources());
     all
@@ -101,7 +136,13 @@ pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     renderer.with_item_type_plugin(device, Box::new(PointCloudPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(GaussianSplatPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(GpuImplicitPlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(StreamtubePlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(TubePlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(TensorGlyphPlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(RibbonPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(ExternalInstancesPlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(SpritePlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(GpuParticlesPlugin::default()));
 }
 
 impl viewport_lib::plugin_api::Uploads<PointCloudItem> for ViewportRenderer {
@@ -249,6 +290,251 @@ impl ExternalInstanceUploads for ViewportRenderer {
     ) -> viewport_lib::error::ViewportResult<()> {
         plugin_mut::<ExternalInstancesPlugin>(self, EXTERNAL_INSTANCES_TYPE_NAME)
             .set_buffer(id, positions)
+    }
+}
+
+/// Implement the standard upload surface for one item type whose plugin
+/// exposes the five store calls under their usual names.
+macro_rules! standard_uploads {
+    ($item:ty, $id:ty, $name:expr, $plugin:ty) => {
+        impl viewport_lib::plugin_api::Uploads<$item> for ViewportRenderer {
+            type Id = $id;
+
+            fn upload(
+                &mut self,
+                device: &gpu::Device,
+                queue: &gpu::Queue,
+                item: &$item,
+            ) -> viewport_lib::error::ViewportResult<$id> {
+                let host = host::<$plugin>(self, $name);
+                Ok(host.plugin.upload(device, queue, host.resources, item))
+            }
+
+            fn begin_upload(
+                &mut self,
+                device: &gpu::Device,
+                queue: &gpu::Queue,
+                item: $item,
+            ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
+                let host = host::<$plugin>(self, $name);
+                Ok(host
+                    .plugin
+                    .begin_upload(&host.jobs, device, queue, host.resources, item))
+            }
+
+            fn replace(
+                &mut self,
+                device: &gpu::Device,
+                queue: &gpu::Queue,
+                id: $id,
+                item: &$item,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                let host = host::<$plugin>(self, $name);
+                host.plugin.replace(device, queue, host.resources, id, item)
+            }
+        }
+
+        impl viewport_lib::plugin_api::Handles<$id> for ViewportRenderer {
+            fn upload_result(
+                &mut self,
+                job: viewport_lib::resources::JobId,
+            ) -> viewport_lib::error::ViewportResult<$id> {
+                let host = host::<$plugin>(self, $name);
+                host.plugin.take_upload_result(&host.jobs, job)
+            }
+
+            fn release(&mut self, id: $id) -> bool {
+                plugin_mut::<$plugin>(self, $name).drop_stored(id)
+            }
+        }
+    };
+}
+
+standard_uploads!(
+    StreamtubeItem,
+    StreamtubeId,
+    STREAMTUBE_TYPE_NAME,
+    StreamtubePlugin
+);
+standard_uploads!(TubeItem, TubeId, TUBE_TYPE_NAME, TubePlugin);
+standard_uploads!(RibbonItem, RibbonId, RIBBON_TYPE_NAME, RibbonPlugin);
+standard_uploads!(
+    TensorGlyphItem,
+    TensorGlyphSetId,
+    TENSOR_GLYPH_TYPE_NAME,
+    TensorGlyphPlugin
+);
+
+/// Sprites keep two stores behind one item struct: a batch drawn as one set,
+/// and an instance set drawn per transform. `Uploads` carries one `Id` per
+/// implementation, so it covers the plain set and the instance set keeps calls
+/// of its own on [`SpriteInstanceUploads`].
+impl viewport_lib::plugin_api::Uploads<SpriteItem> for ViewportRenderer {
+    type Id = SpriteSetId;
+
+    fn upload(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        item: &SpriteItem,
+    ) -> viewport_lib::error::ViewportResult<SpriteSetId> {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        Ok(host.plugin.upload_set(device, queue, host.resources, item))
+    }
+
+    fn begin_upload(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        item: SpriteItem,
+    ) -> viewport_lib::error::ViewportResult<viewport_lib::resources::JobId> {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        Ok(host
+            .plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item))
+    }
+
+    fn replace(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: SpriteSetId,
+        item: &SpriteItem,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        host.plugin
+            .replace_set(device, queue, host.resources, id, item)
+    }
+}
+
+impl viewport_lib::plugin_api::Handles<SpriteSetId> for ViewportRenderer {
+    fn upload_result(
+        &mut self,
+        job: viewport_lib::resources::JobId,
+    ) -> viewport_lib::error::ViewportResult<SpriteSetId> {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        host.plugin.take_set_result(&host.jobs, job)
+    }
+
+    fn release(&mut self, id: SpriteSetId) -> bool {
+        plugin_mut::<SpritePlugin>(self, SPRITE_TYPE_NAME).drop_set(id)
+    }
+}
+
+/// The sprite instance-set store, which shares `SpriteItem` with the plain set
+/// store and so cannot share its `Uploads` implementation. Its handle type is
+/// its own, so taking a finished job and releasing a set go through
+/// [`Handles`](viewport_lib::plugin_api::Handles) like every other store.
+pub trait SpriteInstanceUploads {
+    /// Upload an instance set, returning a handle valid until
+    /// [`release`](viewport_lib::plugin_api::Handles::release).
+    fn upload_sprite_instance_set(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        item: &SpriteItem,
+    ) -> SpriteInstanceSetId;
+
+    /// Start an off-thread upload of an instance set.
+    fn begin_upload_sprite_instance_set(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        item: SpriteItem,
+    ) -> viewport_lib::resources::JobId;
+
+    /// Replace the sprites behind an instance-set handle, keeping the handle.
+    fn replace_sprite_instance_set(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: SpriteInstanceSetId,
+        item: &SpriteItem,
+    ) -> viewport_lib::error::ViewportResult<()>;
+}
+
+impl SpriteInstanceUploads for ViewportRenderer {
+    fn upload_sprite_instance_set(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        item: &SpriteItem,
+    ) -> SpriteInstanceSetId {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        host.plugin
+            .upload_instance_set(device, queue, host.resources, item)
+    }
+
+    fn begin_upload_sprite_instance_set(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        item: SpriteItem,
+    ) -> viewport_lib::resources::JobId {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        host.plugin
+            .begin_upload(&host.jobs, device, queue, host.resources, item)
+    }
+
+    fn replace_sprite_instance_set(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: SpriteInstanceSetId,
+        item: &SpriteItem,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        host.plugin
+            .replace_instance_set(device, queue, host.resources, id, item)
+    }
+}
+
+impl viewport_lib::plugin_api::Handles<SpriteInstanceSetId> for ViewportRenderer {
+    fn upload_result(
+        &mut self,
+        job: viewport_lib::resources::JobId,
+    ) -> viewport_lib::error::ViewportResult<SpriteInstanceSetId> {
+        let host = host::<SpritePlugin>(self, SPRITE_TYPE_NAME);
+        host.plugin.take_instance_set_result(&host.jobs, job)
+    }
+
+    fn release(&mut self, id: SpriteInstanceSetId) -> bool {
+        plugin_mut::<SpritePlugin>(self, SPRITE_TYPE_NAME).drop_instance_set(id)
+    }
+}
+
+/// The GPU particle system surface, on the renderer.
+///
+/// A system owns a persistent particle buffer the simulation advances in
+/// place, so creating one is not an upload of content and neither call fits
+/// [`Uploads`](viewport_lib::plugin_api::Uploads).
+pub trait GpuParticleSystems {
+    /// Create a persistent GPU particle system, returning its handle.
+    fn create_gpu_particle_system(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        config: &GpuParticleSystemConfig,
+    ) -> GpuParticleSystemId;
+
+    /// Release a system. The handle stops resolving and its buffers are freed.
+    fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId);
+}
+
+impl GpuParticleSystems for ViewportRenderer {
+    fn create_gpu_particle_system(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        config: &GpuParticleSystemConfig,
+    ) -> GpuParticleSystemId {
+        let host = host::<GpuParticlesPlugin>(self, GPU_PARTICLES_TYPE_NAME);
+        host.plugin
+            .create_system(device, queue, host.resources, config)
+    }
+
+    fn drop_gpu_particle_system(&mut self, id: GpuParticleSystemId) {
+        plugin_mut::<GpuParticlesPlugin>(self, GPU_PARTICLES_TYPE_NAME).drop_system(id)
     }
 }
 

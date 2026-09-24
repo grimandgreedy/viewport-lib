@@ -24,14 +24,14 @@ use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
     BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GlyphItem, GpuMarchingCubesItem,
-    LightingSettings, Material, MeshData, MeshId, MeshInstanceItem, PolylineItem, RibbonItem,
-    ScatterSettings, ScatterVolumeItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem,
-    TensorGlyphItem, TubeItem, ViewportRenderer, VolumeItem, primitives,
+    LightingSettings, Material, MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings,
+    ScatterVolumeItem, SceneFrame, SceneRenderItem, ViewportRenderer, VolumeItem, primitives,
 };
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::{
     GaussianSplatItem, GpuImplicitItem, ImageSliceItem, VolumeSurfaceSliceItem,
 };
+use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
@@ -83,7 +83,7 @@ pub struct BuiltScene {
     /// only reproducible because the emit RNG is seeded from a frame counter
     /// rather than from the clock, and the harness pumps a fixed number of
     /// frames.
-    pub gpu_particle_systems: Vec<viewport_lib::GpuParticleSystemItem>,
+    pub gpu_particle_systems: Vec<viewport_lib_item_types::GpuParticleSystemItem>,
     /// Ray-marched volume items.
     pub volumes: Vec<VolumeItem>,
     /// Gaussian splat items.
@@ -194,12 +194,13 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<PointCloudItem>() = scene.point_clouds.clone();
     *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
     *sf.items_mut::<viewport_lib::GlyphItem>() = scene.glyphs.clone();
-    *sf.items_mut::<viewport_lib::TensorGlyphItem>() = scene.tensor_glyphs.clone();
-    *sf.items_mut::<viewport_lib::TubeItem>() = scene.tube_items.clone();
-    *sf.items_mut::<viewport_lib::StreamtubeItem>() = scene.streamtube_items.clone();
-    *sf.items_mut::<viewport_lib::RibbonItem>() = scene.ribbon_items.clone();
-    *sf.items_mut::<viewport_lib::SpriteItem>() = scene.sprite_items.clone();
-    *sf.items_mut::<viewport_lib::GpuParticleSystemItem>() = scene.gpu_particle_systems.clone();
+    *sf.items_mut::<viewport_lib_item_types::TensorGlyphItem>() = scene.tensor_glyphs.clone();
+    *sf.items_mut::<viewport_lib_item_types::TubeItem>() = scene.tube_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::StreamtubeItem>() = scene.streamtube_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::RibbonItem>() = scene.ribbon_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::SpriteItem>() = scene.sprite_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::GpuParticleSystemItem>() =
+        scene.gpu_particle_systems.clone();
     *sf.items_mut::<viewport_lib::VolumeItem>() = scene.volumes.clone();
     *sf.items_mut::<GaussianSplatItem>() = scene.gaussian_splats.clone();
     *sf.items_mut::<ImageSliceItem>() = scene.image_slices.clone();

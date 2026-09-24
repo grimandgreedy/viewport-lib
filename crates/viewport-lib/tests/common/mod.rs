@@ -22,9 +22,8 @@ use viewport_lib::wgpu;
 pub use viewport_lib::{
     Aabb, AlphaMode, AnchorX, AnchorY, BackfacePolicy, Camera, DecalItem, GlyphItem, GlyphType,
     IndirectLightSource, ItemSettings, LightKind, LightSource, Material, MeshId,
-    OverrideBufferSlice, PickBackend, PickId, PickMask, PickPoll, PolylineItem, RibbonItem,
-    ScatterVolume, ScatterVolumeItem, Scene, Selection, ShadingModel, SpriteItem, SpriteSizeMode,
-    VolumeItem, VolumeMeshItem,
+    OverrideBufferSlice, PickBackend, PickId, PickMask, PickPoll, PolylineItem, ScatterVolume,
+    ScatterVolumeItem, Scene, Selection, ShadingModel, VolumeItem, VolumeMeshItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,

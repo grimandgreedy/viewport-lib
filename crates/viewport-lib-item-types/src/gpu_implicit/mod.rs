@@ -23,7 +23,7 @@ pub const TYPE_NAME: &str = "vpl.gpu_implicit";
 pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
     use crate::shader::{lit_shader, scene_shader, wgsl_source};
     vec![
-        ("implicit.wgsl", lit_shader(wgsl_source!("implicit"))),
+        ("implicit.wgsl", lit_shader(&[], wgsl_source!("implicit"))),
         (
             "implicit_outline_mask.wgsl",
             scene_shader(&[], wgsl_source!("implicit_outline_mask")),

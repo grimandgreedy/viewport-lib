@@ -11,15 +11,11 @@
 
 pub(crate) mod registry;
 
-pub(crate) mod curves;
 pub(crate) mod decal;
 pub(crate) mod glyph;
 pub(crate) mod gpu_marching_cubes;
-pub(crate) mod gpu_particles;
 pub(crate) mod polyline;
 pub(crate) mod scatter_volume;
-pub(crate) mod sprite;
-pub(crate) mod tensor_glyph;
 pub(crate) mod volume;
 
 use crate::plugin_api::PluginItemCollection;
@@ -83,10 +79,6 @@ impl crate::renderer::ViewportRenderer {
         self.install_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
         self.install_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
         self.install_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));
-        self.install_item_type_plugin(device, Box::new(curves::StreamtubePlugin::default()));
-        self.install_item_type_plugin(device, Box::new(curves::TubePlugin::default()));
-        self.install_item_type_plugin(device, Box::new(tensor_glyph::TensorGlyphPlugin::default()));
-        self.install_item_type_plugin(device, Box::new(curves::RibbonPlugin::default()));
         // Then the types that always had a draw site of their own.
         self.install_item_type_plugin(
             device,
@@ -94,11 +86,6 @@ impl crate::renderer::ViewportRenderer {
         );
         // Sprites drew after every other non-mesh type, so they register last,
         // with the particles that shared their pass right behind them.
-        self.install_item_type_plugin(device, Box::new(sprite::SpritePlugin::default()));
-        self.install_item_type_plugin(
-            device,
-            Box::new(gpu_particles::GpuParticlesPlugin::default()),
-        );
         self.install_item_type_plugin(
             device,
             Box::new(decal::DecalPlugin::new(self.decal_cache_stats.clone())),

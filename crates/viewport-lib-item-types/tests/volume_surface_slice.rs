@@ -9,14 +9,6 @@ use viewport_lib_item_types::*;
 mod common;
 use common::*;
 
-/// A renderer with this crate's item types registered, which is what a
-/// consumer of the crate builds.
-fn renderer_with_item_types(device: &gpu::Device) -> ViewportRenderer {
-    let mut renderer = ViewportRenderer::new(device, gpu::TextureFormat::Rgba8UnormSrgb);
-    install(&mut renderer, device);
-    renderer
-}
-
 #[test]
 fn gpu_pick_hits_volume_surface_slice() {
     let Some((device, queue)) = headless_device() else {

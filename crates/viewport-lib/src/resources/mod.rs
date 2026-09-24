@@ -56,6 +56,7 @@ pub use self::material::environment::{EnvironmentMapId, EnvironmentZone};
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;
+pub use self::mesh::geometry::generate_edge_indices;
 use self::mesh::geometry::{build_glyph_arrow, build_glyph_sphere, build_unit_cube};
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh::meshes::OverrideBufferSlice;
@@ -79,14 +80,8 @@ pub use self::plugin_builders::{
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
-pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
 pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
-pub use crate::renderer::item_plugins::gpu_particles::types::{
-    GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender,
-};
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
-pub use crate::renderer::item_plugins::sprite::types::{SpriteInstanceSetId, SpriteSetId};
-pub use crate::renderer::item_plugins::tensor_glyph::types::TensorGlyphSetId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;
@@ -105,9 +100,8 @@ pub(crate) use self::types::{
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
     OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
-    OverlayTextVertex, PickInstance, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform,
-    ShadowCullState, SsaoUniform, SubHighlightGpuData, ToneMapUniform, ViewportCullState,
-    ViewportHdrState,
+    OverlayTextVertex, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState,
+    SsaoUniform, SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
@@ -121,8 +115,16 @@ pub use self::types::{
 // `plugin_api::shared_wgsl` instead.
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
-    OverlayVertex, PolylineGpuData, SingleLightUniform, Vertex, VertexBufferLayoutExt,
+    OverlayVertex, PolylineGpuData, SingleLightUniform, VertexBufferLayoutExt,
 };
+// The mesh vertex is the exception: `plugin_api::builders::mesh_vertex_layout`
+// publishes its buffer layout, so an item type building geometry for a
+// pipeline that declares that layout has to be able to fill the struct too.
+pub use self::types::Vertex;
+// Likewise the per-instance pick record: `plugin_api::shared_wgsl`'s
+// `SHARED_PICK_INSTANCE_WGSL` declares its shader-side counterpart, so an item
+// type drawing instanced pick geometry has to be able to fill it.
+pub use self::types::PickInstance;
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};

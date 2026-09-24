@@ -9,12 +9,6 @@ use viewport_lib_item_types::*;
 mod common;
 use common::*;
 
-fn renderer_with_item_types(device: &gpu::Device) -> ViewportRenderer {
-    let mut renderer = ViewportRenderer::new(device, gpu::TextureFormat::Rgba8UnormSrgb);
-    install(&mut renderer, device);
-    renderer
-}
-
 fn positions_buffer(device: &gpu::Device, elements: u64, usage: gpu::BufferUsages) -> gpu::Buffer {
     device.create_buffer(&gpu::BufferDescriptor {
         label: Some("test_positions"),
