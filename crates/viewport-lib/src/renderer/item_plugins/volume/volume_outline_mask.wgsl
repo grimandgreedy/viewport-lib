@@ -330,5 +330,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         t = t + step;
     }
 
+    // `discard` is not a terminator in WGSL, so a value-returning function
+    // still needs a return after it. naga accepts the fall-through; Tint
+    // rejects the module, which takes the whole volume outline pass with it.
     discard;
+    return vec4<f32>(0.0);
 }

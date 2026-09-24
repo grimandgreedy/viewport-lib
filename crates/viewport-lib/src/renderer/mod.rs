@@ -737,11 +737,18 @@ impl ViewportRenderer {
     pub const MIN_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The per-stage storage-buffer count per-vertex deformers need: the base
-    /// vertex stage (seven) plus the two the deform sidecar adds. A device below
+    /// vertex stage (eight) plus the two the deform sidecar adds. A device below
     /// this still renders the base mesh path, but the deform group is left out
     /// and `register_deformer` reports that deformers are unavailable, rather
     /// than failing pipeline creation.
-    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 9;
+    ///
+    /// This must equal what the deform-enabled mesh pipeline layout actually
+    /// binds in the vertex stage. A device granted exactly one less passes the
+    /// gate and then fails every pipeline layout that includes the deform
+    /// group, which renders nothing at all. `ViewportGpuResources::new` counts
+    /// the layouts it builds and `debug_assert!`s against this, so adding a
+    /// vertex-stage storage buffer without updating it fails a debug build.
+    pub const DEFORM_STORAGE_BUFFERS_PER_STAGE: u32 = 10;
 
     /// The device limits viewport-lib runs best with, above wgpu's defaults.
     ///

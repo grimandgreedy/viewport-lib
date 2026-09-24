@@ -349,7 +349,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // colour target here, so asking it is both correct and self-describing.
         let viewport_size = vec2<f32>(textureDimensions(scene_depth_tex));
         let screen_uv     = in.clip_pos.xy / viewport_size;
-        let scene_ndc_z   = textureSample(scene_depth_tex, scene_depth_samp, screen_uv);
+        // Sampled with an explicit level: `textureSample` derives its own LOD
+        // and is therefore only legal in uniform control flow, while
+        // `soft_dist` can come from `in.soft_distance`, a per-instance vertex
+        // output. Tint rejects the module over it and no sprite draws at all,
+        // while naga lets the same source through. The depth target has one
+        // mip level, so level zero is what the implicit lookup picked anyway.
+        // (A depth texture's level is an integer, not the f32 the colour
+        // overloads take.)
+        let scene_ndc_z   = textureSampleLevel(scene_depth_tex, scene_depth_samp, screen_uv, 0i);
         let ndc = vec4<f32>(
             screen_uv.x * 2.0 - 1.0,
             1.0 - screen_uv.y * 2.0,

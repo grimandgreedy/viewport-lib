@@ -18,6 +18,9 @@ viewport-lib = { path = "../../viewport-lib", default-features = false, features
 glam = { workspace = true }
 winit = "0.30"
 pollster = "0.4"
+# A clock that works on both targets: re-exports `std::time` natively and reads
+# `performance.now()` on wasm, where `std::time::Instant::now()` panics.
+web-time = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
@@ -37,7 +40,6 @@ raytrace-hardware = ["raytrace", "viewport-lib/raytrace-hardware"]
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-time = "1"
 console_error_panic_hook = "0.1"
 console_log = "1"
 log = "0.4"
@@ -78,6 +80,14 @@ required-features = ["wgpu27"]
 [[example]]
 name = "winit-web"
 path = "examples/winit_web/main.rs"
+required-features = ["wgpu27"]
+
+# The CPU-side web check: iso-surface extraction, BVH build, and a ray query,
+# run in a browser and reported on the page. Same command as winit-web, with
+# --example web-scivis-smoke.
+[[example]]
+name = "web-scivis-smoke"
+path = "examples/web_scivis_smoke/main.rs"
 required-features = ["wgpu27"]
 
 [[example]]

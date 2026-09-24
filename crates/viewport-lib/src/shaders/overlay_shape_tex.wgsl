@@ -408,74 +408,84 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Start with the shadow layers.
     var colour = shadow_col;
 
+    // The sample is hoisted out of the `fill_alpha > 0.0` branch below, with
+    // the UV computation it needs. `textureSample` derives its own LOD, so
+    // WGSL only permits it in uniform control flow, and `fill_alpha` comes
+    // from the vertex stage. Tint enforces that and rejects the whole module;
+    // naga does not, which is why this drew in Firefox and not in Chrome.
+    // Sampling unconditionally costs a fetch on fully transparent fills, which
+    // is the cheap half of the trade: an image fill can be mipped, so pinning
+    // it to level zero instead would alias whenever it is drawn smaller than
+    // its source.
+    // 9-slice remap when enabled: rebuild the sample UV by remapping
+    // each axis through the piecewise function so corners stay at
+    // their authored size and edges/centre tile or stretch per mode.
+    var sample_uv = in.uv;
+    if (in.extras.w > 0.5) {
+        let u = ninepatch_axis(
+            in.uv.x,
+            in.nine_slice_frac.w,   // left frac
+            in.nine_slice_frac.y,   // right frac
+            in.nine_slice_uv.w,     // left uv
+            in.nine_slice_uv.y,     // right uv
+            in.extras.z,            // edge mode
+            in.extras.y,            // centre mode
+        );
+        let v = ninepatch_axis(
+            in.uv.y,
+            in.nine_slice_frac.x,   // top frac
+            in.nine_slice_frac.z,   // bottom frac
+            in.nine_slice_uv.x,     // top uv
+            in.nine_slice_uv.z,     // bottom uv
+            in.extras.z,
+            in.extras.y,
+        );
+        sample_uv = vec2<f32>(u, v);
+    } else {
+        // Texture transform path: scale + rotate around (0.5, 0.5),
+        // translate, flip, then apply tile_mode. Identity transform
+        // (scale=1, no rotation/offset/flip, Stretch) is a no-op.
+        let off = in.texture_transform_a.xy;
+        let scl = in.texture_transform_a.zw;
+        let rot = in.texture_transform_b.x;
+        let tile = i32(in.texture_transform_b.y + 0.5);
+        let flip_x = in.texture_transform_b.z > 0.5;
+        let flip_y = in.texture_transform_b.w > 0.5;
+        var uvc = in.uv - vec2<f32>(0.5, 0.5);
+        // Scale: multiply the UV by `scale`. `scale = 1.0` is 1:1.
+        // Larger scale widens the sampled range (more tiles with Tile
+        // mode, or sees more of the texture with Stretch/Mirror).
+        uvc = uvc * scl;
+        // Rotate around the centre.
+        if (abs(rot) > 0.000001) {
+            let c = cos(rot);
+            let s = sin(rot);
+            uvc = vec2<f32>(c * uvc.x - s * uvc.y, s * uvc.x + c * uvc.y);
+        }
+        var uvt = uvc + vec2<f32>(0.5, 0.5) + off;
+        if (flip_x) { uvt.x = 1.0 - uvt.x; }
+        if (flip_y) { uvt.y = 1.0 - uvt.y; }
+        // Apply tile mode for sample lookup.
+        if (tile == 1) {
+            // Tile: wrap.
+            uvt = fract(uvt - floor(uvt));
+        } else if (tile == 2) {
+            // Mirror: ping-pong.
+            let m = uvt - 2.0 * floor(uvt * 0.5);
+            uvt = vec2<f32>(
+                select(m.x, 2.0 - m.x, m.x > 1.0),
+                select(m.y, 2.0 - m.y, m.y > 1.0),
+            );
+        } else {
+            // Stretch: clamp.
+            uvt = clamp(uvt, vec2<f32>(0.0), vec2<f32>(1.0));
+        }
+        sample_uv = uvt;
+    }
+    let tex_sample = textureSample(t_fill, s_fill, sample_uv);
+
     // Composite textured fill on top of shadow.
     if (fill_alpha > 0.0) {
-        // 9-slice remap when enabled: rebuild the sample UV by remapping
-        // each axis through the piecewise function so corners stay at
-        // their authored size and edges/centre tile or stretch per mode.
-        var sample_uv = in.uv;
-        if (in.extras.w > 0.5) {
-            let u = ninepatch_axis(
-                in.uv.x,
-                in.nine_slice_frac.w,   // left frac
-                in.nine_slice_frac.y,   // right frac
-                in.nine_slice_uv.w,     // left uv
-                in.nine_slice_uv.y,     // right uv
-                in.extras.z,            // edge mode
-                in.extras.y,            // centre mode
-            );
-            let v = ninepatch_axis(
-                in.uv.y,
-                in.nine_slice_frac.x,   // top frac
-                in.nine_slice_frac.z,   // bottom frac
-                in.nine_slice_uv.x,     // top uv
-                in.nine_slice_uv.z,     // bottom uv
-                in.extras.z,
-                in.extras.y,
-            );
-            sample_uv = vec2<f32>(u, v);
-        } else {
-            // Texture transform path: scale + rotate around (0.5, 0.5),
-            // translate, flip, then apply tile_mode. Identity transform
-            // (scale=1, no rotation/offset/flip, Stretch) is a no-op.
-            let off = in.texture_transform_a.xy;
-            let scl = in.texture_transform_a.zw;
-            let rot = in.texture_transform_b.x;
-            let tile = i32(in.texture_transform_b.y + 0.5);
-            let flip_x = in.texture_transform_b.z > 0.5;
-            let flip_y = in.texture_transform_b.w > 0.5;
-            var uvc = in.uv - vec2<f32>(0.5, 0.5);
-            // Scale: multiply the UV by `scale`. `scale = 1.0` is 1:1.
-            // Larger scale widens the sampled range (more tiles with Tile
-            // mode, or sees more of the texture with Stretch/Mirror).
-            uvc = uvc * scl;
-            // Rotate around the centre.
-            if (abs(rot) > 0.000001) {
-                let c = cos(rot);
-                let s = sin(rot);
-                uvc = vec2<f32>(c * uvc.x - s * uvc.y, s * uvc.x + c * uvc.y);
-            }
-            var uvt = uvc + vec2<f32>(0.5, 0.5) + off;
-            if (flip_x) { uvt.x = 1.0 - uvt.x; }
-            if (flip_y) { uvt.y = 1.0 - uvt.y; }
-            // Apply tile mode for sample lookup.
-            if (tile == 1) {
-                // Tile: wrap.
-                uvt = fract(uvt - floor(uvt));
-            } else if (tile == 2) {
-                // Mirror: ping-pong.
-                let m = uvt - 2.0 * floor(uvt * 0.5);
-                uvt = vec2<f32>(
-                    select(m.x, 2.0 - m.x, m.x > 1.0),
-                    select(m.y, 2.0 - m.y, m.y > 1.0),
-                );
-            } else {
-                // Stretch: clamp.
-                uvt = clamp(uvt, vec2<f32>(0.0), vec2<f32>(1.0));
-            }
-            sample_uv = uvt;
-        }
-        let tex_sample = textureSample(t_fill, s_fill, sample_uv);
         var fc: vec4<f32>;
         if (in.extras.x > 0.5) {
             // Backdrop blur: bound texture is the scene-blur output (opaque

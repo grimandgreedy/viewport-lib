@@ -16,7 +16,7 @@
 //! // mesh.positions, mesh.normals, mesh.indices ready for upload.
 //! ```
 
-use rayon::prelude::*;
+use viewport_lib_types::par::*;
 use std::collections::HashMap;
 use viewport_lib_types::data::mesh::MeshData;
 
@@ -158,7 +158,7 @@ pub fn extract_isosurface(volume: &VolumeData, isovalue: f32) -> MeshData {
         // independent slabs, each with its own edge cache. Slab outputs are
         // concatenated with adjusted index offsets after the parallel phase.
         let nz_cells = (nz - 1) as usize;
-        let num_threads = rayon::current_num_threads();
+        let num_threads = current_num_threads();
         let slab_height = (nz_cells / num_threads).max(1);
 
         let slabs: Vec<_> = (0..nz_cells)

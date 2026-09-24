@@ -11,7 +11,7 @@
 //! `ibl_ambient`, etc.) live in `src/shaders/helpers/ambient.wgsl`, shared by
 //! the four lit mesh shaders via the build-time `// #include` preprocessor.
 
-use rayon::prelude::*;
+use viewport_lib_types::par::*;
 use std::f32::consts::PI;
 
 use crate::resources::upload_jobs::{ApplyFn, JobId, JobProduct, ProgressHandle, UploadStatus};

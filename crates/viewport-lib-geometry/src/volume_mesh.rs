@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use rayon::prelude::*;
+use viewport_lib_types::par::*;
 
 use viewport_lib_types::data::{attribute::AttributeData, mesh::MeshData};
 
