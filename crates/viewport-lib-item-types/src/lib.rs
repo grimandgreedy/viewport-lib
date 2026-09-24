@@ -30,6 +30,7 @@ mod curves;
 mod external_instances;
 mod gaussian_splat;
 mod gpu_implicit;
+mod gpu_marching_cubes;
 mod gpu_particles;
 mod helpers;
 mod image_slice;
@@ -53,6 +54,7 @@ pub use gaussian_splat::{
 pub use gpu_implicit::{
     GpuImplicitItem, GpuImplicitOptions, GpuImplicitPlugin, ImplicitBlendMode, ImplicitPrimitive,
 };
+pub use gpu_marching_cubes::{GpuMarchingCubesItem, GpuMarchingCubesPlugin, McVolumeId};
 pub use gpu_particles::{
     EmitterConfig, ForceField, GpuParticleSystemConfig, GpuParticleSystemItem, GpuParticlesPlugin,
     ParticleMeshAlign, ParticleRender, SpawnShape, VelocityDist,
@@ -94,6 +96,8 @@ pub const GAUSSIAN_SPLAT_TYPE_NAME: &str = gaussian_splat::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const GPU_IMPLICIT_TYPE_NAME: &str = gpu_implicit::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const GPU_MARCHING_CUBES_TYPE_NAME: &str = gpu_marching_cubes::TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const IMAGE_SLICE_TYPE_NAME: &str = image_slice::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const POINT_CLOUD_TYPE_NAME: &str = point_cloud::TYPE_NAME;
@@ -114,6 +118,7 @@ pub fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(external_instances::shader_sources());
     all.extend(gaussian_splat::shader_sources());
     all.extend(gpu_implicit::shader_sources());
+    all.extend(gpu_marching_cubes::shader_sources());
     all.extend(gpu_particles::shader_sources());
     all.extend(image_slice::shader_sources());
     all.extend(point_cloud::shader_sources());
@@ -141,6 +146,7 @@ pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     renderer.with_item_type_plugin(device, Box::new(PointCloudPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(GaussianSplatPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(GpuImplicitPlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(GpuMarchingCubesPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(VolumePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(StreamtubePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(TubePlugin::default()));
@@ -506,6 +512,114 @@ impl viewport_lib::plugin_api::Handles<SpriteInstanceSetId> for ViewportRenderer
 
     fn release(&mut self, id: SpriteInstanceSetId) -> bool {
         plugin_mut::<SpritePlugin>(self, SPRITE_TYPE_NAME).drop_instance_set(id)
+    }
+}
+
+/// The marching-cubes volume surface, on the renderer.
+///
+/// `VolumeData` belongs to `viewport-lib-geometry` and this crate owns neither
+/// it nor `ViewportRenderer`, so `Uploads<VolumeData>` cannot be written here:
+/// no type in the implementation would be local to this crate. Two of these
+/// calls are not uploads anyway, so the content-keyed half of the surface gets
+/// verbs of its own. The handle is this crate's, so taking a finished job and
+/// releasing a volume go through
+/// [`Handles`](viewport_lib::plugin_api::Handles) as usual.
+pub trait McVolumes {
+    /// Upload a scalar field, pre-allocating every slab's buffers, and return
+    /// its handle.
+    fn upload_volume_for_mc(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        vol: &viewport_lib_geometry::marching_cubes::VolumeData,
+    ) -> viewport_lib::error::ViewportResult<McVolumeId>;
+
+    /// Start an off-thread upload of a scalar field. Ownership of `vol`
+    /// transfers into the worker, and the handle is minted by
+    /// [`upload_result`](viewport_lib::plugin_api::Handles::upload_result).
+    fn begin_upload_volume_for_mc(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        vol: viewport_lib_geometry::marching_cubes::VolumeData,
+    ) -> viewport_lib::resources::JobId;
+
+    /// Feed a volume from a caller-supplied buffer, refreshed before every
+    /// dispatch so the isosurface tracks it with no CPU upload.
+    ///
+    /// The buffer holds one `f32` per volume node in x-fastest order
+    /// (`index = x + y * nx + z * nx * ny`), matching `VolumeData::data`,
+    /// starting at `offset_bytes`. It needs `COPY_SRC` usage and
+    /// `offset_bytes` must be a multiple of 4. The renderer keeps a clone of
+    /// the buffer handle; if the consumer reallocates it, call this again with
+    /// the new buffer.
+    fn set_mc_scalar_source_buffer(
+        &mut self,
+        id: McVolumeId,
+        buffer: gpu::Buffer,
+        offset_bytes: u64,
+    ) -> viewport_lib::error::ViewportResult<()>;
+
+    /// Detach the external scalar source, freezing the isosurface at the last
+    /// field copied in.
+    fn clear_mc_scalar_source(&mut self, id: McVolumeId)
+    -> viewport_lib::error::ViewportResult<()>;
+}
+
+impl McVolumes for ViewportRenderer {
+    fn upload_volume_for_mc(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        vol: &viewport_lib_geometry::marching_cubes::VolumeData,
+    ) -> viewport_lib::error::ViewportResult<McVolumeId> {
+        plugin_mut::<GpuMarchingCubesPlugin>(self, GPU_MARCHING_CUBES_TYPE_NAME)
+            .upload(device, queue, vol)
+    }
+
+    fn begin_upload_volume_for_mc(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        vol: viewport_lib_geometry::marching_cubes::VolumeData,
+    ) -> viewport_lib::resources::JobId {
+        let host = host::<GpuMarchingCubesPlugin>(self, GPU_MARCHING_CUBES_TYPE_NAME);
+        host.plugin.begin_upload(&host.jobs, device, queue, vol)
+    }
+
+    fn set_mc_scalar_source_buffer(
+        &mut self,
+        id: McVolumeId,
+        buffer: gpu::Buffer,
+        offset_bytes: u64,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        plugin_mut::<GpuMarchingCubesPlugin>(self, GPU_MARCHING_CUBES_TYPE_NAME).set_scalar_source(
+            id,
+            buffer,
+            offset_bytes,
+        )
+    }
+
+    fn clear_mc_scalar_source(
+        &mut self,
+        id: McVolumeId,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        plugin_mut::<GpuMarchingCubesPlugin>(self, GPU_MARCHING_CUBES_TYPE_NAME)
+            .clear_scalar_source(id)
+    }
+}
+
+impl viewport_lib::plugin_api::Handles<McVolumeId> for ViewportRenderer {
+    fn upload_result(
+        &mut self,
+        job: viewport_lib::resources::JobId,
+    ) -> viewport_lib::error::ViewportResult<McVolumeId> {
+        let host = host::<GpuMarchingCubesPlugin>(self, GPU_MARCHING_CUBES_TYPE_NAME);
+        host.plugin.take_upload_result(&host.jobs, job)
+    }
+
+    fn release(&mut self, id: McVolumeId) -> bool {
+        plugin_mut::<GpuMarchingCubesPlugin>(self, GPU_MARCHING_CUBES_TYPE_NAME).free(id)
     }
 }
 

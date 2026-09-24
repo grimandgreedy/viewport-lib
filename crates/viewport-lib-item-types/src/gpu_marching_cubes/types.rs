@@ -1,10 +1,10 @@
-use crate::scene::material::{ItemSettings, Material};
+use viewport_lib::{ItemSettings, Material};
 
-crate::resources::handle::slot_handle! {
+viewport_lib::resources::handle::slot_handle! {
     /// Handle to a volume scalar field uploaded for GPU marching cubes.
     ///
-    /// Returned by [`Uploads::upload`](crate::plugin_api::Uploads::upload). Pass to
-    /// [`GpuMarchingCubesItem`](crate::renderer::GpuMarchingCubesItem) to select which volume to triangulate each frame.
+    /// Returned by [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload). Pass to
+    /// [`GpuMarchingCubesItem`](viewport_lib::renderer::GpuMarchingCubesItem) to select which volume to triangulate each frame.
     ///
     /// Carries the slot index plus the generation the slot had when the handle
     /// was issued. A handle whose volume was removed (its slot freed and reused
@@ -33,5 +33,5 @@ pub struct GpuMarchingCubesItem {
     /// When set, the CPU picker ray-marches the actual scalar field and detects
     /// isovalue crossings rather than falling back to the volume AABB. `None`
     /// means the item is not reachable by the CPU picking path.
-    pub cpu_data: Option<std::sync::Arc<crate::geometry::marching_cubes::VolumeData>>,
+    pub cpu_data: Option<std::sync::Arc<viewport_lib_geometry::marching_cubes::VolumeData>>,
 }

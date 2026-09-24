@@ -73,10 +73,10 @@ pub use self::types::{
     DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings,
     DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode, ExposureSettings,
     FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData, GlyphItem, GlyphRunItem,
-    GlyphSetRefItem, GlyphType, GpuMarchingCubesItem, GradientStop, GroundPlane, GroundPlaneMode,
-    IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim,
-    LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings, LineCap, LineJoin,
-    Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    GlyphSetRefItem, GlyphType, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
+    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
+    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
+    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
     OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
     OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
     OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
@@ -2793,48 +2793,6 @@ impl ViewportRenderer {
     /// [`DeviceResources::free_volume`].
     pub fn free_volume(&mut self, id: crate::resources::VolumeId) -> bool {
         self.resources.free_volume(id)
-    }
-
-    /// Start an asynchronous marching-cubes-ready volume upload.
-    ///
-    /// Returns a [`JobId`](crate::resources::JobId) immediately. Slab sizing
-    /// and the scalar, intermediate and output buffer allocation run on a
-    /// worker thread against cloned `Device` and `Queue` handles. Ownership of
-    /// `vol` transfers into the worker. The worker surfaces
-    /// [`McBufferTooLarge`](crate::error::ViewportError::McBufferTooLarge)
-    /// through `UploadStatus::Failed` when the device's
-    /// `max_storage_buffer_binding_size` cannot fit a single Z-cell layer.
-    pub fn begin_upload_volume_for_mc(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        vol: crate::geometry::marching_cubes::VolumeData,
-    ) -> crate::resources::JobId {
-        let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
-        let host = self
-            .item_type_plugin_host::<crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin>(
-                name,
-            )
-            .expect("the built-in marching cubes item type is registered at construction");
-        host.plugin.begin_upload(&host.jobs, device, queue, vol)
-    }
-
-    /// Take the [`McVolumeId`](crate::resources::McVolumeId) produced by a
-    /// completed [`begin_upload_volume_for_mc`](Self::begin_upload_volume_for_mc) job.
-    ///
-    /// The volume enters the store here, so a handle is minted on the call that
-    /// collects the job rather than on a background thread.
-    pub fn upload_result_volume_mc(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::McVolumeId> {
-        let name = crate::renderer::item_plugins::gpu_marching_cubes::TYPE_NAME;
-        let host = self
-            .item_type_plugin_host::<crate::renderer::item_plugins::gpu_marching_cubes::GpuMarchingCubesPlugin>(
-                name,
-            )
-            .ok_or(crate::error::ViewportError::ItemTypePluginMissing { type_name: name })?;
-        host.plugin.take_upload_result(&host.jobs, id)
     }
 
     /// Start an asynchronous boundary-only volume mesh upload. See

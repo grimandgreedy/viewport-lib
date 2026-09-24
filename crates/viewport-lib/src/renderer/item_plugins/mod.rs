@@ -13,7 +13,6 @@ pub(crate) mod registry;
 
 pub(crate) mod decal;
 pub(crate) mod glyph;
-pub(crate) mod gpu_marching_cubes;
 pub(crate) mod polyline;
 pub(crate) mod scatter_volume;
 
@@ -77,13 +76,6 @@ impl crate::renderer::ViewportRenderer {
         // order that loop drew them.
         self.install_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
         self.install_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
-        // Then the types that always had a draw site of their own.
-        self.install_item_type_plugin(
-            device,
-            Box::new(gpu_marching_cubes::GpuMarchingCubesPlugin::default()),
-        );
-        // Sprites drew after every other non-mesh type, so they register last,
-        // with the particles that shared their pass right behind them.
         self.install_item_type_plugin(
             device,
             Box::new(decal::DecalPlugin::new(self.decal_cache_stats.clone())),

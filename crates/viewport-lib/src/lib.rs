@@ -358,10 +358,10 @@ pub use resources::volume::volume_mesh::{
 pub use resources::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
     ClipVolumeEntry, ClipVolumesUniform, ColourmapId, CompressedTextureDesc, ComputeFilterResult,
-    DeviceResources, EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget,
-    GpuMarchingCubesItem, JobId, MatcapId, McVolumeId, MeshData, ProgressHandle, ResidentBytes,
-    SubmeshRange, TextMetrics, TextureId, TextureMemoryStats, UploadStatus, VolumeId, VramBudget,
-    lerp_attributes, supports_texture_format, vram_budget,
+    DeviceResources, EnvironmentMapId, EnvironmentZone, FontError, FontHandle, FrameBudget, JobId,
+    MatcapId, MeshData, ProgressHandle, ResidentBytes, SubmeshRange, TextMetrics, TextureId,
+    TextureMemoryStats, UploadStatus, VolumeId, VramBudget, lerp_attributes,
+    supports_texture_format, vram_budget,
 };
 pub use resources::{
     DEFORM_PARAMS_PER_SLOT_PUB as DEFORM_PARAMS_PER_SLOT,

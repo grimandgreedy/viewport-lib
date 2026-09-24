@@ -21,9 +21,10 @@ use viewport_lib as vpl;
 use viewport_lib_item_types::{
     GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
 };
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 use vpl::{
-    Camera, GpuMarchingCubesItem, LightKind, LightSource, LightingSettings, Material,
-    SceneRenderItem, VolumeData, extract_isosurface, primitives,
+    Camera, LightKind, LightSource, LightingSettings, Material, SceneRenderItem, VolumeData,
+    extract_isosurface, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ pub(crate) struct IsState {
     pub mesh_id: MeshId,
     pub mc_mesh_id: Option<MeshId>,
     pub sdf_variant: IsSdfVariant,
-    pub gmc_volume_id: Option<vpl::McVolumeId>,
+    pub gmc_volume_id: Option<McVolumeId>,
     pub gmc_isovalue: f32,
 }
 
@@ -331,7 +332,7 @@ impl App {
         mat.roughness = 0.4;
 
         fd.scene
-            .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+            .items_mut::<GpuMarchingCubesItem>()
             .push(GpuMarchingCubesItem {
                 volume_id,
                 isovalue: self.is_state.gmc_isovalue,

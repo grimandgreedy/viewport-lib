@@ -4,11 +4,12 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
-#[cfg(feature = "wgpu29")]
-use viewport_lib::wgpu;
-
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
+use viewport_lib::wgpu;
+use viewport_lib::{ItemSettings, Material};
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 
 #[test]
 fn gpu_pick_hits_marching_cubes() {
@@ -16,7 +17,7 @@ fn gpu_pick_hits_marching_cubes() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let mut frame = sub_object_pick_frame();
 
     // A radial scalar field centred at the origin: the isosurface at value 1.5 is
@@ -36,7 +37,7 @@ fn gpu_pick_hits_marching_cubes() {
             }
         }
     }
-    let vol = viewport_lib::VolumeData {
+    let vol = viewport_lib_geometry::marching_cubes::VolumeData {
         data,
         dims,
         origin,
@@ -46,7 +47,7 @@ fn gpu_pick_hits_marching_cubes() {
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
-    let mut job = viewport_lib::GpuMarchingCubesItem {
+    let mut job = GpuMarchingCubesItem {
         volume_id,
         isovalue: 1.5,
         material: Material::default(),
@@ -54,10 +55,7 @@ fn gpu_pick_hits_marching_cubes() {
         cpu_data: None,
     };
     job.settings.pick_id = PickId(717);
-    frame
-        .scene
-        .items_mut::<viewport_lib::GpuMarchingCubesItem>()
-        .push(job);
+    frame.scene.items_mut::<GpuMarchingCubesItem>().push(job);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -72,7 +70,7 @@ fn cpu_pick_hits_marching_cubes() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
     let mut frame = sub_object_pick_frame();
 
@@ -81,7 +79,7 @@ fn cpu_pick_hits_marching_cubes() {
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
-    let mut job = viewport_lib::GpuMarchingCubesItem {
+    let mut job = GpuMarchingCubesItem {
         volume_id,
         isovalue: 1.5,
         material: Material::default(),
@@ -89,10 +87,7 @@ fn cpu_pick_hits_marching_cubes() {
         cpu_data: Some(vol),
     };
     job.settings.pick_id = PickId(718);
-    frame
-        .scene
-        .items_mut::<viewport_lib::GpuMarchingCubesItem>()
-        .push(job);
+    frame.scene.items_mut::<GpuMarchingCubesItem>().push(job);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);
@@ -111,7 +106,7 @@ fn rect_pick_hits_marching_cubes() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
     let mut frame = sub_object_pick_frame();
 
@@ -120,7 +115,7 @@ fn rect_pick_hits_marching_cubes() {
         .upload_volume_for_mc(&device, &queue, &vol)
         .expect("mc volume upload");
 
-    let mut job = viewport_lib::GpuMarchingCubesItem {
+    let mut job = GpuMarchingCubesItem {
         volume_id,
         isovalue: 1.5,
         material: Material::default(),
@@ -128,10 +123,7 @@ fn rect_pick_hits_marching_cubes() {
         cpu_data: Some(vol),
     };
     job.settings.pick_id = PickId(719);
-    frame
-        .scene
-        .items_mut::<viewport_lib::GpuMarchingCubesItem>()
-        .push(job);
+    frame.scene.items_mut::<GpuMarchingCubesItem>().push(job);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let vp = glam::Vec2::new(64.0, 64.0);
@@ -162,7 +154,7 @@ fn rect_pick_hits_marching_cubes() {
 
 /// A radial scalar field centred at the origin: the isosurface at 1.5 is a
 /// sphere of radius 1.5, spanning roughly [-2.3, 2.3]^3.
-fn radial_field() -> viewport_lib::VolumeData {
+fn radial_field() -> viewport_lib_geometry::marching_cubes::VolumeData {
     let dims = [24u32, 24, 24];
     let spacing = [0.2f32; 3];
     let origin = [-(23.0 * 0.2) / 2.0; 3];
@@ -178,7 +170,7 @@ fn radial_field() -> viewport_lib::VolumeData {
             }
         }
     }
-    viewport_lib::VolumeData {
+    viewport_lib_geometry::marching_cubes::VolumeData {
         data,
         dims,
         origin,
@@ -191,12 +183,12 @@ fn radial_field() -> viewport_lib::VolumeData {
 // ---------------------------------------------------------------------------
 
 /// A small field with an isosurface somewhere in the middle of it.
-fn sample_volume() -> viewport_lib::VolumeData {
+fn sample_volume() -> viewport_lib_geometry::marching_cubes::VolumeData {
     let dims = [8u32, 8, 8];
     let data = (0..(dims[0] * dims[1] * dims[2]))
         .map(|i| (i % 2) as f32)
         .collect();
-    viewport_lib::VolumeData {
+    viewport_lib_geometry::marching_cubes::VolumeData {
         data,
         dims,
         origin: [0.0, 0.0, 0.0],
@@ -220,12 +212,12 @@ fn a_stale_mc_volume_handle_does_not_alias_after_slot_reuse() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
 
     let id1 = renderer
         .upload_volume_for_mc(&device, &queue, &sample_volume())
         .expect("upload a volume");
-    renderer.free_mc_volume(id1);
+    renderer.release(id1);
 
     // The next upload reuses the freed slot at a new generation.
     let id2 = renderer
@@ -250,7 +242,7 @@ fn mc_volume_bytes_are_reported_and_reclaimed() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let baseline = renderer.resident_bytes().plugin_bytes;
 
     let id = renderer
@@ -261,7 +253,7 @@ fn mc_volume_bytes_are_reported_and_reclaimed() {
         "an uploaded volume must count toward the plugin working set"
     );
 
-    renderer.free_mc_volume(id);
+    renderer.release(id);
     assert_eq!(
         renderer.resident_bytes().plugin_bytes,
         baseline,
@@ -275,7 +267,7 @@ fn the_mc_scalar_source_round_trips_and_rejects_bad_inputs() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let id = renderer
         .upload_volume_for_mc(&device, &queue, &sample_volume())
         .expect("upload a volume");
@@ -327,7 +319,7 @@ fn begin_upload_volume_for_mc_drains_to_a_handle() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
 
     let job = renderer.begin_upload_volume_for_mc(&device, &queue, sample_volume());
     for _ in 0..200 {
@@ -342,8 +334,8 @@ fn begin_upload_volume_for_mc_drains_to_a_handle() {
         }
     }
 
-    let id = renderer
-        .upload_result_volume_mc(job)
+    let id: McVolumeId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
     assert!(
         renderer.resident_bytes().plugin_bytes > 0,
@@ -352,8 +344,133 @@ fn begin_upload_volume_for_mc_drains_to_a_handle() {
 
     // The result is taken once; a second take has nothing to hand back.
     assert!(matches!(
-        renderer.upload_result_volume_mc(job),
+        Handles::<McVolumeId>::upload_result(&mut renderer, job),
         Err(viewport_lib::error::ViewportError::JobResultMissing { .. })
     ));
-    renderer.free_mc_volume(id);
+    renderer.release(id);
+}
+
+/// An external scalar source must drive GPU marching cubes per frame: the
+/// slab scalar buffers are refreshed from the consumer's buffer before every
+/// dispatch. The uploaded CPU volume has no surface at the isovalue; writing
+/// a sphere field into the external buffer makes one appear, and writing the
+/// empty field again makes it vanish, proving both the copy and its
+/// per-frame cadence.
+#[test]
+fn mc_external_scalar_drives_isosurface() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let dims = [16u32, 16, 16];
+    let spacing = [0.3f32; 3];
+    let origin = [-(15.0 * 0.3) / 2.0; 3];
+    let node_count = (dims[0] * dims[1] * dims[2]) as usize;
+
+    // Uploaded field: uniformly far above the isovalue, no surface anywhere.
+    let vol = viewport_lib_geometry::marching_cubes::VolumeData {
+        data: vec![10.0; node_count],
+        dims,
+        origin,
+        spacing,
+    };
+    let volume_id = renderer
+        .upload_volume_for_mc(&device, &queue, &vol)
+        .expect("mc volume upload");
+
+    // Sphere field: distance from the origin; isovalue 1.5 is a sphere well
+    // inside the grid.
+    let mut sphere = vec![0.0f32; node_count];
+    for z in 0..dims[2] {
+        for y in 0..dims[1] {
+            for x in 0..dims[0] {
+                let wx = origin[0] + x as f32 * spacing[0];
+                let wy = origin[1] + y as f32 * spacing[1];
+                let wz = origin[2] + z as f32 * spacing[2];
+                let idx = (x + y * dims[0] + z * dims[0] * dims[1]) as usize;
+                sphere[idx] = (wx * wx + wy * wy + wz * wz).sqrt();
+            }
+        }
+    }
+
+    let scalar_src = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("test_mc_scalar_src"),
+        size: (node_count * 4) as u64,
+        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let make_frame = || -> FrameData {
+        let cam = Camera::default();
+        let mut frame = FrameData::default();
+        frame.camera.render_camera = {
+            let mut rc = RenderCamera::from_camera(&cam);
+            rc.aspect = 1.0;
+            rc
+        };
+        frame.camera.viewport_size = [64.0, 64.0];
+        frame.viewport.show_grid = false;
+        frame.viewport.show_axes_indicator = false;
+        frame
+            .scene
+            .items_mut::<GpuMarchingCubesItem>()
+            .push(GpuMarchingCubesItem {
+                volume_id,
+                isovalue: 1.5,
+                material: Material::default(),
+                settings: ItemSettings::default(),
+                cpu_data: None,
+            });
+        frame
+    };
+    let empty_frame = || -> FrameData {
+        let mut frame = make_frame();
+        frame.scene.items_mut::<GpuMarchingCubesItem>().clear();
+        frame
+    };
+    let diff_count = |a: &[u8], b: &[u8]| -> usize {
+        a.chunks_exact(4)
+            .zip(b.chunks_exact(4))
+            .filter(|(pa, pb)| pa.iter().zip(pb.iter()).any(|(&x, &y)| x.abs_diff(y) > 8))
+            .count()
+    };
+
+    let empty = renderer.render_offscreen(&device, &queue, &empty_frame(), 64, 64);
+
+    // Baseline: uploaded field has no surface.
+    let flat = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
+    assert_eq!(
+        diff_count(&flat, &empty),
+        0,
+        "the uploaded all-above-iso field must extract no surface"
+    );
+
+    // Attach the external source and write the sphere field into it.
+    queue.write_buffer(&scalar_src, 0, bytemuck::cast_slice(&sphere));
+    renderer
+        .set_mc_scalar_source_buffer(volume_id, scalar_src.clone(), 0)
+        .unwrap();
+    let with_sphere = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
+    assert!(
+        diff_count(&with_sphere, &empty) > 0,
+        "after the external sphere field is copied in, the isosurface must \
+         render"
+    );
+
+    // Rewrite the buffer with the empty field: the surface must vanish on
+    // the next frame, proving the copy happens every dispatch.
+    queue.write_buffer(
+        &scalar_src,
+        0,
+        bytemuck::cast_slice(&vec![10.0f32; node_count]),
+    );
+    let flat_again = renderer.render_offscreen(&device, &queue, &make_frame(), 64, 64);
+    assert_eq!(
+        diff_count(&flat_again, &empty),
+        0,
+        "rewriting the external buffer with an all-above-iso field must \
+         remove the surface on the next frame"
+    );
 }

@@ -12,11 +12,9 @@
 // Group 1 : per-draw material
 //   binding 0 : McSurfaceUniform (base_colour vec3, roughness f32)
 //
-// Uses the canonical `SingleLight` / `Lights` structs from `scene_lighting.wgsl`
-// but keeps an inline per-light loop because it adds a Blinn-Phong specular term
-// that the shared helper does not cover.
-
-// #include "helpers/scene_lighting.wgsl"
+// Uses the canonical `SingleLight` / `Lights` structs from the shared scene
+// lighting section but keeps an inline per-light loop because it adds a
+// Blinn-Phong specular term that the shared helper does not cover.
 
 // ---------------------------------------------------------------------------
 // Group 0: camera + shadow + lights
@@ -42,7 +40,7 @@ struct ShadowAtlas {
     atlas_rects:       array<vec4<f32>, 8>,
 };
 
-// `SingleLight` and `Lights` come from the included `scene_lighting.wgsl`.
+// `SingleLight` and `Lights` come from the shared scene lighting section.
 
 @group(0) @binding(0) var<uniform>       camera:         Camera;
 @group(0) @binding(1) var                shadow_map:     texture_depth_2d;
@@ -50,9 +48,8 @@ struct ShadowAtlas {
 @group(0) @binding(3) var<uniform>       lights_uniform: Lights;
 @group(0) @binding(5) var<uniform>       shadow_atlas:   ShadowAtlas;
 
-// Cascaded shadow map sampling: cascade selection, receiver bias, and the
-// PCF/PCSS/hard filter tiers, shared with the mesh shader family.
-// #include "helpers/csm.wgsl"
+// Cascaded shadow map sampling comes from the shared CSM section: cascade
+// selection, receiver bias, and the PCF/PCSS/hard filter tiers.
 
 // ---------------------------------------------------------------------------
 // Group 1: per-draw material
@@ -141,7 +138,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             light_rgb = light.colour * light.intensity;
         } else if light.light_type == 1u {
             // Point: physical inverse-square falloff, radius-clamped and windowed
-            // to zero at `range`. Matches scene_lighting.wgsl::eval_light.
+            // to zero at `range`. Matches the shared scene lighting
+            // section's `eval_light`.
             let to_light = light.pos_or_dir - in.world_pos;
             let dist = length(to_light);
             L = to_light / max(dist, 0.0001);

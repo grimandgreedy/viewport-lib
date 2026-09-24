@@ -24,15 +24,16 @@ use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
 
 use crate::eframe::egui;
 use vpl::{
     BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData, GlyphItem,
-    GlyphType, GpuMarchingCubesItem, ItemSettings, LightingSettings, Material, McVolumeId, MeshId,
-    NodeId, PickBackend, PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo,
-    SceneFrame, SceneRenderItem, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer,
-    VolumeData, VolumeMeshData, VolumeMeshItem,
+    GlyphType, ItemSettings, LightingSettings, Material, MeshId, NodeId, PickBackend, PickId,
+    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
+    SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData, VolumeMeshData,
+    VolumeMeshItem,
 };
 
 use crate::App;
@@ -2205,7 +2206,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         mc_settings.pick_id = PickId(54);
         mc_settings.selected = app.pl_state.selection.contains(54);
         fd.scene
-            .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+            .items_mut::<GpuMarchingCubesItem>()
             .push(GpuMarchingCubesItem {
                 volume_id: mc_vol_id,
                 isovalue: 0.0,

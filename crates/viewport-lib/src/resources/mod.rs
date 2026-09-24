@@ -132,5 +132,3 @@ pub use self::volume::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
-pub use crate::renderer::GpuMarchingCubesItem;
-pub use crate::renderer::item_plugins::gpu_marching_cubes::types::McVolumeId;

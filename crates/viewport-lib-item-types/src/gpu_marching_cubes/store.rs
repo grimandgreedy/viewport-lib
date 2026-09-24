@@ -6,12 +6,12 @@
 //! keeps every allocation inside `device.limits().max_buffer_size` no matter
 //! how large the field is. The upload entry points are the `*_mc_*` and
 //! `*_volume_for_mc` methods on
-//! [`ViewportRenderer`](crate::renderer::ViewportRenderer), which find this
+//! [`ViewportRenderer`](viewport_lib::renderer::ViewportRenderer), which find this
 //! plugin by name and call through to the methods below.
 
 use super::types::McVolumeId;
-use crate::geometry::marching_cubes::VolumeData;
-use crate::gpu::util::DeviceExt as _;
+use viewport_lib::gpu::util::DeviceExt as _;
+use viewport_lib_geometry::marching_cubes::VolumeData;
 
 /// GPU buffers for one Z-axis slab of an uploaded volume.
 ///
@@ -19,20 +19,20 @@ use crate::gpu::util::DeviceExt as _;
 /// Adjacent slabs share exactly one scalar Z-layer at their boundary so MC
 /// edge interpolation produces no seams.
 pub(super) struct McSlabGpuData {
-    pub scalar_buf: crate::gpu::Buffer, // f32 per slab node; STORAGE | COPY_DST
+    pub scalar_buf: viewport_lib::gpu::Buffer, // f32 per slab node; STORAGE | COPY_DST
     /// Byte offset of this slab's first scalar in the full linear volume
     /// (x-fastest node order). Used to source the slab's range out of an
     /// external scalar buffer with one `copy_buffer_to_buffer` per slab.
     pub scalar_byte_offset: u64,
-    pub counts_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
-    pub case_idx_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
-    pub offsets_buf: crate::gpu::Buffer, // u32 per slab cell; STORAGE
-    pub block_sums_buf: crate::gpu::Buffer, // u32 per slab block; STORAGE
-    pub vertex_buf: crate::gpu::Buffer, // f32 * 6 per vertex; STORAGE | VERTEX
-    pub indirect_buf: crate::gpu::Buffer, // 4 u32; STORAGE | INDIRECT (surface draw)
-    pub wire_indirect_buf: crate::gpu::Buffer, // 4 u32; STORAGE | INDIRECT (wireframe draw)
-    pub dims: [u32; 3],                 // [nx, ny, slab_nz] (scalar layers)
-    pub origin: [f32; 3],               // world origin; z is offset per slab
+    pub counts_buf: viewport_lib::gpu::Buffer, // u32 per slab cell; STORAGE
+    pub case_idx_buf: viewport_lib::gpu::Buffer, // u32 per slab cell; STORAGE
+    pub offsets_buf: viewport_lib::gpu::Buffer, // u32 per slab cell; STORAGE
+    pub block_sums_buf: viewport_lib::gpu::Buffer, // u32 per slab block; STORAGE
+    pub vertex_buf: viewport_lib::gpu::Buffer, // f32 * 6 per vertex; STORAGE | VERTEX
+    pub indirect_buf: viewport_lib::gpu::Buffer, // 4 u32; STORAGE | INDIRECT (surface draw)
+    pub wire_indirect_buf: viewport_lib::gpu::Buffer, // 4 u32; STORAGE | INDIRECT (wireframe draw)
+    pub dims: [u32; 3],                        // [nx, ny, slab_nz] (scalar layers)
+    pub origin: [f32; 3],                      // world origin; z is offset per slab
     pub spacing: [f32; 3],
     pub cell_count: u32,
     pub block_count: u32,
@@ -55,12 +55,12 @@ pub(super) struct McVolumeGpuData {
 
 /// A caller-supplied buffer feeding a volume's scalar field.
 pub(super) struct McExternalScalarSource {
-    pub buffer: crate::gpu::Buffer,
+    pub buffer: viewport_lib::gpu::Buffer,
     /// Byte offset of the volume's first scalar inside `buffer`.
     pub offset_bytes: u64,
 }
 
-impl crate::resources::handle::GpuByteSize for McVolumeGpuData {
+impl viewport_lib::resources::handle::GpuByteSize for McVolumeGpuData {
     /// Resident GPU bytes across every slab buffer of this volume.
     fn gpu_bytes(&self) -> u64 {
         self.slabs
@@ -82,10 +82,10 @@ impl crate::resources::handle::GpuByteSize for McVolumeGpuData {
 /// CPU + GPU-buffer work for an MC volume upload, factored out so the same
 /// code can run on a worker thread for the async path.
 pub(super) fn build_mc_volume_gpu_data(
-    device: &crate::gpu::Device,
-    queue: &crate::gpu::Queue,
+    device: &viewport_lib::gpu::Device,
+    queue: &viewport_lib::gpu::Queue,
     vol: &VolumeData,
-) -> crate::ViewportResult<McVolumeGpuData> {
+) -> viewport_lib::error::ViewportResult<McVolumeGpuData> {
     {
         let [nx, ny, nz] = vol.dims;
         // The vertex buffer is bound as both STORAGE (compute) and VERTEX (render).
@@ -108,7 +108,7 @@ pub(super) fn build_mc_volume_gpu_data(
         };
         if z_cells_per_slab == 0 {
             // Even a single Z-layer of cells exceeds the effective binding limit.
-            return Err(crate::ViewportError::McBufferTooLarge {
+            return Err(viewport_lib::error::ViewportError::McBufferTooLarge {
                 buffer: "vertex_buf",
                 needed: cells_xy * 15 * 24,
                 limit: max_limit,
@@ -143,57 +143,61 @@ pub(super) fn build_mc_volume_gpu_data(
             let scalar_end = (z_cell_start + slab_nz) as usize * nodes_per_z;
             let slab_origin_z = vol.origin[2] + z_cell_start as f32 * vol.spacing[2];
 
-            let scalar_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                label: Some("mc_scalar_buf"),
-                contents: bytemuck::cast_slice(&vol.data[scalar_start..scalar_end]),
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::COPY_DST,
-            });
-            let counts_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            let scalar_buf =
+                device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
+                    label: Some("mc_scalar_buf"),
+                    contents: bytemuck::cast_slice(&vol.data[scalar_start..scalar_end]),
+                    usage: viewport_lib::gpu::BufferUsages::STORAGE
+                        | viewport_lib::gpu::BufferUsages::COPY_DST,
+                });
+            let counts_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("mc_counts_buf"),
                 size: slab_cell_bytes,
-                usage: crate::gpu::BufferUsages::STORAGE,
+                usage: viewport_lib::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let case_idx_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            let case_idx_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("mc_case_idx_buf"),
                 size: slab_cell_bytes,
-                usage: crate::gpu::BufferUsages::STORAGE,
+                usage: viewport_lib::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let offsets_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            let offsets_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("mc_offsets_buf"),
                 size: slab_cell_bytes,
-                usage: crate::gpu::BufferUsages::STORAGE,
+                usage: viewport_lib::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let block_sums_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            let block_sums_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("mc_block_sums_buf"),
                 size: slab_block_bytes,
-                usage: crate::gpu::BufferUsages::STORAGE,
+                usage: viewport_lib::gpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let vertex_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
+            let vertex_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
                 label: Some("mc_vertex_buf"),
                 size: slab_vertex_bytes,
-                usage: crate::gpu::BufferUsages::STORAGE | crate::gpu::BufferUsages::VERTEX,
+                usage: viewport_lib::gpu::BufferUsages::STORAGE
+                    | viewport_lib::gpu::BufferUsages::VERTEX,
                 mapped_at_creation: false,
             });
             let initial_indirect = bytemuck::cast_slice(&[0u32, 1u32, 0u32, 0u32]);
-            let indirect_buf = device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
-                label: Some("mc_indirect_buf"),
-                // Initial: 0 vertices, 1 instance, 0 first_vertex, 0 first_instance.
-                contents: initial_indirect,
-                usage: crate::gpu::BufferUsages::STORAGE
-                    | crate::gpu::BufferUsages::INDIRECT
-                    | crate::gpu::BufferUsages::COPY_DST,
-            });
+            let indirect_buf =
+                device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
+                    label: Some("mc_indirect_buf"),
+                    // Initial: 0 vertices, 1 instance, 0 first_vertex, 0 first_instance.
+                    contents: initial_indirect,
+                    usage: viewport_lib::gpu::BufferUsages::STORAGE
+                        | viewport_lib::gpu::BufferUsages::INDIRECT
+                        | viewport_lib::gpu::BufferUsages::COPY_DST,
+                });
             let wire_indirect_buf =
-                device.create_buffer_init(&crate::gpu::util::BufferInitDescriptor {
+                device.create_buffer_init(&viewport_lib::gpu::util::BufferInitDescriptor {
                     label: Some("mc_wire_indirect_buf"),
                     contents: initial_indirect,
-                    usage: crate::gpu::BufferUsages::STORAGE
-                        | crate::gpu::BufferUsages::INDIRECT
-                        | crate::gpu::BufferUsages::COPY_DST,
+                    usage: viewport_lib::gpu::BufferUsages::STORAGE
+                        | viewport_lib::gpu::BufferUsages::INDIRECT
+                        | viewport_lib::gpu::BufferUsages::COPY_DST,
                 });
 
             slabs.push(McSlabGpuData {
@@ -230,4 +234,5 @@ pub(super) fn build_mc_volume_gpu_data(
 /// carries a generation bumped on removal, and a [`McVolumeId`] captures the
 /// generation it was issued against, so a stale handle resolves to `None`
 /// rather than aliasing the volume now in its slot.
-pub(super) type McVolumeStore = crate::resources::handle::SlotStore<McVolumeGpuData, McVolumeId>;
+pub(super) type McVolumeStore =
+    viewport_lib::resources::handle::SlotStore<McVolumeGpuData, McVolumeId>;

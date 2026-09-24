@@ -6,18 +6,10 @@
 // job's pick id and the fragment depth into the three pick targets. Object-level:
 // the primitive channel is 0.
 //
-// Group 0: pick camera (binding 0 = Camera). Matches the surface pick pipeline's
-//          group 0 so the shared pick camera bind group can be reused. Binding 6
-//          (clip volume) is present in the layout but unused here.
+// Group 0: the shared scene bind group, whose pick camera bind group the
+//          surface pick pipeline binds too. The clip volume at binding 6 is
+//          present in the layout but unused here.
 // Group 1: per-job pick id (binding 0).
-
-struct Camera {
-    view_proj: mat4x4<f32>,
-    eye_pos:   vec3<f32>,
-    _pad:      f32,
-};
-
-@group(0) @binding(0) var<uniform> camera: Camera;
 
 @group(1) @binding(0) var<uniform> pick_id: vec4<u32>;
 

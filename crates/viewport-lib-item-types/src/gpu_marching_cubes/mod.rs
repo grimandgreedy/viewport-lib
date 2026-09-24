@@ -1,32 +1,64 @@
 //! The GPU marching cubes item type as an [`ItemTypePlugin`]: an isosurface
 //! extracted from an uploaded scalar field by three compute passes each frame
-//! and drawn with indirect draws. Consumers submit [`GpuMarchingCubesItem`]s on
-//! `SceneFrame::gpu_mc_items`; the renderer routes that field to this plugin.
+//! and drawn with indirect draws. Consumers submit [`GpuMarchingCubesItem`]s
+//! with `frame.scene.submit::<GpuMarchingCubesItem>(..)`.
 //!
 //! The plugin owns the pipelines, the per-frame extraction, and the uploaded
-//! volumes themselves: `upload_volume_for_mc` hands back a [`McVolumeId`] that
-//! names a volume held here.
+//! volumes themselves: [`McVolumes::upload_volume_for_mc`](crate::McVolumes::upload_volume_for_mc)
+//! hands back a [`McVolumeId`] that names a volume held here.
 
 mod pipeline;
 mod store;
-pub(crate) mod types;
+mod types;
 
-use crate::geometry::marching_cubes::VolumeData;
-use crate::plugin_api::{
+use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext, ShadowCastContext,
 };
-use crate::renderer::{GpuMarchingCubesItem, PickHit, PickId, PickMask};
-use crate::resources::HDR_COLOR_FORMAT;
-use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_volume_gpu_data};
-use types::McVolumeId;
+use viewport_lib::renderer::{PickHit, PickId, PickMask};
+use viewport_lib::resources::HDR_COLOR_FORMAT;
+use viewport_lib_geometry::marching_cubes::VolumeData;
 
-pub(crate) const TYPE_NAME: &str = "vpl.gpu_marching_cubes";
+use store::{McExternalScalarSource, McVolumeGpuData, McVolumeStore, build_mc_volume_gpu_data};
+
+pub use types::{GpuMarchingCubesItem, McVolumeId};
+
+/// This type's shaders as the pipelines compile them, shared sections already
+/// spliced in front of each body.
+pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
+    use crate::shader::{lit_shader, scene_shader, wgsl_source};
+    use viewport_lib::plugin_api::shared_wgsl;
+    vec![
+        ("mc_classify.wgsl", wgsl_source!("mc_classify").to_string()),
+        (
+            "mc_prefix_sum.wgsl",
+            wgsl_source!("mc_prefix_sum").to_string(),
+        ),
+        ("mc_generate.wgsl", wgsl_source!("mc_generate").to_string()),
+        ("mc_shadow.wgsl", wgsl_source!("mc_shadow").to_string()),
+        (
+            "mc_surface.wgsl",
+            lit_shader(&[shared_wgsl::SHARED_CSM_WGSL], wgsl_source!("mc_surface")),
+        ),
+        (
+            "mc_wireframe.wgsl",
+            scene_shader(&[], wgsl_source!("mc_wireframe")),
+        ),
+        (
+            "mc_outline_mask.wgsl",
+            scene_shader(&[], wgsl_source!("mc_outline_mask")),
+        ),
+        ("mc_pick.wgsl", scene_shader(&[], wgsl_source!("mc_pick"))),
+    ]
+}
+
+/// Stable name this item type submits and registers under.
+pub const TYPE_NAME: &str = "vpl.gpu_marching_cubes";
 
 impl PluginItem for GpuMarchingCubesItem {
     const TYPE_NAME: &'static str = TYPE_NAME;
 
-    fn settings(&self) -> &crate::scene::material::ItemSettings {
+    fn settings(&self) -> &viewport_lib::ItemSettings {
         &self.settings
     }
 }
@@ -36,18 +68,20 @@ impl PluginItem for GpuMarchingCubesItem {
 struct McPickItem {
     id: u64,
     isovalue: f32,
-    volume_data: std::sync::Arc<crate::geometry::marching_cubes::VolumeData>,
+    volume_data: std::sync::Arc<viewport_lib_geometry::marching_cubes::VolumeData>,
 }
 
+/// The registered item type. `install` builds one; a consumer taking only
+/// this type registers it with `with_item_type_plugin`.
 #[derive(Default)]
-pub(crate) struct GpuMarchingCubesPlugin {
+pub struct GpuMarchingCubesPlugin {
     /// The uploaded scalar volumes, owned by the type that triangulates them.
     volumes: McVolumeStore,
     gpu: Option<pipeline::McGpu>,
     /// Per drawn item, rebuilt each prepare.
     frame: Vec<pipeline::McFrame>,
     /// Object-id uniforms for the pick pass, keyed alongside `frame`.
-    pick_bgs: Vec<Option<(crate::gpu::Buffer, crate::gpu::BindGroup)>>,
+    pick_bgs: Vec<Option<(viewport_lib::gpu::Buffer, viewport_lib::gpu::BindGroup)>>,
     /// The pickable subset of the same items, for the CPU pick paths.
     pick_items: Vec<McPickItem>,
     /// Whether the frame's selection outline is active; the mask hook draws
@@ -66,7 +100,11 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
         self.volumes.allocated_bytes()
     }
 
-    fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn on_device_recreated(
+        &mut self,
+        _device: &viewport_lib::gpu::Device,
+        _queue: &viewport_lib::gpu::Queue,
+    ) {
         self.gpu = None;
         self.frame.clear();
         self.pick_bgs.clear();
@@ -74,11 +112,11 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
     fn prepare(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
-    ) -> Vec<crate::gpu::CommandBuffer> {
+    ) -> Vec<viewport_lib::gpu::CommandBuffer> {
         self.frame.clear();
         self.pick_bgs.clear();
         self.pick_items.clear();
@@ -117,7 +155,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
     fn paint(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -154,7 +192,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
     /// cascade cull (the frame data carries no world AABB).
     fn cast_shadow_pass(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         _ctx: &ShadowCastContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -177,7 +215,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
     fn outline_mask(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -211,15 +249,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
                 continue;
             };
             if best.as_ref().is_none_or(|(t, _)| toi < *t) {
-                #[allow(deprecated)]
-                let hit = PickHit {
-                    id: item.id,
-                    sub_object: None,
-                    world_pos,
-                    normal: glam::Vec3::Z,
-                    scalar_value: None,
-                    sub_object_world_pos: None,
-                };
+                let hit = PickHit::object_hit(item.id, world_pos, glam::Vec3::Z);
                 best = Some((toi, hit));
             }
         }
@@ -229,8 +259,8 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
     /// Walk the cells where the scalar field straddles the isovalue (the cells
     /// the compute stage would emit triangles for) and hit the item when any
     /// such cell centre projects into the rect.
-    fn pick_rect(&self, ctx: &RectPickContext<'_>) -> crate::renderer::PickRectResult {
-        let mut result = crate::renderer::PickRectResult::default();
+    fn pick_rect(&self, ctx: &RectPickContext<'_>) -> viewport_lib::renderer::PickRectResult {
+        let mut result = viewport_lib::renderer::PickRectResult::default();
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return result;
         }
@@ -274,7 +304,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
                                     iy as f32 + 0.5,
                                     iz as f32 + 0.5,
                                 );
-                        let projected = crate::plugin_api::pick_helpers::project_to_screen(
+                        let projected = viewport_lib::plugin_api::pick_helpers::project_to_screen(
                             cell_centre,
                             ctx.view_proj,
                             ctx.viewport_size,
@@ -300,7 +330,7 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 
     fn render_pick(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut viewport_lib::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -330,20 +360,20 @@ impl ItemTypePlugin for GpuMarchingCubesPlugin {
 impl GpuMarchingCubesPlugin {
     /// Upload a scalar field, pre-allocating every slab's intermediate and
     /// output buffer, and return its handle. Reached from
-    /// [`ViewportRenderer::upload_volume_for_mc`](crate::renderer::ViewportRenderer::upload_volume_for_mc).
+    /// [`McVolumes::upload_volume_for_mc`](crate::McVolumes::upload_volume_for_mc).
     pub(crate) fn upload(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
         vol: &VolumeData,
-    ) -> crate::ViewportResult<McVolumeId> {
+    ) -> viewport_lib::error::ViewportResult<McVolumeId> {
         let gpu_data = build_mc_volume_gpu_data(device, queue, vol)?;
         Ok(self.volumes.insert_sized(gpu_data))
     }
 
-    /// Drop a volume and its slab buffers. A stale handle is ignored.
-    pub(crate) fn free(&mut self, id: McVolumeId) {
-        self.volumes.remove(id);
+    /// Drop a volume and its slab buffers. False if the handle was stale.
+    pub(crate) fn free(&mut self, id: McVolumeId) -> bool {
+        self.volumes.remove(id).is_some()
     }
 
     /// Point a volume's scalar field at a caller-supplied buffer, refreshed
@@ -351,27 +381,32 @@ impl GpuMarchingCubesPlugin {
     pub(crate) fn set_scalar_source(
         &mut self,
         id: McVolumeId,
-        buffer: crate::gpu::Buffer,
+        buffer: viewport_lib::gpu::Buffer,
         offset_bytes: u64,
-    ) -> crate::ViewportResult<()> {
-        if !buffer.usage().contains(crate::gpu::BufferUsages::COPY_SRC) {
-            return Err(crate::ViewportError::ExternalBufferUsageMissing {
-                missing: "COPY_SRC",
-            });
+    ) -> viewport_lib::error::ViewportResult<()> {
+        if !buffer
+            .usage()
+            .contains(viewport_lib::gpu::BufferUsages::COPY_SRC)
+        {
+            return Err(
+                viewport_lib::error::ViewportError::ExternalBufferUsageMissing {
+                    missing: "COPY_SRC",
+                },
+            );
         }
         let store_len = self.volumes.slot_count();
-        let vol = self
-            .volumes
-            .get_mut(id)
-            .ok_or(crate::ViewportError::StaleHandle {
-                index: id.index(),
-                count: store_len,
-            })?;
+        let vol =
+            self.volumes
+                .get_mut(id)
+                .ok_or(viewport_lib::error::ViewportError::StaleHandle {
+                    index: id.index(),
+                    count: store_len,
+                })?;
         let [nx, ny, nz] = vol.dims;
         let needed_bytes = nx as u64 * ny as u64 * nz as u64 * 4;
         let available_bytes = buffer.size().saturating_sub(offset_bytes);
         if offset_bytes % 4 != 0 || needed_bytes > available_bytes {
-            return Err(crate::ViewportError::McScalarSourceMismatch {
+            return Err(viewport_lib::error::ViewportError::McScalarSourceMismatch {
                 needed_bytes,
                 available_bytes,
                 offset_bytes,
@@ -386,15 +421,18 @@ impl GpuMarchingCubesPlugin {
 
     /// Detach the external scalar source. The slab buffers keep whatever was
     /// last copied in, so the isosurface freezes at the final field.
-    pub(crate) fn clear_scalar_source(&mut self, id: McVolumeId) -> crate::ViewportResult<()> {
+    pub(crate) fn clear_scalar_source(
+        &mut self,
+        id: McVolumeId,
+    ) -> viewport_lib::error::ViewportResult<()> {
         let store_len = self.volumes.slot_count();
-        let vol = self
-            .volumes
-            .get_mut(id)
-            .ok_or(crate::ViewportError::StaleHandle {
-                index: id.index(),
-                count: store_len,
-            })?;
+        let vol =
+            self.volumes
+                .get_mut(id)
+                .ok_or(viewport_lib::error::ViewportError::StaleHandle {
+                    index: id.index(),
+                    count: store_len,
+                })?;
         vol.external_scalar = None;
         Ok(())
     }
@@ -404,11 +442,11 @@ impl GpuMarchingCubesPlugin {
     /// [`take_upload_result`](Self::take_upload_result) collects the job.
     pub(crate) fn begin_upload(
         &self,
-        jobs: &crate::resources::Jobs<'_>,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        jobs: &viewport_lib::resources::Jobs<'_>,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
         vol: VolumeData,
-    ) -> crate::resources::JobId {
+    ) -> viewport_lib::resources::JobId {
         let device = device.clone();
         let queue = queue.clone();
         jobs.try_submit_cpu(move |progress| {
@@ -423,25 +461,27 @@ impl GpuMarchingCubesPlugin {
     /// handle.
     pub(crate) fn take_upload_result(
         &mut self,
-        jobs: &crate::resources::Jobs<'_>,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<McVolumeId> {
+        jobs: &viewport_lib::resources::Jobs<'_>,
+        id: viewport_lib::resources::JobId,
+    ) -> viewport_lib::error::ViewportResult<McVolumeId> {
         match jobs.status(id) {
-            crate::resources::UploadStatus::Pending { .. } => {
-                Err(crate::error::ViewportError::JobNotReady)
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                Err(viewport_lib::error::ViewportError::JobNotReady)
             }
-            crate::resources::UploadStatus::Unknown => {
-                Err(crate::error::ViewportError::JobResultMissing {
+            viewport_lib::resources::UploadStatus::Unknown => {
+                Err(viewport_lib::error::ViewportError::JobResultMissing {
                     reason: "unknown id or wrong upload type",
                 })
             }
-            crate::resources::UploadStatus::Failed(e) => Err(e),
-            crate::resources::UploadStatus::Ready => match jobs.take::<McVolumeGpuData>(id) {
-                Some(gpu_data) => Ok(self.volumes.insert_sized(gpu_data)),
-                None => Err(crate::error::ViewportError::JobResultMissing {
-                    reason: "unknown id or wrong upload type",
-                }),
-            },
+            viewport_lib::resources::UploadStatus::Failed(e) => Err(e),
+            viewport_lib::resources::UploadStatus::Ready => {
+                match jobs.take::<McVolumeGpuData>(id) {
+                    Some(gpu_data) => Ok(self.volumes.insert_sized(gpu_data)),
+                    None => Err(viewport_lib::error::ViewportError::JobResultMissing {
+                        reason: "unknown id or wrong upload type",
+                    }),
+                }
+            }
         }
     }
 }
@@ -492,19 +532,19 @@ fn ray_aabb_slab(
 fn bisect_mc_crossing(
     ray_orig: glam::Vec3,
     ray_dir: glam::Vec3,
-    vol: &crate::geometry::marching_cubes::VolumeData,
+    vol: &viewport_lib_geometry::marching_cubes::VolumeData,
     isovalue: f32,
     mut t_lo: f32,
     mut t_hi: f32,
 ) -> f32 {
-    let s0 = crate::geometry::marching_cubes::trilinear_sample(
+    let s0 = viewport_lib_geometry::marching_cubes::trilinear_sample(
         vol,
         (ray_orig + ray_dir * t_lo).to_array(),
     ) - isovalue;
     let mut lo_sign = s0 < 0.0;
     for _ in 0..8 {
         let mid = (t_lo + t_hi) * 0.5;
-        let s = crate::geometry::marching_cubes::trilinear_sample(
+        let s = viewport_lib_geometry::marching_cubes::trilinear_sample(
             vol,
             (ray_orig + ray_dir * mid).to_array(),
         ) - isovalue;
@@ -527,7 +567,7 @@ fn march(
     ray_dir: glam::Vec3,
     item: &McPickItem,
 ) -> Option<(f32, glam::Vec3)> {
-    use crate::geometry::marching_cubes::trilinear_sample;
+    use viewport_lib_geometry::marching_cubes::trilinear_sample;
 
     let vol = &item.volume_data;
     let isovalue = item.isovalue;

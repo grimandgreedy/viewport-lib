@@ -24,7 +24,6 @@ pub use self::mesh_instance::*;
 pub use self::volume_mesh::*;
 pub use crate::renderer::item_plugins::decal::types::*;
 pub use crate::renderer::item_plugins::glyph::types::*;
-pub use crate::renderer::item_plugins::gpu_marching_cubes::types::*;
 pub use crate::renderer::item_plugins::polyline::types::*;
 pub use crate::renderer::item_plugins::scatter_volume::types::*;
 // The glyph structs are wgpu-free and carry no store id, so they live in

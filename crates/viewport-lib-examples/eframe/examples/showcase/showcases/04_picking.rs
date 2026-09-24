@@ -22,16 +22,17 @@ use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
     BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GlyphItem, GlyphType,
-    GpuMarchingCubesItem, ItemSettings, Material, McVolumeId, MeshId, NodeId, OverlayFill,
-    OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem, PolylineSelectionInfo,
-    SubObjectRef, SubSelection, SubSelectionRef, TextureId, VolumeData, VolumeId, VolumeMeshData,
-    VolumeMeshItem, VolumeSelectionInfo, primitives,
+    ItemSettings, Material, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId,
+    PickMask, PolylineItem, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef,
+    TextureId, VolumeData, VolumeId, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo,
+    primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -364,7 +365,7 @@ impl PickingShowcase {
             settings.pick_id = PickId(MC);
             settings.selected = sel(MC);
             fd.scene
-                .items_mut::<viewport_lib::GpuMarchingCubesItem>()
+                .items_mut::<GpuMarchingCubesItem>()
                 .push(GpuMarchingCubesItem {
                     volume_id: mc_id,
                     isovalue: 0.0,
