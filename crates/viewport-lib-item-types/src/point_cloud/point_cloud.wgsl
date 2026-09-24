@@ -1,10 +1,7 @@
 // Point cloud shader for the 3D viewport.
 //
-// Group 0: Camera uniform (view-projection, eye position)
-//          + shadow atlas texture + comparison sampler
-//          + Lights uniform
-//          + ClipPlanes uniform (up to 6 half-space clipping planes)
-//          + ShadowAtlas uniform (unused here, but layout must match camera_bgl).
+// Group 0: the shared scene bindings, prefixed from SHARED_BINDINGS_WGSL.
+//          Only camera.view_proj, clip_planes and clip_volume are read.
 // Group 1: PointCloud uniform (model matrix, point_size, scalar mapping params,
 //          default_colour, has_scalars, has_colours)
 //          + LUT texture (256x1, Rgba8Unorm)
@@ -16,21 +13,6 @@
 //
 // The shader reads per-point colour or scalar data from storage buffers,
 // mapping through the LUT when has_scalars != 0.
-
-struct Camera {
-    view_proj: mat4x4<f32>,
-    eye_pos:   vec3<f32>,
-    _pad:      f32,
-};
-
-// Clip planes uniform : must match mesh.wgsl group 0 binding 4.
-struct ClipPlanes {
-    planes: array<vec4<f32>, 6>,
-    count:  u32,
-    _pad0:  u32,
-    viewport_width:  f32,
-    viewport_height: f32,
-};
 
 // Point cloud per-item uniform : 128 bytes.
 struct PointCloudUniform {
@@ -49,38 +31,6 @@ struct PointCloudUniform {
     _pad1:            u32,           //  4 bytes padding
     _pad2:            u32,           //  4 bytes padding
 };
-
-struct ClipVolumeEntry {
-    volume_type: u32,
-    _pad_a: u32,
-    _pad_b: u32,
-    _pad_c: u32,
-    center: vec3<f32>,
-    radius: f32,
-    half_extents: vec3<f32>,
-    _pad1: f32,
-    col0: vec3<f32>,
-    _pad2: f32,
-    col1: vec3<f32>,
-    _pad3: f32,
-    col2: vec3<f32>,
-    _pad4: f32,
-}
-
-struct ClipVolumeUB {
-    count: u32,
-    _pad_a: u32,
-    _pad_b: u32,
-    _pad_c: u32,
-    volumes: array<ClipVolumeEntry, 4>,
-};
-
-@group(0) @binding(0) var<uniform> camera:     Camera;
-// Bindings 1-5 of group 0 are shadow/light uniforms present in the layout but unused here.
-@group(0) @binding(4) var<uniform> clip_planes: ClipPlanes;
-@group(0) @binding(6) var<uniform> clip_volume: ClipVolumeUB;
-
-// #include "helpers/clip_volume_test.wgsl"
 
 @group(1) @binding(0) var<uniform>            pc_uniform:           PointCloudUniform;
 @group(1) @binding(1) var                     lut_texture:          texture_2d<f32>;
@@ -174,14 +124,8 @@ fn vs_main(in: VertexIn) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    // Clip-plane culling (section views).
-    for (var i = 0u; i < clip_planes.count; i = i + 1u) {
-        let plane = clip_planes.planes[i];
-        if dot(vec4<f32>(in.world_pos, 1.0), plane) < 0.0 {
-            discard;
-        }
-    }
-    if !clip_volume_test(in.world_pos) { discard; }
+    // Section-view clipping: planes and volumes together.
+    if !viewport_clip_test(in.world_pos) { discard; }
 
     // All modes clip to a circle. uv is in [-1,1]^2; d2=1 is the quad edge.
     let d2 = dot(in.uv, in.uv);

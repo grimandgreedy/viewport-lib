@@ -455,6 +455,14 @@ pub struct SubSelectionRef {
 }
 
 impl SubSelectionRef {
+    /// The selected `(node_id, sub_object)` pairs.
+    ///
+    /// An item type reads this to work out which of its sub-objects are
+    /// selected, matching `node_id` against its items' pick ids.
+    pub fn items(&self) -> &[(NodeId, SubObjectRef)] {
+        &self.items
+    }
+
     /// Create a snapshot from a live [`SubSelection`].
     ///
     /// - `mesh_lookup` : CPU positions + indices per node id (same type as the

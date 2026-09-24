@@ -579,7 +579,7 @@ impl ViewportInstance {
 mod tests {
     use super::*;
     use crate::interaction::input::{ButtonState, MouseButton};
-    use crate::{Material, OrbitCameraController, PointCloudItem, primitives};
+    use crate::{GlyphItem, Material, OrbitCameraController, primitives};
 
     fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
@@ -743,12 +743,12 @@ mod tests {
         let mut orbit = OrbitCameraController::new_stateless();
 
         // A retained extra is re-injected into the scene every frame.
-        let mut pc = PointCloudItem::default();
-        pc.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let id = session.add_point_cloud(pc);
+        let mut glyphs = GlyphItem::default();
+        glyphs.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let id = session.add_item(glyphs);
         let frame = session.update_orbit(&mut orbit);
         assert_eq!(
-            frame.scene.items_of::<crate::PointCloudItem>().len(),
+            frame.scene.items_of::<crate::GlyphItem>().len(),
             1,
             "retained extra injected"
         );
@@ -756,11 +756,11 @@ mod tests {
         // The injection closure runs after assembly, so per-frame items land.
         let frame = session.update_orbit_with(&mut orbit, |f| {
             f.scene
-                .items_mut::<crate::PointCloudItem>()
-                .push(PointCloudItem::default());
+                .items_mut::<crate::GlyphItem>()
+                .push(GlyphItem::default());
         });
         assert_eq!(
-            frame.scene.items_of::<crate::PointCloudItem>().len(),
+            frame.scene.items_of::<crate::GlyphItem>().len(),
             2,
             "retained + per-frame injected item"
         );
@@ -769,7 +769,7 @@ mod tests {
         assert!(session.remove_extra(id));
         let frame = session.update_orbit(&mut orbit);
         assert_eq!(
-            frame.scene.items_of::<crate::PointCloudItem>().len(),
+            frame.scene.items_of::<crate::GlyphItem>().len(),
             0,
             "removed extra gone"
         );

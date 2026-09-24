@@ -17,7 +17,7 @@ use crate::gpu::ShaderStages;
 ///
 /// `source` accepts a baked `&'static str` (via [`wgsl_source!`]) or an owned
 /// `String` (a shader composed at runtime, e.g. by the deform registry).
-pub(crate) fn wgsl_module<'a>(
+pub fn wgsl_module<'a>(
     device: &crate::gpu::Device,
     label: &str,
     source: impl Into<std::borrow::Cow<'a, str>>,
@@ -33,7 +33,7 @@ pub(crate) fn wgsl_module<'a>(
 /// declaration, naga 27 rejects the directive. Only for sources compiled on a
 /// device with [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE)
 /// (the directive itself fails validation without the feature).
-pub(crate) fn with_primitive_index_enable(src: &str) -> String {
+pub fn with_primitive_index_enable(src: &str) -> String {
     format!(
         "{}{}",
         crate::plugin_api::shared_wgsl::PICK_PRIM_ENABLE_WGSL,
@@ -237,10 +237,7 @@ macro_rules! wgsl_source {
 pub(crate) use wgsl_source;
 
 /// A uniform-buffer bind group layout entry (non-dynamic, no min size).
-pub(crate) fn uniform_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn uniform_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -254,10 +251,7 @@ pub(crate) fn uniform_entry(
 }
 
 /// A filterable float 2D texture bind group layout entry.
-pub(crate) fn texture_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn texture_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -271,10 +265,7 @@ pub(crate) fn texture_entry(
 }
 
 /// A filtering sampler bind group layout entry.
-pub(crate) fn sampler_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn sampler_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -284,7 +275,7 @@ pub(crate) fn sampler_entry(
 }
 
 /// Bind group layout with a single uniform buffer at binding 0.
-pub(crate) fn uniform_bgl(
+pub fn uniform_bgl(
     device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
@@ -298,7 +289,7 @@ pub(crate) fn uniform_bgl(
 /// Bind group layout: filterable texture at binding 0 + filtering sampler at
 /// binding 1, both visible to `visibility`. The common shape for a
 /// full-screen composite / blit pass.
-pub(crate) fn texture_sampler_bgl(
+pub fn texture_sampler_bgl(
     device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
@@ -313,7 +304,7 @@ pub(crate) fn texture_sampler_bgl(
 /// a filterable texture at binding 1, and a filtering sampler at binding 2
 /// (both visible to `tex_vis`). The standard scivis per-item layout: an item
 /// uniform plus an optional colour-LUT texture and sampler.
-pub(crate) fn uniform_texture_sampler_bgl(
+pub fn uniform_texture_sampler_bgl(
     device: &crate::gpu::Device,
     label: &str,
     uniform_vis: ShaderStages,
@@ -331,10 +322,7 @@ pub(crate) fn uniform_texture_sampler_bgl(
 
 /// Linear-filtered sampler clamped to edge on all axes. The default sampler for
 /// texture lookups that must not wrap (LUTs, composite targets, most content).
-pub(crate) fn clamp_linear_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_linear_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -348,10 +336,7 @@ pub(crate) fn clamp_linear_sampler(
 
 /// Nearest-filtered sampler clamped to edge on all axes. Used where
 /// interpolation would blur discrete data (index buffers, nearest blits).
-pub(crate) fn clamp_nearest_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_nearest_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -366,7 +351,7 @@ pub(crate) fn clamp_nearest_sampler(
 /// Linear-filtered sampler that repeats on all axes. Used for tiling textures
 /// (decals, patterned materials). `mipmap_filter` varies: most callers want
 /// `Nearest`, uploaded user textures pick it from the mip chain at runtime.
-pub(crate) fn repeat_linear_sampler(
+pub fn repeat_linear_sampler(
     device: &crate::gpu::Device,
     label: &str,
     mipmap_filter: crate::gpu::FilterMode,
@@ -495,7 +480,7 @@ pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::Blend
 /// bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
 /// constant by [`build_dual_pipeline`]. The vertex and fragment stages share
 /// one shader module, which is the shape every scivis feature uses.
-pub(crate) struct DualPipelineDesc<'a> {
+pub struct DualPipelineDesc<'a> {
     pub label: &'a str,
     pub layout: &'a crate::gpu::PipelineLayout,
     pub shader: &'a crate::gpu::ShaderModule,
@@ -517,7 +502,7 @@ pub(crate) struct DualPipelineDesc<'a> {
 /// state constant. The two variants differ only in colour target format
 /// (`desc.ldr_format` vs `Rgba16Float`), which is the invariant `DualPipeline`
 /// encodes.
-pub(crate) fn build_dual_pipeline(
+pub fn build_dual_pipeline(
     device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
 ) -> crate::resources::types::DualPipeline {
@@ -661,7 +646,7 @@ pub(crate) fn build_outline_mask_pipeline(
 /// shape: a shader, its layout, and an entry point, with default compilation
 /// options and no cache. This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
-pub(crate) fn compute_pipeline(
+pub fn compute_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,
@@ -711,7 +696,7 @@ pub fn pipeline_layout<'a>(
 
 /// Pipeline layout with the standard scene binding convention:
 /// group 0 = camera, group 1 = the feature's per-item bind group layout.
-pub(crate) fn standard_scene_layout(
+pub fn standard_scene_layout(
     device: &crate::gpu::Device,
     label: &str,
     camera_bgl: &crate::gpu::BindGroupLayout,

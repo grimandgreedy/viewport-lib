@@ -160,9 +160,6 @@
 //! // After step: convert accumulated primitives to render items.
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
 //!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
-//!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.items_mut::<crate::PointCloudItem>().push(pc);
-//!     }
 //! }
 //! ```
 //!

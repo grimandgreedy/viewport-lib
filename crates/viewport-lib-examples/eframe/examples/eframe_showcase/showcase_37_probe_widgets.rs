@@ -16,10 +16,11 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 use vpl::{
     BoxWidget, CameraFrame, CylinderWidget, DiskWidget, FrameData, LightingSettings,
-    LineProbeWidget, PlaneWidget, PointCloudItem, PolylineWidget, SceneRenderItem, SphereWidget,
-    ViewportRenderer, WidgetContext, WidgetResult, scene::Scene,
+    LineProbeWidget, PlaneWidget, PolylineWidget, SceneRenderItem, SphereWidget, ViewportRenderer,
+    WidgetContext, WidgetResult, scene::Scene,
 };
 
 const CLOUD_N: usize = 20000;
@@ -471,9 +472,7 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
         pc.default_colour = [0.5, 0.7, 1.0, 1.0].into();
         pc.gaussian = true;
         pc.point_size = 8.0;
-        fd.scene
-            .items_mut::<viewport_lib::PointCloudItem>()
-            .push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
     if !sel.is_empty() {
         let mut pc = PointCloudItem::default();
@@ -481,9 +480,7 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
         pc.default_colour = [1.0, 0.55, 0.1, 1.0].into();
         pc.gaussian = true;
         pc.point_size = 14.0;
-        fd.scene
-            .items_mut::<viewport_lib::PointCloudItem>()
-            .push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
 }
 

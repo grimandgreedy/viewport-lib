@@ -465,10 +465,10 @@ pub fn pick_scene_accelerated_with_probe_cpu(
 pub struct RectPickResult {
     /// Per-object typed sub-object references.
     ///
-    /// Key = object identifier: [`crate::renderer::PickId`]`.0` (the scene node id)
-    /// for mesh scene items, [`crate::renderer::PointCloudItem::id`] for point clouds.
+    /// Key = object identifier: [`crate::renderer::PickId`]`.0`, the scene node
+    /// id for mesh scene items and the item's pick id for an item type.
     /// Value = [`SubObjectRef`]s inside the rect : `Face` for mesh triangles,
-    /// `Point` for point cloud points.
+    /// `Point` for the point-set types.
     pub hits: std::collections::HashMap<u64, Vec<SubObjectRef>>,
 }
 
@@ -788,41 +788,6 @@ pub fn voxel_world_aabb(
         .fold(glam::Vec3::splat(f32::NEG_INFINITY), |acc, c| acc.max(c));
 
     (world_min, world_max)
-}
-
-/// Pick the closest point in a [`crate::renderer::PointCloudItem`] to a screen-space click.
-///
-/// Projects every point through `view_proj` and returns the closest one whose
-/// screen-space distance to `click_pos` is within `radius_px` pixels.  Returns
-/// `None` when no point is within that radius.
-///
-/// # Arguments
-/// * `click_pos`     - screen-space click position in viewport pixels (top-left origin)
-/// * `id`            - object identifier to embed in the returned [`PickHit`]
-/// * `item`          - the point cloud item to search
-/// * `view_proj`     - combined view x projection matrix
-/// * `viewport_size` - viewport width x height in pixels
-/// * `radius_px`     - maximum screen-space distance in pixels to accept as a hit
-pub fn pick_point_cloud_cpu(
-    click_pos: glam::Vec2,
-    id: u64,
-    item: &crate::renderer::PointCloudItem,
-    view_proj: glam::Mat4,
-    viewport_size: glam::Vec2,
-    radius_px: f32,
-) -> Option<PickHit> {
-    // Same screen-space nearest-point search as gaussian splats, just sourced
-    // from a PointCloudItem instead of a bare position slice.
-    let model = glam::Mat4::from_cols_array_2d(&item.model);
-    pick_gaussian_splat_cpu(
-        click_pos,
-        id,
-        &item.positions,
-        model,
-        view_proj,
-        viewport_size,
-        radius_px,
-    )
 }
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,6 @@ pub(crate) mod gpu_implicit;
 pub(crate) mod gpu_marching_cubes;
 pub(crate) mod gpu_particles;
 pub(crate) mod image_slice;
-pub(crate) mod point_cloud;
 pub(crate) mod polyline;
 pub(crate) mod scatter_volume;
 pub(crate) mod sprite;
@@ -86,7 +85,6 @@ impl crate::renderer::ViewportRenderer {
         // its neighbours the way it always has.
         // First the types that came off the shared scivis draw loop, in the
         // order that loop drew them.
-        self.install_item_type_plugin(device, Box::new(point_cloud::PointCloudPlugin::default()));
         self.install_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
         self.install_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
         self.install_item_type_plugin(device, Box::new(volume::VolumePlugin::default()));

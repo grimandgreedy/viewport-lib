@@ -13,9 +13,8 @@
 
 use super::types::FrameData;
 use super::{
-    CameraFrame, GlyphItem, LightingSettings, PointCloudItem, PolylineItem, RenderCamera,
-    RibbonItem, SceneFrame, StreamtubeItem, SurfaceSubmission, TensorGlyphItem, TubeItem,
-    ViewportRenderer,
+    CameraFrame, GlyphItem, LightingSettings, PolylineItem, RenderCamera, RibbonItem, SceneFrame,
+    StreamtubeItem, SurfaceSubmission, TensorGlyphItem, TubeItem, ViewportRenderer,
 };
 use crate::camera::Camera;
 use crate::plugin_api::ItemTypePlugin as _;
@@ -24,7 +23,6 @@ use crate::renderer::PickId;
 use crate::renderer::item_plugins::curves::{RibbonPlugin, StreamtubePlugin, TubePlugin};
 use crate::renderer::item_plugins::glyph::GlyphPlugin;
 use crate::renderer::item_plugins::gpu_implicit::GpuImplicitPlugin;
-use crate::renderer::item_plugins::point_cloud::PointCloudPlugin;
 use crate::renderer::item_plugins::polyline::PolylinePlugin;
 use crate::renderer::item_plugins::tensor_glyph::TensorGlyphPlugin;
 use crate::resources::GpuImplicitItem;
@@ -86,50 +84,6 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
         return;
     };
     let renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
-
-    // -----------------------------------------------------------------
-    // Point cloud
-    // -----------------------------------------------------------------
-    //
-    // The point cloud item type is an `ItemTypePlugin`, so the check drives
-    // the plugin's prepare directly instead of reading a renderer field.
-    {
-        let mut vis = PointCloudItem::default();
-        vis.positions = vec![[0.0, 0.0, 0.0]];
-        vis.settings = visible();
-        let mut hid = PointCloudItem::default();
-        hid.positions = vec![[1.0, 0.0, 0.0]];
-        hid.settings = hidden();
-        let items: Vec<PointCloudItem> = vec![vis, hid];
-        let collections: Vec<Box<dyn crate::plugin_api::PluginItemCollection>> =
-            vec![Box::new(items)];
-        let items = crate::plugin_api::ItemCollections::new(&collections);
-
-        let fd = empty_frame();
-        let resources = renderer.resources();
-        let ctx = crate::plugin_api::ItemFrameContext {
-            camera: &fd.camera.render_camera,
-            viewport_size: glam::Vec2::from(fd.camera.viewport_size),
-            viewport_index: 0,
-            frame_index: 0,
-            jobs: crate::resources::Jobs::new(resources),
-            resources,
-            wireframe_mode: false,
-            outline_selected: false,
-            sub_selection: None,
-            clip_objects: &[],
-            quality_reduced: false,
-            decal_excluded_surfaces: &[],
-            collections: &collections,
-        };
-        let mut plugin = PointCloudPlugin::default();
-        let _ = plugin.prepare(&device, &queue, &ctx, &items);
-        assert_eq!(
-            plugin.drawn_count(),
-            1,
-            "point_cloud: hidden item must not produce gpu data"
-        );
-    }
 
     // -----------------------------------------------------------------
     // Glyph

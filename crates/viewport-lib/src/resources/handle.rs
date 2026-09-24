@@ -8,7 +8,7 @@
 //! stores wrap.
 
 pub use viewport_lib_types::ids::ContentHandle;
-pub(crate) use viewport_lib_types::slot_handle;
+pub use viewport_lib_types::slot_handle;
 
 /// Resident GPU bytes for one stored entry, used by the `_sized` store helpers
 /// so a store over a payload that can measure itself does not have to restate
@@ -17,7 +17,7 @@ pub(crate) use viewport_lib_types::slot_handle;
 /// Counts the buffers the entry owns. Data shared across entries (such as the
 /// base meshes glyph batches borrow from a single cached copy) belongs to that
 /// cache rather than to each entry, and is not counted here.
-pub(crate) trait GpuByteSize {
+pub trait GpuByteSize {
     fn gpu_bytes(&self) -> u64;
 }
 
@@ -45,7 +45,7 @@ struct Slot<T> {
 /// `SlotStore` and adds only what differs: how it measures an entry's GPU byte
 /// size, and any lookups specific to that resource. Byte accounting is opt-in,
 /// a store whose entries carry no measured size passes `0` for `bytes`.
-pub(crate) struct SlotStore<T, H: ContentHandle> {
+pub struct SlotStore<T, H: ContentHandle> {
     slots: Vec<Slot<T>>,
     free_list: Vec<usize>,
     allocated_bytes: u64,
@@ -59,7 +59,7 @@ pub(crate) struct SlotStore<T, H: ContentHandle> {
 impl<T, H: ContentHandle> SlotStore<T, H> {
     /// Insert a value charging `bytes` against it, reusing a free slot if one is
     /// available. Returns the handle carrying the slot's current generation.
-    pub(crate) fn insert(&mut self, value: T, bytes: u64) -> H {
+    pub fn insert(&mut self, value: T, bytes: u64) -> H {
         self.allocated_bytes += bytes;
         self.live_count += 1;
         let revision = self.next_revision;
@@ -94,13 +94,13 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
 
     /// Borrow the value for `id`, validating the generation. `None` for a stale
     /// handle, an empty slot, or an out-of-range index.
-    pub(crate) fn get(&self, id: H) -> Option<&T> {
+    pub fn get(&self, id: H) -> Option<&T> {
         self.live_slot(id)?.value.as_ref()
     }
 
     /// Mutably borrow the value for `id`, with the same generation check as
     /// [`get`](Self::get).
-    pub(crate) fn get_mut(&mut self, id: H) -> Option<&mut T> {
+    pub fn get_mut(&mut self, id: H) -> Option<&mut T> {
         let slot = self.slots.get_mut(id.index())?;
         if slot.generation != id.generation() {
             return None;
@@ -115,14 +115,14 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     /// insert and replace, so a cache keyed on `(id, revision)` is invalidated
     /// by a replace under a stable handle without the store having to hold the
     /// cached thing itself.
-    pub(crate) fn revision(&self, id: H) -> Option<u64> {
+    pub fn revision(&self, id: H) -> Option<u64> {
         Some(self.live_slot(id)?.revision)
     }
 
     /// Borrow the value for `id` together with its
     /// [`revision`](Self::revision), for the common case of looking up an entry
     /// and checking a cache against it in one step.
-    pub(crate) fn get_with_revision(&self, id: H) -> Option<(&T, u64)> {
+    pub fn get_with_revision(&self, id: H) -> Option<(&T, u64)> {
         let slot = self.live_slot(id)?;
         Some((slot.value.as_ref()?, slot.revision))
     }
@@ -130,7 +130,7 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     /// Borrow the value in a raw slot index without a generation check. For the
     /// per-frame draw path, where the index was already validated through
     /// [`get`](Self::get) earlier in the same frame.
-    pub(crate) fn get_by_index(&self, index: usize) -> Option<&T> {
+    pub fn get_by_index(&self, index: usize) -> Option<&T> {
         self.slots.get(index)?.value.as_ref()
     }
 
@@ -140,7 +140,7 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     ///
     /// The generation check is the in-flight guard: a stale `id` does not
     /// resolve, so it cannot overwrite whatever now occupies the slot.
-    pub(crate) fn replace(&mut self, id: H, value: T, bytes: u64) -> Option<T> {
+    pub fn replace(&mut self, id: H, value: T, bytes: u64) -> Option<T> {
         let slot = self.slots.get_mut(id.index())?;
         if slot.generation != id.generation() || slot.value.is_none() {
             return None;
@@ -157,7 +157,7 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     /// store that mutates an entry in place through [`get_mut`](Self::get_mut)
     /// and needs to keep its resident-byte total accurate. Returns `false` for a
     /// stale handle or an empty slot.
-    pub(crate) fn set_bytes(&mut self, id: H, bytes: u64) -> bool {
+    pub fn set_bytes(&mut self, id: H, bytes: u64) -> bool {
         let Some(slot) = self.slots.get_mut(id.index()) else {
             return false;
         };
@@ -172,7 +172,7 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     /// Remove the value for `id`, bump the slot generation, free the slot, and
     /// drop its byte charge. Returns the removed value, or `None` for a stale
     /// handle or an empty slot.
-    pub(crate) fn remove(&mut self, id: H) -> Option<T> {
+    pub fn remove(&mut self, id: H) -> Option<T> {
         let slot = self.slots.get_mut(id.index())?;
         if slot.generation != id.generation() {
             return None;
@@ -188,27 +188,27 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     }
 
     /// Whether the slot for `id` holds a live value.
-    pub(crate) fn contains(&self, id: H) -> bool {
+    pub fn contains(&self, id: H) -> bool {
         self.live_slot(id).is_some()
     }
 
     /// Number of occupied (non-empty) slots.
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.live_count
     }
 
     /// Total number of slots (occupied plus free).
-    pub(crate) fn slot_count(&self) -> usize {
+    pub fn slot_count(&self) -> usize {
         self.slots.len()
     }
 
     /// Total GPU bytes charged across every resident value.
-    pub(crate) fn allocated_bytes(&self) -> u64 {
+    pub fn allocated_bytes(&self) -> u64 {
         self.allocated_bytes
     }
 
     /// Iterate every live value with its handle.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (H, &T)> {
+    pub fn iter(&self) -> impl Iterator<Item = (H, &T)> {
         self.slots.iter().enumerate().filter_map(|(idx, slot)| {
             slot.value
                 .as_ref()
@@ -217,7 +217,7 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     }
 
     /// Mutably iterate every live value with its handle.
-    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (H, &mut T)> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (H, &mut T)> {
         self.slots.iter_mut().enumerate().filter_map(|(idx, slot)| {
             let generation = slot.generation;
             slot.value
@@ -230,14 +230,14 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
 impl<T: GpuByteSize, H: ContentHandle> SlotStore<T, H> {
     /// Insert a value that measures its own GPU footprint, charging
     /// [`GpuByteSize::gpu_bytes`] against the slot.
-    pub(crate) fn insert_sized(&mut self, value: T) -> H {
+    pub fn insert_sized(&mut self, value: T) -> H {
         let bytes = value.gpu_bytes();
         self.insert(value, bytes)
     }
 
     /// Swap the value in `id`'s slot, re-charging from the new value's own
     /// [`GpuByteSize::gpu_bytes`]. Same contract as [`replace`](Self::replace).
-    pub(crate) fn replace_sized(&mut self, id: H, value: T) -> Option<T> {
+    pub fn replace_sized(&mut self, id: H, value: T) -> Option<T> {
         let bytes = value.gpu_bytes();
         self.replace(id, value, bytes)
     }

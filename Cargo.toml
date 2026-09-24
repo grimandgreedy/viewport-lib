@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/viewport-lib",
     "crates/viewport-lib-types",
+    "crates/viewport-lib-item-types",
     "crates/viewport-lib-geometry",
     "crates/viewport-lib-input",
     "crates/viewport-lib-post-effects",
@@ -18,6 +19,7 @@ members = [
 default-members = [
     "crates/viewport-lib",
     "crates/viewport-lib-types",
+    "crates/viewport-lib-item-types",
     "crates/viewport-lib-geometry",
     "crates/viewport-lib-input",
     "crates/viewport-lib-post-effects",

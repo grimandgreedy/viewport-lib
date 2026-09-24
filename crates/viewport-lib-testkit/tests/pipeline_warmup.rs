@@ -5,9 +5,9 @@
 //! prepare, so a frame that hits a cold pipeline reads non-zero.
 
 use viewport_lib::{
-    CameraFrame, DecalItem, FrameData, Material, PointCloudItem, PointCloudRefItem, SceneFrame,
-    SceneRenderItem, VolumeItem,
+    CameraFrame, DecalItem, FrameData, Material, SceneFrame, SceneRenderItem, VolumeItem,
 };
+use viewport_lib_item_types::{PointCloudItem, PointCloudRefItem, PointCloudUploads};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 fn mesh_frame(item: SceneRenderItem, size: [f32; 2]) -> FrameData {
@@ -113,7 +113,7 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
     let mut with_cloud = mesh_frame(item, [200.0, 150.0]);
     with_cloud
         .scene
-        .items_mut::<viewport_lib::PointCloudRefItem>()
+        .items_mut::<PointCloudRefItem>()
         .push(PointCloudRefItem::new(source));
     let _ = h.render(&with_cloud, 200, 150);
     assert_eq!(

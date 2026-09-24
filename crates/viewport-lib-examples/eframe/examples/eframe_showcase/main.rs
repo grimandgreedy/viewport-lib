@@ -131,6 +131,7 @@ fn main() -> eframe::Result {
             // targets hand egui non-sRGB views so the encode survives the sample.
             let mut renderer =
                 ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
+            viewport_lib_item_types::install(&mut renderer, &device);
             // Compile the custom-shading plugin pipelines now, at startup,
             // rather than on the frame that showcase opens: the ~45 pipeline
             // builds would otherwise stall that frame. See

@@ -1,0 +1,29 @@
+[package]
+name = "viewport-lib-item-types"
+version = "0.1.0"
+edition = "2024"
+description = "The built-in item types for viewport-lib: point clouds, glyphs, sprites, curves, volumes and the rest"
+license = "GPL-3.0-only"
+repository = "https://github.com/grimandgreedy/viewport-lib"
+keywords = ["3d", "viewport", "viewport-lib", "rendering", "visualization"]
+categories = ["graphics", "rendering", "visualization"]
+rust-version = "1.85"
+publish = true
+
+[dependencies]
+viewport-lib = { path = "../viewport-lib", version = "0.22", default-features = false }
+glam = { workspace = true }
+bytemuck = { version = "1.25", features = ["derive"] }
+
+[dev-dependencies]
+viewport-lib-testkit = { path = "../viewport-lib-testkit", default-features = false, features = ["core"] }
+
+[features]
+default = ["wgpu27"]
+# One leg, matching the viewport-lib the crate is built against. The renderer
+# re-exports its wgpu as `viewport_lib::gpu`, and everything here names types
+# through that path, so selecting the leg here is the whole of it.
+wgpu27 = ["viewport-lib/wgpu27"]
+wgpu29 = ["viewport-lib/wgpu29"]
+wgpu30 = ["viewport-lib/wgpu30"]
+serde = ["viewport-lib/serde"]

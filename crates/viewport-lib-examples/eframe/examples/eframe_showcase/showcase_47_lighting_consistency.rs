@@ -23,13 +23,13 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 use vpl::{
     ColourmapId, FrameData, GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem,
     GlyphType, GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
-    ItemSettings, LightSource, LightingSettings, Material, MeshId, PointCloudItem, PolylineItem,
-    RibbonItem, SceneRenderItem, ShDegree, StreamtubeItem, TensorGlyphItem, TubeItem,
-    ViewportRenderer, VolumeId, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    VolumeTransparency,
+    ItemSettings, LightSource, LightingSettings, Material, MeshId, PolylineItem, RibbonItem,
+    SceneRenderItem, ShDegree, StreamtubeItem, TensorGlyphItem, TubeItem, ViewportRenderer,
+    VolumeId, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
 };
 
 use crate::App;
@@ -436,9 +436,7 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         pc.point_size = 8.0;
         pc.default_colour = [0.10, 0.26, 0.68, 1.0].into();
         broadcast(s, &mut pc.settings);
-        fd.scene
-            .items_mut::<viewport_lib::PointCloudItem>()
-            .push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
 
     // Cell (2, 0): glyphs on a ring in the camera-facing X-Z plane, tangent vectors

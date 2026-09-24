@@ -156,7 +156,7 @@ pub(crate) struct ViewportHdrState {
 /// primary scene colour attachment, which may be either format depending on
 /// whether post-processing is active.
 #[derive(Clone)]
-pub(crate) struct DualPipeline {
+pub struct DualPipeline {
     pub ldr: crate::gpu::RenderPipeline,
     pub hdr: crate::gpu::RenderPipeline,
 }

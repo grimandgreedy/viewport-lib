@@ -18,8 +18,10 @@
 //! - [`world_radius_in_pixels`]: a world-space radius measured in pixels, for
 //!   an item type whose instances are drawn at a world size but picked by
 //!   screen-space proximity.
+//! - [`inline_point_position`]: the world position of one point sub-object,
+//!   found by scanning the frame's items for the one carrying a pick id.
 
 pub use crate::renderer::picking::helpers::{
-    pick_closest_polyline_segment, project_to_screen, ray_triangle, ray_unit_box_toi,
-    segment_in_rect, world_radius_in_pixels,
+    inline_point_position, pick_closest_polyline_segment, project_to_screen, ray_triangle,
+    ray_unit_box_toi, segment_in_rect, world_radius_in_pixels,
 };

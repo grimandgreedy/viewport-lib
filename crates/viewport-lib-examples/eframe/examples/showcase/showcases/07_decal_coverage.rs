@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
@@ -23,9 +24,9 @@ use vpl::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
     Material, McVolumeId, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId,
-    PickMask, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, ShDegree,
-    SpriteItem, StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef, TensorGlyphItem,
-    TextureId, TubeItem, VolumeData, VolumeId, VolumeItem, VolumeMeshData, VolumeMeshItem,
+    PickMask, PolylineItem, PolylineSelectionInfo, RibbonItem, ShDegree, SpriteItem,
+    StreamtubeItem, SubObjectRef, SubSelection, SubSelectionRef, TensorGlyphItem, TextureId,
+    TubeItem, VolumeData, VolumeId, VolumeItem, VolumeMeshData, VolumeMeshItem,
     VolumeSelectionInfo, VolumeSurfaceSliceItem, primitives,
 };
 
@@ -233,9 +234,7 @@ impl DecalCoverageShowcase {
         // Point cloud.
         let mut pc = self.pc.clone();
         pc.settings.selected = sel(PC);
-        fd.scene
-            .items_mut::<viewport_lib::PointCloudItem>()
-            .push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
 
         // Arrow glyphs.
         let mut glyphs = self.glyphs.clone();

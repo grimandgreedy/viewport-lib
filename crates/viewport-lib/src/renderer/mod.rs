@@ -58,13 +58,13 @@ mod hidden_tests;
 #[cfg(test)]
 mod lod_instance_tests;
 
-/// Item-type names beginning with this prefix belong to the library.
+/// Item-type names beginning with this prefix belong to the types viewport-lib
+/// ships with.
 ///
-/// Every built-in item type registers under it (`vpl.sprite`,
-/// `vpl.point_cloud`, and so on), and
-/// [`ViewportRenderer::with_item_type_plugin`] refuses any other plugin that
-/// claims a name in it. One prefix rather than a list of names, so a built-in
-/// type added later is covered without a second place to update.
+/// It is a naming convention, not an allocation: what
+/// [`ViewportRenderer::with_item_type_plugin`] actually refuses is a name a
+/// type the renderer itself installed is already answering to. Pick a prefix of
+/// your own anyway, so a type shipped later cannot collide with yours.
 pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
 pub use self::types::{
@@ -84,17 +84,17 @@ pub use self::types::{
     OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId,
     OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
     OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE,
-    ParticleMeshAlign, PathSegment, PathTrack, PipelineMode, PointCloudItem, PointCloudRefItem,
-    PointRenderMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem, PositionedGlyph,
-    PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem, RibbonRefItem,
-    ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame, SceneRenderItem,
-    ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape, SpriteBlend,
-    SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode, SpriteOrientation,
-    SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem, StrokePattern, SubPath,
-    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
-    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
-    ViewportFrame, VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem,
-    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    ParticleMeshAlign, PathSegment, PathTrack, PipelineMode, PointShadowMode, PolylineCap,
+    PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem,
+    SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings,
+    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
+    StreamtubeRefItem, StrokePattern, SubPath, SurfaceLICConfig, SurfaceSubmission,
+    TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode, ToneMapping,
+    TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects, ViewportFrame,
+    VignetteSettings, VolumeItem, VolumeMeshItem, VolumeSurfaceSliceItem, VolumeTransparency,
+    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -337,6 +337,9 @@ pub struct ViewportRenderer {
     /// `init_gpu` is invoked once on registration; per-frame `prepare` and
     /// `paint` fire when a matching collection is on `SceneFrame`.
     item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry,
+    /// Names of the item types the renderer installed itself, which an
+    /// external plugin may not take over.
+    renderer_owned_type_names: std::collections::HashSet<&'static str>,
     /// Externally registered post-effect producers, in registration order.
     /// `init_gpu` is deferred to the first render with the device; per-frame
     /// `prepare` / `encode` run on the HDR path, per viewport.
@@ -903,6 +906,7 @@ impl ViewportRenderer {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
+            renderer_owned_type_names: std::collections::HashSet::new(),
             post_effect_producers: Vec::new(),
             next_post_effect_producer_id: 0,
             post_effect_stages: Vec::new(),
@@ -1644,15 +1648,13 @@ impl ViewportRenderer {
     ///
     /// # Panics
     ///
-    /// If `type_name()` starts with [`RESERVED_TYPE_NAME_PREFIX`]. That
-    /// namespace belongs to the built-in item types, which register through
-    /// this same call at construction, and the per-type calls on this renderer
-    /// (`upload_sprite_set`, `create_gpu_particle_system`, and the rest) resolve
-    /// their plugin by that name and downcast it. Replacing one would leave
-    /// those calls looking at a type that is not what they expect, so the
-    /// collision is refused where it is made rather than surfacing as a failure
-    /// in an unrelated upload later. Pick a prefix of your own: the name is only
-    /// ever compared, never parsed.
+    /// If a type the renderer installed itself already answers to
+    /// `type_name()`. The per-type calls on this renderer (`upload_sprite_set`,
+    /// `create_gpu_particle_system`, and the rest) resolve their plugin by name
+    /// and downcast it, so replacing one would leave those calls looking at a
+    /// type that is not what they expect. The collision is refused where it is
+    /// made rather than surfacing as a failure in an unrelated upload later.
+    /// Pick a prefix of your own: the name is only ever compared, never parsed.
     pub fn with_item_type_plugin(
         &mut self,
         device: &crate::gpu::Device,
@@ -1660,21 +1662,33 @@ impl ViewportRenderer {
     ) {
         let name = plugin.type_name();
         assert!(
-            !name.starts_with(RESERVED_TYPE_NAME_PREFIX),
-            "item type name {name:?} is reserved: the {RESERVED_TYPE_NAME_PREFIX:?} prefix \
-             belongs to the built-in item types. Register under a prefix of your own."
+            !self.renderer_owned_type_names.contains(&name),
+            "item type name {name:?} is taken by a type the renderer installed itself. \
+             Register under a prefix of your own."
         );
-        self.install_item_type_plugin(device, plugin);
+        self.register_item_type_plugin(device, plugin);
     }
 
     /// [`with_item_type_plugin`](Self::with_item_type_plugin) without the
-    /// reserved-name check, which is how the built-in types register.
+    /// name check, and recording the name as one the renderer owns.
     ///
-    /// The check is the only difference. The built-ins deliberately enter
-    /// through the same door an external type does, so that door is known to be
-    /// wide enough for everything an item type needs; what they cannot also do
-    /// is pass a guard that exists to stop anything else taking their names.
+    /// The check is the only difference. The types the renderer installs
+    /// deliberately enter through the same door an external type does, so that
+    /// door is known to be wide enough for everything an item type needs; what
+    /// they cannot also do is pass a guard that exists to stop anything else
+    /// taking their names.
     pub(crate) fn install_item_type_plugin(
+        &mut self,
+        device: &crate::gpu::Device,
+        plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,
+    ) {
+        self.renderer_owned_type_names.insert(plugin.type_name());
+        self.register_item_type_plugin(device, plugin);
+    }
+
+    /// Run a plugin's `init_gpu` and store it under its type name, replacing
+    /// whatever was there. The shared tail of both registration paths.
+    fn register_item_type_plugin(
         &mut self,
         device: &crate::gpu::Device,
         mut plugin: Box<dyn crate::plugin_api::ItemTypePlugin>,

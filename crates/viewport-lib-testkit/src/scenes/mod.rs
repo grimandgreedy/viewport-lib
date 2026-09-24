@@ -25,10 +25,11 @@ use viewport_lib::wgpu;
 use viewport_lib::{
     BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GaussianSplatItem, GlyphItem,
     GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, LightingSettings, Material, MeshData,
-    MeshId, MeshInstanceItem, PointCloudItem, PolylineItem, RibbonItem, ScatterSettings,
-    ScatterVolumeItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, TensorGlyphItem,
-    TubeItem, ViewportRenderer, VolumeItem, VolumeSurfaceSliceItem, primitives,
+    MeshId, MeshInstanceItem, PolylineItem, RibbonItem, ScatterSettings, ScatterVolumeItem,
+    SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem,
+    ViewportRenderer, VolumeItem, VolumeSurfaceSliceItem, primitives,
 };
+use viewport_lib_item_types::PointCloudItem;
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
@@ -188,7 +189,7 @@ pub const TEST_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
 pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -> FrameData {
     let mut sf = SceneFrame::from_surface_items(scene.items.clone());
     sf.generation = scene.generation;
-    *sf.items_mut::<viewport_lib::PointCloudItem>() = scene.point_clouds.clone();
+    *sf.items_mut::<PointCloudItem>() = scene.point_clouds.clone();
     *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
     *sf.items_mut::<viewport_lib::GlyphItem>() = scene.glyphs.clone();
     *sf.items_mut::<viewport_lib::TensorGlyphItem>() = scene.tensor_glyphs.clone();

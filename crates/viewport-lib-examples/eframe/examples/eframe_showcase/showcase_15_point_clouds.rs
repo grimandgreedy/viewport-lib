@@ -13,9 +13,10 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, GlyphItem, GlyphType, LightingSettings,
-    PointCloudItem, PostProcessSettings, SceneRenderItem,
+    PostProcessSettings, SceneRenderItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -357,7 +358,7 @@ pub(crate) fn submit_pc_items(app: &mut App, fd: &mut FrameData) {
     match app.pc_state.sub_mode {
         PcSubMode::PointCloud => {
             fd.scene
-                .items_mut::<viewport_lib::PointCloudItem>()
+                .items_mut::<PointCloudItem>()
                 .push(app.make_pc_point_cloud_item());
         }
         PcSubMode::VectorField => {
@@ -367,7 +368,7 @@ pub(crate) fn submit_pc_items(app: &mut App, fd: &mut FrameData) {
         }
         PcSubMode::PointGaussian => {
             fd.scene
-                .items_mut::<viewport_lib::PointCloudItem>()
+                .items_mut::<PointCloudItem>()
                 .push(app.make_pc_gaussian_item());
         }
     }

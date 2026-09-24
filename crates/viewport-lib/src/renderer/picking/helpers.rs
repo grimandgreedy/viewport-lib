@@ -284,7 +284,7 @@ pub fn ray_triangle(
 /// positions live in an upload store rather than on the frame.
 ///
 /// [`ItemTypePlugin::sub_object_position`]: crate::plugin_api::ItemTypePlugin::sub_object_position
-pub(crate) fn inline_point_position<T: 'static>(
+pub fn inline_point_position<T: 'static>(
     items: &crate::plugin_api::ItemCollections<'_>,
     pick_id: crate::renderer::PickId,
     sub_object: crate::renderer::SubObjectRef,

@@ -86,7 +86,6 @@ pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
 pub use crate::renderer::item_plugins::gpu_particles::types::{
     GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender,
 };
-pub use crate::renderer::item_plugins::point_cloud::types::PointCloudId;
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 pub use crate::renderer::item_plugins::sprite::types::{SpriteInstanceSetId, SpriteSetId};
 pub use crate::renderer::item_plugins::tensor_glyph::types::TensorGlyphSetId;

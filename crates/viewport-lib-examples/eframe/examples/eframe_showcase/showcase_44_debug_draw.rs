@@ -15,6 +15,7 @@
 
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 use vpl::{
     Aabb, DebugDraw, DebugLayer, DebugPrim, FixedTimestep, Material, MeshId, RuntimeFrameContext,
     RuntimePlugin, RuntimeStepContext, SceneRenderItem, ViewportRuntime,
@@ -271,10 +272,8 @@ pub(crate) fn submit_dbg_draw_items(app: &App, fd: &mut vpl::FrameData) {
     fd.scene
         .items_mut::<viewport_lib::PolylineItem>()
         .extend(dd.to_polylines());
-    if let Some(pc) = dd.to_point_cloud() {
-        fd.scene
-            .items_mut::<viewport_lib::PointCloudItem>()
-            .push(pc);
+    if let Some(pc) = PointCloudItem::from_debug_draw(dd) {
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
     fd.overlays.labels.extend(dd.to_labels());
 }
@@ -329,7 +328,7 @@ pub(crate) fn controls_dbg_draw(app: &mut App, ui: &mut egui::Ui) {
         ui.label("- begin_frame() clears transient draws; persistent draws survive across frames.");
         ui.label("- Dev layer suppressed when dev_enabled = false (ship mode).");
         ui.label("- Overlay layer always shown regardless of dev_enabled.");
-        ui.label("- to_polylines(), to_point_cloud(), to_labels() convert to render items.");
+        ui.label("- to_polylines() and to_labels() convert to render items; PointCloudItem::from_debug_draw() collects the points.");
     });
 }
 

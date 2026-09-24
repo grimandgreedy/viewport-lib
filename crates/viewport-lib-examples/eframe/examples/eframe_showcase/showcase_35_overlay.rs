@@ -53,6 +53,7 @@ impl Default for OvlState {
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 use vpl::{
     BuiltinColourmap, Colour, FontHandle, GlyphRunItem, LabelAnchor, LabelItem, LineCap,
     OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, PositionedGlyph, TriangleDirection,
@@ -1870,15 +1871,13 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     fd.overlays.shapes = shapes;
     fd.overlays.labels = labels;
     if app.ovl_state.cloud_built {
-        let mut pc = vpl::PointCloudItem::default();
+        let mut pc = PointCloudItem::default();
         pc.positions = app.ovl_state.cloud_positions.clone();
         pc.scalars = app.ovl_state.cloud_scalars.clone();
         pc.scalar_range = Some((-1.5, 1.5));
         pc.colourmap_id = Some(vpl::ColourmapId(app.ovl_state.colourmap as usize));
         pc.point_size = 4.0;
-        fd.scene
-            .items_mut::<viewport_lib::PointCloudItem>()
-            .push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
 }
 

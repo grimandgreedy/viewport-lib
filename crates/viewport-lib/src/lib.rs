@@ -281,7 +281,7 @@ pub use interaction::clip_plane::{
 };
 pub use interaction::query::picking::{
     ProbeBinding, RectPickResult, nearest_vertex_on_hit, pick_gaussian_splat_cpu,
-    pick_gaussian_splat_rect, pick_point_cloud_cpu, pick_scene_accelerated_with_probe_cpu,
+    pick_gaussian_splat_rect, pick_scene_accelerated_with_probe_cpu,
     pick_scene_nodes_with_probe_cpu, pick_scene_with_probe_cpu, pick_transparent_volume_mesh_cpu,
     pick_transparent_volume_mesh_rect, pick_volume_cpu, pick_volume_rect, voxel_world_aabb,
 };
@@ -314,16 +314,15 @@ pub use renderer::{
     OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke,
     OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath,
     ParticleMeshAlign, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit, PickId,
-    PickMask, PickPoll, PickRectResult, PipelineMode, PointCloudItem, PointCloudRefItem,
-    PointRenderMode, PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay, RibbonItem,
-    RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem, SceneEffects, SceneFrame,
-    SceneRenderItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings, SliceAxis, SpawnShape,
-    SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
-    SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem, StreamtubeRefItem,
-    StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig,
-    SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform, TileMode,
-    ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
+    PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap, PolylineItem, PolylineRefItem,
+    PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, RibbonItem, RibbonRefItem, ScatterQuality, ScatterSettings, ScatterVolumeItem,
+    SceneEffects, SceneFrame, SceneRenderItem, ShDegree, ShadowFilter, ShadowLayer, ShadowSettings,
+    SliceAxis, SpawnShape, SpriteBlend, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrientation, SpriteSetRefItem, SpriteSizeMode, StreamtubeItem,
+    StreamtubeRefItem, StrokePattern, SubObjectRef, SubPath, SubSelection, SubSelectionRef,
+    SurfaceLICConfig, SurfaceSubmission, TensorGlyphItem, TensorGlyphSetRefItem, TextureTransform,
+    TileMode, ToneMapping, TriangleDirection, TubeItem, TubeRefItem, VelocityDist, ViewportEffects,
     ViewportFrame, ViewportId, ViewportRenderer, VignetteSettings, VolumeItem, VolumeMeshItem,
     VolumeSelectionInfo, VolumeSurfaceSliceItem, VolumeTransparency, aabb_wireframe_polyline,
     obb_wireframe_polyline, sphere_wireframe_polyline,
@@ -377,8 +376,8 @@ pub use resources::{
 };
 pub use resources::{
     ExternalInstanceSetConfig, ExternalInstanceSetId, GlyphSetId, GpuParticleSystemConfig,
-    GpuParticleSystemId, ParticleRender, PointCloudId, PolylineId, RibbonId, SpriteInstanceSetId,
-    SpriteSetId, StreamtubeId, TensorGlyphSetId, TubeId,
+    GpuParticleSystemId, ParticleRender, PolylineId, RibbonId, SpriteInstanceSetId, SpriteSetId,
+    StreamtubeId, TensorGlyphSetId, TubeId,
 };
 pub use resources::{
     MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,

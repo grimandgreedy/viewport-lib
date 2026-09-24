@@ -316,61 +316,6 @@ impl ViewportRenderer {
         self.ribbon_host().plugin.drop_stored(id)
     }
 
-    /// Upload a point cloud for reuse across frames, returning its handle.
-    ///
-    /// Prefer this over the [`DeviceResources`] method of the same name: it is
-    /// the call that keeps working once an item type owns its own storage.
-    pub fn upload_point_cloud(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: &crate::renderer::PointCloudItem,
-    ) -> crate::resources::PointCloudId {
-        let host = self.point_cloud_host();
-        host.plugin.upload(device, queue, host.resources, item)
-    }
-
-    /// Start an off-thread upload of a point cloud. Poll the returned job with
-    /// [`upload_status`](Self::upload_status) and take the handle from
-    /// [`upload_result_point_cloud`](Self::upload_result_point_cloud).
-    pub fn begin_upload_point_cloud(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        item: crate::renderer::PointCloudItem,
-    ) -> crate::resources::JobId {
-        let host = self.point_cloud_host();
-        host.plugin
-            .begin_upload(&host.jobs, device, queue, host.resources, item)
-    }
-
-    /// Take the handle from a finished [`begin_upload_point_cloud`](Self::begin_upload_point_cloud) job.
-    pub fn upload_result_point_cloud(
-        &mut self,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<crate::resources::PointCloudId> {
-        let host = self.point_cloud_host();
-        host.plugin.take_upload_result(&host.jobs, id)
-    }
-
-    /// Replace the geometry behind a point cloud handle, keeping the handle valid.
-    /// `false` if the handle does not resolve.
-    pub fn replace_point_cloud(
-        &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        id: crate::resources::PointCloudId,
-        item: &crate::renderer::PointCloudItem,
-    ) -> bool {
-        let host = self.point_cloud_host();
-        host.plugin.replace(device, queue, host.resources, id, item)
-    }
-
-    /// Release a point cloud. `false` if the handle does not resolve.
-    pub fn drop_point_cloud(&mut self, id: crate::resources::PointCloudId) -> bool {
-        self.point_cloud_host().plugin.drop_stored(id)
-    }
-
     /// The registered polyline item type, which holds the uploaded curves.
     fn polyline_host(
         &mut self,
@@ -447,19 +392,6 @@ impl ViewportRenderer {
         self.item_type_plugin_host(crate::renderer::item_plugins::sprite::TYPE_NAME)
             .expect(
                 "the built-in sprite item type registers at construction, under a name nothing else can take",
-            )
-    }
-
-    /// The registered point cloud item type, which holds the uploaded clouds.
-    fn point_cloud_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<
-        '_,
-        crate::renderer::item_plugins::point_cloud::PointCloudPlugin,
-    > {
-        self.item_type_plugin_host(crate::renderer::item_plugins::point_cloud::TYPE_NAME)
-            .expect(
-                "the built-in point cloud item type registers at construction, under a name nothing else can take",
             )
     }
 

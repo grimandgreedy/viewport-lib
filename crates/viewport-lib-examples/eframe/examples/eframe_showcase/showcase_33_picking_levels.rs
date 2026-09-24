@@ -18,6 +18,7 @@
 use crate::eframe;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 
 use crate::eframe::egui;
 use vpl::{
@@ -25,10 +26,10 @@ use vpl::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
     GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
     LightingSettings, Material, McVolumeId, MeshId, NodeId, PickBackend, PickId, PickMask,
-    PickRectResult, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneFrame,
-    SceneRenderItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
-    TensorGlyphItem, TextureId, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData,
-    VolumeMeshItem, VolumeSurfaceSliceItem,
+    PickRectResult, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneFrame, SceneRenderItem,
+    ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef, TensorGlyphItem,
+    TextureId, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData, VolumeMeshItem,
+    VolumeSurfaceSliceItem,
 };
 
 use crate::App;
@@ -1065,10 +1066,18 @@ impl App {
             }
 
             PlPickLevel::Point => {
-                let mut pc_item = vpl::PointCloudItem::default();
+                let mut pc_item = PointCloudItem::default();
                 pc_item.positions = self.pl_state.pc_positions.clone();
                 pc_item.settings.pick_id = PickId(100);
-                let hit = vpl::pick_point_cloud_cpu(pos, 100, &pc_item, view_proj, vp_size, 20.0);
+                let hit = vpl::picking::pick_gaussian_splat_cpu(
+                    pos,
+                    100,
+                    &pc_item.positions,
+                    glam::Mat4::from_cols_array_2d(&pc_item.model),
+                    view_proj,
+                    vp_size,
+                    20.0,
+                );
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     select_sub!(100, sub);
@@ -1805,9 +1814,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         pc.settings.pick_id = PickId(100);
         pc.settings.selected = app.pl_state.selection.contains(100);
         pc.settings.unlit = false;
-        fd.scene
-            .items_mut::<viewport_lib::PointCloudItem>()
-            .push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
     // Gaussian splat grid (pick_id=10).
     if let Some(splat_id) = app.pl_state.splat_id {
@@ -1980,9 +1987,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             marker.positions = vec![marker_pos.to_array()];
             marker.point_size = 16.0;
             marker.default_colour = [1.0, 0.35, 0.0, 1.0].into();
-            fd.scene
-                .items_mut::<viewport_lib::PointCloudItem>()
-                .push(marker);
+            fd.scene.items_mut::<PointCloudItem>().push(marker);
         }
     }
     // Volume (pick_id=20).

@@ -1,11 +1,10 @@
 //! Retained non-mesh scene items.
 //!
 //! Meshes live in the retained [`Scene`](crate::scene::scene::Scene) graph and
-//! are added once. Point clouds, glyphs, volumes, and gaussian splats live only
-//! on the per-frame [`SceneFrame`](crate::SceneFrame), so without help a static
-//! one has to be re-submitted every frame. The session keeps a list of retained
-//! extras and re-injects them during assembly, so they are added once like a
-//! mesh node.
+//! are added once. Item-type content lives only on the per-frame
+//! [`SceneFrame`](crate::SceneFrame), so without help a static one has to be
+//! re-submitted every frame. The session keeps a list of retained extras and
+//! re-injects them during assembly, so they are added once like a mesh node.
 //!
 //! Each retained item is cloned into the frame each assembly (the same cost as
 //! re-pushing it by hand). For data that changes every frame, prefer the
@@ -15,42 +14,25 @@
 //! reference item via the per-frame path.
 
 use super::ViewportInstance;
-use crate::{GaussianSplatItem, GlyphItem, PointCloudItem, VolumeItem};
 
-/// Handle to a retained scene extra, returned by the `add_*` methods and passed
-/// to [`remove_extra`](ViewportInstance::remove_extra).
+/// Handle to a retained scene extra, returned by [`add_item`](ViewportInstance::add_item)
+/// and passed to [`remove_extra`](ViewportInstance::remove_extra).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExtraId(u64);
 
-/// A retained non-mesh item. Kept private: callers add through the typed
-/// `add_*` methods and refer to items by [`ExtraId`].
-pub(super) enum SceneExtra {
-    PointCloud(PointCloudItem),
-    Glyphs(GlyphItem),
-    Volume(VolumeItem),
-    GaussianSplat(GaussianSplatItem),
-}
+/// A retained item, held as the push that re-injects it. Boxing the push
+/// rather than the item keeps this free of any item type's name, so an item
+/// type the session has never heard of retains the same way a built-in one
+/// does.
+pub(super) struct SceneExtra(Box<dyn Fn(&mut crate::renderer::SceneFrame)>);
 
 impl ViewportInstance {
-    /// Retain a point cloud, re-injected into the scene each frame. Returns a
-    /// handle for [`remove_extra`](Self::remove_extra).
-    pub fn add_point_cloud(&mut self, item: PointCloudItem) -> ExtraId {
-        self.push_extra(SceneExtra::PointCloud(item))
-    }
-
-    /// Retain a glyph set, re-injected into the scene each frame.
-    pub fn add_glyphs(&mut self, item: GlyphItem) -> ExtraId {
-        self.push_extra(SceneExtra::Glyphs(item))
-    }
-
-    /// Retain a volume, re-injected into the scene each frame.
-    pub fn add_volume(&mut self, item: VolumeItem) -> ExtraId {
-        self.push_extra(SceneExtra::Volume(item))
-    }
-
-    /// Retain a gaussian splat set, re-injected into the scene each frame.
-    pub fn add_gaussian_splat(&mut self, item: GaussianSplatItem) -> ExtraId {
-        self.push_extra(SceneExtra::GaussianSplat(item))
+    /// Retain an item of any item type, re-injected into the scene each frame.
+    /// Returns a handle for [`remove_extra`](Self::remove_extra).
+    pub fn add_item<T: crate::plugin_api::PluginItem + Clone>(&mut self, item: T) -> ExtraId {
+        self.push_extra(SceneExtra(Box::new(move |scene| {
+            scene.items_mut::<T>().push(item.clone())
+        })))
     }
 
     /// Remove a retained extra by handle. Returns `true` if it was present.
@@ -76,28 +58,7 @@ impl ViewportInstance {
     /// Called from assembly, after the scene is rebuilt from the graph.
     pub(super) fn inject_extras(&mut self) {
         for (_, extra) in &self.extras {
-            match extra {
-                SceneExtra::PointCloud(item) => self
-                    .frame
-                    .scene
-                    .items_mut::<crate::PointCloudItem>()
-                    .push(item.clone()),
-                SceneExtra::Glyphs(item) => self
-                    .frame
-                    .scene
-                    .items_mut::<crate::GlyphItem>()
-                    .push(item.clone()),
-                SceneExtra::Volume(item) => self
-                    .frame
-                    .scene
-                    .items_mut::<crate::VolumeItem>()
-                    .push(item.clone()),
-                SceneExtra::GaussianSplat(item) => self
-                    .frame
-                    .scene
-                    .items_mut::<crate::GaussianSplatItem>()
-                    .push(item.clone()),
-            }
+            (extra.0)(&mut self.frame.scene);
         }
     }
 }

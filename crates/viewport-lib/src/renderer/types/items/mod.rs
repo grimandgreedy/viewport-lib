@@ -29,7 +29,6 @@ pub use crate::renderer::item_plugins::glyph::types::*;
 pub use crate::renderer::item_plugins::gpu_implicit::types::*;
 pub use crate::renderer::item_plugins::gpu_marching_cubes::types::*;
 pub use crate::renderer::item_plugins::image_slice::types::*;
-pub use crate::renderer::item_plugins::point_cloud::types::*;
 pub use crate::renderer::item_plugins::polyline::types::*;
 pub use crate::renderer::item_plugins::scatter_volume::types::*;
 pub use crate::renderer::item_plugins::sprite::types::*;

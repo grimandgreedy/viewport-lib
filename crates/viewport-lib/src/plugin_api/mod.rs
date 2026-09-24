@@ -133,6 +133,7 @@
 //! plugin follows whichever version the build chose; a plugin that names its own
 //! `wgpu` dependency is coupled to one version and must match the library's.
 
+pub mod builders;
 pub mod cull;
 pub mod install;
 pub mod item_type;

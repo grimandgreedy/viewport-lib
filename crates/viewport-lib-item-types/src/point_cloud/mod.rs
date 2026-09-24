@@ -1,32 +1,54 @@
-//! The point cloud item type as an [`ItemTypePlugin`]: a set of world-space
-//! points drawn as screen-space discs, coloured by a scalar through a colourmap
-//! or by per-point colours. Consumers submit [`PointCloudItem`]s on
-//! `SceneFrame::point_clouds`, or [`PointCloudRefItem`]s on
-//! `SceneFrame::point_cloud_refs` to draw a cloud uploaded once through
-//! `upload_point_cloud`; the renderer routes both fields to this plugin.
+//! The point cloud item type: a set of world-space points drawn as
+//! screen-space discs, coloured by a scalar through a colourmap or by
+//! per-point colours.
+//!
+//! Submit [`PointCloudItem`]s with `frame.scene.submit::<PointCloudItem>(..)`,
+//! or [`PointCloudRefItem`]s to draw a cloud uploaded once through
+//! [`PointCloudUploads::upload_point_cloud`](crate::PointCloudUploads::upload_point_cloud).
+//! Both forms arrive at this plugin under the one type name.
 
 mod pipeline;
 mod store;
-pub(crate) mod types;
+mod types;
 
-use crate::plugin_api::{
+use store::{PointCloudStore, build_point_cloud, resolve_bindings};
+use viewport_lib::gpu;
+use viewport_lib::plugin_api::{
     ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
     PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
-use crate::renderer::{
-    PickHit, PickId, PickMask, PickRectResult, PointCloudItem, PointCloudRefItem, SubObjectRef,
-};
-use crate::resources::HDR_COLOR_FORMAT;
-use store::{PointCloudStore, build_point_cloud, resolve_bindings};
+use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
+use viewport_lib::resources::HDR_COLOR_FORMAT;
 
-pub(crate) use types::PointCloudId;
+pub use types::{PointCloudId, PointCloudItem, PointCloudRefItem, PointRenderMode};
 
-pub(crate) const TYPE_NAME: &str = "vpl.point_cloud";
+/// Stable name this item type submits and registers under.
+pub const TYPE_NAME: &str = "vpl.point_cloud";
+
+/// This type's shaders as the pipelines compile them, shared sections already
+/// spliced in front of each body.
+pub(crate) fn shader_sources() -> Vec<(&'static str, String)> {
+    use crate::shader::{scene_shader, wgsl_source};
+    vec![
+        (
+            "point_cloud.wgsl",
+            scene_shader(&[], wgsl_source!("point_cloud")),
+        ),
+        (
+            "point_cloud_pick.wgsl",
+            scene_shader(&[], wgsl_source!("point_cloud_pick")),
+        ),
+        (
+            "point_disc_mask.wgsl",
+            scene_shader(&[], wgsl_source!("point_disc_mask")),
+        ),
+    ]
+}
 
 impl PluginItem for PointCloudItem {
     const TYPE_NAME: &'static str = TYPE_NAME;
 
-    fn settings(&self) -> &crate::scene::material::ItemSettings {
+    fn settings(&self) -> &viewport_lib::ItemSettings {
         &self.settings
     }
 }
@@ -34,18 +56,21 @@ impl PluginItem for PointCloudItem {
 impl PluginItem for PointCloudRefItem {
     const TYPE_NAME: &'static str = TYPE_NAME;
 
-    fn settings(&self) -> &crate::scene::material::ItemSettings {
+    fn settings(&self) -> &viewport_lib::ItemSettings {
         &self.settings
     }
 }
 
+/// The point cloud item type. Register it with
+/// [`ViewportRenderer::with_item_type_plugin`](viewport_lib::renderer::ViewportRenderer::with_item_type_plugin),
+/// or take the whole set with [`install`](crate::install).
 #[derive(Default)]
-pub(crate) struct PointCloudPlugin {
+pub struct PointCloudPlugin {
     /// The pre-uploaded clouds, owned by the type that draws them.
     stored: PointCloudStore,
     /// Group-1 layout every upload builds its bind group against. Created on
     /// registration, because an upload can arrive before the first frame.
-    bgl: Option<crate::gpu::BindGroupLayout>,
+    bgl: Option<gpu::BindGroupLayout>,
     gpu: Option<pipeline::PointCloudGpu>,
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references, the order the draw loop used before the two collections met
@@ -66,8 +91,8 @@ impl ItemTypePlugin for PointCloudPlugin {
 
     fn init_gpu(
         &mut self,
-        device: &crate::gpu::Device,
-        _shared: &crate::plugin_api::SharedBindings<'_>,
+        device: &gpu::Device,
+        _shared: &viewport_lib::plugin_api::SharedBindings<'_>,
     ) {
         self.bgl = Some(store::build_bgl(device));
     }
@@ -76,7 +101,7 @@ impl ItemTypePlugin for PointCloudPlugin {
         self.stored.allocated_bytes()
     }
 
-    fn on_device_recreated(&mut self, device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
+    fn on_device_recreated(&mut self, device: &gpu::Device, _queue: &gpu::Queue) {
         self.gpu = None;
         self.bgl = Some(store::build_bgl(device));
         self.frame.clear();
@@ -85,11 +110,11 @@ impl ItemTypePlugin for PointCloudPlugin {
 
     fn prepare(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
         ctx: &ItemFrameContext<'_>,
         items: &ItemCollections<'_>,
-    ) -> Vec<crate::gpu::CommandBuffer> {
+    ) -> Vec<gpu::CommandBuffer> {
         self.frame.clear();
         self.outlines.clear();
         let items = items.of::<PointCloudItem>();
@@ -150,7 +175,7 @@ impl ItemTypePlugin for PointCloudPlugin {
 
     fn paint(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -176,7 +201,7 @@ impl ItemTypePlugin for PointCloudPlugin {
 
     fn outline_mask(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -206,10 +231,11 @@ impl ItemTypePlugin for PointCloudPlugin {
             // The disc is `point_size` pixels across, with a floor so a
             // one-pixel cloud is still clickable.
             let radius_px = item.point_size.max(4.0);
-            let Some(mut hit) = crate::interaction::query::picking::pick_point_cloud_cpu(
+            let Some(mut hit) = viewport_lib::picking::pick_gaussian_splat_cpu(
                 ctx.click_pos,
                 item.settings.pick_id.0,
-                item,
+                &item.positions,
+                glam::Mat4::from_cols_array_2d(&item.model),
                 ctx.view_proj,
                 ctx.viewport_size,
                 radius_px,
@@ -243,7 +269,7 @@ impl ItemTypePlugin for PointCloudPlugin {
             let mut item_hit = false;
             for (index, pos) in item.positions.iter().enumerate() {
                 let world = model.transform_point3(glam::Vec3::from(*pos));
-                let Some(p) = crate::plugin_api::pick_helpers::project_to_screen(
+                let Some(p) = viewport_lib::plugin_api::pick_helpers::project_to_screen(
                     world,
                     ctx.view_proj,
                     ctx.viewport_size,
@@ -273,7 +299,7 @@ impl ItemTypePlugin for PointCloudPlugin {
 
     fn render_pick(
         &self,
-        pass: &mut crate::gpu::RenderPass<'_>,
+        pass: &mut gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
         _items: &ItemCollections<'_>,
     ) {
@@ -321,7 +347,7 @@ impl ItemTypePlugin for PointCloudPlugin {
         pick_id: PickId,
         sub_object: SubObjectRef,
     ) -> Option<glam::Vec3> {
-        crate::renderer::picking::helpers::inline_point_position(
+        viewport_lib::plugin_api::pick_helpers::inline_point_position(
             items,
             pick_id,
             sub_object,
@@ -332,17 +358,16 @@ impl ItemTypePlugin for PointCloudPlugin {
 
 impl PointCloudPlugin {
     /// Number of items the last `prepare` produced draw data for.
-    #[cfg(test)]
-    pub(crate) fn drawn_count(&self) -> usize {
+    pub fn drawn_count(&self) -> usize {
         self.frame.len()
     }
 
     /// Pre-upload a point cloud and return its handle.
-    pub(crate) fn upload(
+    pub fn upload(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        resources: &crate::resources::DeviceResources,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
         item: &PointCloudItem,
     ) -> PointCloudId {
         let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
@@ -352,16 +377,16 @@ impl PointCloudPlugin {
     }
 
     /// Drop a pre-uploaded cloud. `false` when the handle does not resolve.
-    pub(crate) fn drop_stored(&mut self, id: PointCloudId) -> bool {
+    pub fn drop_stored(&mut self, id: PointCloudId) -> bool {
         self.stored.remove(id).is_some()
     }
 
     /// Replace the points behind a live handle, keeping the handle.
-    pub(crate) fn replace(
+    pub fn replace(
         &mut self,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        resources: &crate::resources::DeviceResources,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
         id: PointCloudId,
         item: &PointCloudItem,
     ) -> bool {
@@ -381,14 +406,14 @@ impl PointCloudPlugin {
     /// here, on the calling thread, and cloned into the worker: they are the
     /// renderer's and a worker has no `DeviceResources` borrow. The buffer
     /// building and the bind group then run off the frame thread.
-    pub(crate) fn begin_upload(
+    pub fn begin_upload(
         &mut self,
-        jobs: &crate::resources::Jobs<'_>,
-        device: &crate::gpu::Device,
-        queue: &crate::gpu::Queue,
-        resources: &crate::resources::DeviceResources,
+        jobs: &viewport_lib::resources::Jobs<'_>,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
         item: PointCloudItem,
-    ) -> crate::resources::JobId {
+    ) -> viewport_lib::resources::JobId {
         let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
         let binds = resolve_bindings(resources, bgl, &item);
         let device = device.clone();
@@ -397,19 +422,19 @@ impl PointCloudPlugin {
     }
 
     /// Store the cloud a finished job built and hand back its handle.
-    pub(crate) fn take_upload_result(
+    pub fn take_upload_result(
         &mut self,
-        jobs: &crate::resources::Jobs<'_>,
-        id: crate::resources::JobId,
-    ) -> crate::error::ViewportResult<PointCloudId> {
+        jobs: &viewport_lib::resources::Jobs<'_>,
+        id: viewport_lib::resources::JobId,
+    ) -> viewport_lib::error::ViewportResult<PointCloudId> {
         match jobs.status(id) {
-            crate::resources::UploadStatus::Pending { .. } => {
-                Err(crate::error::ViewportError::JobNotReady)
+            viewport_lib::resources::UploadStatus::Pending { .. } => {
+                Err(viewport_lib::error::ViewportError::JobNotReady)
             }
-            crate::resources::UploadStatus::Failed(e) => Err(e),
+            viewport_lib::resources::UploadStatus::Failed(e) => Err(e),
             _ => match jobs.take::<store::PointCloudGpuData>(id) {
                 Some(gpu) => Ok(self.stored.insert_sized(gpu)),
-                None => Err(crate::error::ViewportError::JobResultMissing {
+                None => Err(viewport_lib::error::ViewportError::JobResultMissing {
                     reason: "unknown id or wrong upload type",
                 }),
             },
@@ -420,7 +445,7 @@ impl PointCloudPlugin {
 /// Build this frame's outline coverage: every point of a selected item, or just
 /// the sub-selected points of an item that is not itself selected.
 fn build_outlines(
-    device: &crate::gpu::Device,
+    device: &gpu::Device,
     ctx: &ItemFrameContext<'_>,
     items: &[PointCloudItem],
     gpu: &pipeline::PointCloudGpu,
@@ -443,7 +468,7 @@ fn build_outlines(
             let selected: Vec<[f32; 3]> = ctx
                 .sub_selection
                 .iter()
-                .flat_map(|s| s.items.iter())
+                .flat_map(|s| s.items().iter())
                 .filter_map(|(node_id, sub)| {
                     if *node_id != item.settings.pick_id.0 {
                         return None;

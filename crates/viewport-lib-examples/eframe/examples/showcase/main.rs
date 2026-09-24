@@ -67,6 +67,7 @@ fn main() -> eframe::Result {
             let mut session =
                 ViewportInstance::new(&rs.device, OffscreenViewportTarget::render_format(rs.target_format))
                     .with_manipulation(ManipulationController::new());
+            viewport_lib_item_types::install(session.renderer_mut(), &rs.device);
 
             let mut list = showcases::all();
             let mut setup = SetupCtx {

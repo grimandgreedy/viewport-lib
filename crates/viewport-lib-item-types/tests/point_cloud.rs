@@ -4,11 +4,19 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
-#[cfg(feature = "wgpu29")]
-use viewport_lib::wgpu;
+use viewport_lib::gpu;
 
 mod common;
 use common::*;
+use viewport_lib_item_types::*;
+
+/// A renderer with this crate's item types registered, which is what a
+/// consumer of the crate builds.
+fn renderer_with_item_types(device: &gpu::Device) -> ViewportRenderer {
+    let mut renderer = ViewportRenderer::new(device, gpu::TextureFormat::Rgba8UnormSrgb);
+    install(&mut renderer, device);
+    renderer
+}
 
 #[test]
 fn gpu_pick_point_cloud_resolves_point() {
@@ -16,7 +24,7 @@ fn gpu_pick_point_cloud_resolves_point() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let mut frame = sub_object_pick_frame();
 
     // Three points spread along X. The centre point (index 1) sits at world
@@ -26,10 +34,7 @@ fn gpu_pick_point_cloud_resolves_point() {
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
     cloud.settings.pick_id = PickId(444);
-    frame
-        .scene
-        .items_mut::<viewport_lib::PointCloudItem>()
-        .push(cloud);
+    frame.scene.items_mut::<PointCloudItem>().push(cloud);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -61,7 +66,7 @@ fn gpu_pick_rect_resolves_point_cloud_elements() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let mut frame = sub_object_pick_frame();
 
     // Three fat points spread across the centre of the view.
@@ -69,10 +74,7 @@ fn gpu_pick_rect_resolves_point_cloud_elements() {
     pc.positions = vec![[-1.2, 0.0, 0.0], [0.0, 0.0, 0.0], [1.2, 0.0, 0.0]];
     pc.point_size = 24.0;
     pc.settings.pick_id = PickId(500);
-    frame
-        .scene
-        .items_mut::<viewport_lib::PointCloudItem>()
-        .push(pc);
+    frame.scene.items_mut::<PointCloudItem>().push(pc);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
 
@@ -111,7 +113,7 @@ fn cpu_pick_hits_point_cloud() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
     let mut frame = sub_object_pick_frame();
 
@@ -119,10 +121,7 @@ fn cpu_pick_hits_point_cloud() {
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
     cloud.settings.pick_id = PickId(445);
-    frame
-        .scene
-        .items_mut::<viewport_lib::PointCloudItem>()
-        .push(cloud);
+    frame.scene.items_mut::<PointCloudItem>().push(cloud);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -146,7 +145,7 @@ fn an_object_query_drops_the_point_sub_object() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
     let mut frame = sub_object_pick_frame();
 
@@ -154,10 +153,7 @@ fn an_object_query_drops_the_point_sub_object() {
     cloud.positions = vec![[0.0, 0.0, 0.0]];
     cloud.point_size = 20.0;
     cloud.settings.pick_id = PickId(446);
-    frame
-        .scene
-        .items_mut::<viewport_lib::PointCloudItem>()
-        .push(cloud);
+    frame.scene.items_mut::<PointCloudItem>().push(cloud);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     for backend in [PickBackend::Gpu, PickBackend::Cpu] {
@@ -184,7 +180,7 @@ fn a_reference_item_picks_like_an_inline_one() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let mut frame = sub_object_pick_frame();
 
     let mut cloud = PointCloudItem::default();
@@ -192,12 +188,9 @@ fn a_reference_item_picks_like_an_inline_one() {
     cloud.point_size = 20.0;
     let source = renderer.upload_point_cloud(&device, &queue, &cloud);
 
-    let mut item = viewport_lib::PointCloudRefItem::new(source);
+    let mut item = PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(447);
-    frame
-        .scene
-        .items_mut::<viewport_lib::PointCloudRefItem>()
-        .push(item);
+    frame.scene.items_mut::<PointCloudRefItem>().push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -220,7 +213,7 @@ fn a_hidden_reference_item_is_skipped() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let mut frame = sub_object_pick_frame();
 
     let mut cloud = PointCloudItem::default();
@@ -228,13 +221,10 @@ fn a_hidden_reference_item_is_skipped() {
     cloud.point_size = 20.0;
     let source = renderer.upload_point_cloud(&device, &queue, &cloud);
 
-    let mut item = viewport_lib::PointCloudRefItem::new(source);
+    let mut item = PointCloudRefItem::new(source);
     item.settings.pick_id = PickId(448);
     item.settings.hidden = true;
-    frame
-        .scene
-        .items_mut::<viewport_lib::PointCloudRefItem>()
-        .push(item);
+    frame.scene.items_mut::<PointCloudRefItem>().push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -252,8 +242,8 @@ fn a_hidden_reference_item_is_skipped() {
 // The clouds the item type holds
 // ---------------------------------------------------------------------------
 
-fn sample_point_cloud() -> viewport_lib::renderer::PointCloudItem {
-    let mut item = viewport_lib::renderer::PointCloudItem::default();
+fn sample_point_cloud() -> PointCloudItem {
+    let mut item = PointCloudItem::default();
     item.positions = vec![
         [0.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
@@ -270,7 +260,7 @@ fn an_uploaded_cloud_resolves_until_it_is_dropped() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let baseline = renderer.resident_bytes().plugin_bytes;
 
     let id = renderer.upload_point_cloud(&device, &queue, &sample_point_cloud());
@@ -295,7 +285,7 @@ fn begin_upload_point_cloud_drains_to_a_handle() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
 
     let job = renderer.begin_upload_point_cloud(&device, &queue, sample_point_cloud());
     for _ in 0..200 {
@@ -331,7 +321,7 @@ fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let mut renderer = renderer_with_item_types(&device);
     let viridis = renderer
         .resources()
         .builtin_colourmap_id(viewport_lib::resources::BuiltinColourmap::Viridis);
@@ -350,4 +340,36 @@ fn an_upload_before_the_first_frame_still_gets_a_real_colourmap() {
         "the upload resolved the same id a later frame would"
     );
     assert!(renderer.drop_point_cloud(id));
+}
+
+/// A hidden item produces no draw data, so hiding one costs nothing beyond the
+/// submission itself.
+#[test]
+fn hidden_items_produce_no_draw_data() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let mut frame = sub_object_pick_frame();
+
+    let mut visible = PointCloudItem::default();
+    visible.positions = vec![[0.0, 0.0, 0.0]];
+    let mut hidden = PointCloudItem::default();
+    hidden.positions = vec![[1.0, 0.0, 0.0]];
+    hidden.settings.hidden = true;
+    frame
+        .scene
+        .items_mut::<PointCloudItem>()
+        .extend([visible, hidden]);
+
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    let plugin = renderer
+        .item_type_plugin::<PointCloudPlugin>(POINT_CLOUD_TYPE_NAME)
+        .expect("registered by install()");
+    assert_eq!(
+        plugin.drawn_count(),
+        1,
+        "hidden item must not produce gpu data"
+    );
 }

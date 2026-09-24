@@ -1,10 +1,11 @@
-use crate::renderer::types::items::IDENTITY_MAT4;
-use crate::resources::ColourmapId;
-use crate::scene::material::ItemSettings;
+use viewport_lib::resources::ColourmapId;
+use viewport_lib::{Colour, ItemSettings};
 
-crate::resources::handle::slot_handle! {
+const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
+
+viewport_lib::resources::handle::slot_handle! {
     /// Handle to a point cloud uploaded once through
-    /// [`ViewportRenderer::upload_point_cloud`](crate::renderer::ViewportRenderer::upload_point_cloud).
+    /// [`PointCloudUploads::upload_point_cloud`](crate::PointCloudUploads::upload_point_cloud).
     ///
     /// Name it from a [`PointCloudRefItem`] to draw the stored cloud without
     /// resubmitting its points. Carries the slot index plus the generation the
@@ -31,7 +32,7 @@ pub struct PointCloudItem {
     /// World-space positions (one vec3 per point).
     pub positions: Vec<[f32; 3]>,
     /// Optional per-point RGBA colours in linear `[0,1]`. If empty, uses `default_colour`.
-    pub colours: Vec<crate::Colour>,
+    pub colours: Vec<Colour>,
     /// Optional per-point scalar values for LUT colouring. If non-empty, overrides `colours`.
     pub scalars: Vec<f32>,
     /// Scalar range for LUT mapping. None = auto from min/max of `scalars`.
@@ -41,7 +42,7 @@ pub struct PointCloudItem {
     /// Screen-space point size in pixels. Default: 4.0.
     pub point_size: f32,
     /// Fallback colour when neither `colours` nor `scalars` are provided.
-    pub default_colour: crate::Colour,
+    pub default_colour: Colour,
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
     /// Render mode. Default: ScreenSpaceCircle.
@@ -90,14 +91,14 @@ impl Default for PointCloudItem {
     }
 }
 
-/// Per-frame reference to a pre-uploaded point cloud. See [`PolylineRefItem`].
+/// Per-frame reference to a pre-uploaded point cloud.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PointCloudRefItem {
     /// Handle to GPU buffers produced by
-    /// [`ViewportRenderer::upload_point_cloud`](crate::renderer::ViewportRenderer::upload_point_cloud)
+    /// [`PointCloudUploads::upload_point_cloud`](crate::PointCloudUploads::upload_point_cloud)
     /// or `begin_upload_point_cloud`.
-    pub source: crate::resources::PointCloudId,
+    pub source: PointCloudId,
     /// Per-frame model matrix. Composes on top of the model baked into the
     /// upload, so identity here renders the points at their original
     /// transform.
@@ -108,11 +109,55 @@ pub struct PointCloudRefItem {
 
 impl PointCloudRefItem {
     /// Visible reference at the identity transform.
-    pub fn new(id: crate::resources::PointCloudId) -> Self {
+    pub fn new(id: PointCloudId) -> Self {
         Self {
             source: id,
             model: IDENTITY_MAT4,
             settings: ItemSettings::default(),
         }
+    }
+}
+
+impl PointCloudItem {
+    /// Collect the point primitives a [`DebugDraw`](viewport_lib::runtime::DebugDraw)
+    /// has accumulated into one cloud.
+    ///
+    /// `None` when there are no point primitives, or when the buffer is
+    /// disabled. Dev-layer points are skipped unless `dev_enabled` is set, the
+    /// same filtering the polyline and label conversions apply.
+    pub fn from_debug_draw(dd: &viewport_lib::runtime::DebugDraw) -> Option<Self> {
+        use viewport_lib::runtime::{DebugLayer, DebugPrim};
+
+        if !dd.enabled {
+            return None;
+        }
+        let mut positions = Vec::new();
+        let mut colours = Vec::new();
+        let mut radii = Vec::new();
+        for prim in dd.prims() {
+            if prim.layer() == DebugLayer::Dev && !dd.dev_enabled {
+                continue;
+            }
+            if let DebugPrim::Point {
+                position,
+                radius,
+                colour,
+                ..
+            } = prim
+            {
+                positions.push((*position).into());
+                colours.push(*colour);
+                radii.push(*radius);
+            }
+        }
+        if positions.is_empty() {
+            return None;
+        }
+        Some(Self {
+            positions,
+            colours,
+            radii,
+            ..Self::default()
+        })
     }
 }

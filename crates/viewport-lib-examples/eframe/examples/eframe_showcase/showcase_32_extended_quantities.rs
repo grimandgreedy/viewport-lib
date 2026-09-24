@@ -16,10 +16,11 @@
 use crate::eframe::egui;
 use crate::{App, MeshId};
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, CELL_SENTINEL, ColourmapId,
-    FrameData, GlyphItem, LightingSettings, PointCloudItem, SceneRenderItem, ViewportRenderer,
-    VolumeMeshData, volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
+    FrameData, GlyphItem, LightingSettings, SceneRenderItem, ViewportRenderer, VolumeMeshData,
+    volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 
 // ---------------------------------------------------------------------------
@@ -398,9 +399,7 @@ pub(crate) fn submit_eq_items(app: &mut App, fd: &mut FrameData) {
     fd.scene
         .items_mut::<viewport_lib::GlyphItem>()
         .extend(glyphs);
-    fd.scene
-        .items_mut::<viewport_lib::PointCloudItem>()
-        .extend(pcs);
+    fd.scene.items_mut::<PointCloudItem>().extend(pcs);
 }
 
 // ---------------------------------------------------------------------------
