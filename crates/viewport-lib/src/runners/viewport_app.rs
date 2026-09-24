@@ -385,7 +385,7 @@ impl ViewportApp {
     /// the runner still owning the window, the wgpu bring-up, and the render loop.
     ///
     /// ```rust,ignore
-    /// let mut orbit = OrbitCameraController::viewport_all();
+    /// let mut orbit = OrbitCameraController::new_stateless();
     /// ViewportApp::new(config)
     ///     .with_input(move |ictx| {
     ///         for ev in ictx.events() {
@@ -426,7 +426,7 @@ impl ViewportApp {
             callback,
             input: self.input,
             state: None,
-            orbit: OrbitCameraController::viewport_all(),
+            orbit: OrbitCameraController::new_stateless(),
             events: Vec::new(),
             last_frame: Instant::now(),
             start: Instant::now(),
@@ -739,11 +739,16 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
                     return;
                 }
 
-                state.session.begin_frame(ViewportContext {
-                    hovered: state.hovered,
-                    focused: state.focused,
-                    viewport_size: [w, h],
-                });
+                // begin_frame_at rather than begin_frame: the runner already owns a
+                // clock, and double tap and long press need one.
+                state.session.begin_frame_at(
+                    ViewportContext {
+                        hovered: state.hovered,
+                        focused: state.focused,
+                        viewport_size: [w, h],
+                    },
+                    self.start.elapsed().as_secs_f32(),
+                );
                 // Continuous keeps the loop spinning; OnDemand only redraws when
                 // the callback asked to (an animating callback calls
                 // request_redraw each frame).
@@ -768,6 +773,15 @@ impl<F: FnMut(&mut FrameCtx)> ApplicationHandler for AppHandler<F> {
             }
 
             other => {
+                // A touch device never sends CursorEntered, so the contact itself is
+                // what makes the viewport hovered: without this the resolver gates
+                // every touch-driven gesture out.
+                if let WindowEvent::Touch(touch) = &other {
+                    state.hovered = !matches!(
+                        touch.phase,
+                        ::winit::event::TouchPhase::Ended | ::winit::event::TouchPhase::Cancelled
+                    );
+                }
                 let scale = state.window.scale_factor() as f32;
                 if let Some(ev) = from_winit(&other, scale) {
                     // Without an input handler, feed the resolver directly (orbit /

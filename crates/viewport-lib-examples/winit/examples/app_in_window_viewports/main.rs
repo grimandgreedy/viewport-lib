@@ -42,7 +42,7 @@ impl Pane {
             // the (sRGB) window surface encodes exactly once.
             session: ViewportInstance::new(device, OffscreenViewportTarget::render_format(surface_format)),
             target: OffscreenViewportTarget::new(device, surface_format, size),
-            orbit: OrbitCameraController::viewport_all(),
+            orbit: OrbitCameraController::new_stateless(),
             blit: None,
             size,
         }

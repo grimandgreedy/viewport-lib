@@ -45,7 +45,9 @@ pub mod viewport_app;
 pub mod viewport_app_v2;
 
 use crate::camera::Camera;
-use crate::interaction::input::{ActionFrame, BindingPreset, ViewportContext, ViewportEvent};
+use crate::interaction::input::{
+    ActionFrame, BindingPreset, TouchSettings, ViewportBinding, ViewportContext, ViewportEvent,
+};
 use crate::interaction::manipulation::{ManipResult, ManipulationController};
 use crate::interaction::select::selection::Selection;
 use crate::resources::DeviceResources;
@@ -179,10 +181,10 @@ impl ViewportInstance {
             scene: Scene::new(),
             selection: Selection::new(),
             camera: Camera::default(),
-            // ViewportAll carries the manipulation keybindings (G/R/S, axis
+            // The default preset carries the manipulation keybindings (G/R/S, axis
             // constraints) as well as camera navigation, so an instance with a
             // ManipulationController resolves them without extra setup.
-            input: ViewportInput::from_preset(BindingPreset::ViewportAll),
+            input: ViewportInput::from_preset(BindingPreset::Default),
             manip: None,
             runtime: None,
             frame: FrameData::default(),
@@ -196,6 +198,33 @@ impl ViewportInstance {
             extras: Vec::new(),
             next_extra_id: 0,
         }
+    }
+
+    /// Replace the binding set this viewport resolves with, at construction.
+    ///
+    /// Bindings live here, on the resolver, not on a camera controller: a controller
+    /// applies the resolved [`ActionFrame`] and never sees which gesture produced it.
+    /// This is the one place to choose a control scheme, and a session honours it.
+    ///
+    /// ```no_run
+    /// # use viewport_lib::{ViewportInstance, BindingPreset, viewer_bindings};
+    /// # fn demo(device: &viewport_lib::gpu::Device, fmt: viewport_lib::gpu::TextureFormat) {
+    /// // A pure viewer, with no selection or tools, so left drag can orbit.
+    /// let session = ViewportInstance::new(device, fmt).with_bindings(viewer_bindings());
+    /// # let _ = (session, BindingPreset::Default);
+    /// # }
+    /// ```
+    pub fn with_bindings(mut self, bindings: Vec<ViewportBinding>) -> Self {
+        self.input = ViewportInput::new(bindings);
+        self
+    }
+
+    /// Replace the binding set after construction.
+    ///
+    /// Resets the input accumulator, so call it between frames rather than part way
+    /// through one: any gesture in flight ends.
+    pub fn set_bindings(&mut self, bindings: Vec<ViewportBinding>) {
+        self.input = ViewportInput::new(bindings);
     }
 
     /// Attach a [`ViewportRuntime`] for physics, animation, and GPU plugins.
@@ -230,9 +259,48 @@ impl ViewportInstance {
         self.input.begin_frame(ctx);
     }
 
+    /// Begin a frame, and tell the resolver what time it is.
+    ///
+    /// `time_seconds` is your own elapsed-seconds clock. Use this instead of
+    /// [`begin_frame`](Self::begin_frame) on anything with a touchscreen: double tap
+    /// and long press cannot be decided from positions alone, and stay quiet without
+    /// a clock.
+    pub fn begin_frame_at(&mut self, ctx: ViewportContext, time_seconds: f32) {
+        self.viewport_size = ctx.viewport_size;
+        self.input.begin_frame_at(ctx, time_seconds);
+    }
+
+    /// The numbers touch recognition is calibrated on: sensitivities with per-axis
+    /// inversion, the tap and long-press tolerances, and the double-tap window.
+    pub fn touch_settings(&self) -> TouchSettings {
+        self.input.touch_settings()
+    }
+
+    /// Replace the touch calibration.
+    pub fn set_touch_settings(&mut self, settings: TouchSettings) {
+        self.input.set_touch_settings(settings);
+    }
+
     /// Feed one native event, already translated to a [`ViewportEvent`].
     pub fn handle_event(&mut self, event: ViewportEvent) {
         self.input.push_event(event);
+    }
+
+    /// Whether a pointer gesture of ours is in flight.
+    ///
+    /// A host checks this before taking the pointer for its own UI, so it does not
+    /// steal a drag half-way through.
+    pub fn is_gesture_active(&self) -> bool {
+        self.input.is_gesture_active()
+    }
+
+    /// End any gesture in flight without completing it, releasing every held button.
+    ///
+    /// For when something outside the viewport invalidates the gesture and no release
+    /// will arrive: the host taking the pointer, a mode change, a tool switch, a
+    /// cancelled touch.
+    pub fn cancel_gesture(&mut self) {
+        self.input.cancel_gesture();
     }
 
     /// Update the viewport size without resetting the input accumulator.
@@ -602,7 +670,7 @@ mod tests {
         session.camera_mut().distance = 6.0;
 
         session.begin_frame(ctx());
-        let mut orbit = OrbitCameraController::viewport_all();
+        let mut orbit = OrbitCameraController::new_stateless();
         let frame = session.update_orbit(&mut orbit);
         // Assembly collected the scene node and stamped a non-default generation.
         assert!(
@@ -672,7 +740,7 @@ mod tests {
         };
         let mut session = ViewportInstance::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
         session.begin_frame(ctx());
-        let mut orbit = OrbitCameraController::viewport_all();
+        let mut orbit = OrbitCameraController::new_stateless();
 
         // A retained extra is re-injected into the scene every frame.
         let mut pc = PointCloudItem::default();

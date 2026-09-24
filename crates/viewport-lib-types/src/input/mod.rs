@@ -28,16 +28,21 @@ pub mod event;
 pub mod mode;
 /// Named control presets.
 pub mod preset;
+/// Touch gesture calibration.
+pub mod touch;
 /// Viewport gesture and binding types.
 pub mod viewport_binding;
 
 pub use action::Action;
 pub use action_frame::{ActionFrame, NavigationActions, PointerFrame, ResolvedActionState};
 pub use binding::{ActivationMode, Binding, KeyCode, Modifiers, MouseButton, Trigger, TriggerKind};
-pub use context::ViewportContext;
+pub use context::{PointerOwnership, ViewportContext, forward_to_viewport};
 pub use cursor::CursorShape;
 pub use defaults::default_bindings;
-pub use event::{ButtonState, ScrollUnits, Theme, ViewportEvent};
+pub use event::{ButtonState, ScrollUnits, Theme, TouchId, TouchPhase, ViewportEvent};
 pub use mode::{InputMode, NavigationMode};
-pub use preset::{BindingPreset, viewport_all_bindings};
+pub use preset::{
+    BindingPreset, viewer_bindings, viewport_camera_bindings, viewport_default_bindings,
+};
+pub use touch::TouchSettings;
 pub use viewport_binding::{ModifiersMatch, ViewportBinding, ViewportGesture};

@@ -133,7 +133,7 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(App {
                 session,
-                orbit: OrbitCameraController::viewport_all(),
+                orbit: OrbitCameraController::new_stateless(),
                 target: None,
                 tab: Tab::Exposure,
                 light_intensity: 4.0,

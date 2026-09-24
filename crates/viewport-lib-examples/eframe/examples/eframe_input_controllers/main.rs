@@ -24,12 +24,12 @@ use viewport_lib as vpl;
 
 use crate::eframe::{egui, wgpu};
 use vpl::{
-    Action, ButtonState, Camera, CameraFrame, FirstPersonCameraController, FrameData, Gizmo,
-    GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult,
+    Action, BindingPreset, ButtonState, Camera, CameraFrame, FirstPersonCameraController,
+    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult,
     ManipulationContext, ManipulationController, ManipulationKind, Material, MeshId,
     OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
     ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
-    ViewportInput, ViewportRenderer, gizmo_center_for_pivot, primitives, viewport_all_bindings,
+    ViewportInput, ViewportRenderer, gizmo_center_for_pivot, primitives, viewport_default_bindings,
     wish_xy_from_actions,
 };
 
@@ -43,12 +43,7 @@ const CAPSULE_HEIGHT: f32 = 1.8;
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : Input Controllers",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 600.0]),
-            depth_buffer: 24,
-            stencil_buffer: 8,
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([900.0, 600.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state
@@ -234,11 +229,11 @@ impl App {
                 ..Camera::default()
             },
             ctrl_primitives: OrbitCameraController::viewport_primitives(),
-            ctrl_all: OrbitCameraController::viewport_all(),
+            ctrl_all: OrbitCameraController::new(BindingPreset::Default),
             // Resolver for the play modes: viewport_all provides the WASD/Fly
             // movement actions. Look is driven from raw pointer motion in the
             // update loop, so it follows the mouse without holding a button.
-            input_play: ViewportInput::new(viewport_all_bindings()),
+            input_play: ViewportInput::new(viewport_default_bindings()),
             ctrl_fp: FirstPersonCameraController::new(
                 FirstPersonCameraController::DEFAULT_SENSITIVITY,
                 FirstPersonCameraController::DEFAULT_PITCH_CLAMP,

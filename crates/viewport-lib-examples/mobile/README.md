@@ -7,9 +7,9 @@ A viewport-lib scene on Android and iOS: winit for the window and the touch even
 | 1-finger drag | Orbit |
 | 2-finger drag | Pan |
 | Pinch | Zoom |
-| 2-finger rotate | Roll (iOS only) |
+| 2-finger rotate | Twist |
 
-`src/app.rs` holds the whole example and runs unchanged on both platforms. Two things vary by target: Android asks for the Vulkan backend so the device does not pick GLES instead, and iOS gets pinch and rotation as their own winit events, while on Android the pinch span is worked out from the raw touch positions.
+`src/app.rs` holds the whole example and runs unchanged on both platforms. The gestures are not written there: `from_winit` translates the winit events, `ViewportInput` recognises the contacts, and the orbit controller applies the frame that resolves. One thing does vary by target, and it is not input: Android asks for the Vulkan backend so the device does not pick GLES instead.
 
 The crate sits outside the parent workspace. cargo-mobile2's generated projects build the Rust side by running cargo from this directory and looking for the library under `./target`, and a workspace member writes to the workspace root's target directory instead.
 
@@ -21,7 +21,7 @@ No device needed to work on the scene or the camera:
 cargo mobile-example
 ```
 
-That alias expands to `cargo run --release --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --bin mobile-desktop`. Mouse drags reach the same orbit controller the touch handler feeds.
+That alias expands to `cargo run --release --manifest-path crates/viewport-lib-examples/mobile/Cargo.toml --bin mobile-desktop`. Mouse and trackpad reach the same resolver the fingers do.
 
 ## Prerequisites
 

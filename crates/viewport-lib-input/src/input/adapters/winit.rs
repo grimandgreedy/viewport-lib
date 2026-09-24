@@ -1,6 +1,9 @@
 //! winit -> [`ViewportEvent`] translation.
 
-use crate::input::{ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, Theme, ViewportEvent};
+use crate::input::{
+    ButtonState, KeyCode, Modifiers, MouseButton, ScrollUnits, Theme, TouchId, TouchPhase,
+    ViewportEvent,
+};
 
 /// Translate a winit [`WindowEvent`](::winit::event::WindowEvent) into a
 /// [`ViewportEvent`], or `None` for events the viewport does not consume.
@@ -71,6 +74,12 @@ pub fn from_winit(event: &::winit::event::WindowEvent, scale_factor: f32) -> Opt
         WindowEvent::PanGesture { delta, .. } => Some(ViewportEvent::TrackpadPan(
             glam::Vec2::new(delta.x, delta.y) * inv_scale,
         )),
+        // Touch locations are physical, like the cursor's, so they scale the same way.
+        WindowEvent::Touch(touch) => Some(ViewportEvent::Touch {
+            id: TouchId(touch.id),
+            phase: map_touch_phase(touch.phase),
+            position: glam::Vec2::new(touch.location.x as f32, touch.location.y as f32) * inv_scale,
+        }),
         WindowEvent::DroppedFile(path) => Some(ViewportEvent::FileDropped(path.clone())),
         WindowEvent::HoveredFile(path) => Some(ViewportEvent::FileHovered(path.clone())),
         WindowEvent::HoveredFileCancelled => Some(ViewportEvent::FileHoverCancelled),
@@ -99,6 +108,16 @@ fn map_state(state: ::winit::event::ElementState) -> ButtonState {
     match state {
         ::winit::event::ElementState::Pressed => ButtonState::Pressed,
         ::winit::event::ElementState::Released => ButtonState::Released,
+    }
+}
+
+fn map_touch_phase(phase: ::winit::event::TouchPhase) -> TouchPhase {
+    use ::winit::event::TouchPhase as W;
+    match phase {
+        W::Started => TouchPhase::Started,
+        W::Moved => TouchPhase::Moved,
+        W::Ended => TouchPhase::Ended,
+        W::Cancelled => TouchPhase::Cancelled,
     }
 }
 
@@ -399,6 +418,20 @@ mod tests {
     }
 
     #[test]
+    fn touch_phases_map() {
+        use ::winit::event::TouchPhase as W;
+        let cases = [
+            (W::Started, TouchPhase::Started),
+            (W::Moved, TouchPhase::Moved),
+            (W::Ended, TouchPhase::Ended),
+            (W::Cancelled, TouchPhase::Cancelled),
+        ];
+        for (winit, expected) in cases {
+            assert_eq!(map_touch_phase(winit), expected);
+        }
+    }
+
+    #[test]
     fn raw_device_motion_translates() {
         use ::winit::event::DeviceEvent;
         assert!(matches!(
@@ -406,9 +439,11 @@ mod tests {
             Some(ViewportEvent::RawMotion { delta }) if delta == glam::Vec2::new(3.0, -4.0)
         ));
         // A device event the viewport does not consume translates to None.
-        assert!(from_winit_device(&DeviceEvent::MouseWheel {
-            delta: ::winit::event::MouseScrollDelta::LineDelta(0.0, 1.0)
-        })
-        .is_none());
+        assert!(
+            from_winit_device(&DeviceEvent::MouseWheel {
+                delta: ::winit::event::MouseScrollDelta::LineDelta(0.0, 1.0)
+            })
+            .is_none()
+        );
     }
 }

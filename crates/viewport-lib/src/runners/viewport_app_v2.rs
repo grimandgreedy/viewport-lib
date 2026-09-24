@@ -855,7 +855,7 @@ impl AppHandlerV2 {
                 surface_config,
                 session,
                 redraw_mode: config.redraw_mode,
-                orbit: OrbitCameraController::viewport_all(),
+                orbit: OrbitCameraController::new_stateless(),
                 input,
                 callback,
                 paint,
@@ -1027,11 +1027,16 @@ impl AppHandlerV2 {
 
             crate::gpu::present(&gpu.queue, frame);
 
-            state.session.begin_frame(ViewportContext {
-                hovered: state.hovered,
-                focused: state.focused,
-                viewport_size: [w, h],
-            });
+            // begin_frame_at rather than begin_frame: the runner already owns a clock,
+            // and double tap and long press need one.
+            state.session.begin_frame_at(
+                ViewportContext {
+                    hovered: state.hovered,
+                    focused: state.focused,
+                    viewport_size: [w, h],
+                },
+                time,
+            );
             if state.redraw_mode == RedrawMode::Continuous || request_redraw {
                 state.window.request_redraw();
             }
@@ -1172,6 +1177,16 @@ impl ApplicationHandler for AppHandlerV2 {
 
             other => {
                 if let Some(state) = self.windows.get_mut(&id) {
+                    // A touch device never sends CursorEntered, so the contact itself
+                    // is what makes the viewport hovered: without this the resolver
+                    // gates every touch-driven gesture out.
+                    if let WindowEvent::Touch(touch) = &other {
+                        state.hovered = !matches!(
+                            touch.phase,
+                            ::winit::event::TouchPhase::Ended
+                                | ::winit::event::TouchPhase::Cancelled
+                        );
+                    }
                     let scale = state.window.scale_factor() as f32;
                     if let Some(ev) = from_winit(&other, scale) {
                         if state.input.is_none() {

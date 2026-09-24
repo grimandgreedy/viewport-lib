@@ -22,8 +22,8 @@ use crate::eframe;
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
-    Action, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode,
-    GizmoSpace, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
+    Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
+    GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
     Material, Modifiers, MouseButton, NodeId, OrbitCameraController, PickBackend, PickMask,
     Projection, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent,
     ViewportRenderer,
@@ -91,10 +91,10 @@ impl Default for MvState {
                 },
             ],
             controllers: [
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
             ],
             viewports: None,
             built: false,

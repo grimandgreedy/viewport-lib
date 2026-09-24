@@ -4,8 +4,8 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
-    ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData, GizmoAxis, GizmoMode,
-    GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
+    BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
+    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
     OrbitCameraController, PickBackend, PickMask, SceneFrame, SceneRenderItem, ScrollUnits,
     ViewportContext, ViewportEvent, ViewportRenderer,
 };
@@ -157,7 +157,7 @@ fn main() -> eframe::Result {
                         * glam::Quat::from_rotation_x(1.1),
                     ..Camera::default()
                 },
-                controller: OrbitCameraController::viewport_all(),
+                controller: OrbitCameraController::new(BindingPreset::Default),
                 mode: ShowcaseMode::Basic,
                 mode_gen: 0,
                 show_keybinds: false,

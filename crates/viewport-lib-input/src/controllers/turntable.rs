@@ -11,6 +11,10 @@ use viewport_lib_types::camera::Camera;
 /// Each frame, advance the azimuth by `angular_velocity * dt` and apply the
 /// result to the camera. The orbit distance and center are left unchanged.
 ///
+/// This is the one controller that reads no input at all: it takes `dt` and
+/// nothing else, so a viewport on a turntable ignores the whole `ActionFrame`
+/// until you switch to a controller that reads one.
+///
 /// ```rust,ignore
 /// let mut turntable = TurntableController::from_camera(&camera, 0.5);
 /// // in the render loop:

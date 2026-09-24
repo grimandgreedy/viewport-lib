@@ -26,10 +26,7 @@ use vpl::{
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : minimal (egui)",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 720.0]),
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([1280.0, 720.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state
@@ -74,7 +71,7 @@ fn main() -> eframe::Result {
 
             Ok(Box::new(App {
                 session,
-                orbit: OrbitCameraController::viewport_all(),
+                orbit: OrbitCameraController::new_stateless(),
                 cube_id,
                 target: None,
             }))

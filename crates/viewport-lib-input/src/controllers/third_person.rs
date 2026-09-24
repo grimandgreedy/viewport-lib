@@ -7,6 +7,12 @@
 //! along the look direction; a `height` offset raises the orbit pivot above the
 //! target's feet.
 //!
+//! # Input it reads
+//!
+//! `navigation.orbit` for look, and the fly actions for movement. `pan`, `zoom` and
+//! `twist` are ignored, so the boom length is yours to set rather than something the
+//! wheel changes.
+//!
 //! The coordinate conventions match
 //! [`FirstPersonCameraController`](crate::controllers::first_person::FirstPersonCameraController), so the
 //! shared [`wish_xy_from_actions`](crate::controllers::movement::wish_xy_from_actions) helper produces

@@ -26,7 +26,9 @@ macro_rules! egui_adapter {
     ($egui:ident) => {
         use $egui as egui;
 
-        use crate::input::{ButtonState, KeyCode, MouseButton, ScrollUnits, ViewportEvent};
+        use crate::input::{
+            ButtonState, KeyCode, MouseButton, ScrollUnits, TouchId, TouchPhase, ViewportEvent,
+        };
 
         /// Translate an `egui::Event` into a [`ViewportEvent`], or `None` for
         /// events the viewport does not consume.
@@ -72,6 +74,27 @@ macro_rules! egui_adapter {
                         units,
                     })
                 }
+                // egui reports a pinch as a multiplicative zoom factor (1.0 = no
+                // change); the viewport convention is winit's additive, log-scale
+                // delta. `ln` is the exact inverse of the `exp` egui-winit applies
+                // on the way in, so a pinch that arrives through egui and the same
+                // pinch that arrives through winit resolve to the same zoom.
+                Event::Zoom(factor) => {
+                    (*factor > 0.0).then(|| ViewportEvent::TrackpadPinch(factor.ln()))
+                }
+                // egui's angle convention is the opposite of winit's, which is why
+                // egui-winit negates on the way in. Negate back, so twist turns the
+                // same way whichever shell hosts the viewport.
+                Event::Rotate(radians) => Some(ViewportEvent::TrackpadRotate(-*radians)),
+                // Raw contacts, not egui's derived multi-touch state: the viewport
+                // recognises gestures itself so the feel is the same through every
+                // host. egui also warns its own translation delta may not be in
+                // screen points, which the recogniser would have to undo.
+                Event::Touch { id, phase, pos, .. } => Some(ViewportEvent::Touch {
+                    id: TouchId(id.0),
+                    phase: map_touch_phase(*phase),
+                    position: glam::Vec2::new(pos.x, pos.y) - viewport_origin,
+                }),
                 Event::Key {
                     key,
                     pressed,
@@ -87,6 +110,15 @@ macro_rules! egui_adapter {
                     repeat: *repeat,
                 }),
                 _ => None,
+            }
+        }
+
+        fn map_touch_phase(phase: egui::TouchPhase) -> TouchPhase {
+            match phase {
+                egui::TouchPhase::Start => TouchPhase::Started,
+                egui::TouchPhase::Move => TouchPhase::Moved,
+                egui::TouchPhase::End => TouchPhase::Ended,
+                egui::TouchPhase::Cancel => TouchPhase::Cancelled,
             }
         }
 
@@ -350,6 +382,79 @@ macro_rules! egui_adapter {
                         }
                         other => panic!("expected Wheel, got {other:?}"),
                     }
+                }
+            }
+
+            #[test]
+            fn a_pinch_becomes_the_viewport_log_scale_delta() {
+                // egui hands us a factor; the viewport speaks winit's additive delta.
+                // A factor of 1.0 is no change, so it must resolve to zero.
+                match from_egui(&Event::Zoom(1.0), glam::Vec2::ZERO) {
+                    Some(ViewportEvent::TrackpadPinch(d)) => assert!(d.abs() < 1e-6),
+                    other => panic!("expected TrackpadPinch, got {other:?}"),
+                }
+                // Spreading (factor > 1) zooms in, which is a positive delta.
+                match from_egui(&Event::Zoom(std::f32::consts::E), glam::Vec2::ZERO) {
+                    Some(ViewportEvent::TrackpadPinch(d)) => assert!((d - 1.0).abs() < 1e-5),
+                    other => panic!("expected TrackpadPinch, got {other:?}"),
+                }
+                // Pinching together is negative.
+                match from_egui(&Event::Zoom(0.5), glam::Vec2::ZERO) {
+                    Some(ViewportEvent::TrackpadPinch(d)) => assert!(d < 0.0),
+                    other => panic!("expected TrackpadPinch, got {other:?}"),
+                }
+                // A zero or negative factor has no logarithm; drop it rather than
+                // feed the resolver an infinity.
+                assert!(from_egui(&Event::Zoom(0.0), glam::Vec2::ZERO).is_none());
+            }
+
+            #[test]
+            fn rotation_is_negated_onto_the_winit_convention() {
+                // egui's positive angle is winit's negative one. Getting this wrong
+                // makes twist spin opposite ways depending on the host, which is the
+                // whole reason the adapter converts rather than passing through.
+                match from_egui(&Event::Rotate(0.25), glam::Vec2::ZERO) {
+                    Some(ViewportEvent::TrackpadRotate(r)) => assert!((r + 0.25).abs() < 1e-6),
+                    other => panic!("expected TrackpadRotate, got {other:?}"),
+                }
+            }
+
+            #[test]
+            fn a_touch_keeps_its_id_and_is_made_viewport_local() {
+                let ev = from_egui(
+                    &Event::Touch {
+                        device_id: egui::TouchDeviceId(0),
+                        id: egui::TouchId(7),
+                        phase: egui::TouchPhase::Move,
+                        pos: Pos2::new(60.0, 50.0),
+                        force: None,
+                    },
+                    glam::Vec2::new(10.0, 20.0),
+                );
+                match ev {
+                    Some(ViewportEvent::Touch {
+                        id,
+                        phase,
+                        position,
+                    }) => {
+                        assert_eq!(id, TouchId(7));
+                        assert_eq!(phase, TouchPhase::Moved);
+                        assert_eq!(position, glam::Vec2::new(50.0, 30.0));
+                    }
+                    other => panic!("expected Touch, got {other:?}"),
+                }
+            }
+
+            #[test]
+            fn egui_touch_phases_map() {
+                let cases = [
+                    (egui::TouchPhase::Start, TouchPhase::Started),
+                    (egui::TouchPhase::Move, TouchPhase::Moved),
+                    (egui::TouchPhase::End, TouchPhase::Ended),
+                    (egui::TouchPhase::Cancel, TouchPhase::Cancelled),
+                ];
+                for (egui_phase, expected) in cases {
+                    assert_eq!(map_touch_phase(egui_phase), expected);
                 }
             }
 

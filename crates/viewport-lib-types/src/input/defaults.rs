@@ -55,7 +55,7 @@ fn mouse_click(btn: MouseButton) -> Trigger {
 }
 
 /// Returns the default binding table for viewport navigation and manipulation.
-#[deprecated(note = "superseded by viewport_all_bindings")]
+#[deprecated(note = "superseded by viewport_default_bindings")]
 pub fn default_bindings() -> Vec<Binding> {
     let normal = &[InputMode::Normal];
     let fly = &[InputMode::FlyMode];
@@ -216,7 +216,7 @@ pub fn default_bindings() -> Vec<Binding> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::viewport_all_bindings;
+    use crate::input::viewport_default_bindings;
     use std::collections::HashSet;
 
     // One list of every action, expanded into both the array the coverage test
@@ -272,7 +272,7 @@ mod tests {
     );
 
     /// Every action must be reachable from at least one of the two shipped
-    /// binding sets (`default_bindings` or `viewport_all_bindings`), so no action
+    /// binding sets (`default_bindings` or `viewport_default_bindings`), so no action
     /// is defined but impossible to trigger. The single documented exception is
     /// `FlySpeedBoost`, which fly-mode logic reads from the Shift modifier
     /// directly rather than through a binding.
@@ -281,7 +281,7 @@ mod tests {
         let bound: HashSet<Action> = default_bindings()
             .iter()
             .map(|b| b.action)
-            .chain(viewport_all_bindings().iter().map(|b| b.action))
+            .chain(viewport_default_bindings().iter().map(|b| b.action))
             .collect();
 
         let unbound: Vec<Action> = ALL_ACTIONS

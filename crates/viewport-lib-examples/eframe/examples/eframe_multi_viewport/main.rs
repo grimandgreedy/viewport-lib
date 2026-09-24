@@ -32,8 +32,9 @@ use crate::eframe::{egui, wgpu};
 use std::collections::HashMap;
 use viewport_lib as vpl;
 use vpl::{
-    Action, BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
-    GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult, ManipulationContext,
+    Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
+    GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult,
+    ManipulationContext,
     ManipulationController, Material, MeshId, Modifiers, MouseButton, OffscreenViewportTarget,
     OrbitCameraController,
     Projection, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ViewportContext,
@@ -74,12 +75,7 @@ fn quad_rects(full: egui::Rect) -> [egui::Rect; 4] {
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : Multi-Viewport",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
-            depth_buffer: 24,
-            stencil_buffer: 8,
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([1280.0, 800.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state
@@ -232,10 +228,10 @@ impl App {
             selection: Selection::new(),
             cameras,
             controllers: [
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
-                OrbitCameraController::viewport_all(),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new(BindingPreset::Default),
             ],
             gizmo: Gizmo::new(),
             gizmo_center: None,

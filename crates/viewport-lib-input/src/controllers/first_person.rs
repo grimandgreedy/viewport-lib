@@ -16,8 +16,19 @@
 //! Unlike [`OrbitCameraController`](crate::controllers::orbit::OrbitCameraController), this
 //! controller does not own a camera: call
 //! [`apply`](FirstPersonCameraController::apply) with the host's `&mut Camera`.
-//! Look is read from `frame.navigation.orbit`, so the same input pipeline and
-//! binding presets that drive orbit also drive first-person look.
+//! # Input it reads
+//!
+//! `navigation.orbit` for look, and the fly actions through
+//! [`wish_xy_from_actions`](crate::controllers::movement::wish_xy_from_actions) for
+//! movement. Nothing else: `pan`, `zoom` and `twist` are read by the orbit
+//! controller and ignored here, so the wheel does nothing while this controller is
+//! the active one unless you rebind it.
+//!
+//! Look is a **drag**, not mouselook: `navigation.orbit` is filled from a bound
+//! gesture, so moving the mouse with nothing held does not turn the camera. For
+//! mouselook, read [`ViewportEvent::RawMotion`](crate::input::ViewportEvent::RawMotion)
+//! from the event stream yourself and add it to the look delta; the resolver does
+//! not model it, because whether the cursor is grabbed is the host's decision.
 
 use glam::Vec3;
 

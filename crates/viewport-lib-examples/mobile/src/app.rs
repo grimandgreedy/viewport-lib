@@ -1,41 +1,25 @@
 //! The example itself: three primitives on a grid, orbited with touch.
 //!
-//! The same code runs on Android, on iOS, and on the desktop. What differs per
-//! platform is the wgpu backend and where the gesture data comes from: iOS
-//! delivers pinch and rotation as their own winit events, Android only sends
-//! raw touches, so the pinch span is tracked by hand there.
+//! The same code runs on Android, on iOS, and on the desktop, and the input
+//! handling is the same on all three: translate the winit event with `from_winit`,
+//! push it into a `ViewportInput`, and apply the frame it resolves to the camera.
+//! One finger orbits, two pan, a pinch zooms and a twist turns; none of that is
+//! written here.
 
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
+use viewport_lib::interaction::input::adapters::from_winit;
 use viewport_lib::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material, MouseButton,
-    OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    Camera, CameraFrame, FrameData, LightingSettings, Material, OrbitCameraController,
+    PostProcessSettings, SceneFrame, SceneRenderItem, ViewportContext, ViewportInput,
+    ViewportRenderer, primitives, viewport_default_bindings,
 };
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
-use winit::event::{Touch, TouchPhase, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-
-/// True where winit synthesises `PinchGesture` and `RotationGesture` from the
-/// touch stream. Elsewhere the pinch span is derived from the touch positions.
-const GESTURE_EVENTS: bool = cfg!(any(target_os = "ios", target_os = "macos"));
-
-// ---------------------------------------------------------------------------
-// Touch mode
-// ---------------------------------------------------------------------------
-
-#[derive(Default, PartialEq)]
-enum TouchMode {
-    #[default]
-    None,
-    /// Single finger held: orbit via left-button drag.
-    OneFingerOrbit,
-    /// Two fingers held: pan via middle-button drag.
-    TwoFingerPan,
-}
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -55,16 +39,11 @@ struct AppState {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    input: ViewportInput,
     scene_items: Vec<SceneRenderItem>,
-
-    // Touch tracking
-    touches: HashMap<u64, glam::Vec2>,
-    touch_mode: TouchMode,
-    /// Centroid from the previous two-finger move event, for pan delta.
-    prev_centroid: Option<glam::Vec2>,
-    /// Distance between the two fingers on the previous move event. Only used
-    /// where the platform does not send pinch events of its own.
-    prev_pinch_dist: Option<f32>,
+    /// Elapsed-seconds clock. The viewport reads no clock of its own, and the
+    /// double-tap and long-press recognisers need one.
+    start: Instant,
 }
 
 // ---------------------------------------------------------------------------
@@ -173,8 +152,12 @@ impl ApplicationHandler for App {
             ..Camera::default()
         };
 
-        let mut controller = OrbitCameraController::viewport_primitives();
-        controller.begin_frame(ViewportContext {
+        // The controller applies a resolved frame; the bindings live on the
+        // resolver beside it, which is the one place that decides what a gesture
+        // means.
+        let controller = OrbitCameraController::new_stateless();
+        let mut input = ViewportInput::new(viewport_default_bindings());
+        input.begin_frame(ViewportContext {
             hovered: true,
             focused: true,
             viewport_size: [config.width as f32, config.height as f32],
@@ -189,11 +172,9 @@ impl ApplicationHandler for App {
             renderer,
             camera,
             controller,
+            input,
             scene_items,
-            touches: HashMap::new(),
-            touch_mode: TouchMode::None,
-            prev_centroid: None,
-            prev_pinch_dist: None,
+            start: Instant::now(),
         });
 
         if let Some(state) = self.state.as_ref() {
@@ -229,35 +210,6 @@ impl ApplicationHandler for App {
                 }
             }
 
-            WindowEvent::Touch(Touch {
-                phase,
-                location,
-                id,
-                ..
-            }) => {
-                let pos = glam::Vec2::new(location.x as f32, location.y as f32);
-                handle_touch(state, phase, id, pos);
-                state.window.request_redraw();
-            }
-
-            // Fires alongside the touch events on iOS. Where it is available the
-            // touch handler leaves zoom alone and only drives pan and orbit.
-            WindowEvent::PinchGesture { delta, .. } => {
-                // delta > 0 means the fingers moved apart (zoom in).
-                state.controller.push_event(ViewportEvent::Wheel {
-                    delta: glam::Vec2::new(0.0, delta as f32 * 8.0),
-                    units: ScrollUnits::Pixels,
-                });
-                state.window.request_redraw();
-            }
-
-            WindowEvent::RotationGesture { delta, .. } => {
-                state
-                    .controller
-                    .push_event(ViewportEvent::TrackpadRotate(delta.to_radians()));
-                state.window.request_redraw();
-            }
-
             WindowEvent::RedrawRequested => {
                 if state.surface_config.width == 0 {
                     return;
@@ -279,7 +231,8 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
-                state.controller.apply_to_camera(&mut state.camera);
+                let actions = state.input.resolve();
+                state.controller.apply(&mut state.camera, &actions);
                 state.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(
@@ -303,144 +256,26 @@ impl ApplicationHandler for App {
                 state.queue.submit(std::iter::once(cmd));
                 frame.present();
 
-                state.controller.begin_frame(ViewportContext {
-                    hovered: true,
-                    focused: true,
-                    viewport_size: [w, h],
-                });
+                state.input.begin_frame_at(
+                    ViewportContext {
+                        hovered: true,
+                        focused: true,
+                        viewport_size: [w, h],
+                    },
+                    state.start.elapsed().as_secs_f32(),
+                );
             }
 
-            _ => {}
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Touch gesture mapping
-// ---------------------------------------------------------------------------
-
-fn handle_touch(state: &mut AppState, phase: TouchPhase, id: u64, pos: glam::Vec2) {
-    match phase {
-        TouchPhase::Started => {
-            state.touches.insert(id, pos);
-
-            match state.touches.len() {
-                1 => {
-                    // Begin orbit.
-                    state
-                        .controller
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
-                    state.controller.push_event(ViewportEvent::MouseButton {
-                        button: MouseButton::Left,
-                        state: ButtonState::Pressed,
-                    });
-                    state.touch_mode = TouchMode::OneFingerOrbit;
+            // Everything else, touch included, goes through the adapter. The
+            // viewport fills the window, so there is no rect to offset by.
+            other => {
+                let scale = state.window.scale_factor() as f32;
+                if let Some(ev) = from_winit(&other, scale) {
+                    state.input.push_event(ev);
+                    state.window.request_redraw();
                 }
-                2 => {
-                    // Second finger down: end orbit, begin pan.
-                    state.controller.push_event(ViewportEvent::MouseButton {
-                        button: MouseButton::Left,
-                        state: ButtonState::Released,
-                    });
-                    let centroid = touches_centroid(&state.touches);
-                    state
-                        .controller
-                        .push_event(ViewportEvent::PointerMoved { position: centroid });
-                    state.controller.push_event(ViewportEvent::MouseButton {
-                        button: MouseButton::Middle,
-                        state: ButtonState::Pressed,
-                    });
-                    state.prev_centroid = Some(centroid);
-                    state.prev_pinch_dist = Some(touches_distance(&state.touches));
-                    state.touch_mode = TouchMode::TwoFingerPan;
-                }
-                _ => {}
             }
         }
-
-        TouchPhase::Moved => {
-            state.touches.insert(id, pos);
-
-            match state.touch_mode {
-                TouchMode::OneFingerOrbit => {
-                    state
-                        .controller
-                        .push_event(ViewportEvent::PointerMoved { position: pos });
-                }
-                TouchMode::TwoFingerPan => {
-                    let centroid = touches_centroid(&state.touches);
-                    state
-                        .controller
-                        .push_event(ViewportEvent::PointerMoved { position: centroid });
-                    state.prev_centroid = Some(centroid);
-
-                    let dist = touches_distance(&state.touches);
-                    if !GESTURE_EVENTS {
-                        if let Some(prev) = state.prev_pinch_dist {
-                            let delta = dist - prev;
-                            if delta.abs() > 0.5 {
-                                state.controller.push_event(ViewportEvent::Wheel {
-                                    delta: glam::Vec2::new(0.0, delta * 0.05),
-                                    units: ScrollUnits::Pixels,
-                                });
-                            }
-                        }
-                    }
-                    state.prev_pinch_dist = Some(dist);
-                }
-                TouchMode::None => {}
-            }
-        }
-
-        TouchPhase::Ended | TouchPhase::Cancelled => {
-            state.touches.remove(&id);
-
-            match state.touch_mode {
-                TouchMode::OneFingerOrbit => {
-                    state.controller.push_event(ViewportEvent::MouseButton {
-                        button: MouseButton::Left,
-                        state: ButtonState::Released,
-                    });
-                    state.touch_mode = TouchMode::None;
-                }
-                TouchMode::TwoFingerPan => {
-                    state.controller.push_event(ViewportEvent::MouseButton {
-                        button: MouseButton::Middle,
-                        state: ButtonState::Released,
-                    });
-                    state.prev_centroid = None;
-                    state.prev_pinch_dist = None;
-
-                    if state.touches.len() == 1 {
-                        // One finger still down: resume orbit from its position.
-                        let remaining = *state.touches.values().next().unwrap();
-                        state.controller.push_event(ViewportEvent::PointerMoved {
-                            position: remaining,
-                        });
-                        state.controller.push_event(ViewportEvent::MouseButton {
-                            button: MouseButton::Left,
-                            state: ButtonState::Pressed,
-                        });
-                        state.touch_mode = TouchMode::OneFingerOrbit;
-                    } else {
-                        state.touch_mode = TouchMode::None;
-                    }
-                }
-                TouchMode::None => {}
-            }
-        }
-    }
-}
-
-fn touches_centroid(touches: &HashMap<u64, glam::Vec2>) -> glam::Vec2 {
-    touches.values().copied().sum::<glam::Vec2>() / touches.len() as f32
-}
-
-fn touches_distance(touches: &HashMap<u64, glam::Vec2>) -> f32 {
-    let mut it = touches.values().copied();
-    match (it.next(), it.next()) {
-        (Some(a), Some(b)) => (a - b).length(),
-        _ => 0.0,
     }
 }
 

@@ -24,7 +24,7 @@
     - Screen-space 2D Overlays: rectangles, circles, stars, arcs, text labels; support for colours, glow, textures, animations and much more.
 - **Lighting**: directional, point, and spot lights; cascaded, point-light, and contact shadows; image-based lighting from environment maps; baked lightmaps.
 - **Materials & effects**: Blinn-Phong, and matcap shading; normal and AO maps, emissive, and transparency; bloom, SSAO, depth of field, and tone mapping; runtime WGSL shading hooks and GPU deformers
-- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable key/mouse bindings; view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
+- **Camera & input**: built-in orbit, first-person, third-person, and turntable input controllers (or bring your own) with configurable bindings for mouse, keyboard, trackpad gestures, and touch (one finger orbits, two pan, pinch zooms); view presets and smooth animation; CPU and GPU picking down to faces, vertices, edges, and cells; rectangle selection and transform gizmos with snapping
 - **Sciviz**: scalar colouring with colourmaps, isolines, on-surface vector-field flow (LIC), clip planes, and volume slices
 - **Integration**: drop a viewport into any wgpu app (eframe/egui, winit, iced, Slint, bevy) through event adapters.
 - **Performance**: GPU-driven frustum culling and mesh instancing; async streaming uploads with VRAM budgeting; mipmapped and block-compressed textures.
@@ -94,21 +94,30 @@ ViewportApp::new(AppConfig::default().with_title("demo").with_window_size(1280, 
 When your app already owns the window, wgpu device/queue, and event loop, drive a `ViewportInstance` from inside your render loop. The `eframe-minimal` example is this embedded in egui.
 
 ```rust
-use viewport_lib::{Material, OrbitCameraController, ViewportContext, ViewportInstance, primitives};
+use viewport_lib::{
+    Material, OrbitCameraController, PointerOwnership, ViewportContext, ViewportInstance,
+    forward_to_viewport, primitives,
+};
 
 // Your app creates the window, wgpu device/queue, and event loop.
 // Once the device is available, create the instance and a camera controller:
 let mut viewport = ViewportInstance::new(&device, target_format);
-let mut orbit = OrbitCameraController::viewport_all();
+// The session owns the bindings (see with_bindings); the controller just applies
+// the frame they resolve to.
+let mut orbit = OrbitCameraController::new_stateless();
 
 let mesh = viewport.resources_mut().upload_mesh_data(&device, &primitives::cube(1.0))?;
 viewport.scene_mut().add(Some(mesh), glam::Mat4::IDENTITY, Material::from_colour([0.85, 0.25, 0.2]));
 
 // Then, each frame inside your app's render loop:
-viewport.begin_frame(ViewportContext { hovered, focused, viewport_size: [width, height] });
+// `ownership` is your routing decision: Owned when the viewport won the input this
+// frame, Inside when your own chrome over it holds the pointer, Elsewhere otherwise.
+viewport.begin_frame(ViewportContext::with_ownership(ownership, [width, height]));
 for ev in native_events {
     // translate to ViewportEvent (from_winit / from_egui adapters, or by hand)
-    viewport.handle_event(ev);
+    if forward_to_viewport(&ev, ownership) {
+        viewport.handle_event(ev);
+    }
 }
 viewport.update_orbit(&mut orbit);                   // resolve input, orbit the camera, assemble
 let cmd = viewport.render(&device, &queue, &view);   // submit cmd to your queue

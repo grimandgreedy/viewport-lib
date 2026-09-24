@@ -28,12 +28,7 @@ const COLOUR_CYAN: [f32; 3] = [0.0, 1.0, 1.0];
 fn main() -> eframe::Result {
     eframe::run_native(
         "viewport-lib : shadow cascade debug",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1600.0, 900.0]),
-            depth_buffer: 24,
-            stencil_buffer: 8,
-            ..Default::default()
-        },
+        viewport_lib_examples_eframe::native_options([1600.0, 900.0]),
         Box::new(|cc| {
             let rs = cc
                 .wgpu_render_state

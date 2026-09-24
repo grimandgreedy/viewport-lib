@@ -25,8 +25,8 @@ use std::rc::Rc;
 use viewport_lib as vpl;
 
 use vpl::{
-    AppConfig, LabelAnchor, LabelItem, Material, OrbitCameraController, OverlayFill, OverlayShape,
-    OverlayShapeItem, PickMask, ViewportApp, ViewportContext, ViewportEvent, primitives,
+    AppConfig, BindingPreset, LabelAnchor, LabelItem, Material, OrbitCameraController, OverlayFill,
+    OverlayShape, OverlayShapeItem, PickMask, ViewportApp, ViewportContext, ViewportEvent, primitives,
 };
 
 // Quit button rectangle in logical pixels (top-left corner of the window).
@@ -76,7 +76,7 @@ fn main() {
     // Drive navigation ourselves so we can suppress it under the UI. The runner
     // stops auto-feeding events and driving orbit; this handler owns the input.
     .with_input({
-        let mut orbit = OrbitCameraController::viewport_all();
+        let mut orbit = OrbitCameraController::new(BindingPreset::Default);
         let mut cursor = glam::Vec2::ZERO;
         move |ictx| {
             let size = ictx.viewport_size();
