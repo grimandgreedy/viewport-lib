@@ -35,10 +35,6 @@ crate::resources::handle::slot_handle! {
 ///   edge scalars.
 /// - **Per-node radius** (`node_radii`): per-node line width in pixels; overrides the
 ///   global `line_width`.
-/// - **Node vectors** (`node_vectors`): world-space 3-D arrows at each node, rendered
-///   automatically as `GlyphItem` arrows.
-/// - **Edge vectors** (`edge_vectors`): world-space 3-D arrows at each segment midpoint,
-///   also rendered as `GlyphItem` arrows.
 ///
 /// Colour priority per segment: `node_colours`/`edge_colours` (direct) > `edge_scalars` >
 /// `scalars` (per-node) > `default_colour`.
@@ -73,14 +69,6 @@ pub struct PolylineItem {
     /// overrides the global `line_width`; adjacent endpoints are linearly interpolated
     /// along each segment.
     pub node_radii: Vec<f32>,
-    /// Per-node world-space vectors. Length must match `positions`. When non-empty the
-    /// renderer automatically generates a [`GlyphItem`](super::GlyphItem) (arrows at node positions).
-    pub node_vectors: Vec<[f32; 3]>,
-    /// Per-edge world-space vectors. Length = total segment count. When non-empty the
-    /// renderer automatically generates a [`GlyphItem`](super::GlyphItem) (arrows at segment midpoints).
-    pub edge_vectors: Vec<[f32; 3]>,
-    /// Scale applied to generated arrow glyphs from `node_vectors`/`edge_vectors`.
-    pub vector_scale: f32,
     /// Per-frame model matrix applied to `positions` in the vertex shader.
     /// Identity (the default) renders `positions` as world-space coordinates,
     /// preserving the historical behaviour. Set this to a translation, rotation,
@@ -110,9 +98,6 @@ impl Default for PolylineItem {
             edge_scalars: Vec::new(),
             edge_colours: Vec::new(),
             node_radii: Vec::new(),
-            node_vectors: Vec::new(),
-            edge_vectors: Vec::new(),
-            vector_scale: 1.0,
             model: IDENTITY_MAT4,
             stroke_pattern: crate::StrokePattern::Solid,
             settings: ItemSettings::default(),

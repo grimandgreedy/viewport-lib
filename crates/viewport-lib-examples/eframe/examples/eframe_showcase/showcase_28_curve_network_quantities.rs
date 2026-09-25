@@ -66,13 +66,14 @@ pub(crate) fn controls_cnq(app: &mut App, ui: &mut egui::Ui) {
 ///
 /// Uses a helix with 120 nodes as the base geometry.  All quantity data is
 /// derived analytically from the helix parameter `t` in [0, 2pi].
-pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
+/// The helix every mode is built on: positions, unit tangents, and radial
+/// outward normals.
+fn cnq_helix() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 3]>) {
     let n = 120usize;
     let turns = 3.0_f32;
     let radius = 2.0_f32;
     let height = 4.0_f32;
 
-    // Build helix positions and analytic per-node data.
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n);
     let mut tangents: Vec<[f32; 3]> = Vec::with_capacity(n);
     let mut normals_3d: Vec<[f32; 3]> = Vec::with_capacity(n);
@@ -96,6 +97,13 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
         let ny = t.sin();
         normals_3d.push([nx, ny, 0.0]);
     }
+
+    (positions, tangents, normals_3d)
+}
+
+pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
+    let (positions, tangents, normals_3d) = cnq_helix();
+    let n = positions.len();
 
     // Total segment count for edge quantities.
     let num_segs = n - 1;
@@ -160,32 +168,60 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
                 .collect();
         }
 
-        CnqMode::NodeVectors => {
-            // Per-node vectors: scaled tangents.
-            item.node_vectors = tangents
-                .iter()
-                .map(|&[tx, ty, tz]| [tx * 0.3, ty * 0.3, tz * 0.3])
-                .collect();
-            item.vector_scale = 0.8;
-        }
-
-        CnqMode::EdgeVectors => {
-            // Per-edge vectors: radial outward normals at each midpoint.
-            item.edge_vectors = (0..num_segs)
-                .map(|i| {
-                    let n0 = normals_3d[i];
-                    let n1 = normals_3d[i + 1];
-                    let mx = (n0[0] + n1[0]) * 0.5 * 0.4;
-                    let my = (n0[1] + n1[1]) * 0.5 * 0.4;
-                    let mz = (n0[2] + n1[2]) * 0.5 * 0.4;
-                    [mx, my, mz]
-                })
-                .collect();
-            item.vector_scale = 0.8;
-        }
+        // The vector modes draw their arrows as a separate item: a curve
+        // carries positions, not a vector field.
+        CnqMode::NodeVectors | CnqMode::EdgeVectors => {}
     }
 
     item
+}
+
+/// Arrows for the two vector modes, as their own item rather than something
+/// the polyline generates.
+pub(crate) fn make_cnq_vectors(app: &App) -> Option<viewport_lib::GlyphItem> {
+    let (positions, tangents, normals_3d) = cnq_helix();
+    let num_segs = positions.len().saturating_sub(1);
+
+    let (at, vectors) = match app.cnq_state.mode {
+        CnqMode::NodeVectors => (
+            positions.clone(),
+            tangents
+                .iter()
+                .map(|&[tx, ty, tz]| [tx * 0.3, ty * 0.3, tz * 0.3])
+                .collect::<Vec<_>>(),
+        ),
+        CnqMode::EdgeVectors => (
+            (0..num_segs)
+                .map(|i| {
+                    let a = positions[i];
+                    let b = positions[i + 1];
+                    [
+                        (a[0] + b[0]) * 0.5,
+                        (a[1] + b[1]) * 0.5,
+                        (a[2] + b[2]) * 0.5,
+                    ]
+                })
+                .collect(),
+            (0..num_segs)
+                .map(|i| {
+                    let n0 = normals_3d[i];
+                    let n1 = normals_3d[i + 1];
+                    [
+                        (n0[0] + n1[0]) * 0.5 * 0.4,
+                        (n0[1] + n1[1]) * 0.5 * 0.4,
+                        (n0[2] + n1[2]) * 0.5 * 0.4,
+                    ]
+                })
+                .collect(),
+        ),
+        _ => return None,
+    };
+
+    let mut g = viewport_lib::GlyphItem::default();
+    g.positions = at;
+    g.vectors = vectors;
+    g.scale = 0.8;
+    Some(g)
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +238,11 @@ pub(crate) fn submit_cnq_items(app: &App, fd: &mut FrameData) {
     fd.scene
         .items_mut::<viewport_lib::PolylineItem>()
         .push(make_cnq_polyline_item(app));
+    if let Some(vectors) = make_cnq_vectors(app) {
+        fd.scene
+            .items_mut::<viewport_lib::GlyphItem>()
+            .push(vectors);
+    }
 }
 
 // ---------------------------------------------------------------------------

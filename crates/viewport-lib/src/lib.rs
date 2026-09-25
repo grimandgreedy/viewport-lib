@@ -333,8 +333,7 @@ pub use runners::viewport_app_v2::{
 };
 
 pub use quantities::{
-    edge_one_form_to_glyphs, face_intrinsic_to_glyphs, polyline_edge_vectors_to_glyphs,
-    polyline_node_vectors_to_glyphs, vertex_intrinsic_to_glyphs,
+    edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs,
     volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
 };
 

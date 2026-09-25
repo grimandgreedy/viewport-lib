@@ -6,11 +6,6 @@
 //! methods on [`ViewportRenderer`](crate::renderer::ViewportRenderer). Both end
 //! up as the same [`GlyphGpuData`], which is why the builder is shared.
 //!
-//! The polyline vector decoration builds glyph data through here too: a
-//! polyline carrying `node_vectors` or `edge_vectors` draws arrows, and those
-//! are glyphs. That is a dependency from the polyline item type onto this one,
-//! which is what the decoration actually is.
-//!
 //! The two bind group layouts live here rather than with the pipelines. The
 //! base meshes do not: arrow, sphere and cube are shared with the tensor glyph
 //! item type and stay with the renderer, reached through

@@ -9,7 +9,6 @@
 //! bounding boxes, clip-object outlines and the splat and sprite wireframe
 //! overlays also render through. See [`pipeline`] for why.
 
-mod decoration;
 mod pipeline;
 mod store;
 pub(crate) mod types;
@@ -51,9 +50,6 @@ pub(crate) struct PolylinePlugin {
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references.
     frame: Vec<pipeline::PolylineFrame>,
-    /// The vector-quantity decoration: arrow glyphs generated from the
-    /// `node_vectors` / `edge_vectors` of the drawn items.
-    decoration: decoration::Decoration,
     /// Every inline item from the last prepared frame, hidden included,
     /// matching what the CPU pick cache used to retain. Reference items are not
     /// here: their segments live on the GPU, so they answer the GPU pick only.
@@ -72,7 +68,6 @@ impl ItemTypePlugin for PolylinePlugin {
     fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
         self.gpu = None;
         self.frame.clear();
-        self.decoration.reset();
     }
 
     fn prepare(
@@ -83,7 +78,6 @@ impl ItemTypePlugin for PolylinePlugin {
         items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
-        self.decoration.clear_frame();
         let items = items.of::<PolylineItem>();
         let refs = ctx.refs_of::<PolylineRefItem>();
         self.pick_items.clear();
@@ -112,8 +106,6 @@ impl ItemTypePlugin for PolylinePlugin {
                 pick_bind_group,
                 outlined: ctx.outline_selected && item.settings.selected,
             });
-
-            self.decoration.add_for_item(device, queue, ctx, item);
         }
 
         // Pre-uploaded references. The model matrix lives at offset 0 of the
@@ -182,9 +174,6 @@ impl ItemTypePlugin for PolylinePlugin {
                 pass.draw(0..6, 0..gd.segment_count);
             }
         }
-        // The vector decoration draws after the lines it belongs to, the order
-        // the shared scivis loop gave it.
-        self.decoration.paint(pass, is_hdr);
     }
 
     fn draws_ldr(&self) -> bool {

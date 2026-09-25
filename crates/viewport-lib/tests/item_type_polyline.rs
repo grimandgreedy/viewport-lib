@@ -308,8 +308,6 @@ fn a_decorated_polyline_still_picks() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    polyline.node_vectors = vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]];
-    polyline.vector_scale = 0.5;
     polyline.settings.pick_id = PickId(894);
     frame
         .scene
