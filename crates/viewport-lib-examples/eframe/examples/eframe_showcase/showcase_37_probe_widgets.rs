@@ -56,6 +56,9 @@ pub(crate) struct ProbeWidgetState {
     pub line_threshold: f32,
     pub polyline_threshold: f32,
     pub disk_half_thickness: f32,
+    /// Unit sphere the widget handles are drawn with. The widgets hand back
+    /// positions and radii; picking the shape is the app's job.
+    pub handle_mesh: vpl::MeshId,
 }
 
 impl ProbeWidgetState {
@@ -123,6 +126,7 @@ impl ProbeWidgetState {
             selected,
             line_threshold: 0.4,
             polyline_threshold: 0.5,
+            handle_mesh: vpl::MeshId::INVALID,
             disk_half_thickness: 0.5,
         }
     }
@@ -287,8 +291,13 @@ fn generate_cloud(n: usize) -> Vec<[f32; 3]> {
 }
 
 impl App {
-    pub(crate) fn build_probe_widgets_scene(&mut self, _renderer: &mut ViewportRenderer) {
+    pub(crate) fn build_probe_widgets_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.pw_state = ProbeWidgetState::new();
+        let sphere = vpl::primitives::icosphere(1.0, 2);
+        self.pw_state.handle_mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &sphere)
+            .expect("handle sphere upload");
         self.pw_state.built = true;
     }
 
@@ -393,18 +402,24 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
             fd.scene
                 .items_mut::<viewport_lib::PolylineItem>()
                 .push(state.probe.polyline_item(0));
-            fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(state.probe.handle_glyphs(100, &widget_ctx));
+            fd.scene.mesh_instances.push(
+                state
+                    .probe
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Sphere => {
             fd.effects.clip.objects.push(state.sphere.clip_object());
             fd.scene
                 .items_mut::<viewport_lib::PolylineItem>()
                 .push(state.sphere.wireframe_item(0));
-            fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(state.sphere.handle_glyphs(100, &widget_ctx));
+            fd.scene.mesh_instances.push(
+                state
+                    .sphere
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Box => {
             fd.scene
@@ -413,41 +428,56 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
             fd.scene
                 .items_mut::<viewport_lib::PolylineItem>()
                 .push(state.bw.rotation_arcs_item(1));
-            fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(state.bw.handle_glyphs(100, &widget_ctx));
+            fd.scene.mesh_instances.push(
+                state
+                    .bw
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Plane => {
             fd.scene
                 .items_mut::<viewport_lib::PolylineItem>()
                 .push(state.plane.plane_item(0));
-            fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(state.plane.handle_glyphs(100, &widget_ctx));
+            fd.scene.mesh_instances.push(
+                state
+                    .plane
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Disk => {
             fd.scene
                 .items_mut::<viewport_lib::PolylineItem>()
                 .push(state.disk.wireframe_item(0));
-            fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(state.disk.handle_glyphs(100, &widget_ctx));
+            fd.scene.mesh_instances.push(
+                state
+                    .disk
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Cylinder => {
             fd.scene
                 .items_mut::<viewport_lib::PolylineItem>()
                 .push(state.cylinder.wireframe_item(0));
-            fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(state.cylinder.handle_glyphs(100, &widget_ctx));
+            fd.scene.mesh_instances.push(
+                state
+                    .cylinder
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Polyline => {
             fd.scene
                 .items_mut::<viewport_lib::PolylineItem>()
                 .push(state.polyline.polyline_item(0));
-            fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(state.polyline.handle_glyphs(100, &widget_ctx));
+            fd.scene.mesh_instances.push(
+                state
+                    .polyline
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
     }
 

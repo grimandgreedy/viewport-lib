@@ -26,6 +26,8 @@ pub(crate) struct InteractState {
     pub gizmo_center: Option<glam::Vec3>,
     pub gizmo_scale: f32,
     pub spline: vpl::SplineWidget,
+    /// Unit sphere the spline's control-point handles are drawn with.
+    pub handle_mesh: vpl::MeshId,
 }
 
 impl Default for InteractState {
@@ -35,6 +37,7 @@ impl Default for InteractState {
             selection: Selection::new(),
             animator: CameraAnimator::with_default_damping(),
             gizmo: Gizmo::new(),
+            handle_mesh: vpl::MeshId::INVALID,
             manip: ManipulationController::new(),
             transforms_snapshot: HashMap::new(),
             left_held: false,
@@ -59,6 +62,12 @@ impl App {
     pub(crate) fn build_interact_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.interact_state.scene = Scene::new();
         self.interact_state.selection.clear();
+
+        let handle_sphere = vpl::primitives::icosphere(1.0, 2);
+        self.interact_state.handle_mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &handle_sphere)
+            .expect("spline handle sphere upload");
 
         let positions = [
             [0.0, 0.0, 0.0],
@@ -380,9 +389,12 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
         released: false,
         double_clicked: false,
     };
-    fd.scene
-        .items_mut::<viewport_lib::GlyphItem>()
-        .push(app.interact_state.spline.handle_glyphs(9901, &spline_ctx));
+    fd.scene.mesh_instances.push(
+        app.interact_state
+            .spline
+            .handle_markers(9901, &spline_ctx)
+            .to_mesh_instances(app.interact_state.handle_mesh),
+    );
 }
 
 // ---------------------------------------------------------------------------

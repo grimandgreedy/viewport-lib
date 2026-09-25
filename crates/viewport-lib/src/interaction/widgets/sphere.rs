@@ -1,11 +1,13 @@
 //! Sphere widget: draggable center handle and radius handle.
 
 use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{ClipObject, ClipShape, GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::{ClipObject, ClipShape, PolylineItem};
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
-use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius};
+use super::{
+    HandleMarkers, WidgetContext, WidgetResult, ctx_ray, handle_colour, handle_world_radius,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SphereHandle {
@@ -16,8 +18,8 @@ enum SphereHandle {
 /// An interactive sphere widget with a draggable center and radius handle.
 ///
 /// Use `clip_object()` to get the visual fill/outline (push into
-/// `fd.effects.clip.objects` with `clip_geometry: false`), and `handle_glyphs()`
-/// for the draggable handle spheres (push into `fd.scene.items_mut::<crate::GlyphItem>()`).
+/// `fd.effects.clip.objects` with `clip_geometry: false`), and `handle_markers()`
+/// for the draggable handles (build the visual from the returned markers).
 ///
 /// # Usage
 ///
@@ -27,7 +29,8 @@ enum SphereHandle {
 /// // Each frame:
 /// sphere.update(&ctx);
 /// fd.effects.clip.objects.push(sphere.clip_object());
-/// fd.scene.items_mut::<crate::GlyphItem>().push(sphere.handle_glyphs(HANDLE_ID, &ctx));
+/// let markers = sphere.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct SphereWidget {
     /// World-space center of the sphere.
@@ -190,44 +193,30 @@ impl SphereWidget {
         }
     }
 
-    /// Build a `GlyphItem` with sphere handles: one at the center, one at the
-    /// radius edge (along +X from center).
+    /// Handle markers for the centre and the radius grip.
     ///
-    /// `id_base` is the pick ID for the center handle; `id_base + 1` for the radius handle.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         let rp = self.radius_handle_pos();
-        let r_center = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let r_rh = handle_world_radius(rp, &ctx.camera, ctx.viewport_size.y, 8.0);
-
-        let sc = if self.hovered_handle == Some(SphereHandle::Center)
-            || self.active_handle == Some(SphereHandle::Center)
-        {
-            1.0_f32
-        } else {
-            0.2
+        let hot = |h: SphereHandle| {
+            if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
+                1.0_f32
+            } else {
+                0.2
+            }
         };
-        let sr = if self.hovered_handle == Some(SphereHandle::Radius)
-            || self.active_handle == Some(SphereHandle::Radius)
-        {
-            1.0_f32
-        } else {
-            0.2
-        };
-
-        let mut g = GlyphItem::default();
-        g.positions = vec![self.center.to_array(), rp.to_array()];
-        g.vectors = vec![[r_center, 0.0, 0.0], [r_rh, 0.0, 0.0]];
-        g.scalars = vec![sc, sr];
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        HandleMarkers {
+            positions: vec![self.center, rp],
+            radii: vec![
+                handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(rp, &ctx.camera, ctx.viewport_size.y, 8.0),
+            ],
+            colours: vec![
+                handle_colour(self.handle_colour, hot(SphereHandle::Center)),
+                handle_colour(self.handle_colour, hot(SphereHandle::Radius)),
+            ],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -297,7 +286,7 @@ mod tests {
         let ctx = ctx_at(CENTRE);
         let w = SphereWidget::new(Vec3::ZERO, 1.0);
         assert!(!w.wireframe_item(1).positions.is_empty());
-        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+        assert!(!w.handle_markers(2, &ctx).positions.is_empty());
     }
 
     #[test]
