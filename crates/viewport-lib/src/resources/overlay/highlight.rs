@@ -510,7 +510,7 @@ impl DeviceResources {
                         }
                     }
                     SubObjectRef::Instance(i) | SubObjectRef::Splat(i) => {
-                        // Instanced items (glyphs, tensor glyphs, sprites) and
+                        // Instanced items (vector and tensor fields, sprites) and
                         // Gaussian splats highlight as a sprite marker at the
                         // instance position, transformed by the node model.
                         if let Some(positions) = sel.instance_lookup.get(node_id) {

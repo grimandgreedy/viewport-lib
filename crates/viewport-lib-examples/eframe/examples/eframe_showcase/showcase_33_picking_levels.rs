@@ -27,15 +27,16 @@ use viewport_lib_item_types::{
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+    VectorFieldItem,
 };
 
 use crate::eframe::egui;
 use vpl::{
     BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, DecalItem,
-    FrameData, GlyphItem, GlyphType, ItemSettings, LightingSettings, Material, MeshId, NodeId,
-    PickBackend, PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame,
-    SceneRenderItem, SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer,
-    VolumeData, VolumeMeshData, VolumeMeshItem,
+    FrameData, ItemSettings, LightingSettings, Material, MeshId, NodeId, PickBackend, PickId,
+    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
+    SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
+    VolumeMeshData, VolumeMeshItem,
 };
 
 use crate::App;
@@ -369,8 +370,10 @@ pub(crate) struct PlState {
     pub polyline_positions: Vec<[f32; 3]>,
     /// Strip lengths for the multi-strip polyline.
     pub polyline_strip_lengths: Vec<u32>,
-    /// Positions for the arrow glyph set (pick_id=31).
-    pub arrow_glyph_positions: Vec<[f32; 3]>,
+    /// Positions for the vector field (pick_id=31).
+    pub vector_field_positions: Vec<[f32; 3]>,
+    /// Arrow the vector field instances.
+    pub arrow_shape_id: MeshId,
     /// Positions for the tensor field (pick_id=32).
     pub tensor_field_positions: Vec<[f32; 3]>,
     /// Per-sample eigenvalues for the tensor field.
@@ -449,7 +452,8 @@ impl Default for PlState {
             tvm_tet_face_to_cell: Vec::new(),
             polyline_positions: Vec::new(),
             polyline_strip_lengths: Vec::new(),
-            arrow_glyph_positions: Vec::new(),
+            vector_field_positions: Vec::new(),
+            arrow_shape_id: MeshId::INVALID,
             tensor_field_positions: Vec::new(),
             tensor_field_eigenvalues: Vec::new(),
             tensor_field_eigenvectors: Vec::new(),
@@ -717,8 +721,12 @@ impl App {
         self.pl_state.polyline_positions = pl_pos;
         self.pl_state.polyline_strip_lengths = pl_lens;
 
-        // --- Arrow glyphs: 5 arrows at y=-4 pointing up (pick_id=31) ---
-        self.pl_state.arrow_glyph_positions = (0..5_i32)
+        // --- Vector field: 5 arrows at y=-4 pointing up (pick_id=31) ---
+        self.pl_state.arrow_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+            .expect("pl arrow shape mesh");
+        self.pl_state.vector_field_positions = (0..5_i32)
             .map(|i| [(i - 2) as f32 * 2.0, -4.0, 0.0])
             .collect();
 
@@ -1432,7 +1440,7 @@ impl App {
             Some(SubObjectRef::Vertex(_)) => "Mesh",
             Some(SubObjectRef::Point(_)) => "Point Cloud",
             Some(SubObjectRef::Splat(_)) => "Gaussian Splat",
-            Some(SubObjectRef::Instance(_)) => "Glyph",
+            Some(SubObjectRef::Instance(_)) => "Instance",
             Some(SubObjectRef::Segment(_)) => "Polyline",
             Some(SubObjectRef::Strip(_)) => "Polyline",
             Some(SubObjectRef::Cell(_)) => "Volume Mesh",
@@ -1527,7 +1535,7 @@ impl App {
             11 => Some("Volume Mesh"),
             12 => Some("TVM Tets"),
             30 => Some("Polyline"),
-            31 => Some("Arrow Glyphs"),
+            31 => Some("Vector Field"),
             32 => Some("Tensor Field"),
             33 => Some("Sprites"),
             34 => Some("XO Sprites"),
@@ -1889,7 +1897,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         }
         let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
         point_positions.insert(100, app.pl_state.pc_positions.clone());
-        // Instance / splat highlight positions. Glyphs and sprites carry
+        // Instance / splat highlight positions. Fields and sprites carry
         // world-space positions (no model entry); splats carry object-space
         // positions and get the splat model matrix so they highlight in place.
         let mut instance_lookup: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
@@ -1897,8 +1905,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             instance_lookup.insert(10, app.pl_state.splat_positions.clone());
             model_matrices.insert(10, pl_splat_model());
         }
-        if !app.pl_state.arrow_glyph_positions.is_empty() {
-            instance_lookup.insert(31, app.pl_state.arrow_glyph_positions.clone());
+        if !app.pl_state.vector_field_positions.is_empty() {
+            instance_lookup.insert(31, app.pl_state.vector_field_positions.clone());
         }
         if !app.pl_state.tensor_field_positions.is_empty() {
             instance_lookup.insert(32, app.pl_state.tensor_field_positions.clone());
@@ -2043,21 +2051,19 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         pl.settings.unlit = false;
         fd.scene.items_mut::<viewport_lib::PolylineItem>().push(pl);
     }
-    // Arrow glyphs (pick_id=31).
-    if !app.pl_state.arrow_glyph_positions.is_empty() {
-        let n = app.pl_state.arrow_glyph_positions.len();
-        let mut g = GlyphItem::default();
-        g.positions = app.pl_state.arrow_glyph_positions.clone();
+    // Vector field (pick_id=31).
+    if !app.pl_state.vector_field_positions.is_empty() {
+        let n = app.pl_state.vector_field_positions.len();
+        let mut g = VectorFieldItem::new(app.pl_state.arrow_shape_id);
+        g.positions = app.pl_state.vector_field_positions.clone();
         g.vectors = vec![[0.0, 0.0, 1.0]; n];
         g.scale = 0.8;
-        g.scale_by_magnitude = false;
-        g.use_default_colour = true;
-        g.default_colour = [0.75, 0.1, 1.0, 1.0].into();
-        g.glyph_type = GlyphType::Arrow;
+        g.size = SizeSource::Uniform(1.0);
+        g.colour = ColourSource::Solid([0.75, 0.1, 1.0, 1.0].into());
         g.settings.pick_id = PickId(31);
         g.settings.selected = app.pl_state.selection.contains(31);
         g.settings.unlit = false;
-        fd.scene.items_mut::<viewport_lib::GlyphItem>().push(g);
+        fd.scene.items_mut::<VectorFieldItem>().push(g);
     }
     // Tensor field (pick_id=32).
     if !app.pl_state.tensor_field_positions.is_empty() {

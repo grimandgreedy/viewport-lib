@@ -12,7 +12,7 @@
 /// validation error. Every mesh-family deform bind goes through this macro so
 /// the guard lives in one greppable place; do not open-code a deform group-2
 /// bind at a draw site. Group-2 binds for features that fundamentally need a
-/// third group (soft body, refraction, scivis LUT, volumes, glyph/tensor
+/// third group (soft body, refraction, scivis LUT, volumes, vector/tensor
 /// instance data, GPU picking) are not deform binds and are not gated: those
 /// features do not run on 2-group devices. The invariant is enforced
 /// headlessly by `two_bind_group_device_renders_without_validation_errors`.
@@ -105,7 +105,7 @@ pub use self::postprocess::*;
 pub struct FrameData {
     /// Camera state, viewport size, and viewport slot.
     pub camera: CameraFrame,
-    /// World-space scene content (surfaces, point clouds, glyphs, etc.).
+    /// World-space scene content (surfaces, point clouds, fields, etc.).
     pub scene: SceneFrame,
     /// Viewport presentation settings (background, grid, axes indicator).
     pub viewport: ViewportFrame,

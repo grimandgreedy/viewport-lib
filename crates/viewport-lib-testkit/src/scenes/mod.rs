@@ -23,9 +23,9 @@ pub mod textures;
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GlyphItem, LightingSettings,
-    Material, MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame,
-    SceneRenderItem, ViewportRenderer, primitives,
+    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, LightingSettings, Material,
+    MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem,
+    ViewportRenderer, primitives,
 };
 use viewport_lib_item_types::GpuMarchingCubesItem;
 use viewport_lib_item_types::PointCloudItem;
@@ -34,7 +34,9 @@ use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
     GaussianSplatItem, GpuImplicitItem, ImageSliceItem, VolumeSurfaceSliceItem,
 };
-use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TubeItem};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TubeItem, VectorFieldItem,
+};
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
@@ -69,9 +71,9 @@ pub struct BuiltScene {
     pub point_clouds: Vec<PointCloudItem>,
     /// Polyline items.
     pub polylines: Vec<PolylineItem>,
-    /// Glyph (arrow/sphere/cube instance) items.
-    pub glyphs: Vec<GlyphItem>,
-    /// Tensor glyph (ellipsoid) items.
+    /// Vector field items.
+    pub vector_fields: Vec<VectorFieldItem>,
+    /// Tensor field items.
     pub tensor_fields: Vec<TensorFieldItem>,
     /// Tube items.
     pub tube_items: Vec<TubeItem>,
@@ -196,7 +198,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     sf.generation = scene.generation;
     *sf.items_mut::<PointCloudItem>() = scene.point_clouds.clone();
     *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
-    *sf.items_mut::<viewport_lib::GlyphItem>() = scene.glyphs.clone();
+    *sf.items_mut::<viewport_lib_item_types::VectorFieldItem>() = scene.vector_fields.clone();
     *sf.items_mut::<viewport_lib_item_types::TensorFieldItem>() = scene.tensor_fields.clone();
     *sf.items_mut::<viewport_lib_item_types::TubeItem>() = scene.tube_items.clone();
     *sf.items_mut::<viewport_lib_item_types::StreamtubeItem>() = scene.streamtube_items.clone();
@@ -689,30 +691,6 @@ fn build_polyline(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
 }
 
-fn build_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // An 8x8 grid of arrow glyphs following a simple swirl field.
-    let mut positions = Vec::new();
-    let mut vectors = Vec::new();
-    for i in 0..8 {
-        for j in 0..8 {
-            let x = (i as f32 - 3.5) * 0.7;
-            let y = (j as f32 - 3.5) * 0.7;
-            positions.push([x, y, 0.0]);
-            // Swirl: vector perpendicular to the radius, rising slightly.
-            vectors.push([-y * 0.3, x * 0.3, 0.25]);
-        }
-    }
-    let mut g = GlyphItem::default();
-    g.positions = positions;
-    g.vectors = vectors;
-    g.scale = 0.6;
-    BuiltScene {
-        glyphs: vec![g],
-        lighting: rigs::from_above(),
-        ..Default::default()
-    }
-}
-
 /// The full catalogue of named scenes. The same list drives the counter tests,
 /// the snapshot tests, the benches, and the `catalogue_viewer` example.
 pub fn catalogue() -> Vec<NamedScene> {
@@ -806,11 +784,6 @@ pub fn catalogue() -> Vec<NamedScene> {
             name: "polyline",
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_polyline,
-        },
-        NamedScene {
-            name: "glyphs",
-            cameras: standard_cameras(Vec3::ZERO, 8.0),
-            build: build_glyphs,
         },
     ];
     scenes.extend(item_types::scenes());

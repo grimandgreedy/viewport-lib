@@ -163,7 +163,7 @@ pub struct PrepareBreakdown {
     /// Building and uploading instanced batches (grouping items by mesh and
     /// material, writing instance data).
     pub instancing_ms: f32,
-    /// Uploading non-mesh geometry: glyphs, point clouds, polylines, decals,
+    /// Uploading non-mesh geometry: fields, point clouds, polylines, decals,
     /// images, tubes, ribbons, slices, and volumes.
     pub geometry_ms: f32,
     /// Recording the shadow depth pass (directional cascades and point-light

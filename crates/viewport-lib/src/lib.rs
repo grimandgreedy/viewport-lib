@@ -300,23 +300,23 @@ pub use renderer::{
     DebugOutputMode, DebugQuantity, DebugVis, DecalAnimation, DecalBlendMode, DecalItem,
     DecalProjection, DisplaySettings, DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings,
     ExposureMode, ExposureReadback, ExposureSettings, FillRule, FilterMode, ForegroundPass,
-    ForegroundProjection, FrameData, GlyphItem, GlyphRunItem, GlyphSetRefItem, GlyphType,
-    GpuContext, GpuPickHit, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
-    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
-    MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS,
-    OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill,
-    OverlayFrame, OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape,
-    OverlayShapeItem, OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId,
-    OverlayTransform, OwnedPath, PassPath, PassView, PathSegment, PathTrack, PickBackend, PickHit,
-    PickId, PickMask, PickPoll, PickRectResult, PipelineMode, PolylineCap, PolylineItem,
-    PolylineRefItem, PolylineSelectionInfo, PositionedGlyph, PostProcessSettings, RenderCamera,
-    RepeatMode, RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame,
-    SceneRenderItem, ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern,
-    SubObjectRef, SubPath, SubSelection, SubSelectionRef, SurfaceLICConfig, SurfaceSubmission,
-    TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects, ViewportFrame,
-    ViewportId, ViewportRenderer, VignetteSettings, VolumeMeshItem, VolumeSelectionInfo,
-    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
+    ForegroundProjection, FrameData, GlyphRunItem, GpuContext, GpuPickHit, GradientStop,
+    GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor, LabelAnchorY,
+    LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture, LightingSettings,
+    LineCap, LineJoin, Lumen, Lux, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
+    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
+    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
+    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
+    OverlayStyleSupport, OverlayTextureId, OverlayTransform, OwnedPath, PassPath, PassView,
+    PathSegment, PathTrack, PickBackend, PickHit, PickId, PickMask, PickPoll, PickRectResult,
+    PipelineMode, PolylineCap, PolylineItem, PolylineRefItem, PolylineSelectionInfo,
+    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
+    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
+    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubObjectRef, SubPath, SubSelection,
+    SubSelectionRef, SurfaceLICConfig, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
+    TriangleDirection, ViewportEffects, ViewportFrame, ViewportId, ViewportRenderer,
+    VignetteSettings, VolumeMeshItem, VolumeSelectionInfo, VolumeTransparency,
+    aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 pub use renderer::{BlitTexture, DeviceLostInfo, DeviceLostWatcher};
 
@@ -338,6 +338,7 @@ pub use geometry::tangent_frames::{
 };
 pub use geometry::vector_samples::VectorSamples;
 
+pub use resources::PolylineId;
 #[allow(deprecated)]
 pub use resources::ViewportGpuResources;
 pub use resources::material::colourmap_data::{
@@ -366,7 +367,6 @@ pub use resources::{
     DEFORM_SLOT_COUNT_PUB as DEFORM_SLOT_COUNT, DEFORM_SLOT_PARAMS_BYTES, DeformSlotHandle,
     DeformSourceSlice, DeformStage, DeformerDesc, DeformerId, deform_slot_params_byte_offset,
 };
-pub use resources::{GlyphSetId, PolylineId};
 pub use resources::{
     MATERIAL_PLUGIN_PARAM_VEC4S, MaterialPlugin, MaterialPluginParamsHandle, MaterialPluginStats,
     ShadingHookDesc, ShadingHookId,

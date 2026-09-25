@@ -29,17 +29,6 @@ impl ViewportRenderer {
                 "the built-in polyline item type registers at construction, under a name nothing else can take",
             )
     }
-
-    /// The registered glyph item type, which holds the uploaded sets.
-    fn glyph_host(
-        &mut self,
-    ) -> crate::plugin_api::ItemTypeHost<'_, crate::renderer::item_plugins::glyph::GlyphPlugin>
-    {
-        self.item_type_plugin_host(crate::renderer::item_plugins::glyph::TYPE_NAME)
-            .expect(
-                "the built-in glyph item type registers at construction, under a name nothing else can take",
-            )
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,9 +96,4 @@ standard_uploads!(
     crate::renderer::PolylineItem,
     crate::resources::PolylineId,
     polyline_host
-);
-standard_uploads!(
-    crate::renderer::GlyphItem,
-    crate::resources::GlyphSetId,
-    glyph_host
 );

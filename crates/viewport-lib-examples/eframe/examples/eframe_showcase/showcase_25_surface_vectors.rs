@@ -10,13 +10,14 @@
 //!   per-edge scalar values via Whitney form interpolation.
 //!
 //! All three return positions paired with world-space vectors, which this
-//! showcase turns into arrows submitted to `SceneFrame::glyphs` each frame.
+//! showcase turns into a `VectorFieldItem` submitted each frame.
 
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::VectorFieldItem;
 use vpl::{
-    BackfacePolicy, BuiltinColourmap, ColourmapId, FrameData, GlyphItem, LightingSettings,
+    BackfacePolicy, BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings,
     MeshData, MeshId, SceneRenderItem, edge_one_form_vectors, face_intrinsic_vectors,
     vertex_intrinsic_vectors,
 };
@@ -64,6 +65,8 @@ pub(crate) struct SvState {
     pub edge_vals: Vec<f32>,
     /// Rainbow colourmap ID fetched at build time.
     pub rainbow_id: Option<ColourmapId>,
+    /// Arrow the field instances, uploaded with the render meshes.
+    pub arrow_shape_id: vpl::MeshId,
 }
 
 impl Default for SvState {
@@ -83,6 +86,7 @@ impl Default for SvState {
             face_vecs: Vec::new(),
             edge_vals: Vec::new(),
             rainbow_id: None,
+            arrow_shape_id: vpl::MeshId::INVALID,
         }
     }
 }
@@ -128,7 +132,12 @@ impl App {
 
         self.sv_state.built = true;
 
-        // Generate glyph data at the current density.
+        self.sv_state.arrow_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+            .expect("sv arrow shape mesh");
+
+        // Generate the field data at the current density.
         self.rebuild_sv_glyph_data();
     }
 
@@ -215,8 +224,8 @@ impl App {
         (total as f32 * self.sv_state.density).ceil().max(1.0) as usize
     }
 
-    /// Build the [`GlyphItem`] for the active sub-mode.
-    pub(crate) fn sv_glyph_item(&self) -> GlyphItem {
+    /// Build the [`VectorFieldItem`] for the active sub-mode.
+    pub(crate) fn sv_field_item(&self) -> VectorFieldItem {
         let samples = match self.sv_state.mode {
             SvMode::VertexIntrinsic => vertex_intrinsic_vectors(
                 &self.sv_state.positions[0],
@@ -236,11 +245,14 @@ impl App {
                 &self.sv_state.edge_vals,
             ),
         };
-        let mut item = GlyphItem::default();
+        let mut item = VectorFieldItem::new(self.sv_state.arrow_shape_id);
         item.positions = samples.positions;
         item.vectors = samples.vectors;
         item.scale = self.sv_state.scale;
-        item.colourmap_id = self.sv_state.rainbow_id;
+        item.colour = ColourSource::Natural {
+            range: None,
+            colourmap: self.sv_state.rainbow_id,
+        };
         item.settings.unlit = true;
         item
     }
@@ -540,8 +552,8 @@ pub(crate) fn submit_sv_items(app: &mut App, fd: &mut FrameData) {
         return;
     }
     fd.scene
-        .items_mut::<viewport_lib::GlyphItem>()
-        .push(app.sv_glyph_item());
+        .items_mut::<VectorFieldItem>()
+        .push(app.sv_field_item());
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +609,7 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
-    // Surface vector glyphs (Showcase 25) : submitted every frame.
+    // Surface vector fields (Showcase 25) : submitted every frame.
     submit_sv_items(app, &mut *fd);
 }
 

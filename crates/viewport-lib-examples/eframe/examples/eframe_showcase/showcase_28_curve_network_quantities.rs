@@ -7,13 +7,14 @@
 //! - **NodeColour**: per-node direct RGBA (smooth gradient along strip)
 //! - **EdgeColour**: per-edge direct RGBA (flat constant colour per segment)
 //! - **NodeRadius**: per-node line width that varies along the strip
-//! - **NodeVectors**: tangent arrows at each node (auto-rendered via GlyphItem)
+//! - **NodeVectors**: tangent arrows at each node, as their own vector field
 //! - **EdgeVectors**: normal arrows at each segment midpoint
 
 use crate::App;
 use crate::eframe::egui;
 use std::f32::consts::TAU;
 use viewport_lib as vpl;
+use viewport_lib_item_types::VectorFieldItem;
 use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
 };
@@ -31,6 +32,8 @@ pub enum CnqMode {
 pub(crate) struct CnqState {
     pub mode: CnqMode,
     pub line_width: f32,
+    /// Arrow the two vector modes instance, uploaded on first build.
+    pub arrow_shape_id: vpl::MeshId,
 }
 
 impl Default for CnqState {
@@ -38,6 +41,7 @@ impl Default for CnqState {
         Self {
             mode: CnqMode::EdgeScalar,
             line_width: 4.0,
+            arrow_shape_id: vpl::MeshId::INVALID,
         }
     }
 }
@@ -178,7 +182,7 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
 
 /// Arrows for the two vector modes, as their own item rather than something
 /// the polyline generates.
-pub(crate) fn make_cnq_vectors(app: &App) -> Option<viewport_lib::GlyphItem> {
+pub(crate) fn make_cnq_vectors(app: &App) -> Option<VectorFieldItem> {
     let (positions, tangents, normals_3d) = cnq_helix();
     let num_segs = positions.len().saturating_sub(1);
 
@@ -217,7 +221,7 @@ pub(crate) fn make_cnq_vectors(app: &App) -> Option<viewport_lib::GlyphItem> {
         _ => return None,
     };
 
-    let mut g = viewport_lib::GlyphItem::default();
+    let mut g = VectorFieldItem::new(app.cnq_state.arrow_shape_id);
     g.positions = at;
     g.vectors = vectors;
     g.scale = 0.8;
@@ -239,9 +243,7 @@ pub(crate) fn submit_cnq_items(app: &App, fd: &mut FrameData) {
         .items_mut::<viewport_lib::PolylineItem>()
         .push(make_cnq_polyline_item(app));
     if let Some(vectors) = make_cnq_vectors(app) {
-        fd.scene
-            .items_mut::<viewport_lib::GlyphItem>()
-            .push(vectors);
+        fd.scene.items_mut::<VectorFieldItem>().push(vectors);
     }
 }
 
@@ -250,8 +252,16 @@ pub(crate) fn submit_cnq_items(app: &App, fd: &mut FrameData) {
 // ---------------------------------------------------------------------------
 
 /// Whether the host should call [`build`] before the next frame.
-pub(crate) fn needs_build(_app: &crate::App) -> bool {
-    false
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    app.cnq_state.arrow_shape_id == vpl::MeshId::INVALID
+}
+
+/// Upload the arrow the two vector modes instance.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.cnq_state.arrow_shape_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+        .expect("cnq arrow shape mesh");
 }
 
 /// Build this showcase's scene and frame its opening camera. Called once, on
@@ -352,6 +362,9 @@ pub(crate) static SHOWCASE: ScCurveNetworkQuantities = ScCurveNetworkQuantities;
 impl crate::Showcase for ScCurveNetworkQuantities {
     fn needs_build(&self, app: &crate::App) -> bool {
         needs_build(app)
+    }
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
     }
     fn scene(
         &self,

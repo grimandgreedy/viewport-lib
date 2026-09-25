@@ -17,7 +17,8 @@ use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
-    RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+    RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,
+    TubeItem, VectorFieldItem,
 };
 use viewport_lib_item_types::{ScatterVolume, ScatterVolumeItem};
 
@@ -30,6 +31,11 @@ use viewport_lib_item_types::{
 /// The item-type scenes appended to the main catalogue.
 pub fn scenes() -> Vec<NamedScene> {
     vec![
+        NamedScene {
+            name: "vector_fields",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_vector_fields,
+        },
         NamedScene {
             name: "tensor_fields",
             cameras: standard_cameras(Vec3::ZERO, 6.0),
@@ -243,6 +249,34 @@ fn checker_texture(ctx: &mut BuildCtx<'_>, a: [u8; 3], b: [u8; 3]) -> viewport_l
 }
 
 // --- scenes ------------------------------------------------------------------
+
+fn build_vector_fields(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let shape = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::arrow(0.06, 0.15, 0.35, 12))
+        .expect("vector field shape mesh");
+
+    // An 8x8 grid following a simple swirl field, so both the direction and the
+    // magnitude vary across the grid.
+    let mut field = VectorFieldItem::new(shape);
+    for i in 0..8 {
+        for j in 0..8 {
+            let x = (i as f32 - 3.5) * 0.7;
+            let y = (j as f32 - 3.5) * 0.7;
+            field.positions.push([x, y, 0.0]);
+            // Swirl: perpendicular to the radius, rising slightly.
+            field.vectors.push([-y * 0.3, x * 0.3, 0.25]);
+        }
+    }
+    field.scale = 0.6;
+
+    BuiltScene {
+        vector_fields: vec![field],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
 
 fn build_tensor_fields(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let shape = ctx

@@ -20,10 +20,9 @@ use viewport_lib::wgpu;
 // `use common::*;` covers the common set. Unused names from a glob import do not
 // warn, so each file only pays for what it actually references.
 pub use viewport_lib::{
-    Aabb, AlphaMode, AnchorX, AnchorY, BackfacePolicy, Camera, DecalItem, GlyphItem, GlyphType,
-    IndirectLightSource, ItemSettings, LightKind, LightSource, Material, MeshId,
-    OverrideBufferSlice, PickBackend, PickId, PickMask, PickPoll, PolylineItem, Scene, Selection,
-    ShadingModel, VolumeMeshItem,
+    Aabb, AlphaMode, AnchorX, AnchorY, BackfacePolicy, Camera, DecalItem, IndirectLightSource,
+    ItemSettings, LightKind, LightSource, Material, MeshId, OverrideBufferSlice, PickBackend,
+    PickId, PickMask, PickPoll, PolylineItem, Scene, Selection, ShadingModel, VolumeMeshItem,
     error::ViewportError,
     plugin_api::{
         ItemTypePlugin, PickPassContext, PluginItemCollection, SharedBindings,

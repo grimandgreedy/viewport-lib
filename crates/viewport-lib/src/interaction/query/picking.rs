@@ -161,7 +161,7 @@ pub fn pick_scene_nodes_cpu(
     // Light glyphs render on top of meshes and are small, so test them first.
     // Any hit short-circuits the underlying mesh raycast (matches what the GPU
     // pick path produces naturally because the glyph rasterises on top).
-    if let Some(hit) = pick_light_glyphs_cpu(ray_origin, ray_dir, scene) {
+    if let Some(hit) = pick_light_indicators_cpu(ray_origin, ray_dir, scene) {
         return Some(hit);
     }
 
@@ -171,12 +171,12 @@ pub fn pick_scene_nodes_cpu(
 
 /// Half-extent (world units) of the bounding sphere used for picking a
 /// light glyph. Slightly larger than the visual glyph so clicks near the
-/// edge still land. Matches the visual `GLYPH_SIZE` in `scene::light_glyphs`.
+/// edge still land. Matches the visual `GLYPH_SIZE` in `scene::light_indicators`.
 const LIGHT_GLYPH_PICK_RADIUS: f32 = 0.35;
 
 /// Ray-test against the bounding sphere of each scene-graph light glyph.
 /// Returns the nearest hit (along the ray) if any.
-fn pick_light_glyphs_cpu(
+fn pick_light_indicators_cpu(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
     scene: &crate::scene::scene::Scene,

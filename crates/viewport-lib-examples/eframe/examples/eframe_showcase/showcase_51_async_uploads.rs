@@ -26,15 +26,15 @@ use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem};
 use viewport_lib_item_types::{
     RibbonId, RibbonItem, RibbonRefItem, SpriteInstanceSetId, SpriteInstanceUploads, SpriteItem,
     SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorFieldId, TensorFieldItem,
-    TensorFieldRefItem, TensorSource, TubeId, TubeItem, TubeRefItem,
+    TensorFieldRefItem, TensorSource, TubeId, TubeItem, TubeRefItem, VectorFieldId,
+    VectorFieldItem, VectorFieldRefItem,
 };
 
 use crate::eframe::egui;
 use vpl::{
-    ColourmapId, GlyphItem, GlyphSetId, GlyphSetRefItem, JobId, LightKind, LightSource,
-    LightingSettings, Material, MeshData, MeshId, OverlayTextureId, PolylineId, PolylineItem,
-    PolylineRefItem, SceneRenderItem, UploadStatus, ViewportRenderer, VolumeId,
-    plugins::skinning::SkinWeights,
+    ColourmapId, JobId, LightKind, LightSource, LightingSettings, Material, MeshData, MeshId,
+    OverlayTextureId, PolylineId, PolylineItem, PolylineRefItem, SceneRenderItem, UploadStatus,
+    ViewportRenderer, VolumeId, plugins::skinning::SkinWeights,
 };
 
 use crate::App;
@@ -152,7 +152,7 @@ pub(crate) struct AsyncUploadsState {
     pub tube_state: AssetState,
     pub ribbon_state: AssetState,
     pub point_cloud_state: AssetState,
-    pub glyph_set_state: AssetState,
+    pub vector_field_state: AssetState,
     pub tensor_field_set_state: AssetState,
     pub volume_state: AssetState,
     pub gaussian_splat_state: AssetState,
@@ -167,7 +167,7 @@ pub(crate) struct AsyncUploadsState {
     pub loaded_tube_id: Option<TubeId>,
     pub loaded_ribbon_id: Option<RibbonId>,
     pub loaded_point_cloud_id: Option<PointCloudId>,
-    pub loaded_glyph_set_id: Option<GlyphSetId>,
+    pub loaded_vector_field_id: Option<VectorFieldId>,
     pub loaded_tensor_field_set_id: Option<TensorFieldId>,
     pub loaded_volume_id: Option<VolumeId>,
     pub loaded_gaussian_splat_id: Option<GaussianSplatId>,
@@ -212,7 +212,7 @@ impl Default for AsyncUploadsState {
             tube_state: AssetState::Idle,
             ribbon_state: AssetState::Idle,
             point_cloud_state: AssetState::Idle,
-            glyph_set_state: AssetState::Idle,
+            vector_field_state: AssetState::Idle,
             tensor_field_set_state: AssetState::Idle,
             volume_state: AssetState::Idle,
             gaussian_splat_state: AssetState::Idle,
@@ -226,7 +226,7 @@ impl Default for AsyncUploadsState {
             loaded_tube_id: None,
             loaded_ribbon_id: None,
             loaded_point_cloud_id: None,
-            loaded_glyph_set_id: None,
+            loaded_vector_field_id: None,
             loaded_tensor_field_set_id: None,
             loaded_volume_id: None,
             loaded_gaussian_splat_id: None,
@@ -279,7 +279,7 @@ impl App {
         self.async_uploads_state.tube_state = AssetState::Idle;
         self.async_uploads_state.ribbon_state = AssetState::Idle;
         self.async_uploads_state.point_cloud_state = AssetState::Idle;
-        self.async_uploads_state.glyph_set_state = AssetState::Idle;
+        self.async_uploads_state.vector_field_state = AssetState::Idle;
         self.async_uploads_state.tensor_field_set_state = AssetState::Idle;
         self.async_uploads_state.volume_state = AssetState::Idle;
         self.async_uploads_state.gaussian_splat_state = AssetState::Idle;
@@ -293,7 +293,7 @@ impl App {
         self.async_uploads_state.loaded_tube_id = None;
         self.async_uploads_state.loaded_ribbon_id = None;
         self.async_uploads_state.loaded_point_cloud_id = None;
-        self.async_uploads_state.loaded_glyph_set_id = None;
+        self.async_uploads_state.loaded_vector_field_id = None;
         self.async_uploads_state.loaded_tensor_field_set_id = None;
         self.async_uploads_state.loaded_volume_id = None;
         self.async_uploads_state.loaded_gaussian_splat_id = None;
@@ -651,21 +651,21 @@ impl App {
             }
         }
 
-        // Glyph set: when Ready, take the GlyphSetId.
+        // Vector field: when Ready, take the VectorFieldId.
         if let AssetState::InFlight { job, started, .. } =
-            self.async_uploads_state.glyph_set_state.clone()
+            self.async_uploads_state.vector_field_state.clone()
         {
             match renderer.upload_status(job) {
                 UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.loaded_glyph_set_id = Some(id);
-                        self.async_uploads_state.glyph_set_state =
+                        self.async_uploads_state.loaded_vector_field_id = Some(id);
+                        self.async_uploads_state.vector_field_state =
                             AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.glyph_set_state = AssetState::Failed {
+                        self.async_uploads_state.vector_field_state = AssetState::Failed {
                             reason: format!("{e}"),
                             duration_ms,
                         };
@@ -673,13 +673,13 @@ impl App {
                 },
                 UploadStatus::Failed(e) => {
                     let duration_ms = take_job_duration_ms(renderer, job, &started);
-                    self.async_uploads_state.glyph_set_state = AssetState::Failed {
+                    self.async_uploads_state.vector_field_state = AssetState::Failed {
                         reason: format!("{e}"),
                         duration_ms,
                     };
                 }
                 UploadStatus::Pending { progress } => {
-                    self.async_uploads_state.glyph_set_state = AssetState::InFlight {
+                    self.async_uploads_state.vector_field_state = AssetState::InFlight {
                         job,
                         progress,
                         started,
@@ -687,12 +687,12 @@ impl App {
                 }
                 UploadStatus::Unknown => {
                     renderer.drop_job_duration(job);
-                    self.async_uploads_state.glyph_set_state = AssetState::Idle;
+                    self.async_uploads_state.vector_field_state = AssetState::Idle;
                 }
             }
         }
 
-        // Tensor glyph set: when Ready, take the TensorFieldId.
+        // Tensor field: when Ready, take the TensorFieldId.
         if let AssetState::InFlight { job, started, .. } =
             self.async_uploads_state.tensor_field_set_state.clone()
         {
@@ -975,7 +975,7 @@ fn collect_terminal_durations_ms(state: &AsyncUploadsState) -> Vec<u64> {
         read(&state.tube_state),
         read(&state.ribbon_state),
         read(&state.point_cloud_state),
-        read(&state.glyph_set_state),
+        read(&state.vector_field_state),
         read(&state.tensor_field_set_state),
         read(&state.volume_state),
         read(&state.gaussian_splat_state),
@@ -1000,7 +1000,7 @@ fn all_assets_terminal(state: &AsyncUploadsState) -> bool {
         && is_terminal(&state.tube_state)
         && is_terminal(&state.ribbon_state)
         && is_terminal(&state.point_cloud_state)
-        && is_terminal(&state.glyph_set_state)
+        && is_terminal(&state.vector_field_state)
         && is_terminal(&state.tensor_field_set_state)
         && is_terminal(&state.volume_state)
         && is_terminal(&state.gaussian_splat_state)
@@ -1280,11 +1280,11 @@ fn demo_point_cloud(size: PayloadSize) -> PointCloudItem {
     item
 }
 
-fn demo_glyph_set() -> GlyphItem {
+fn demo_vector_field(shape: MeshId) -> VectorFieldItem {
     // A small ring of arrows pointing outward, in object-local coordinates
     // around the origin. The ref item's `model` matrix places it in the
     // showcase grid.
-    let mut item = GlyphItem::default();
+    let mut item = VectorFieldItem::new(shape);
     let count = 12;
     let r = 0.6;
     let mut positions = Vec::with_capacity(count);
@@ -1298,9 +1298,8 @@ fn demo_glyph_set() -> GlyphItem {
     item.positions = positions;
     item.vectors = vectors;
     item.scale = 0.3;
-    item.scale_by_magnitude = false;
-    item.default_colour = [0.9, 0.7, 0.3, 1.0].into();
-    item.use_default_colour = true;
+    item.size = vpl::SizeSource::Uniform(1.0);
+    item.colour = vpl::ColourSource::Solid([0.9, 0.7, 0.3, 1.0].into());
     item
 }
 
@@ -1699,20 +1698,27 @@ impl App {
         }
     }
 
-    fn launch_glyph_set(&mut self, renderer: &mut ViewportRenderer) {
-        let item = demo_glyph_set();
+    fn launch_vector_field(&mut self, renderer: &mut ViewportRenderer) {
+        let shape = match renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+        {
+            Ok(id) => id,
+            Err(_) => return,
+        };
+        let item = demo_vector_field(shape);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
-            self.async_uploads_state.loaded_glyph_set_id = Some(id);
-            self.async_uploads_state.glyph_set_state = AssetState::Loaded {
+            self.async_uploads_state.loaded_vector_field_id = Some(id);
+            self.async_uploads_state.vector_field_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
             let job = renderer
                 .begin_upload(&self.device, &self.queue, item)
                 .unwrap();
-            self.async_uploads_state.glyph_set_state = AssetState::InFlight {
+            self.async_uploads_state.vector_field_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
                 started,
@@ -1906,7 +1912,7 @@ impl App {
         self.launch_tube(renderer);
         self.launch_ribbon(renderer);
         self.launch_point_cloud(renderer);
-        self.launch_glyph_set(renderer);
+        self.launch_vector_field(renderer);
         self.launch_tensor_field_set(renderer);
         self.launch_volume(renderer);
         self.launch_gaussian_splats(renderer);
@@ -1966,12 +1972,10 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
         ref_item.model = translate(-4.8, 2.4);
         fd.scene.items_mut::<PointCloudRefItem>().push(ref_item);
     }
-    if let Some(id) = app.async_uploads_state.loaded_glyph_set_id {
-        let mut ref_item = GlyphSetRefItem::new(id);
+    if let Some(id) = app.async_uploads_state.loaded_vector_field_id {
+        let mut ref_item = VectorFieldRefItem::new(id);
         ref_item.model = translate(4.8, 2.4);
-        fd.scene
-            .items_mut::<viewport_lib::GlyphSetRefItem>()
-            .push(ref_item);
+        fd.scene.items_mut::<VectorFieldRefItem>().push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_tensor_field_set_id {
         let mut ref_item = TensorFieldRefItem::new(id);
@@ -2032,7 +2036,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
         app.async_uploads_state.tube_state = AssetState::Idle;
         app.async_uploads_state.ribbon_state = AssetState::Idle;
         app.async_uploads_state.point_cloud_state = AssetState::Idle;
-        app.async_uploads_state.glyph_set_state = AssetState::Idle;
+        app.async_uploads_state.vector_field_state = AssetState::Idle;
         app.async_uploads_state.tensor_field_set_state = AssetState::Idle;
         app.async_uploads_state.volume_state = AssetState::Idle;
         app.async_uploads_state.gaussian_splat_state = AssetState::Idle;
@@ -2046,7 +2050,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
         app.async_uploads_state.loaded_tube_id = None;
         app.async_uploads_state.loaded_ribbon_id = None;
         app.async_uploads_state.loaded_point_cloud_id = None;
-        app.async_uploads_state.loaded_glyph_set_id = None;
+        app.async_uploads_state.loaded_vector_field_id = None;
         app.async_uploads_state.loaded_tensor_field_set_id = None;
         app.async_uploads_state.loaded_volume_id = None;
         app.async_uploads_state.loaded_gaussian_splat_id = None;
@@ -2234,7 +2238,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
             asset_row(
                 ui,
                 "Glyph set",
-                &app.async_uploads_state.glyph_set_state,
+                &app.async_uploads_state.vector_field_state,
                 &mut clicked_glyph_set,
             );
             asset_row(
@@ -2387,7 +2391,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
         app.launch_point_cloud(renderer);
     }
     if clicked_glyph_set {
-        app.launch_glyph_set(renderer);
+        app.launch_vector_field(renderer);
     }
     if clicked_tensor_field_set {
         app.launch_tensor_field_set(renderer);

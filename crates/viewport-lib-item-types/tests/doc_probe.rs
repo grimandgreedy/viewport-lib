@@ -22,10 +22,9 @@ use viewport_lib_item_types::{
 };
 
 // The types that read as belonging to one of the above but stay in
-// `viewport-lib`: the glyph item type has not moved, `SpriteBlend` selects a
-// pipeline for instanced mesh batches too, and the scatter settings are frame
-// state rather than item data.
-use viewport_lib::{GlyphItem, GlyphType, ScatterQuality, ScatterSettings, SpriteBlend};
+// `viewport-lib`: `SpriteBlend` selects a pipeline for instanced mesh batches
+// too, and the scatter settings are frame state rather than item data.
+use viewport_lib::{ScatterQuality, ScatterSettings, SpriteBlend};
 
 /// The upload surfaces, in the shape a consumer writes them.
 #[allow(dead_code)]

@@ -72,22 +72,21 @@ pub use self::types::{
     ComputeFilterKind, ContactShadowSettings, CylindricalFacing, DebugOutputMode, DebugQuantity,
     DebugVis, DecalAnimation, DecalBlendMode, DecalItem, DecalProjection, DisplaySettings,
     DofSettings, EdlSettings, EffectsFrame, EnvironmentSettings, ExposureMode, ExposureSettings,
-    FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData, GlyphItem, GlyphRunItem,
-    GlyphSetRefItem, GlyphType, GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource,
-    InteractionFrame, LabelAnchor, LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind,
-    LightSource, LightingPosture, LightingSettings, LineCap, LineJoin, Lumen, Lux,
-    MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem, NineSlice, OVERLAY_MAX_GRADIENT_STOPS,
-    OVERLAY_MAX_SHADOW_LAYERS, OutlineMode, OverlayAnchoring, OverlayAnimations, OverlayClip,
-    OverlayEasing, OverlayFill, OverlayFrame, OverlayGeometryId, OverlayOrigin,
-    OverlayPolylineItem, OverlayShape, OverlayShapeItem, OverlayStroke, OverlayStyle,
-    OverlayStyleSupport, OverlayTextureId, OverlayTransform, POINT_SHADOW_FACE_SIZE, PathSegment,
-    PathTrack, PipelineMode, PointShadowMode, PolylineCap, PolylineItem, PolylineRefItem,
-    PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode, RetainedOverlay,
-    ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem, ShadowFilter,
-    ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath, SurfaceLICConfig,
-    SurfaceSubmission, TextureTransform, TileMode, ToneMapping, TriangleDirection, ViewportEffects,
-    ViewportFrame, VignetteSettings, VolumeMeshItem, VolumeTransparency, aabb_wireframe_polyline,
-    obb_wireframe_polyline, sphere_wireframe_polyline,
+    FillRule, FilterMode, ForegroundPass, ForegroundProjection, FrameData, GlyphRunItem,
+    GradientStop, GroundPlane, GroundPlaneMode, IndirectLightSource, InteractionFrame, LabelAnchor,
+    LabelAnchorY, LabelItem, LerpAnim, LicOverlay, LightKind, LightSource, LightingPosture,
+    LightingSettings, LineCap, LineJoin, Lumen, Lux, MAX_POINT_SHADOW_LIGHTS, MeshInstanceItem,
+    NineSlice, OVERLAY_MAX_GRADIENT_STOPS, OVERLAY_MAX_SHADOW_LAYERS, OutlineMode,
+    OverlayAnchoring, OverlayAnimations, OverlayClip, OverlayEasing, OverlayFill, OverlayFrame,
+    OverlayGeometryId, OverlayOrigin, OverlayPolylineItem, OverlayShape, OverlayShapeItem,
+    OverlayStroke, OverlayStyle, OverlayStyleSupport, OverlayTextureId, OverlayTransform,
+    POINT_SHADOW_FACE_SIZE, PathSegment, PathTrack, PipelineMode, PointShadowMode, PolylineCap,
+    PolylineItem, PolylineRefItem, PositionedGlyph, PostProcessSettings, RenderCamera, RepeatMode,
+    RetainedOverlay, ScatterQuality, ScatterSettings, SceneEffects, SceneFrame, SceneRenderItem,
+    ShadowFilter, ShadowLayer, ShadowSettings, SpriteBlend, StrokePattern, SubPath,
+    SurfaceLICConfig, SurfaceSubmission, TextureTransform, TileMode, ToneMapping,
+    TriangleDirection, ViewportEffects, ViewportFrame, VignetteSettings, VolumeMeshItem,
+    VolumeTransparency, aabb_wireframe_polyline, obb_wireframe_polyline, sphere_wireframe_polyline,
 };
 
 /// An opaque handle to a per-viewport GPU state slot.
@@ -355,8 +354,6 @@ pub struct ViewportRenderer {
     plugin_frame_index: u64,
     /// Performance counters from the last frame.
     last_stats: crate::renderer::stats::FrameStats,
-    /// Per-frame glyph GPU data, rebuilt in prepare(), consumed in paint().
-    /// Per-frame tensor glyph GPU data, rebuilt in prepare(), consumed in paint().
     /// Per-frame polyline GPU data, rebuilt in prepare(), consumed in paint().
     polyline_gpu_data: Vec<crate::resources::PolylineGpuData>,
     /// Per-frame general tube GPU data, rebuilt in prepare(), consumed in paint().
@@ -500,8 +497,6 @@ pub struct ViewportRenderer {
     /// Opaque volume mesh items from the last `prepare()` call, retained for cell-level `pick()` dispatch.
     pick_volume_mesh_items: Vec<VolumeMeshItem>,
     /// Polyline items from the last `prepare()` call, retained for `pick()` dispatch.
-    /// Glyph items from the last `prepare()` call, retained for `pick()` dispatch.
-    /// Tensor glyph items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Volume surface slice items from the last `prepare()` call, retained for `pick()` dispatch.
     /// Decal items from the last `prepare()` call, retained for `pick()` dispatch.
     /// When `false`, `prepare()` skips populating the CPU pick caches above, so
@@ -659,7 +654,7 @@ impl ViewportRenderer {
     /// - `SHADER_PRIMITIVE_INDEX` lets the GPU pick pass read the rasterizer's
     ///   triangle index, so a GPU pick can resolve the hit face / cell / segment
     ///   (not just the object). Without it the GPU pick stays object-level for
-    ///   triangle-meshed types; instance- and segment-level picks (glyphs,
+    ///   triangle-meshed types; instance- and segment-level picks (fields,
     ///   sprites, polylines) do not need it.
     /// - `FLOAT32_FILTERABLE` lets direct-volume (`VolumeItem`) rendering keep the
     ///   scalar field in a full-precision `R32Float` 3D texture and still sample
@@ -1251,7 +1246,7 @@ impl ViewportRenderer {
     ///
     /// When enabled, `prepare()` retains a copy of the frame's pickable items so
     /// `pick()` and `pick_rect()` can run later (e.g. on a mouse click) without the
-    /// scene data. This copies all inline point/glyph/curve geometry each frame, so it
+    /// scene data. This copies all inline point/field/curve geometry each frame, so it
     /// is disabled by default: turn it on only when using the CPU `pick()`/`pick_rect()`
     /// path. The GPU path (`pick_scene_gpu`) and the renderer-free
     /// `interaction::picking` functions do not need it.

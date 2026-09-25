@@ -31,12 +31,11 @@ use viewport_lib_item_types::{
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
 use viewport_lib_item_types::{
-    RibbonItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+    RibbonItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem, VectorFieldItem,
 };
 use vpl::{
-    ColourmapId, FrameData, GlyphItem, GlyphType, ItemSettings, LightSource, LightingSettings,
-    Material, MeshId, PolylineItem, SceneRenderItem, ViewportRenderer, VolumeId, VolumeMeshItem,
-    VolumeTransparency,
+    ColourmapId, FrameData, ItemSettings, LightSource, LightingSettings, Material, MeshId,
+    PolylineItem, SceneRenderItem, ViewportRenderer, VolumeId, VolumeMeshItem, VolumeTransparency,
 };
 
 use crate::App;
@@ -51,6 +50,7 @@ pub(crate) struct LcState {
     pub box_mesh_id: Option<MeshId>,
     pub disk_mesh_id: Option<MeshId>,
     pub tensor_shape_id: Option<MeshId>,
+    pub arrow_shape_id: Option<MeshId>,
     pub splat_id: Option<GaussianSplatId>,
     pub volume_id: Option<VolumeId>,
     /// Single-tet volume mesh used to demonstrate transparent volumetric
@@ -88,6 +88,7 @@ impl Default for LcState {
             box_mesh_id: None,
             disk_mesh_id: None,
             tensor_shape_id: None,
+            arrow_shape_id: None,
             splat_id: None,
             volume_id: None,
             tvm_item: None,
@@ -223,6 +224,11 @@ impl App {
             .resources_mut()
             .upload_mesh_data(&self.device, &vpl::primitives::icosphere(1.0, 2))
             .ok();
+        // --- Arrow for the vector field, pointing along +Z ---
+        self.lc_state.arrow_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+            .ok();
 
         // --- Small disk mesh for the volume surface slice ---
         {
@@ -341,7 +347,7 @@ pub(crate) fn controls_lc(app: &mut App, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.weak("Grid (X-Z plane):");
-    ui.label("Row 0: Surface mesh | Point cloud | Glyph | Tensor glyph | Polyline");
+    ui.label("Row 0: Surface mesh | Point cloud | Vector field | Tensor field | Polyline");
     ui.label("Row 1: Streamtube | Tube | Ribbon | GPU implicit | Gaussian splat");
     ui.label("Row 2: Volume | Vol. surface slice | Transp. vol. mesh");
     ui.separator();
@@ -454,12 +460,12 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
 
-    // Cell (2, 0): glyphs on a ring in the camera-facing X-Z plane, tangent vectors
-    // along the same plane so the arrows lie flat against the screen.
-    {
+    // Cell (2, 0): a vector field on a ring in the camera-facing X-Z plane,
+    // tangent vectors along the same plane so the arrows lie flat against the
+    // screen.
+    if let Some(shape) = s.arrow_shape_id {
         let p = cell(2, 0);
-        let mut g = GlyphItem::default();
-        g.glyph_type = GlyphType::Arrow;
+        let mut g = VectorFieldItem::new(shape);
         let n = 8;
         for i in 0..n {
             let theta = (i as f32 / n as f32) * std::f32::consts::TAU;
@@ -468,11 +474,10 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
                 .push([p.x + r * theta.cos(), p.y, p.z + r * theta.sin()]);
             g.vectors.push([-theta.sin() * 0.6, 0.0, theta.cos() * 0.6]);
         }
-        g.use_default_colour = true;
-        g.default_colour = [0.72, 0.42, 0.04, 1.0].into();
+        g.colour = vpl::ColourSource::Solid([0.72, 0.42, 0.04, 1.0].into());
         g.scale = 0.9;
         broadcast(s, &mut g.settings);
-        fd.scene.items_mut::<viewport_lib::GlyphItem>().push(g);
+        fd.scene.items_mut::<VectorFieldItem>().push(g);
     }
 
     // Cell (3, 0): a tensor field.

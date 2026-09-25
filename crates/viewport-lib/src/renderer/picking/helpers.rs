@@ -38,7 +38,7 @@ pub fn project_to_screen(
 /// Pixel radius of a world-space radius `world_r` measured at `world_centre`.
 ///
 /// Item types whose instances are drawn at a world size but picked by
-/// screen-space proximity (glyphs, tensor glyphs, world-space sprites) need
+/// screen-space proximity (vector and tensor fields, world-space sprites) need
 /// their pick tolerance in pixels. Measuring at the instance centroid rather
 /// than at the model origin keeps the estimate right when the instances sit
 /// far from the origin. The result is floored at 4 pixels so a distant set is

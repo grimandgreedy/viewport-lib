@@ -12,7 +12,6 @@
 pub(crate) mod registry;
 
 pub(crate) mod decal;
-pub(crate) mod glyph;
 pub(crate) mod polyline;
 
 use crate::plugin_api::PluginItemCollection;
@@ -73,7 +72,6 @@ impl crate::renderer::ViewportRenderer {
         // its neighbours the way it always has.
         // First the types that came off the shared scivis draw loop, in the
         // order that loop drew them.
-        self.install_item_type_plugin(device, Box::new(glyph::GlyphPlugin::default()));
         self.install_item_type_plugin(device, Box::new(polyline::PolylinePlugin::default()));
         self.install_item_type_plugin(
             device,

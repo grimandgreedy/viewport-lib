@@ -95,7 +95,7 @@ pub struct ViewportInstance {
     outline_width_px: f32,
 
     // Retained non-mesh items, re-injected into the scene sub-frame each
-    // assembly so static point clouds/glyphs/volumes/splats are added once.
+    // assembly so static point clouds/fields/volumes/splats are added once.
     extras: Vec<(ExtraId, extras::SceneExtra)>,
     next_extra_id: u64,
 }
@@ -579,7 +579,7 @@ impl ViewportInstance {
 mod tests {
     use super::*;
     use crate::interaction::input::{ButtonState, MouseButton};
-    use crate::{GlyphItem, Material, OrbitCameraController, primitives};
+    use crate::{Material, OrbitCameraController, PolylineItem, primitives};
 
     fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
@@ -743,24 +743,26 @@ mod tests {
         let mut orbit = OrbitCameraController::new_stateless();
 
         // A retained extra is re-injected into the scene every frame.
-        let mut glyphs = GlyphItem::default();
-        glyphs.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let id = session.add_item(glyphs);
+        let mut line = PolylineItem::default();
+        line.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        line.strip_lengths = vec![2];
+        let id = session.add_item(line);
         let frame = session.update_orbit(&mut orbit);
         assert_eq!(
-            frame.scene.items_of::<crate::GlyphItem>().len(),
+            frame.scene.items_of::<crate::PolylineItem>().len(),
             1,
             "retained extra injected"
         );
 
         // The injection closure runs after assembly, so per-frame items land.
         let frame = session.update_orbit_with(&mut orbit, |f| {
-            f.scene
-                .items_mut::<crate::GlyphItem>()
-                .push(GlyphItem::default());
+            let mut extra = PolylineItem::default();
+            extra.positions = vec![[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]];
+            extra.strip_lengths = vec![2];
+            f.scene.items_mut::<crate::PolylineItem>().push(extra);
         });
         assert_eq!(
-            frame.scene.items_of::<crate::GlyphItem>().len(),
+            frame.scene.items_of::<crate::PolylineItem>().len(),
             2,
             "retained + per-frame injected item"
         );
@@ -769,7 +771,7 @@ mod tests {
         assert!(session.remove_extra(id));
         let frame = session.update_orbit(&mut orbit);
         assert_eq!(
-            frame.scene.items_of::<crate::GlyphItem>().len(),
+            frame.scene.items_of::<crate::PolylineItem>().len(),
             0,
             "removed extra gone"
         );

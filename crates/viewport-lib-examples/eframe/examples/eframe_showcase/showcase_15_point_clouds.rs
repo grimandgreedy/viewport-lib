@@ -1,29 +1,38 @@
-//! Showcase 15: Point Clouds & Glyphs : state, build, and controls.
+//! Showcase 15: Point Clouds & Vector Fields : state, build, and controls.
 //!
-//! Demonstrates `PointCloudItem` and `GlyphItem` : the two main primitive types
+//! Demonstrates `PointCloudItem` and `VectorFieldItem` : the two main primitive types
 //! for particle and vector-field data. No mesh upload or Scene graph is needed;
 //! items are submitted directly to `SceneFrame` each frame.
 //!
 //! **Point cloud sub-mode:** 20 000-point cloud on a noisy sphere shell, coloured
 //! by radial distance via a selectable colourmap.
 //!
-//! **Vector field sub-mode:** 5x5x5 grid of arrow glyphs representing an outward-
+//! **Vector field sub-mode:** 5x5x5 grid of arrows representing an outward-
 //! diverging vector field, with magnitude-driven scaling and colourmap colouring.
 
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
-use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::{PointCloudItem, VectorFieldItem};
 use vpl::{
-    BuiltinColourmap, ColourSource, ColourmapId, FrameData, GlyphItem, GlyphType, LightingSettings,
-    PostProcessSettings, SceneRenderItem, SizeSource,
+    BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings, PostProcessSettings,
+    SceneRenderItem, SizeSource,
 };
 
 // ---------------------------------------------------------------------------
 // Sub-mode enum
 // ---------------------------------------------------------------------------
 
-/// Sub-mode for Showcase 15 (Point Clouds & Glyphs).
+/// The mesh the vector field instances. A field takes any uploaded mesh; these
+/// three are the shapes this showcase offers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldShape {
+    Arrow,
+    Sphere,
+    Cube,
+}
+
+/// Sub-mode for Showcase 15 (Point Clouds & Fields).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PcSubMode {
     PointCloud,
@@ -42,7 +51,9 @@ pub(crate) struct PointCloudsState {
     pub colourmap: BuiltinColourmap,
     pub scalar_range_manual: bool,
     pub scalar_range: (f32, f32),
-    pub glyph_type: GlyphType,
+    pub shape: FieldShape,
+    /// Arrow, sphere and cube meshes the field can instance.
+    pub shape_meshes: [vpl::MeshId; 3],
     pub glyph_scale: f32,
     pub glyph_magnitude_scale: bool,
     pub cloud_positions: Vec<[f32; 3]>,
@@ -63,7 +74,8 @@ impl Default for PointCloudsState {
             colourmap: BuiltinColourmap::Viridis,
             scalar_range_manual: false,
             scalar_range: (2.6, 3.4),
-            glyph_type: GlyphType::Arrow,
+            shape: FieldShape::Arrow,
+            shape_meshes: [vpl::MeshId::INVALID; 3],
             glyph_scale: 1.0,
             glyph_magnitude_scale: true,
             cloud_positions: Vec::new(),
@@ -85,9 +97,21 @@ impl App {
     /// One-time setup for Showcase 15.
     ///
     /// Generates and caches CPU-side data for both sub-modes. No GPU upload is
-    /// required: `PointCloudItem` and `GlyphItem` are submitted directly to
+    /// required: `PointCloudItem` and `VectorFieldItem` are submitted directly to
     /// `SceneFrame` each frame.
-    pub(crate) fn build_pc_scene(&mut self) {
+    pub(crate) fn build_pc_scene(&mut self, renderer: &mut vpl::ViewportRenderer) {
+        // The three shapes the field can instance. A field takes any mesh; a
+        // consumer with its own arrow uploads that instead.
+        let res = renderer.resources_mut();
+        self.pc_state.shape_meshes = [
+            res.upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+                .expect("pc arrow shape"),
+            res.upload_mesh_data(&self.device, &vpl::primitives::icosphere(0.35, 2))
+                .expect("pc sphere shape"),
+            res.upload_mesh_data(&self.device, &vpl::primitives::cube(0.55))
+                .expect("pc cube shape"),
+        ];
+
         let (cloud_pos, cloud_scalars) = make_point_cloud(20_000);
         self.pc_state.cloud_positions = cloud_pos;
         self.pc_state.cloud_scalars = cloud_scalars;
@@ -123,8 +147,8 @@ impl App {
         item
     }
 
-    /// Build a `GlyphItem` from cached data and current control state.
-    pub(crate) fn make_pc_glyph_item(&self) -> GlyphItem {
+    /// Build a `VectorFieldItem` from cached data and current control state.
+    pub(crate) fn make_pc_field_item(&self) -> VectorFieldItem {
         let s = &self.pc_state;
         let colourmap_id = Some(ColourmapId(s.colourmap as usize));
         let scalar_range = if s.scalar_range_manual {
@@ -132,14 +156,28 @@ impl App {
         } else {
             None
         };
-        let mut item = GlyphItem::default();
+        let shape = match s.shape {
+            FieldShape::Arrow => s.shape_meshes[0],
+            FieldShape::Sphere => s.shape_meshes[1],
+            FieldShape::Cube => s.shape_meshes[2],
+        };
+        let mut item = VectorFieldItem::new(shape);
         item.positions = s.field_positions.clone();
         item.vectors = s.field_vectors.clone();
         item.scale = s.glyph_scale;
-        item.scale_by_magnitude = s.glyph_magnitude_scale;
-        item.scalar_range = scalar_range;
-        item.colourmap_id = colourmap_id;
-        item.glyph_type = s.glyph_type;
+        item.colour = ColourSource::Natural {
+            range: scalar_range,
+            colourmap: colourmap_id,
+        };
+        // Magnitude scaling off means every sample is drawn the same size.
+        item.size = if s.glyph_magnitude_scale {
+            SizeSource::Natural {
+                domain: Some((0.0, 1.0)),
+                output: (0.05, 1.0),
+            }
+        } else {
+            SizeSource::Uniform(1.0)
+        };
         item
     }
 
@@ -181,7 +219,7 @@ impl App {
     }
 
     /// Surface items for Showcase 15 (none: all geometry is submitted as
-    /// point clouds or glyphs directly on `SceneFrame`).
+    /// point clouds or fields directly on `SceneFrame`).
     pub(crate) fn pc_surface_items() -> Vec<SceneRenderItem> {
         vec![]
     }
@@ -261,22 +299,16 @@ pub(crate) fn controls_point_clouds(app: &mut App, ui: &mut egui::Ui) {
             ui.add(egui::Slider::new(&mut s.point_size, 1.0..=16.0).step_by(0.5));
         }
         PcSubMode::VectorField => {
-            ui.label("Glyph type:");
+            ui.label("Shape mesh:");
             ui.horizontal(|ui| {
-                if ui
-                    .radio(s.glyph_type == GlyphType::Arrow, "Arrow")
-                    .clicked()
-                {
-                    s.glyph_type = GlyphType::Arrow;
-                }
-                if ui
-                    .radio(s.glyph_type == GlyphType::Sphere, "Sphere")
-                    .clicked()
-                {
-                    s.glyph_type = GlyphType::Sphere;
-                }
-                if ui.radio(s.glyph_type == GlyphType::Cube, "Cube").clicked() {
-                    s.glyph_type = GlyphType::Cube;
+                for (shape, label) in [
+                    (FieldShape::Arrow, "Arrow"),
+                    (FieldShape::Sphere, "Sphere"),
+                    (FieldShape::Cube, "Cube"),
+                ] {
+                    if ui.radio(s.shape == shape, label).clicked() {
+                        s.shape = shape;
+                    }
                 }
             });
 
@@ -369,8 +401,8 @@ pub(crate) fn submit_pc_items(app: &mut App, fd: &mut FrameData) {
         }
         PcSubMode::VectorField => {
             fd.scene
-                .items_mut::<viewport_lib::GlyphItem>()
-                .push(app.make_pc_glyph_item());
+                .items_mut::<VectorFieldItem>()
+                .push(app.make_pc_field_item());
         }
         PcSubMode::PointGaussian => {
             fd.scene
@@ -425,8 +457,8 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 
 /// Build this showcase's scene and frame its opening camera. Called once, on
 /// the first frame after it becomes the active showcase.
-pub(crate) fn build(app: &mut crate::App, _renderer: &mut vpl::ViewportRenderer) {
-    app.build_pc_scene();
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.build_pc_scene(renderer);
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 12.0,

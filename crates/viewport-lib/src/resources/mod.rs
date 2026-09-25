@@ -56,8 +56,8 @@ pub use self::material::environment::{EnvironmentMapId, EnvironmentZone};
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;
+use self::mesh::geometry::build_unit_cube;
 pub use self::mesh::geometry::generate_edge_indices;
-use self::mesh::geometry::{build_glyph_arrow, build_glyph_sphere, build_unit_cube};
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh::meshes::OverrideBufferSlice;
 pub use self::mesh::meshes::lerp_attributes;
@@ -74,13 +74,11 @@ pub use self::mesh_sidecar::shade::{
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
-    GlyphBaseMeshRef, HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry,
-    PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
-    SHADOW_DEPTH_FORMAT,
+    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
+    PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
-pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
 pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.

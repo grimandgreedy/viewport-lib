@@ -26,16 +26,16 @@ use viewport_lib_item_types::{
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 use viewport_lib_item_types::{
     RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+    VectorFieldItem,
 };
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, DecalProjection, GlyphItem,
-    GlyphType, ItemSettings, Material, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem,
-    PickId, PickMask, PolylineItem, PolylineSelectionInfo, SubObjectRef, SubSelection,
-    SubSelectionRef, TextureId, VolumeData, VolumeId, VolumeMeshData, VolumeMeshItem,
-    VolumeSelectionInfo, primitives,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, DecalProjection, ItemSettings,
+    Material, MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask,
+    PolylineItem, PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, TextureId,
+    VolumeData, VolumeId, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -91,7 +91,7 @@ pub struct DecalCoverageShowcase {
     // Vec-backed items are stored whole and cloned; items that own a GPU handle
     // are rebuilt each frame from the handle plus stored CPU data.
     pc: PointCloudItem,
-    glyphs: GlyphItem,
+    glyphs: VectorFieldItem,
     polyline: PolylineItem,
     tensor: TensorFieldItem,
     sprites: SpriteItem,
@@ -155,7 +155,7 @@ impl DecalCoverageShowcase {
             pick_face: false,
             labels: HashMap::new(),
             pc: PointCloudItem::default(),
-            glyphs: GlyphItem::default(),
+            glyphs: VectorFieldItem::default(),
             polyline: PolylineItem::default(),
             tensor: TensorFieldItem::default(),
             sprites: SpriteItem::default(),
@@ -247,7 +247,7 @@ impl DecalCoverageShowcase {
         // Arrow glyphs.
         let mut glyphs = self.glyphs.clone();
         glyphs.settings.selected = sel(GLYPH);
-        fd.scene.items_mut::<viewport_lib::GlyphItem>().push(glyphs);
+        fd.scene.items_mut::<VectorFieldItem>().push(glyphs);
 
         // Multi-strip polyline.
         let mut polyline = self.polyline.clone();
@@ -471,6 +471,12 @@ impl Showcase for DecalCoverageShowcase {
             .resources_mut()
             .upload_mesh_data(ctx.device, &primitives::icosphere(1.0, 2))
             .unwrap();
+        // Arrow for the vector field, pointing along +Z.
+        let arrow_shape = ctx
+            .session
+            .resources_mut()
+            .upload_mesh_data(ctx.device, &primitives::arrow(0.06, 0.15, 0.35, 12))
+            .unwrap();
 
         // Marker first so it takes node id 0 (PickId(0) == NONE, skipped by GPU
         // picking) and keeps the real meshes off node id 0.
@@ -538,9 +544,8 @@ impl Showcase for DecalCoverageShowcase {
         self.glyphs.positions = gpos.clone();
         self.glyphs.vectors = vec![[0.0, 0.0, 1.0]; n];
         self.glyphs.scale = 0.7;
-        self.glyphs.use_default_colour = true;
-        self.glyphs.default_colour = [0.55, 0.10, 0.75, 1.0].into();
-        self.glyphs.glyph_type = GlyphType::Arrow;
+        self.glyphs.shape = arrow_shape;
+        self.glyphs.colour = ColourSource::Solid([0.55, 0.10, 0.75, 1.0].into());
         self.glyphs.settings.pick_id = PickId(GLYPH);
         self.instance_lookup.insert(GLYPH, gpos);
         self.model_matrices.insert(GLYPH, Mat4::IDENTITY);

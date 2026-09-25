@@ -515,11 +515,6 @@ pub struct DeviceResources {
     // --- point cloud pipelines (lazily created) ---
     /// Point-cloud render pipeline and bind group layout (lazy).
 
-    // --- glyph rendering (lazily created) ---
-    /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
-    pub(crate) glyph: crate::resources::scivis::glyph::GlyphResources,
-    /// Tensor glyph pipelines and layouts.
-
     // --- polyline / streamtube / ribbon rendering (lazily created) ---
     /// Polyline pipelines and layouts.
     pub(crate) polyline: crate::resources::scivis::polyline::PolylineResources,

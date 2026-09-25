@@ -3,5 +3,3 @@
 //!
 //! Most `*Item` descriptors reference uploaded store ids and stay in
 //! `viewport-lib`; this module holds the wgpu-free, store-id-free exceptions.
-
-pub mod glyph;

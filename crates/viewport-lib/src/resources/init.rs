@@ -2469,7 +2469,6 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             lic: crate::resources::postprocess::LicResources::default(),
-            glyph: crate::resources::scivis::glyph::GlyphResources::new(),
             polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
