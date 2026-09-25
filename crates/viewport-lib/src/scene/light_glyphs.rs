@@ -1,16 +1,18 @@
-//! Light glyph + influence-volume wireframe emission.
+//! Light indicator emission: the on-screen icon for each scene-graph light,
+//! plus the influence-volume wireframe for a selected one.
 //!
-//! [`build_light_glyphs`] walks the scene-graph lights and produces a
-//! `GlyphItem` per light (sphere for point, arrow for spot or directional)
-//! plus a `PolylineItem` per selected non-directional light showing its
-//! influence volume. Both carry `settings.pick_id = node_id` so the
-//! standard pick + selection-outline machinery applies.
+//! [`build_light_indicators`] walks the scene-graph lights and describes an
+//! indicator per light, without deciding what it is drawn as. The caller turns
+//! that into whatever it likes;
+//! [`LightIndicators::to_mesh_instances`] covers the usual case of a small
+//! arrow or sphere per light. Everything carries `settings.pick_id = node_id`
+//! so the standard pick and selection-outline machinery applies.
 
 use std::collections::HashMap;
 
 use crate::interaction::select::selection::Selection;
 use crate::renderer::PickId;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem, sphere_wireframe_polyline};
+use crate::renderer::{MeshInstanceItem, PolylineItem, sphere_wireframe_polyline};
 use crate::scene::LayerId;
 use crate::scene::material::ItemSettings;
 use crate::scene::scene::Scene;
@@ -19,27 +21,117 @@ use crate::{LightKind, LightSource};
 /// World-space half-size used for the on-screen light icon.
 const GLYPH_SIZE: f32 = 0.28;
 
-/// Walk every scene-graph light and emit:
-/// - one `GlyphItem` per light (the on-screen icon, always visible),
-/// - one `PolylineItem` per selected non-directional light (range sphere
-///   for points; cone outline for spots; directionals get no extra
-///   wireframe at this phase).
+/// One scene-graph light's on-screen indicator, as a description rather than
+/// a drawn thing.
 ///
-/// All emitted items carry `settings.pick_id = node_id` so clicking the
-/// glyph or the wireframe returns the light's `NodeId` through the
-/// standard pick API. `settings.selected` mirrors the consumer's
-/// `Selection` so the existing outline pass highlights selected lights.
+/// A directional or spot light points somewhere, so its indicator is oriented;
+/// a point light is not. The caller decides what shape stands for each.
+#[derive(Clone, Copy, Debug)]
+pub struct LightMarker {
+    /// World-space position of the light.
+    pub position: glam::Vec3,
+    /// Unit direction the light points, or `None` for a point light. When set,
+    /// the indicator should be oriented along it.
+    pub direction: Option<glam::Vec3>,
+    /// World half-size for the indicator. A fixed world size rather than a
+    /// screen-space one, so a light reads as being somewhere in the scene.
+    pub size: f32,
+    /// The light's own colour, so the indicator identifies which light it is.
+    pub colour: crate::Colour,
+    /// The light's `NodeId`, so a pick returns the light.
+    pub pick_id: PickId,
+    /// Whether the consumer's `Selection` holds this light.
+    pub selected: bool,
+}
+
+/// What [`build_light_indicators`] found: an indicator per visible light, and
+/// an influence-volume outline per selected one.
+#[derive(Clone, Default)]
+pub struct LightIndicators {
+    /// One per visible scene-graph light.
+    pub markers: Vec<LightMarker>,
+    /// Range sphere for a selected point light, cone outline for a selected
+    /// spot. Directional lights get none. These need no mesh, so they can be
+    /// submitted as they are.
+    pub outlines: Vec<PolylineItem>,
+}
+
+impl LightIndicators {
+    /// Draw each marker as one of two meshes: `directional` for a light that
+    /// points somewhere, oriented along its direction, and `point` for one
+    /// that does not.
+    ///
+    /// Both meshes should be unit-sized and centred on the origin, with
+    /// `directional` pointing along +Z. `primitives::arrow` and
+    /// `primitives::icosphere` are what these were drawn with before.
+    ///
+    /// Returns up to two items, one batch per mesh, and skips a batch with no
+    /// instances.
+    pub fn to_mesh_instances(
+        &self,
+        directional: crate::resources::mesh::mesh_store::MeshId,
+        point: crate::resources::mesh::mesh_store::MeshId,
+    ) -> Vec<MeshInstanceItem> {
+        let mut out = Vec::new();
+        for (mesh, oriented) in [(directional, true), (point, false)] {
+            let batch: Vec<&LightMarker> = self
+                .markers
+                .iter()
+                .filter(|m| m.direction.is_some() == oriented)
+                .collect();
+            if batch.is_empty() {
+                continue;
+            }
+            let mut item = MeshInstanceItem::default();
+            item.mesh_id = mesh;
+            item.transforms = batch
+                .iter()
+                .map(|m| {
+                    let rotation = match m.direction {
+                        // The mesh points along +Z, so rotate that onto the
+                        // light's direction.
+                        Some(d) => glam::Quat::from_rotation_arc(glam::Vec3::Z, d),
+                        None => glam::Quat::IDENTITY,
+                    };
+                    glam::Mat4::from_scale_rotation_translation(
+                        glam::Vec3::splat(m.size),
+                        rotation,
+                        m.position,
+                    )
+                    .to_cols_array_2d()
+                })
+                .collect();
+            item.colours = batch.iter().map(|m| m.colour).collect();
+            // An indicator is an affordance: it should neither cast nor
+            // receive the light it stands for.
+            item.settings.unlit = true;
+            item.settings.cast_shadows = false;
+            item.settings.receive_shadows = false;
+            // One batch, one id. A caller wanting to pick an individual light
+            // submits one item per marker instead.
+            if let Some(first) = batch.first() {
+                item.settings.pick_id = first.pick_id;
+                item.settings.selected = batch.iter().any(|m| m.selected);
+            }
+            out.push(item);
+        }
+        out
+    }
+}
+
+/// Walk every scene-graph light and describe its indicator.
+///
+/// Everything carries `pick_id = node_id`, so picking an indicator returns the
+/// light's `NodeId` through the standard pick API, and `selected` mirrors the
+/// consumer's `Selection`.
 ///
 /// Layer visibility and node visibility are honoured (matches the same
 /// filter applied in [`Scene::collect_lights`]).
-pub fn build_light_glyphs(
-    scene: &Scene,
-    selection: &Selection,
-) -> (Vec<GlyphItem>, Vec<PolylineItem>) {
+pub fn build_light_indicators(scene: &Scene, selection: &Selection) -> LightIndicators {
     let layer_visible: HashMap<LayerId, bool> =
         scene.layers().iter().map(|l| (l.id, l.visible)).collect();
 
-    let mut glyphs: Vec<GlyphItem> = Vec::new();
+    let mut markers: Vec<LightMarker> = Vec::new();
     let mut polylines: Vec<PolylineItem> = Vec::new();
 
     for node in scene.nodes() {
@@ -66,7 +158,9 @@ pub fn build_light_glyphs(
         settings.cast_shadows = false;
         settings.receive_shadows = false;
 
-        let (glyph_type, vector) = match &src.kind {
+        // A light that points somewhere gets an oriented indicator; a point
+        // light does not, so it carries no direction.
+        let direction = match &src.kind {
             LightKind::Directional { direction } => {
                 let d = glam::Vec3::from(*direction);
                 let d = if d.length_squared() > 1.0e-12 {
@@ -74,10 +168,9 @@ pub fn build_light_glyphs(
                 } else {
                     glam::Vec3::Z
                 };
-                let v = world.transform_vector3(d).normalize_or_zero();
-                (GlyphType::Arrow, v)
+                Some(world.transform_vector3(d).normalize_or_zero())
             }
-            LightKind::Point { .. } => (GlyphType::Sphere, glam::Vec3::Z),
+            LightKind::Point { .. } => None,
             LightKind::Spot { direction, .. } => {
                 let d = glam::Vec3::from(*direction);
                 let d = if d.length_squared() > 1.0e-12 {
@@ -85,23 +178,19 @@ pub fn build_light_glyphs(
                 } else {
                     glam::Vec3::NEG_Z
                 };
-                let v = world.transform_vector3(d).normalize_or_zero();
-                (GlyphType::Arrow, v)
+                Some(world.transform_vector3(d).normalize_or_zero())
             }
             _ => unreachable!("unhandled LightKind variant"),
         };
 
-        let mut g = GlyphItem::default();
-        g.glyph_type = glyph_type;
-        g.positions.push(translation.into());
-        let vec_scaled: [f32; 3] = (vector * GLYPH_SIZE).into();
-        g.vectors.push(vec_scaled);
-        g.scale = GLYPH_SIZE;
-        g.scale_by_magnitude = matches!(glyph_type, GlyphType::Arrow);
-        g.use_default_colour = true;
-        g.default_colour = colour_rgba.into();
-        g.settings = settings;
-        glyphs.push(g);
+        markers.push(LightMarker {
+            position: translation,
+            direction,
+            size: GLYPH_SIZE,
+            colour: colour_rgba.into(),
+            pick_id: settings.pick_id,
+            selected: settings.selected,
+        });
 
         if is_selected {
             let world_src = resolve_light_for_glyph(src, world);
@@ -143,7 +232,10 @@ pub fn build_light_glyphs(
         }
     }
 
-    (glyphs, polylines)
+    LightIndicators {
+        markers,
+        outlines: polylines,
+    }
 }
 
 /// Same world-space resolution as `Scene::collect_lights` uses for the

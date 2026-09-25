@@ -18,7 +18,7 @@ use viewport_lib as vpl;
 use vpl::{
     LightKind, LightSource, LightingSettings, Material, SceneRenderItem, Selection,
     ViewportRenderer,
-    scene::{Scene, build_light_glyphs},
+    scene::{Scene, build_light_indicators},
 };
 
 // ---------------------------------------------------------------------------
@@ -33,6 +33,10 @@ pub(crate) enum SlTab {
 
 pub(crate) struct SlState {
     pub built: bool,
+    /// Meshes the light indicators are drawn with: an arrow for lights that
+    /// point somewhere, a sphere for those that do not.
+    pub light_arrow: vpl::MeshId,
+    pub light_sphere: vpl::MeshId,
     pub tab: SlTab,
     pub active_tab: SlTab,
 
@@ -110,6 +114,8 @@ impl Default for SlState {
     fn default() -> Self {
         Self {
             built: false,
+            light_arrow: vpl::MeshId::INVALID,
+            light_sphere: vpl::MeshId::INVALID,
             tab: SlTab::Basics,
             active_tab: SlTab::Basics,
             scene: Scene::new(),
@@ -169,6 +175,20 @@ impl App {
             SlTab::Basics => self.build_sl_basics(renderer),
             SlTab::Stress => self.build_sl_stress(renderer),
         }
+
+        // The light indicators are drawn as meshes, so the app supplies the
+        // shapes: an arrow for a light that points somewhere, a sphere for one
+        // that does not.
+        let arrow = vpl::primitives::arrow(0.05, 0.12, 0.3, 16);
+        let sphere = vpl::primitives::icosphere(1.0, 2);
+        self.sl_state.light_arrow = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &arrow)
+            .expect("light indicator arrow upload");
+        self.sl_state.light_sphere = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &sphere)
+            .expect("light indicator sphere upload");
 
         self.sl_state.built = true;
     }
@@ -382,13 +402,13 @@ fn submit_basics(app: &mut App, fd: &mut vpl::FrameData) {
     fd.scene.lights = app.sl_state.scene.collect_lights();
 
     if app.sl_state.show_glyphs {
-        let (glyphs, polylines) = build_light_glyphs(&app.sl_state.scene, &Selection::new());
-        fd.scene
-            .items_mut::<viewport_lib::GlyphItem>()
-            .extend(glyphs);
+        let indicators = build_light_indicators(&app.sl_state.scene, &Selection::new());
+        fd.scene.mesh_instances.extend(
+            indicators.to_mesh_instances(app.sl_state.light_arrow, app.sl_state.light_sphere),
+        );
         fd.scene
             .items_mut::<viewport_lib::PolylineItem>()
-            .extend(polylines);
+            .extend(indicators.outlines);
     }
 }
 
@@ -422,13 +442,13 @@ fn submit_stress(app: &mut App, fd: &mut vpl::FrameData) {
     fd.scene.lights = app.sl_state.scene.collect_lights();
 
     if app.sl_state.stress_show_glyphs {
-        let (glyphs, polylines) = build_light_glyphs(&app.sl_state.scene, &Selection::new());
-        fd.scene
-            .items_mut::<viewport_lib::GlyphItem>()
-            .extend(glyphs);
+        let indicators = build_light_indicators(&app.sl_state.scene, &Selection::new());
+        fd.scene.mesh_instances.extend(
+            indicators.to_mesh_instances(app.sl_state.light_arrow, app.sl_state.light_sphere),
+        );
         fd.scene
             .items_mut::<viewport_lib::PolylineItem>()
-            .extend(polylines);
+            .extend(indicators.outlines);
     }
 }
 

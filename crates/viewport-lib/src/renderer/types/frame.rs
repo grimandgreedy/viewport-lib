@@ -495,15 +495,18 @@ impl SceneFrame {
     ) -> Self {
         let items = scene.collect_render_items(selection);
         let lights = scene.collect_lights();
-        let (light_glyphs, light_polylines) = crate::scene::build_light_glyphs(scene, selection);
+        // The influence-volume outlines for a selected light need no mesh, so
+        // they come through here. The indicator bodies do need one, so they
+        // are opt-in: see `scene::build_light_indicators` and
+        // `LightIndicators::to_mesh_instances`.
+        let indicators = crate::scene::build_light_indicators(scene, selection);
         let mut frame = Self {
             generation: scene.version(),
             surfaces: SurfaceSubmission::Flat(items.into()),
             lights,
             ..Self::default()
         };
-        *frame.items_mut::<crate::GlyphItem>() = light_glyphs;
-        *frame.items_mut::<crate::PolylineItem>() = light_polylines;
+        *frame.items_mut::<crate::PolylineItem>() = indicators.outlines;
         frame
     }
 }
