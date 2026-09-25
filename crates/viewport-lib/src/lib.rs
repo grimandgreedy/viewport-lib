@@ -230,6 +230,10 @@ pub use scene::scene::{
     DecalHandle, Group, GroupId, Layer, LayerId, LiveDecal, Scene, SceneNode, SceneStats,
 };
 pub use scene::traits::{RenderMode, ViewportObject};
+/// How an item maps its per-sample data to colour and size. See
+/// [`ColourSource`] and [`SizeSource`].
+pub use viewport_lib_types::encoding;
+pub use viewport_lib_types::encoding::{ColourSource, SizeSource};
 pub use vplt::colour::{Colour, ColourParseError, ColourSpace, linear_to_srgb, srgb_to_linear};
 pub use vplt::data::texture::{TextureData, TexturePayload, TextureRole};
 

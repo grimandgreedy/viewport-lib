@@ -7,6 +7,10 @@
 - **`viewport-lib-item-types` builds on the wgpu29 and wgpu30 legs** - the sprite pass spelled its leg guard `#[cfg(any(wgpu29, wgpu30))]`, which is the renderer's own build-script cfg and is never set in a consumer crate, so the field it guards was dropped and the render pass descriptor came up short on those two legs. It reads `feature = "wgpu29"` now, which is how the crate selects its leg.
 - **A selected sprite batch outlines every billboard** - the outline mask shader declared a shorter `SpriteInstance` than the one the store writes, and it reads that buffer as a storage array, so the struct set the stride. Every sprite whose record did not land on a 64-byte boundary read a garbage size and collapsed to nothing, leaving one sprite in four outlined.
 
+### Added
+
+- **`ColourSource` and `SizeSource`** - one vocabulary for how an item maps per-sample data to colour and size, in `viewport-lib-types` beside `ItemSettings`, reachable as `viewport_lib::ColourSource` / `SizeSource`. Each says which of the ways an item colours or sizes its samples is in use (one value for all, one per sample, a supplied scalar, or the scalar the item already holds) instead of a set of loosely related fields whose precedence is documented rather than typed. `encoding::map_range` and `encoding::auto_range` are the shared resolution helpers. Nothing adopts them yet, so no existing item type changes.
+
 ### Breaking
 
 - **Scatter volumes moved to `viewport-lib-item-types`** - `ScatterVolumeItem` and the whole media description come from that crate now: `ScatterVolume`, `ScatterShape`, `ColourSource`, `DensityRemap`, `Emission`, `EmissionCurve`, `NoiseDriver`, `RefractionParams` and `MAX_SCATTER_VOLUMES`. The `viewport_lib::scatter_volume` module is gone; import the names from `viewport_lib_item_types` directly. `ScatterSettings` and `ScatterQuality` stay on `EffectsFrame` in `viewport-lib`, because they are frame settings rather than item data.

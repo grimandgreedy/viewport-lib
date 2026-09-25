@@ -83,6 +83,12 @@ pub use volume_surface_slice::{VolumeSurfaceSliceItem, VolumeSurfaceSlicePlugin}
 /// crate does not have to name two crates to submit one item.
 pub use viewport_lib_types::ids::{ExternalInstanceSetId, GpuParticleSystemId};
 
+// The shared colour and size vocabulary is deliberately not re-exported here:
+// the scatter volume already has a `ColourSource` of its own, with `Flat` and
+// `Ramp` where the shared one has `Solid` and `Natural`. Reach the shared pair
+// as `viewport_lib::ColourSource` and `viewport_lib::SizeSource` until scatter
+// adopts it and the name is free.
+
 /// The name each item type registers and submits under.
 pub const EXTERNAL_INSTANCES_TYPE_NAME: &str = external_instances::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].

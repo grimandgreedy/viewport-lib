@@ -16,6 +16,7 @@ pub mod colour;
 pub mod colourmap;
 pub mod data;
 pub mod effects;
+pub mod encoding;
 pub mod error;
 pub mod ids;
 pub mod input;
