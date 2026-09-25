@@ -17,6 +17,10 @@ viewport_lib::resources::handle::slot_handle! {
 const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
 /// Per-frame reference to a pre-uploaded vector field.
+///
+/// **Picking is GPU only.** The samples live on the GPU and the plugin keeps no
+/// CPU copy of them, so a reference answers `PickBackend::Gpu` and is invisible
+/// to the CPU ray and rect pickers. An inline [`VectorFieldItem`] answers both.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct VectorFieldRefItem {

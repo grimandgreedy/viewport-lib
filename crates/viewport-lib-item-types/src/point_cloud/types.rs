@@ -93,6 +93,12 @@ impl Default for PointCloudItem {
 }
 
 /// Per-frame reference to a pre-uploaded point cloud.
+///
+/// **Picking is GPU only.** The points live on the GPU and the plugin keeps no
+/// CPU copy of them, so a reference answers `PickBackend::Gpu` and is invisible
+/// to the CPU ray and rect pickers. An inline [`PointCloudItem`] answers both.
+/// Submit the inline form if you need CPU picking, or keep your own positions
+/// and test against them.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PointCloudRefItem {

@@ -221,9 +221,65 @@ pub(super) fn build_vector_field(
         pick_id: item.settings.pick_id,
         uniform_bind_group,
         instance_bind_group,
+        colourmap: crate::sources::requested_colourmap(&item.colour),
         _uniform_buf: uniform_buf,
         _instance_buf: instance_buf,
     }
+}
+
+/// Rewrite a stored field's instance buffer and uniform in place, keeping both
+/// bind groups.
+///
+/// Returns `false` when the new item does not fit what is allocated: a
+/// different sample count needs a bigger or smaller instance buffer, and a
+/// different colourmap needs a different LUT view in the uniform bind group.
+/// The shape `MeshId` may change freely, because the draw binds it by id rather
+/// than through a bind group.
+pub(super) fn try_replace_in_place(
+    queue: &viewport_lib::gpu::Queue,
+    gpu: &mut VectorFieldGpuData,
+    item: &super::types::VectorFieldItem,
+) -> bool {
+    let count = item.positions.len();
+    if count as u32 != gpu.instance_count {
+        return false;
+    }
+    if crate::sources::requested_colourmap(&item.colour) != gpu.colourmap {
+        return false;
+    }
+
+    let mags = magnitudes(item);
+    let sizes = sample_sizes(item, &mags);
+    let colours = colour_plan(&item.colour, count, &mags);
+
+    let instances: Vec<VectorFieldInstance> = (0..count)
+        .map(|i| VectorFieldInstance {
+            position: item.positions[i],
+            size: sizes[i],
+            direction: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
+            scalar: colours.scalars[i],
+            colour: colours.colours[i],
+        })
+        .collect();
+    queue.write_buffer(&gpu._instance_buf, 0, bytemuck::cast_slice(&instances));
+
+    let (scalar_min, scalar_max) = colours.lut_range.unwrap_or((0.0, 1.0));
+    let uniform_data = VectorFieldUniform {
+        model: item.model,
+        global_scale: item.scale,
+        use_lut: colours.lut_range.is_some() as u32,
+        scalar_min,
+        scalar_max,
+        unlit: item.settings.unlit as u32,
+        opacity: item.settings.opacity,
+        _pad0: 0.0,
+        _pad1: 0.0,
+    };
+    queue.write_buffer(&gpu._uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+
+    gpu.shape = item.shape;
+    gpu.pick_id = item.settings.pick_id;
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +314,9 @@ pub(crate) struct VectorFieldGpuData {
     pub(crate) uniform_bind_group: viewport_lib::gpu::BindGroup,
     /// Bind group (group 2): per-instance storage buffer.
     pub(crate) instance_bind_group: viewport_lib::gpu::BindGroup,
+    /// The colourmap the uniform bind group's LUT view came from, or `None`
+    /// for the default. A replace naming a different one has to rebuild it.
+    pub(crate) colourmap: Option<viewport_lib::resources::ColourmapId>,
     // Keep buffers alive.
     pub(crate) _uniform_buf: viewport_lib::gpu::Buffer,
     pub(crate) _instance_buf: viewport_lib::gpu::Buffer,

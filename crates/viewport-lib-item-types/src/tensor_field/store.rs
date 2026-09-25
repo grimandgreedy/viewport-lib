@@ -154,17 +154,13 @@ struct TensorFieldUniform {
     _pad2: f32,
 }
 
-/// Build the GPU data for one tensor field: its buffers and its two bind
-/// groups.
+/// This field's per-sample instance records and its uniform block.
 ///
-/// Shared by the per-frame item path and the store, so a reference draw and an
-/// inline draw are bit-for-bit the same work.
-pub(super) fn build_tensor_field(
-    device: &viewport_lib::gpu::Device,
-    queue: &viewport_lib::gpu::Queue,
-    binds: &TensorFieldBindings,
+/// Shared by the build and the in-place replace, so a stored field rewritten in
+/// place is bit-for-bit what a fresh build would have produced.
+fn build_instances_and_uniform(
     item: &super::types::TensorFieldItem,
-) -> TensorFieldGpuData {
+) -> (Vec<TensorFieldInstance>, TensorFieldUniform) {
     let count = item.positions.len();
     let natural = dominant_eigenvalues(item);
     let extents = sample_extents(item);
@@ -207,14 +203,6 @@ pub(super) fn build_tensor_field(
         })
         .collect();
 
-    let instance_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
-        label: Some("tensor_field_instance_buf"),
-        size: (std::mem::size_of::<TensorFieldInstance>() * instances.len()).max(144) as u64,
-        usage: viewport_lib::gpu::BufferUsages::STORAGE | viewport_lib::gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&instance_buf, 0, bytemuck::cast_slice(&instances));
-
     let (scalar_min, scalar_max) = colours.lut_range.unwrap_or((0.0, 1.0));
     let uniform_data = TensorFieldUniform {
         model: item.model,
@@ -227,6 +215,31 @@ pub(super) fn build_tensor_field(
         _pad1: 0.0,
         _pad2: 0.0,
     };
+    (instances, uniform_data)
+}
+
+/// Build the GPU data for one tensor field: its buffers and its two bind
+/// groups.
+///
+/// Shared by the per-frame item path and the store, so a reference draw and an
+/// inline draw are bit-for-bit the same work.
+pub(super) fn build_tensor_field(
+    device: &viewport_lib::gpu::Device,
+    queue: &viewport_lib::gpu::Queue,
+    binds: &TensorFieldBindings,
+    item: &super::types::TensorFieldItem,
+) -> TensorFieldGpuData {
+    let count = item.positions.len();
+    let (instances, uniform_data) = build_instances_and_uniform(item);
+
+    let instance_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
+        label: Some("tensor_field_instance_buf"),
+        size: (std::mem::size_of::<TensorFieldInstance>() * instances.len()).max(144) as u64,
+        usage: viewport_lib::gpu::BufferUsages::STORAGE | viewport_lib::gpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&instance_buf, 0, bytemuck::cast_slice(&instances));
+
     let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
         label: Some("tensor_field_uniform_buf"),
         size: std::mem::size_of::<TensorFieldUniform>() as u64,
@@ -269,9 +282,39 @@ pub(super) fn build_tensor_field(
         pick_id: item.settings.pick_id,
         uniform_bind_group,
         instance_bind_group,
+        colourmap: crate::sources::requested_colourmap(&item.colour),
         _uniform_buf: uniform_buf,
         _instance_buf: instance_buf,
     }
+}
+
+/// Rewrite a stored field's instance buffer and uniform in place, keeping both
+/// bind groups.
+///
+/// Returns `false` when the new item does not fit what is allocated: a
+/// different sample count needs a different instance buffer, and a different
+/// colourmap needs a different LUT view in the uniform bind group. The shape
+/// `MeshId` may change freely, because the draw binds it by id rather than
+/// through a bind group.
+pub(super) fn try_replace_in_place(
+    queue: &viewport_lib::gpu::Queue,
+    gpu: &mut TensorFieldGpuData,
+    item: &super::types::TensorFieldItem,
+) -> bool {
+    if item.positions.len() as u32 != gpu.instance_count {
+        return false;
+    }
+    if crate::sources::requested_colourmap(&item.colour) != gpu.colourmap {
+        return false;
+    }
+
+    let (instances, uniform_data) = build_instances_and_uniform(item);
+    queue.write_buffer(&gpu._instance_buf, 0, bytemuck::cast_slice(&instances));
+    queue.write_buffer(&gpu._uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+
+    gpu.shape = item.shape;
+    gpu.pick_id = item.settings.pick_id;
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +349,9 @@ pub(crate) struct TensorFieldGpuData {
     pub(crate) uniform_bind_group: viewport_lib::gpu::BindGroup,
     /// Bind group (group 2): per-instance storage buffer.
     pub(crate) instance_bind_group: viewport_lib::gpu::BindGroup,
+    /// The colourmap the uniform bind group's LUT view came from, or `None`
+    /// for the default. A replace naming a different one has to rebuild it.
+    pub(crate) colourmap: Option<viewport_lib::resources::ColourmapId>,
     // Keep buffers alive.
     pub(crate) _uniform_buf: viewport_lib::gpu::Buffer,
     pub(crate) _instance_buf: viewport_lib::gpu::Buffer,

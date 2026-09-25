@@ -182,6 +182,27 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
         true
     }
 
+    /// Stamp a fresh [`revision`](Self::revision) on `id`'s slot without
+    /// swapping the value. Returns `false` for a stale handle or an empty slot.
+    ///
+    /// For a store that updates an entry in place through
+    /// [`get_mut`](Self::get_mut) rather than through
+    /// [`replace`](Self::replace): the contents changed, so any cache keyed on
+    /// `(id, revision)` has to be invalidated the same way a replace would
+    /// invalidate it. An in-place update that skips this is the kind of bug
+    /// that only shows up once someone adds a cache.
+    pub fn bump_revision(&mut self, id: H) -> bool {
+        let Some(slot) = self.slots.get_mut(id.index()) else {
+            return false;
+        };
+        if slot.generation != id.generation() || slot.value.is_none() {
+            return false;
+        }
+        slot.revision = self.next_revision;
+        self.next_revision += 1;
+        true
+    }
+
     /// Remove the value for `id`, bump the slot generation, free the slot, and
     /// drop its byte charge. Returns the removed value, or `None` for a stale
     /// handle or an empty slot.

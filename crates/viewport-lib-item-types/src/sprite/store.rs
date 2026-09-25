@@ -214,11 +214,7 @@ pub(super) fn build_sprite(
         let count = item.positions.len() as u32;
 
         // Position vertex buffer (one vec3 per sprite, instance-stepped).
-        let pos_bytes: Vec<u8> = item
-            .positions
-            .iter()
-            .flat_map(|p| bytemuck::bytes_of(p).iter().copied())
-            .collect();
+        let pos_bytes: &[u8] = bytemuck::cast_slice(&item.positions);
         let vertex_buffer = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
             label: Some("sprite_vertex_buf"),
             size: pos_bytes.len().max(12) as u64,
@@ -226,7 +222,7 @@ pub(super) fn build_sprite(
                 | viewport_lib::gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&vertex_buffer, 0, &pos_bytes);
+        queue.write_buffer(&vertex_buffer, 0, pos_bytes);
 
         // Per-instance storage buffer: build by zipping item vecs with defaults.
         // Layout matches `SpriteInstance` in `sprite.wgsl`. 64 bytes per instance.

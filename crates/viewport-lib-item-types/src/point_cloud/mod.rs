@@ -379,6 +379,12 @@ impl PointCloudPlugin {
     }
 
     /// Replace the points behind a live handle, keeping the handle.
+    ///
+    /// Writes into the existing buffers when the new cloud has the same shape
+    /// as the old one: same point count, same colourmap, same set of present
+    /// channels. That is the normal case for a feed replacing values, and it
+    /// costs a handful of buffer writes rather than reallocating every buffer
+    /// and the bind group. Anything else rebuilds.
     pub fn replace(
         &mut self,
         device: &gpu::Device,
@@ -389,6 +395,15 @@ impl PointCloudPlugin {
     ) -> viewport_lib::error::ViewportResult<()> {
         if !self.stored.contains(id) {
             return Err(self.stored.stale(id));
+        }
+        if let Some(gpu) = self.stored.get_mut(id)
+            && store::try_replace_in_place(queue, gpu, item)
+        {
+            // The bytes are unchanged, so the store's charge still holds, but
+            // the contents are not: stamp a new revision so a cache keyed on
+            // one cannot serve the old cloud.
+            self.stored.bump_revision(id);
+            return Ok(());
         }
         let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
         let binds = resolve_bindings(resources, bgl, item);

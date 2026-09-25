@@ -476,6 +476,14 @@ impl TensorFieldPlugin {
         if !self.stored.contains(id) {
             return Err(self.stored.stale(id));
         }
+        if let Some(gpu) = self.stored.get_mut(id)
+            && store::try_replace_in_place(queue, gpu, item)
+        {
+            // Same bytes, different contents: the store's charge still holds,
+            // the revision must not.
+            self.stored.bump_revision(id);
+            return Ok(());
+        }
         let gpu = self.build(device, queue, resources, item);
         self.stored.replace_sized(id, gpu);
         Ok(())

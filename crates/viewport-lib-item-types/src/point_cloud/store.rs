@@ -211,6 +211,29 @@ fn resolve_sizes(item: &PointCloudItem) -> (Option<Vec<f32>>, f32) {
     }
 }
 
+/// The point cloud's group-1 uniform block.
+///
+/// A stored cloud keeps its copy so an in-place replace can compare the channel
+/// presence flags against a new item without rebuilding anything, and rewrite
+/// the block when they match.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct PointCloudUniform {
+    model: [[f32; 4]; 4],
+    default_colour: [f32; 4],
+    point_size: f32,
+    has_scalars: u32,
+    scalar_min: f32,
+    scalar_max: f32,
+    has_colours: u32,
+    has_radius: u32,
+    has_transparency: u32,
+    gaussian: u32,
+    // 0 = ScreenSpaceCircle, 1 = Sphere
+    render_mode: u32,
+    _pad: [u32; 3],
+}
+
 /// Build the GPU data for one point cloud: its buffers and its group-1 bind
 /// group.
 ///
@@ -225,18 +248,14 @@ pub(super) fn build_point_cloud(
     {
         let point_count = item.positions.len() as u32;
 
-        let pos_bytes: Vec<u8> = item
-            .positions
-            .iter()
-            .flat_map(|p| bytemuck::bytes_of(p).iter().copied())
-            .collect();
+        let pos_bytes: &[u8] = bytemuck::cast_slice(&item.positions);
         let vertex_buffer = device.create_buffer(&gpu::BufferDescriptor {
             label: Some("pc_vertex_buf"),
             size: pos_bytes.len().max(12) as u64,
             usage: gpu::BufferUsages::VERTEX | gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&vertex_buffer, 0, &pos_bytes);
+        queue.write_buffer(&vertex_buffer, 0, pos_bytes);
 
         let colour = resolve_colour(item);
         let (scalar_min, scalar_max) = colour.scalar_range;
@@ -319,23 +338,6 @@ pub(super) fn build_point_cloud(
             (buf, 0u32)
         };
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct PointCloudUniform {
-            model: [[f32; 4]; 4],
-            default_colour: [f32; 4],
-            point_size: f32,
-            has_scalars: u32,
-            scalar_min: f32,
-            scalar_max: f32,
-            has_colours: u32,
-            has_radius: u32,
-            has_transparency: u32,
-            gaussian: u32,
-            // 0 = ScreenSpaceCircle, 1 = Sphere
-            render_mode: u32,
-            _pad: [u32; 3],
-        }
         let uniform_data = PointCloudUniform {
             model: item.model,
             default_colour: colour.flat,
@@ -404,6 +406,8 @@ pub(super) fn build_point_cloud(
             point_count,
             pick_id: item.settings.pick_id,
             bind_group,
+            uniform: uniform_data,
+            colourmap: crate::sources::requested_colourmap(&item.colour),
             _uniform_buf: uniform_buf,
             _scalar_buf: scalar_buf,
             _colour_buf: colour_buf,
@@ -411,6 +415,89 @@ pub(super) fn build_point_cloud(
             _transparency_buf: transparency_buf,
         }
     }
+}
+
+/// Rewrite a stored cloud's buffers in place, keeping its bind group.
+///
+/// Returns `false` when the new item does not fit what is already allocated, in
+/// which case the caller rebuilds from scratch. The shape has to match exactly:
+/// the same point count, the same colourmap behind the LUT binding, and the
+/// same set of present channels. All three matter. A different point count
+/// means every buffer is the wrong size; a different colourmap means the bind
+/// group holds the wrong texture view; and a channel appearing or disappearing
+/// swaps a real buffer for a four-byte fallback, which is a different binding
+/// even when the counts agree.
+///
+/// This is what makes a streaming feed cheap: a replace that keeps its shape,
+/// which is the normal case when only the values changed, costs six
+/// `write_buffer` calls instead of six buffer allocations plus a bind group.
+pub(super) fn try_replace_in_place(
+    queue: &gpu::Queue,
+    gpu: &mut PointCloudGpuData,
+    item: &PointCloudItem,
+) -> bool {
+    let count = item.positions.len() as u32;
+    if count != gpu.point_count {
+        return false;
+    }
+    if crate::sources::requested_colourmap(&item.colour) != gpu.colourmap {
+        return false;
+    }
+
+    let colour = resolve_colour(item);
+    let (per_point_radii, uniform_radius) = resolve_sizes(item);
+    let (scalar_min, scalar_max) = colour.scalar_range;
+
+    let has_scalars = !colour.scalars.is_empty() as u32;
+    let has_colours = !colour.colours.is_empty() as u32;
+    let has_radius = per_point_radii.is_some() as u32;
+    let has_transparency = !item.transparencies.is_empty() as u32;
+    if has_scalars != gpu.uniform.has_scalars
+        || has_colours != gpu.uniform.has_colours
+        || has_radius != gpu.uniform.has_radius
+        || has_transparency != gpu.uniform.has_transparency
+    {
+        return false;
+    }
+
+    queue.write_buffer(&gpu.vertex_buffer, 0, bytemuck::cast_slice(&item.positions));
+    if has_scalars == 1 {
+        queue.write_buffer(&gpu._scalar_buf, 0, bytemuck::cast_slice(&colour.scalars));
+    }
+    if has_colours == 1 {
+        queue.write_buffer(&gpu._colour_buf, 0, bytemuck::cast_slice(&colour.colours));
+    }
+    if let Some(radii) = per_point_radii {
+        queue.write_buffer(&gpu._radius_buf, 0, bytemuck::cast_slice(&radii));
+    }
+    if has_transparency == 1 {
+        queue.write_buffer(
+            &gpu._transparency_buf,
+            0,
+            bytemuck::cast_slice(&item.transparencies),
+        );
+    }
+
+    gpu.uniform = PointCloudUniform {
+        model: item.model,
+        default_colour: colour.flat,
+        point_size: uniform_radius,
+        has_scalars,
+        scalar_min,
+        scalar_max,
+        has_colours,
+        has_radius,
+        has_transparency,
+        gaussian: if item.gaussian { 1 } else { 0 },
+        render_mode: match item.render_mode {
+            PointRenderMode::ScreenSpaceCircle => 0,
+            PointRenderMode::Sphere => 1,
+        },
+        _pad: [0; 3],
+    };
+    queue.write_buffer(&gpu._uniform_buf, 0, bytemuck::bytes_of(&gpu.uniform));
+    gpu.pick_id = item.settings.pick_id;
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -440,8 +527,9 @@ impl viewport_lib::resources::handle::GpuByteSize for PointCloudGpuData {
 /// the store holds it across frames.
 #[derive(Clone)]
 pub(crate) struct PointCloudGpuData {
-    /// Vertex buffer: one entry per point, packed as `[position: vec3, _pad: f32]` (16 bytes).
-    /// The shader reads colour/scalar from storage buffers indexed by `vertex_index`.
+    /// Vertex buffer: one tightly packed `[f32; 3]` per point, 12 bytes, matching
+    /// the `Float32x3` vertex layout the pipeline declares. The shader reads
+    /// colour and scalar from storage buffers indexed by `vertex_index`.
     pub(crate) vertex_buffer: gpu::Buffer,
     /// Number of points (= draw count).
     pub(crate) point_count: u32,
@@ -449,10 +537,141 @@ pub(crate) struct PointCloudGpuData {
     pub(crate) pick_id: viewport_lib::PickId,
     /// Bind group (group 1): uniform + LUT + sampler + scalar + colour + radius + transparency.
     pub(crate) bind_group: gpu::BindGroup,
+    /// The uniform block as written. Kept so an in-place replace can compare
+    /// this cloud's channel presence against a new item's.
+    pub(crate) uniform: PointCloudUniform,
+    /// The colourmap the bind group's LUT view came from, or `None` for the
+    /// default. A replace naming a different one has to rebuild the group.
+    pub(crate) colourmap: Option<viewport_lib::resources::ColourmapId>,
     // Keep the buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: gpu::Buffer,
     pub(crate) _scalar_buf: gpu::Buffer,
     pub(crate) _colour_buf: gpu::Buffer,
     pub(crate) _radius_buf: gpu::Buffer,
     pub(crate) _transparency_buf: gpu::Buffer,
+}
+
+#[cfg(test)]
+mod in_place_tests {
+    use super::*;
+    use viewport_lib::{Colour, ColourSource, SizeSource};
+
+    fn device() -> Option<(gpu::Device, gpu::Queue)> {
+        viewport_lib_testkit::headless_device_with(&viewport_lib_testkit::DeviceProfile::low_power(
+            "point_cloud_in_place",
+        ))
+    }
+
+    fn cloud(n: usize) -> PointCloudItem {
+        let mut c = PointCloudItem::default();
+        c.positions = (0..n).map(|i| [i as f32, 0.0, 0.0]).collect();
+        c
+    }
+
+    /// Build a cloud's GPU data the way an upload would, so the tests below
+    /// exercise the same entry a stored cloud holds.
+    fn built(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        resources: &DeviceResources,
+        item: &PointCloudItem,
+    ) -> PointCloudGpuData {
+        let bgl = build_bgl(device);
+        let binds = resolve_bindings(resources, &bgl, item);
+        build_point_cloud(device, queue, &binds, item)
+    }
+
+    /// The case the streaming feed hits every update: same shape, new values.
+    ///
+    /// That the buffers are reused rather than rebuilt is structural, not
+    /// asserted: `try_replace_in_place` takes no `&Device`, so it cannot
+    /// allocate one. What the test pins is that the fast path is *taken* for
+    /// this shape, which is the part a future change could silently lose.
+    #[test]
+    fn a_same_shape_replace_takes_the_in_place_path() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut gpu = built(&device, &queue, &resources, &cloud(8));
+
+        let mut next = cloud(8);
+        next.positions[0] = [99.0, 1.0, 2.0];
+        next.model = glam::Mat4::from_translation(glam::Vec3::X).to_cols_array_2d();
+        assert!(try_replace_in_place(&queue, &mut gpu, &next));
+        assert_eq!(
+            gpu.uniform.model, next.model,
+            "the uniform must carry the new item's model"
+        );
+    }
+
+    #[test]
+    fn a_different_point_count_does_not_fit() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut gpu = built(&device, &queue, &resources, &cloud(8));
+        assert!(!try_replace_in_place(&queue, &mut gpu, &cloud(9)));
+    }
+
+    /// A channel appearing swaps a four-byte fallback buffer for a real one,
+    /// which is a different binding even though the point count is unchanged.
+    #[test]
+    fn a_channel_appearing_does_not_fit() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let solid = cloud(8);
+        let mut gpu = built(&device, &queue, &resources, &solid);
+
+        let mut with_scalars = cloud(8);
+        with_scalars.colour = ColourSource::Scalar {
+            values: vec![0.5; 8],
+            range: Some((0.0, 1.0)),
+            colourmap: None,
+        };
+        assert!(!try_replace_in_place(&queue, &mut gpu, &with_scalars));
+    }
+
+    /// Solid to solid is a shape match: the flat colour rides the uniform, not
+    /// a buffer, so only the uniform changes.
+    #[test]
+    fn a_new_solid_colour_fits() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut solid = cloud(8);
+        solid.colour = ColourSource::Solid(Colour::WHITE);
+        let mut gpu = built(&device, &queue, &resources, &solid);
+
+        let mut recoloured = cloud(8);
+        recoloured.colour = ColourSource::Solid(Colour::linear_rgb(1.0, 0.0, 0.0));
+        assert!(try_replace_in_place(&queue, &mut gpu, &recoloured));
+        assert_eq!(gpu.uniform.default_colour[0], 1.0);
+    }
+
+    /// `Uniform` sizes live in the uniform; a per-sample list is a buffer. Going
+    /// from one to the other changes the bindings.
+    #[test]
+    fn a_uniform_to_per_sample_size_does_not_fit() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut fixed = cloud(8);
+        fixed.size = SizeSource::Uniform(4.0);
+        let mut gpu = built(&device, &queue, &resources, &fixed);
+
+        let mut per_point = cloud(8);
+        per_point.size = SizeSource::PerSample(vec![2.0; 8]);
+        assert!(!try_replace_in_place(&queue, &mut gpu, &per_point));
+    }
 }
