@@ -88,6 +88,33 @@ pub enum ViewportError {
         offset_bytes: u64,
     },
 
+    /// A ranged deform-slot write does not fit the data attached to that slot:
+    /// `first_element + element_count` exceeds what the slot holds.
+    #[error(
+        "deform slot {slot} write [{first_element}..{first_element}+{element_count}) exceeds the slot's {slot_elements} elements"
+    )]
+    DeformSlotWriteOutOfRange {
+        /// The slot the write targeted.
+        slot: usize,
+        /// First element of the requested window.
+        first_element: u32,
+        /// Number of elements in the requested window.
+        element_count: u32,
+        /// How many elements the slot's attached data holds.
+        slot_elements: u32,
+    },
+
+    /// A ranged deform-slot write named a slot with no CPU data attached.
+    /// Attach the slot first with `attach_deform_slot`, which establishes its
+    /// length and stride; a ranged write only updates what is already there.
+    #[error("deform slot {slot} on mesh {mesh_id} has no attached data to write into")]
+    DeformSlotNotAttached {
+        /// The mesh the write targeted.
+        mesh_id: usize,
+        /// The slot the write targeted.
+        slot: usize,
+    },
+
     /// A sliced override binding does not fit inside the supplied buffer:
     /// `base_element + element_count` vec3 elements (12 bytes each) exceed
     /// the buffer's size.
