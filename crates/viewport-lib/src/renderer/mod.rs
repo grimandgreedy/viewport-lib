@@ -53,6 +53,8 @@ pub mod tuning;
 pub use shadow_debug_stats::ShadowDebugStats;
 
 #[cfg(test)]
+mod deform_stats_tests;
+#[cfg(test)]
 mod hidden_tests;
 #[cfg(test)]
 mod lod_instance_tests;
@@ -339,6 +341,10 @@ pub struct ViewportRenderer {
     /// `init_gpu` is invoked once on registration; per-frame `prepare` and
     /// `paint` fire when a matching collection is on `SceneFrame`.
     item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry,
+    /// Per-plugin `prepare` timings for the last frame, in registration order.
+    /// Rebuilt each `dispatch_plugin_prepare`; a plugin with no items that frame
+    /// is present with a zero.
+    plugin_prepare_ms: Vec<(&'static str, f32)>,
     /// Names of the item types the renderer installed itself, which an
     /// external plugin may not take over.
     renderer_owned_type_names: std::collections::HashSet<&'static str>,
@@ -907,6 +913,7 @@ impl ViewportRenderer {
             resources,
             instancing: InstancingState::new(gpu_culling_supported, multi_draw_supported),
             item_type_plugins: crate::renderer::item_plugins::registry::ItemPluginRegistry::new(),
+            plugin_prepare_ms: Vec::new(),
             renderer_owned_type_names: std::collections::HashSet::new(),
             post_effect_producers: Vec::new(),
             next_post_effect_producer_id: 0,
@@ -1027,6 +1034,45 @@ impl ViewportRenderer {
         self.item_type_plugins
             .iter()
             .map(|(name, plugin)| (name, plugin.resident_bytes()))
+    }
+
+    /// Per-item-type contribution to the last prepared frame: CPU prepare time,
+    /// draw calls, and uploaded bytes.
+    ///
+    /// The time half of what
+    /// [`plugin_resident_bytes`](Self::plugin_resident_bytes) does for memory.
+    /// [`PrepareBreakdown::plugin_ms`](crate::renderer::stats::PrepareBreakdown::plugin_ms)
+    /// is the total across every plugin, which is the figure to watch but the
+    /// wrong one to act on: a scene registers many item types (every built-in
+    /// type past mesh geometry is one), and a frame that got slower needs to say
+    /// which. This is the breakdown.
+    ///
+    /// Every registered type appears, in registration order, including the ones
+    /// reading zero. `prepare_ms` is renderer-measured; `draw_calls` and
+    /// `upload_bytes` are self-reported by the plugin and read zero for a plugin
+    /// that has not implemented
+    /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls)
+    /// or [`upload_bytes`](crate::plugin_api::ItemTypePlugin::upload_bytes).
+    pub fn plugin_frame_counters(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, crate::renderer::stats::PluginFrameCounters)> + '_
+    {
+        self.item_type_plugins.iter().map(move |(name, plugin)| {
+            let prepare_ms = self
+                .plugin_prepare_ms
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, ms)| *ms)
+                .unwrap_or(0.0);
+            (
+                name,
+                crate::renderer::stats::PluginFrameCounters {
+                    prepare_ms,
+                    draw_calls: plugin.draw_calls(),
+                    upload_bytes: plugin.upload_bytes(),
+                },
+            )
+        })
     }
 
     /// Performance counters from the last completed frame.
@@ -1968,11 +2014,13 @@ impl ViewportRenderer {
         self.resources.ensure_colourmaps_initialized(device, queue);
         self.plugin_frame_index = self.plugin_frame_index.wrapping_add(1);
         let mut bufs: Vec<crate::gpu::CommandBuffer> = Vec::new();
+        let mut timings: Vec<(&'static str, f32)> = Vec::new();
         for (name, plugin) in self.item_type_plugins.iter_mut() {
             let items = crate::plugin_api::ItemCollections::new(
                 crate::renderer::item_plugins::plugin_collections_slice(frame, name),
             );
             if !items.is_empty() {
+                let start = web_time::Instant::now();
                 // Constructed per plugin because `Jobs` borrows `&resources`
                 // and the borrow only needs to live for this iteration.
                 let ctx = crate::plugin_api::ItemFrameContext {
@@ -1993,8 +2041,14 @@ impl ViewportRenderer {
                     ),
                 };
                 bufs.extend(plugin.prepare(device, queue, &ctx, &items));
+                timings.push((name, start.elapsed().as_secs_f32() * 1000.0));
+            } else {
+                // Present with a zero rather than absent, so a consumer reading
+                // the breakdown sees every registered type every frame.
+                timings.push((name, 0.0));
             }
         }
+        self.plugin_prepare_ms = timings;
         bufs
     }
 

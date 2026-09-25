@@ -206,6 +206,35 @@ pub(crate) struct DeformationState {
     /// bound to an external buffer source. Lets the per-frame copy pass skip its
     /// encoder entirely when nothing is buffer-backed.
     pub external_source_count: usize,
+    /// Slot-write costs accumulated since the last `take_counters`. Read and
+    /// reset once per frame by `prepare`.
+    pub counters: DeformCounters,
+}
+
+/// What deform-slot writes did to their GPU storage since the counters were
+/// last taken.
+///
+/// A slot write that fits its existing buffer is a `write_buffer` and touches
+/// none of these. One that does not reallocates the buffer, which invalidates
+/// every bind group pointing at it, so the rebuild counts are the ones that
+/// scale: a per-mesh reallocation rebuilds one mesh bind group plus one bind
+/// group per instance attached to that mesh.
+///
+/// Surfaced per frame as the `deform_*` fields on
+/// [`FrameStats`](crate::renderer::stats::FrameStats).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeformCounters {
+    /// Slot-storage buffers reallocated, per-mesh and per-instance together.
+    /// Counts only reallocation of storage that already existed; a mesh's or
+    /// instance's first buffer is not counted.
+    pub buffer_reallocations: u32,
+    /// Per-mesh bind groups rebuilt because the mesh's slot buffer was
+    /// replaced.
+    pub mesh_bind_groups_rebuilt: u32,
+    /// Per-instance bind groups rebuilt. A per-instance reallocation rebuilds
+    /// one; a per-mesh reallocation rebuilds every instance bind group on that
+    /// mesh, because they bind the mesh buffer too.
+    pub instance_bind_groups_rebuilt: u32,
 }
 
 /// The `@group(2)` layout: a header uniform plus the per-mesh and per-instance
@@ -305,6 +334,7 @@ impl DeformationState {
             header_cpu,
             registrations: Vec::new(),
             external_source_count: 0,
+            counters: DeformCounters::default(),
         }
     }
 
@@ -329,6 +359,22 @@ impl DeformationState {
             .get(&mesh_id)
             .map(|m| &m.bind_group)
             .unwrap_or(&self.dummy_bind_group)
+    }
+
+    /// Take the accumulated slot-write counters, resetting them. Called once
+    /// per frame by `prepare` so each frame's figures cover that frame alone.
+    pub fn take_counters(&mut self) -> DeformCounters {
+        std::mem::take(&mut self.counters)
+    }
+
+    /// Whether `mesh_id` has any *per-mesh* slot data attached, CPU or
+    /// external-buffer-backed.
+    ///
+    /// Deliberately excludes per-instance data, which
+    /// [`Self::has_per_instance_deform_data`] covers: the two route differently
+    /// at draw time, so a caller deciding a draw path needs them apart.
+    pub(crate) fn has_mesh_slot_data(&self, mesh_id: MeshId) -> bool {
+        self.meshes.get(&mesh_id).is_some_and(|m| m.flag_bits != 0)
     }
 
     /// `deform_flags` value to write into the `ObjectUniform` for `mesh_id`.
@@ -469,6 +515,8 @@ impl DeformationState {
             &new_buffer,
             &self.dummy_instance_buffer,
         );
+        self.counters.buffer_reallocations += 1;
+        self.counters.mesh_bind_groups_rebuilt += 1;
 
         // Rebuild instance bind groups since they bind this mesh's buffer.
         let instance_ids: Vec<u32> = self
@@ -479,6 +527,7 @@ impl DeformationState {
             .keys()
             .copied()
             .collect();
+        self.counters.instance_bind_groups_rebuilt += instance_ids.len() as u32;
         for id in instance_ids {
             let inst_buf_clone = {
                 let inst = self
@@ -733,6 +782,8 @@ impl DeformationState {
             inst.buffer = new_buffer;
             inst.buffer_capacity = packed_bytes_len;
             inst.bind_group = bg;
+            self.counters.buffer_reallocations += 1;
+            self.counters.instance_bind_groups_rebuilt += 1;
         } else {
             let inst = self
                 .meshes
@@ -816,6 +867,8 @@ impl DeformationState {
                 inst.buffer = new_buffer;
                 inst.buffer_capacity = packed_bytes_len;
                 inst.bind_group = bg;
+                self.counters.buffer_reallocations += 1;
+                self.counters.instance_bind_groups_rebuilt += 1;
             } else {
                 queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
             }
@@ -1005,6 +1058,8 @@ impl DeformationState {
             inst.buffer = new_buffer;
             inst.buffer_capacity = packed_bytes_len;
             inst.bind_group = bg;
+            self.counters.buffer_reallocations += 1;
+            self.counters.instance_bind_groups_rebuilt += 1;
         } else {
             let inst = self
                 .meshes

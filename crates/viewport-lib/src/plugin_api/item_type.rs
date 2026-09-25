@@ -771,6 +771,36 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         0
     }
 
+    /// Draw calls this plugin issued for the most recently prepared frame.
+    ///
+    /// Summed into [`FrameStats::plugin_draw_calls`](crate::renderer::stats::FrameStats::plugin_draw_calls)
+    /// and reported per plugin by
+    /// [`ViewportRenderer::plugin_frame_counters`](crate::renderer::ViewportRenderer::plugin_frame_counters).
+    /// `FrameStats::draw_calls` counts mesh-family draws only and cannot see
+    /// yours, so a plugin that leaves this at the default is invisible in the
+    /// frame's draw-call figure however much it draws.
+    ///
+    /// This is a per-frame count, not a running total: reset it in your
+    /// `prepare` and accumulate as you record draws. The renderer reads it
+    /// during `prepare` and does not reset it for you, so a plugin that only
+    /// ever adds will report a number that climbs for the process lifetime.
+    fn draw_calls(&self) -> u32 {
+        0
+    }
+
+    /// Bytes this plugin uploaded for the most recently prepared frame.
+    ///
+    /// Summed into [`FrameStats::plugin_upload_bytes`](crate::renderer::stats::FrameStats::plugin_upload_bytes).
+    /// Same per-frame contract as [`Self::draw_calls`]: reset it in `prepare`.
+    ///
+    /// Count what crossed to the GPU this frame. That is a different question
+    /// from [`Self::resident_bytes`], which is the steady-state working set: a
+    /// plugin holding 100 MB and uploading nothing reports a large
+    /// `resident_bytes` and a zero here, which is the healthy shape.
+    fn upload_bytes(&self) -> u64 {
+        0
+    }
+
     /// Called when the wgpu device is recreated, e.g. after device loss or a
     /// host-driven reset. Every pipeline, buffer, texture, or bind group the
     /// plugin built against the old device is now invalid and must be rebuilt.

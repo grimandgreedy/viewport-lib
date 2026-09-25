@@ -138,6 +138,26 @@ impl Default for PerformancePolicy {
     }
 }
 
+/// One item-type plugin's contribution to the last prepared frame.
+///
+/// [`FrameStats`] carries the totals; this is the same measurement per plugin,
+/// which is what an eviction or budget decision needs. Iterate it with
+/// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
+///
+/// `prepare_ms` is measured by the renderer around the plugin's `prepare` call.
+/// The other two are self-reported, so a plugin that has not implemented them
+/// reads zero whatever it does.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PluginFrameCounters {
+    /// CPU time in this plugin's `prepare`, in milliseconds. Zero on a frame
+    /// where the plugin had no items and was not dispatched.
+    pub prepare_ms: f32,
+    /// Draw calls this plugin reported for the frame.
+    pub draw_calls: u32,
+    /// Bytes this plugin reported uploading for the frame.
+    pub upload_bytes: u64,
+}
+
 /// CPU time spent in each phase of `prepare()`, in milliseconds.
 ///
 /// `FrameStats::cpu_prepare_ms` is the total. This splits that total across the
@@ -151,9 +171,27 @@ impl Default for PerformancePolicy {
 /// not how long the GPU spends running it; use `gpu_frame_ms` for GPU cost.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PrepareBreakdown {
-    /// Item-type plugin prepare and cull dispatch. Skinning and other vertex
-    /// deformers run here, so a heavy skinned crowd shows up in this field.
+    /// Item-type plugin prepare, summed across every registered plugin.
+    /// Skinning and other vertex deformers run here, so a heavy skinned crowd
+    /// shows up in this field.
+    ///
+    /// This is the total. Most scenes register many item-type plugins (every
+    /// built-in type past mesh geometry is one), so the total on its own cannot
+    /// say which plugin is expensive; for that use
+    /// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters),
+    /// which breaks the same measurement out per plugin name. Cull dispatch is
+    /// measured separately in [`Self::plugin_cull_ms`] and excluded here.
     pub plugin_ms: f32,
+    /// Item-type plugin cull dispatch: one pass over every registered plugin
+    /// with the camera frustum, so plugin paint and shadow calls can skip
+    /// culled items.
+    ///
+    /// Split out of [`Self::plugin_ms`] because the two are different work with
+    /// different fixes: prepare cost follows how much content a plugin uploads
+    /// and rebuilds, cull cost follows how many items it holds. A frame where
+    /// this dominates wants coarser culling granularity, not cheaper uploads.
+    /// One dispatch covers all plugins, so this is not broken out per plugin.
+    pub plugin_cull_ms: f32,
     /// Lighting setup: directional shadow cascade matrices, point-light cube-map
     /// faces, and light clustering.
     pub lighting_ms: f32,
@@ -196,6 +234,14 @@ pub struct PrepareBreakdown {
 /// `oit_ms` when nothing transparent is drawn) or when the backend does not
 /// support `TIMESTAMP_QUERY` (the same condition that leaves
 /// [`FrameStats::gpu_frame_ms`] at `None`).
+///
+/// An [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin) records its draws
+/// into the passes the renderer owns, so plugin GPU cost is included in
+/// `scene_ms` / `oit_ms` / `shadow_ms` and cannot be separated from built-in
+/// item draws in the same pass. Splitting it would mean a timestamp pair per
+/// plugin per pass, which is not carried. The CPU side is attributable per
+/// plugin: see
+/// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
 ///
 /// These passes are submitted in separate command buffers but resolved
 /// together, so the values are comparable. Like `gpu_frame_ms`, they lag one
@@ -261,13 +307,29 @@ pub struct GpuBreakdown {
 /// Per-frame rendering statistics returned by [`crate::ViewportRenderer::prepare`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStats {
-    /// Total objects considered for rendering.
+    /// Total mesh-family objects considered for rendering.
+    ///
+    /// Counted from the surface submission only. Item-type plugin content is
+    /// not included here or in `visible_objects` / `culled_objects`: a plugin
+    /// owns its own item collections and the renderer does not know what an
+    /// item of a plugin's type costs to draw.
     pub total_objects: u32,
-    /// Objects that passed visibility and frustum tests.
+    /// Objects that passed visibility and frustum tests. Excludes plugin
+    /// content, as [`Self::total_objects`] describes.
     pub visible_objects: u32,
-    /// Objects culled by frustum or visibility.
+    /// Objects culled by frustum or visibility. Excludes plugin content, as
+    /// [`Self::total_objects`] describes.
     pub culled_objects: u32,
-    /// Number of draw calls issued in the main pass.
+    /// Number of draw calls issued in the main pass for mesh-family content.
+    ///
+    /// Plugin draws are **not** counted here: an
+    /// [`ItemTypePlugin`](crate::plugin_api::ItemTypePlugin) records its own
+    /// draws and reports them through
+    /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls),
+    /// which arrives as [`Self::plugin_draw_calls`]. The two are complementary,
+    /// not double-counted, so the frame's total is the sum of the pair. A scene
+    /// drawn entirely by plugins reads `draw_calls: 0`, which is correct rather
+    /// than broken.
     pub draw_calls: u32,
     /// Number of instanced batches (0 when using per-object path).
     pub instanced_batches: u32,
@@ -321,7 +383,57 @@ pub struct FrameStats {
     /// cache is: `decal_reused` should equal the visible decal count and
     /// `decal_uploads` should be zero once decals are settled.
     pub decal_reused: u32,
-    /// Total triangles submitted to the GPU.
+    /// Draw calls issued by item-type plugins this frame, summed across every
+    /// registered plugin that reports them.
+    ///
+    /// Complements [`Self::draw_calls`], which covers mesh-family content only.
+    /// A plugin reports this itself through
+    /// [`ItemTypePlugin::draw_calls`](crate::plugin_api::ItemTypePlugin::draw_calls)
+    /// and one that has not implemented it contributes zero whatever it draws,
+    /// so this is a floor, not a guarantee. Per-plugin breakdown:
+    /// [`ViewportRenderer::plugin_frame_counters`](crate::ViewportRenderer::plugin_frame_counters).
+    pub plugin_draw_calls: u32,
+    /// Bytes uploaded by item-type plugins this frame, summed across every
+    /// registered plugin that reports them.
+    ///
+    /// Complements [`Self::upload_bytes`], with the same caveat as
+    /// [`Self::plugin_draw_calls`]: it is what plugins report, not what the
+    /// renderer observed.
+    pub plugin_upload_bytes: u64,
+    /// Items drawn this frame that carried deform-slot data the chosen draw
+    /// path did not apply, so they drew undeformed.
+    ///
+    /// Reads zero in a correct frame. A non-zero value is a wrong picture, not
+    /// a slow one: the deformation the consumer attached is silently absent. It
+    /// happens when an item with per-mesh slot data is admitted to an instanced
+    /// batch, because the instanced draws bind the empty deform group. Assert on
+    /// it in a test rather than watching it.
+    ///
+    /// Covers mesh-family items only. A plugin that binds the deform group in
+    /// its own pipeline reads the slot buffers itself, and deformer bodies are
+    /// composed into mesh-family shaders only, so plugin geometry is not
+    /// counted here and never deforms from a registered deformer.
+    pub deform_slots_ignored: u32,
+    /// Deform slot-storage buffers reallocated since the previous `prepare()`.
+    ///
+    /// A slot write that fits its existing buffer is a `write_buffer` and reads
+    /// zero here. A per-frame deformation is a same-size write, so a steady
+    /// animated scene should read zero: a value that tracks the deformed mesh
+    /// count every frame means the writes are reallocating instead.
+    pub deform_buffer_reallocations: u32,
+    /// Per-mesh deform bind groups rebuilt since the previous `prepare()`.
+    /// One per per-mesh reallocation, since the bind group points at the buffer
+    /// that was replaced.
+    pub deform_mesh_bind_groups_rebuilt: u32,
+    /// Per-instance deform bind groups rebuilt since the previous `prepare()`.
+    ///
+    /// The one that scales: a per-instance reallocation rebuilds one, but a
+    /// per-mesh reallocation rebuilds every instance bind group on that mesh,
+    /// because they bind the mesh buffer too. For a crowd sharing one mesh that
+    /// is one bind group per crowd member per write.
+    pub deform_instance_bind_groups_rebuilt: u32,
+    /// Total triangles submitted to the GPU by mesh-family draws. Excludes
+    /// plugin-owned geometry, for the reason given on [`Self::draw_calls`].
     pub triangles_submitted: u64,
     /// Number of draw calls in the shadow pass.
     pub shadow_draw_calls: u32,
@@ -433,6 +545,9 @@ pub struct FrameStats {
     /// per-object uniform writes for items whose transform or material
     /// changed. A steady frame over a static scene reads 0; a non-zero
     /// value attributes frame cost to CPU-to-GPU transfer.
+    ///
+    /// Plugin-owned traffic is not counted here; it arrives separately as
+    /// [`Self::plugin_upload_bytes`].
     pub upload_bytes: u64,
     /// GPU pipelines compiled lazily since the previous `prepare()` call.
     ///
@@ -567,6 +682,12 @@ mod tests {
         assert_eq!(stats.render_scale, 0.0);
         assert!(!stats.missed_budget);
         assert_eq!(stats.upload_bytes, 0);
+        assert_eq!(stats.plugin_draw_calls, 0);
+        assert_eq!(stats.plugin_upload_bytes, 0);
+        assert_eq!(stats.deform_slots_ignored, 0);
+        assert_eq!(stats.deform_buffer_reallocations, 0);
+        assert_eq!(stats.deform_mesh_bind_groups_rebuilt, 0);
+        assert_eq!(stats.deform_instance_bind_groups_rebuilt, 0);
         assert!(!stats.gpu_culling_active);
         assert!(stats.gpu_visible_instances.is_none());
         assert!(!stats.shadows_skipped);

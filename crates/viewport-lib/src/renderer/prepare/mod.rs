@@ -736,6 +736,43 @@ impl ViewportRenderer {
             let decal_cache_stats = self
                 .decal_cache_stats
                 .load(std::sync::atomic::Ordering::Relaxed);
+
+            // Items drawn instanced whose mesh carries per-mesh deform slot
+            // data. The instanced draws bind the empty deform group and the
+            // instanced shader passes no flags, so that data does not reach the
+            // draw and the item renders undeformed. Per-instance data is
+            // excluded from instancing by `is_instanceable`, so it is not at
+            // risk and is not counted here.
+            //
+            // Gated on `use_instancing` as well as the per-item predicate:
+            // below the threshold every item draws per-object whatever
+            // `is_instanceable` says about it, and the per-object path binds
+            // the mesh's real deform group.
+            let deform_slots_ignored = if self.instancing.use_instancing {
+                scene_items
+                    .iter()
+                    .zip(instanceable.iter())
+                    .filter(|(item, inst)| {
+                        **inst
+                            && !item.settings.hidden
+                            && resources.deform.has_mesh_slot_data(item.mesh_id)
+                    })
+                    .count() as u32
+            } else {
+                0
+            };
+
+            let deform = resources.deform.take_counters();
+            let plugin_draw_calls = self
+                .item_type_plugins
+                .values()
+                .map(|p| p.draw_calls())
+                .sum();
+            let plugin_upload_bytes = self
+                .item_type_plugins
+                .values()
+                .map(|p| p.upload_bytes())
+                .sum();
             self.last_stats = crate::renderer::stats::FrameStats {
                 total_objects: total,
                 visible_objects: visible,
@@ -748,6 +785,12 @@ impl ViewportRenderer {
                 batches_skipped,
                 decal_uploads: (decal_cache_stats >> 32) as u32,
                 decal_reused: decal_cache_stats as u32,
+                plugin_draw_calls,
+                plugin_upload_bytes,
+                deform_slots_ignored,
+                deform_buffer_reallocations: deform.buffer_reallocations,
+                deform_mesh_bind_groups_rebuilt: deform.mesh_bind_groups_rebuilt,
+                deform_instance_bind_groups_rebuilt: deform.instance_bind_groups_rebuilt,
                 triangles_submitted: triangles,
                 shadow_draw_calls: 0,    // Updated below in shadow pass.
                 shadow_draw_commands: 0, // Updated below in shadow pass.
@@ -993,14 +1036,18 @@ impl ViewportRenderer {
             sink.extend(plugin_bufs);
         }
 
+        self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
+
         // Run plugin culling for the current camera frustum so subsequent
-        // plugin paint/shadow calls can skip culled items.
+        // plugin paint/shadow calls can skip culled items. Timed apart from
+        // prepare above: the two scale with different things.
+        let cull_start = web_time::Instant::now();
         if !self.item_type_plugins.is_empty() {
             let vp = frame.camera.render_camera.view_proj();
             let frustum = crate::camera::frustum::Frustum::from_view_proj(&vp);
             self.dispatch_plugin_cull(&frustum, frame);
         }
-        self.prepare_breakdown.plugin_ms = plugin_start.elapsed().as_secs_f32() * 1000.0;
+        self.prepare_breakdown.plugin_cull_ms = cull_start.elapsed().as_secs_f32() * 1000.0;
 
         // Rebuild or drop the cached per-object render bundle now that the
         // prepared item list, LOD resolve, and per-item bind groups are final.
