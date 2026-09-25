@@ -13,8 +13,12 @@ pub(crate) struct CompiledOverlay {
     pub vertex_buf: crate::gpu::Buffer,
     /// Number of vertices in `vertex_buf`.
     pub vertex_count: u32,
-    /// GPU bytes charged for this entry (both vertex buffers plus shadows).
-    pub bytes: u64,
+    /// GPU bytes held by the shape stream: `shape_vertex_buf` plus `shadow_buf`.
+    ///
+    /// The entry's total charge lives on its store slot. Only the text stream is
+    /// rebuilt on a re-emit, so the shape half is kept here rather than measured
+    /// again to work out the new total.
+    pub shape_bytes: u64,
     /// Analytic SDF shape vertices (`OverlayShapeVertex`), drawn through the shape
     /// pipeline. `None` when the group has no SDF shapes.
     pub shape_vertex_buf: Option<crate::gpu::Buffer>,

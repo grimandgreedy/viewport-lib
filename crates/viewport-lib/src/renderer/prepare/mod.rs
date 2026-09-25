@@ -898,10 +898,21 @@ impl ViewportRenderer {
         self.overlay_retained_draws.clear();
         self.overlay_retained_shape_draws.clear();
         self.overlay_instances_ready = false;
+        self.overlay_retained_counters = Default::default();
         self.prepare_overlay_labels(device, queue, frame);
         self.prepare_overlay_shapes(device, queue, frame);
         self.finalize_overlay_draw_order(frame);
         self.prepare_breakdown.overlay_ms = overlay_start.elapsed().as_secs_f32() * 1000.0;
+        // Publish the retained counters here rather than in the stats assembly:
+        // the split API reaches this phase through `prepare_viewport` without
+        // assembling a `FrameStats`, and `last_frame_stats()` should still show
+        // what the overlay drew. Per viewport, like `overlay_ms` above.
+        let overlay_counters = self.overlay_retained_counters;
+        self.last_stats.overlay_retained_submitted = overlay_counters.submitted;
+        self.last_stats.overlay_retained_drawn = overlay_counters.drawn;
+        self.last_stats.overlay_retained_reemitted = overlay_counters.reemitted;
+        self.last_stats.overlay_retained_bytes =
+            self.resources.content.overlay_geometry.allocated_bytes();
         self.prepare_debug_buffer(frame);
         self.prepare_atlas_blit(queue, frame, viewport_fx);
     }

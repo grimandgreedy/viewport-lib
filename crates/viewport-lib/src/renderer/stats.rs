@@ -481,6 +481,40 @@ pub struct FrameStats {
     /// the target budget. Always false in [`RuntimeMode::Capture`].
     pub effects_throttled: bool,
 
+    /// Retained overlay groups submitted through `OverlayFrame::retained` this
+    /// frame, whether or not they drew.
+    ///
+    /// Together with [`overlay_retained_drawn`](Self::overlay_retained_drawn)
+    /// this is the ratio a consumer drawing its interface through the overlay
+    /// system needs: the difference is the groups that were submitted and
+    /// silently skipped, because the handle was already freed, the group
+    /// compiled empty, or its world anchor fell outside the view.
+    ///
+    /// Reported for the most recently prepared viewport, not summed across
+    /// them, matching [`PrepareBreakdown::overlay_ms`].
+    pub overlay_retained_submitted: u32,
+    /// Retained overlay groups drawn from their compiled buffers this frame.
+    ///
+    /// Counts groups, not draws: a group carrying both text and SDF-shape
+    /// geometry records two draws and counts once here.
+    pub overlay_retained_drawn: u32,
+    /// Retained overlay groups whose geometry was rebuilt and re-uploaded this
+    /// frame because its baked glyph UVs went stale.
+    ///
+    /// A group carrying glyphs bakes atlas UVs at a physical size, so it is
+    /// re-emitted when the glyph atlas grows or `pixels_per_point` changes. This
+    /// is the only compile work the renderer does on a retained group by itself;
+    /// `compile_overlay_geometry` is called by the consumer and is not counted
+    /// here. A value that stays non-zero frame after frame means groups are
+    /// paying a full rebuild instead of being drawn from their buffers.
+    pub overlay_retained_reemitted: u32,
+    /// Live compiled overlay geometry, in bytes: vertex, shape, and shadow
+    /// buffers across every group that has been compiled and not freed.
+    ///
+    /// A level, not a per-frame count, and independent of what was submitted
+    /// this frame.
+    pub overlay_retained_bytes: u64,
+
     /// Objects that resolved through a LOD group this frame.
     ///
     /// Counts `SceneRenderItem`s with a `lod_group` set, plus each individual

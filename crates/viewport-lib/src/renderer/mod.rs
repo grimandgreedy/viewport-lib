@@ -269,6 +269,16 @@ pub(crate) const GPU_TS_CULL_SCATTER: u32 = 13;
 /// (a begin/end pair per slot).
 pub(crate) const GPU_TS_SLOTS: u32 = 14;
 
+/// Retained-overlay counts gathered while the overlay phase runs, before they
+/// reach the matching `FrameStats` fields. Live bytes are read from the compiled
+/// geometry store at publish time and need no accumulation here.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct OverlayRetainedCounters {
+    pub submitted: u32,
+    pub drawn: u32,
+    pub reemitted: u32,
+}
+
 /// Whether a `render()` presents the frame the user sees, or is an auxiliary
 /// read.
 ///
@@ -411,6 +421,9 @@ pub struct ViewportRenderer {
     /// Set once the label prepare has written `overlay_instances_buf` this frame,
     /// so the shape prepare reuses it instead of building an identity-only fallback.
     overlay_instances_ready: bool,
+    /// Retained-overlay counters for the frame being prepared. Reset at the start
+    /// of the overlay phase and published into `FrameStats` at the end of it.
+    overlay_retained_counters: OverlayRetainedCounters,
     /// Cached GPU textures for the backdrop blur effect (frosted glass).
     /// Recreated when the viewport size changes.
     backdrop_blur_state: Option<crate::resources::BackdropBlurState>,
@@ -916,6 +929,7 @@ impl ViewportRenderer {
             overlay_shape_blur_vbuf: overlay_buffers::GrowBuffer::vertex("overlay_shape_blur_vbuf"),
             overlay_shape_tex_vbufs: Vec::new(),
             overlay_viewport_buf: None,
+            overlay_retained_counters: OverlayRetainedCounters::default(),
             overlay_retained_draws: Vec::new(),
             overlay_retained_shape_draws: Vec::new(),
             overlay_instances_buf: None,
