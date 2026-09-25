@@ -2,7 +2,8 @@
 name = "viewport-lib-item-types"
 version = "0.1.0"
 edition = "2024"
-description = "The built-in item types for viewport-lib: point clouds, glyphs, sprites, curves, volumes and the rest"
+description = "The built-in item types for viewport-lib: point clouds, sprites, curves, volumes, vector and tensor fields and the rest"
+readme = "README.md"
 license = "GPL-3.0-only"
 repository = "https://github.com/grimandgreedy/viewport-lib"
 keywords = ["3d", "viewport", "viewport-lib", "rendering", "visualization"]
