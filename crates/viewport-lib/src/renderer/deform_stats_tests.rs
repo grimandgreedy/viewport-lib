@@ -3,10 +3,12 @@
 //! Two things are checked here. First, that a per-mesh slot write reports what
 //! it cost: the write reallocates its buffer and rebuilds every bind group
 //! pointing at it, and `FrameStats` has to show that rather than leave it
-//! invisible. Second, that an item whose deform data the chosen draw path
-//! cannot apply is counted, because the result is a wrong picture with no other
-//! signal. Colocated with the renderer so the tests can drive `prepare`
-//! directly. Skips when no wgpu adapter is available.
+//! invisible. Second, that items carrying per-mesh slot data stay off the
+//! instanced path, which is what keeps `deform_slots_ignored` at zero: the
+//! instanced draws bind the empty deform group, so an item that reached them
+//! would render undeformed with no other signal. Colocated with the renderer so
+//! the tests can drive `prepare` directly. Skips when no wgpu adapter is
+//! available.
 
 use super::types::FrameData;
 use super::{
@@ -120,17 +122,15 @@ fn per_mesh_slot_write_reports_its_reallocation() {
     assert_eq!(idle.deform_mesh_bind_groups_rebuilt, 0);
 }
 
-/// One item with per-mesh deform data draws per-object and applies it. Two
-/// items cross the instancing threshold, and the instanced draws bind the empty
-/// deform group, so the data does not reach the shader and the items render
-/// undeformed. That is a wrong picture with no other signal, so it is counted.
+/// Per-mesh deform data keeps its items off the instanced path however many of
+/// them there are, so the deformation always reaches the draw and
+/// `deform_slots_ignored` stays at zero. The control in the middle is the point
+/// of the test: the same four items without slot data do batch, so the routing
+/// change is the deform exclusion and not the scene shape.
 #[test]
-fn instanced_items_with_per_mesh_deform_data_are_counted_as_ignored() {
+fn per_mesh_deform_items_stay_off_the_instanced_path() {
     let Some((device, queue)) = headless_device() else {
-        eprintln!(
-            "skipping instanced_items_with_per_mesh_deform_data_are_counted_as_ignored: \
-             no GPU adapter"
-        );
+        eprintln!("skipping per_mesh_deform_items_stay_off_the_instanced_path: no GPU adapter");
         return;
     };
     let mut renderer = ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
@@ -140,6 +140,18 @@ fn instanced_items_with_per_mesh_deform_data_are_counted_as_ignored() {
         .resources_mut()
         .upload_mesh_data(&device, &mesh)
         .unwrap();
+
+    // Control: no slot data, four items, well past the instancing threshold.
+    let many = frame_with(mesh_id, 4);
+    let _ = renderer.prepare_callback(&device, &queue, &many);
+    let control = renderer.last_frame_stats();
+    assert!(
+        control.instanced_batches > 0,
+        "four plain items of one mesh should batch; without that the assertions \
+         below would pass for the wrong reason"
+    );
+    assert_eq!(control.deform_slots_ignored, 0, "nothing is attached yet");
+
     renderer.resources_mut().attach_deform_slot(
         &device,
         mesh_id,
@@ -148,23 +160,25 @@ fn instanced_items_with_per_mesh_deform_data_are_counted_as_ignored() {
         &vec![0u8; vertex_count * 4],
     );
 
-    let single = frame_with(mesh_id, 1);
-    let _ = renderer.prepare_callback(&device, &queue, &single);
+    // Same four items, now carrying per-mesh slot data.
+    let _ = renderer.prepare_callback(&device, &queue, &many);
+    let deformed = renderer.last_frame_stats();
     assert_eq!(
-        renderer.last_frame_stats().deform_slots_ignored,
-        0,
-        "a single item draws per-object, which binds the mesh's deform group"
+        deformed.instanced_batches, 0,
+        "the deform exclusion takes every item off the instanced path"
+    );
+    assert_eq!(
+        deformed.per_object_items, 4,
+        "and they draw per-object, which binds the mesh's real deform group"
+    );
+    assert_eq!(
+        deformed.deform_slots_ignored, 0,
+        "so no item's slot data is dropped. A non-zero value here is a wrong \
+         picture: the deformation the consumer attached is silently absent"
     );
 
-    let many = frame_with(mesh_id, 4);
-    let _ = renderer.prepare_callback(&device, &queue, &many);
-    let stats = renderer.last_frame_stats();
-    assert!(
-        stats.instanced_batches > 0,
-        "four items of one mesh should batch; the counter means nothing otherwise"
-    );
-    assert_eq!(
-        stats.deform_slots_ignored, 4,
-        "every instanced item carries slot data the instanced path drops"
-    );
+    // A single item was never at risk, and still is not.
+    let single = frame_with(mesh_id, 1);
+    let _ = renderer.prepare_callback(&device, &queue, &single);
+    assert_eq!(renderer.last_frame_stats().deform_slots_ignored, 0);
 }

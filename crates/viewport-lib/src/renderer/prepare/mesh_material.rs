@@ -71,6 +71,15 @@ pub(crate) fn is_instanceable(
         && !resources
             .deform
             .has_per_instance_deform_data(item.mesh_id, item.deform_instance)
+        // Per-mesh deform slot data is per-object only, for the same reason as
+        // warp above: the instanced draws bind the empty deform group and the
+        // instanced shader passes no slot flags, so an instanced item reads no
+        // slot data and renders undeformed. Keeping it per-object costs a
+        // uniform write and a bind-group build per item and draws the shape the
+        // consumer asked for. `FrameStats::deform_slots_ignored` counts any that
+        // still reach an instanced batch, and should stay at zero because of
+        // this line.
+        && !resources.deform.has_mesh_slot_data(item.mesh_id)
         && resources.mesh_store.get(item.mesh_id).map_or(true, |m| {
             m.position_override_buffer.is_none() && m.normal_override_buffer.is_none()
             // A baked lightmap is sampled only on the per-object path; the
@@ -329,6 +338,46 @@ mod tests {
         assert!(
             !is_instanceable(&item, &resources, &[]),
             "a warp item must fall back to the per-object path",
+        );
+    }
+
+    /// Per-mesh deform slot data is per-object only, the same as warp: the
+    /// instanced draws bind the empty deform group and the instanced shader
+    /// passes no slot flags, so an instanced item would render undeformed.
+    /// `is_instanceable` must exclude it.
+    #[test]
+    fn per_mesh_deform_item_is_not_instanceable() {
+        let Some((device, _queue)) = try_make_device() else {
+            eprintln!("skipping: no wgpu adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mesh = crate::geometry::primitives::grid_plane(1.0, 1.0, 4, 4);
+        let vertex_count = mesh.positions.len();
+        let mesh_id = resources.upload_mesh_data(&device, &mesh).unwrap();
+
+        let mut item = SceneRenderItem::default();
+        item.mesh_id = mesh_id;
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "a plain mesh item should instance",
+        );
+
+        // One f32 per vertex on slot 0, the shape a displacement deformer takes.
+        resources.attach_deform_slot(&device, mesh_id, 0, 4, &vec![0u8; vertex_count * 4]);
+        assert!(
+            !is_instanceable(&item, &resources, &[]),
+            "an item whose mesh carries per-mesh deform data must fall back to \
+             the per-object path, or it draws undeformed",
+        );
+
+        // Detaching restores instancing: the exclusion tracks the data, not a
+        // one-way flag on the mesh.
+        assert!(resources.detach_deform_slot(&device, mesh_id, 0));
+        assert!(
+            is_instanceable(&item, &resources, &[]),
+            "detaching the slot puts the item back on the instanced path",
         );
     }
 
