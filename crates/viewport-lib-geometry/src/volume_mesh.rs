@@ -1246,6 +1246,40 @@ impl VolumeMeshData {
         self.cells.push(verts);
     }
 
+    /// Centroid of every cell, one per entry in [`VolumeMeshData::cells`].
+    ///
+    /// The centroid is the average of the cell's valid vertex positions, so
+    /// [`CELL_SENTINEL`] padding and out-of-range indices are ignored and every
+    /// cell shape is handled the same way. This is where per-cell quantities go
+    /// when they need a position: the result is index-aligned with `cells`, and
+    /// a cell with no usable vertex at all sits at the origin.
+    pub fn cell_centroids(&self) -> Vec<[f32; 3]> {
+        self.cells
+            .iter()
+            .map(|cell| {
+                let mut sum = [0.0f32; 3];
+                let mut count = 0u32;
+                for &idx in cell {
+                    if idx == CELL_SENTINEL {
+                        continue;
+                    }
+                    let Some(p) = self.positions.get(idx as usize) else {
+                        continue;
+                    };
+                    sum[0] += p[0];
+                    sum[1] += p[1];
+                    sum[2] += p[2];
+                    count += 1;
+                }
+                if count == 0 {
+                    return [0.0; 3];
+                }
+                let inv = 1.0 / count as f32;
+                [sum[0] * inv, sum[1] * inv, sum[2] * inv]
+            })
+            .collect()
+    }
+
     /// Extract all tetrahedral cells and return a [`TetMesh`].
     ///
     /// Cells whose slots `[4..8]` are all [`CELL_SENTINEL`] are tets; every
@@ -2312,5 +2346,35 @@ mod tests {
         let (tets, scalars) = decompose_to_tetrahedra(&data, "");
         assert_eq!(tets.len(), 12, "1+6+2+3 = 12 tets");
         assert_eq!(scalars.len(), 12);
+    }
+
+    #[test]
+    fn cell_centroid_averages_the_valid_vertices() {
+        let mut data = VolumeMeshData::default();
+        data.positions = vec![
+            [0.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [0.0, 4.0, 0.0],
+            [0.0, 0.0, 4.0],
+        ];
+        data.push_tet(0, 1, 2, 3);
+        let c = data.cell_centroids();
+        assert_eq!(c.len(), 1);
+        for axis in 0..3 {
+            assert!((c[0][axis] - 1.0).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn cell_centroids_are_index_aligned_with_cells() {
+        let mut data = VolumeMeshData::default();
+        data.positions = vec![[1.0, 1.0, 1.0]];
+        // A cell whose indices are all out of range still gets an entry.
+        data.push_tet(9, 9, 9, 9);
+        data.push_tet(0, 0, 0, 0);
+        let c = data.cell_centroids();
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0], [0.0; 3]);
+        assert_eq!(c[1], [1.0, 1.0, 1.0]);
     }
 }

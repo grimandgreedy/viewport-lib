@@ -1,7 +1,7 @@
 //! Picking: choose which levels to pick (object, point-like, edge-like,
 //! face-like), then click or drag a box to select. The scene holds one of every
 //! pickable item type (meshes, point cloud, glyphs, polyline, volume, gaussian
-//! splats, a volume mesh, tensor glyphs, sprites, streamtube / tube / ribbon,
+//! splats, a volume mesh, tensor field samples, sprites, streamtube / tube / ribbon,
 //! a volume surface slice, a GPU implicit surface, a GPU marching-cubes
 //! surface, and a decal). Every one highlights at the object
 //! level (outline / selected tint) and, where it has sub-elements, at the
@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::ColourSource;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::VolumeItem;
@@ -23,7 +24,9 @@ use viewport_lib_item_types::{
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
-use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+};
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
@@ -90,7 +93,7 @@ pub struct PickingShowcase {
     pc: PointCloudItem,
     glyphs: GlyphItem,
     polyline: PolylineItem,
-    tensor: TensorGlyphItem,
+    tensor: TensorFieldItem,
     sprites: SpriteItem,
     streamtube: StreamtubeItem,
     tube: TubeItem,
@@ -141,7 +144,7 @@ impl PickingShowcase {
             pc: PointCloudItem::default(),
             glyphs: GlyphItem::default(),
             polyline: PolylineItem::default(),
-            tensor: TensorGlyphItem::default(),
+            tensor: TensorFieldItem::default(),
             sprites: SpriteItem::default(),
             streamtube: StreamtubeItem::default(),
             tube: TubeItem::default(),
@@ -240,7 +243,7 @@ impl PickingShowcase {
         let mut tensor = self.tensor.clone();
         tensor.settings.selected = sel(TENSOR);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
             .push(tensor);
 
         // Sprites.
@@ -409,6 +412,13 @@ impl Showcase for PickingShowcase {
             .resources_mut()
             .upload_mesh_data(ctx.device, &sphere_data)
             .unwrap();
+        // Unit sphere for the tensor field to instance; the field scales each
+        // one by its own eigenvalues.
+        let tensor_shape = ctx
+            .session
+            .resources_mut()
+            .upload_mesh_data(ctx.device, &primitives::icosphere(1.0, 2))
+            .unwrap();
 
         // Marker first so it takes node id 0 (PickId(0) == NONE, skipped by GPU
         // picking) and keeps the real meshes off node id 0.
@@ -498,21 +508,27 @@ impl Showcase for PickingShowcase {
             [6.1, 0.6, 0.4],
         ];
         self.tensor.positions = tpos.clone();
-        self.tensor.eigenvalues = vec![
-            [0.8, 0.7, 0.6],
-            [1.2, 0.3, 0.3],
-            [0.3, 0.3, 1.2],
-            [1.0, 0.6, 0.2],
-        ];
         let c = std::f32::consts::FRAC_1_SQRT_2;
-        self.tensor.eigenvectors = vec![
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            [[c, c, 0.0], [-c, c, 0.0], [0.0, 0.0, 1.0]],
-            [[0.866, 0.0, 0.5], [0.0, 1.0, 0.0], [-0.5, 0.0, 0.866]],
-            [[0.5, 0.866, 0.0], [-0.866, 0.5, 0.0], [0.0, 0.0, 1.0]],
-        ];
+        self.tensor.tensors = TensorSource::Eigen {
+            values: vec![
+                [0.8, 0.7, 0.6],
+                [1.2, 0.3, 0.3],
+                [0.3, 0.3, 1.2],
+                [1.0, 0.6, 0.2],
+            ],
+            vectors: vec![
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                [[c, c, 0.0], [-c, c, 0.0], [0.0, 0.0, 1.0]],
+                [[0.866, 0.0, 0.5], [0.0, 1.0, 0.0], [-0.5, 0.0, 0.866]],
+                [[0.5, 0.866, 0.0], [-0.866, 0.5, 0.0], [0.0, 0.0, 1.0]],
+            ],
+        };
+        self.tensor.shape = tensor_shape;
         self.tensor.scale = 0.5;
-        self.tensor.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+        self.tensor.colour = ColourSource::Natural {
+            range: None,
+            colourmap: Some(ColourmapId(BuiltinColourmap::Coolwarm as usize)),
+        };
         self.tensor.settings.pick_id = PickId(TENSOR);
         self.instance_lookup.insert(TENSOR, tpos);
         self.labels.insert(TENSOR, ("Tensor glyphs".into(), None));

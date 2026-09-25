@@ -268,9 +268,9 @@ pub(crate) const SHOWCASES: [Entry; 58] = [
     ),
     entry(
         39,
-        "Tensor Glyphs",
-        M::TensorGlyphs,
-        &crate::showcase_39_tensor_glyphs::SHOWCASE,
+        "Tensor Fields",
+        M::TensorFields,
+        &crate::showcase_39_tensor_fields::SHOWCASE,
     ),
     entry(
         40,

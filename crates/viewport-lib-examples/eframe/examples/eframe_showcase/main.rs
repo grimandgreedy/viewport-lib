@@ -5,9 +5,9 @@ use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
-    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
-    OrbitCameraController, PickBackend, PickMask, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportRenderer,
+    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId,
+    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, SceneFrame,
+    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
 };
 
 mod geometry;
@@ -51,7 +51,7 @@ mod showcase_35_overlay;
 mod showcase_36_playback_runtime;
 mod showcase_37_probe_widgets;
 mod showcase_38_surface_lic;
-mod showcase_39_tensor_glyphs;
+mod showcase_39_tensor_fields;
 mod showcase_40_vertex_warp;
 mod showcase_41_sprites;
 mod showcase_42_gaussian_splats;
@@ -221,7 +221,7 @@ fn main() -> eframe::Result {
 
                 lic_state: showcase_38_surface_lic::LicState::default(),
 
-                tg_state: showcase_39_tensor_glyphs::TensorGlyphState::default(),
+                tg_state: showcase_39_tensor_fields::TensorFieldState::default(),
 
                 warp_state: showcase_40_vertex_warp::VertexWarpState::default(),
                 sprite_state: showcase_41_sprites::SpriteState::default(),
@@ -294,7 +294,7 @@ enum ShowcaseMode {
     PlaybackRuntime,
     ProbeWidgets,
     SurfaceLIC,
-    TensorGlyphs,
+    TensorFields,
     VertexWarp,
     Sprites,
     GaussianSplats,
@@ -477,7 +477,7 @@ pub(crate) struct App {
     pub(crate) lic_state: showcase_38_surface_lic::LicState,
 
     // --- Showcase 39 ---
-    pub(crate) tg_state: showcase_39_tensor_glyphs::TensorGlyphState,
+    pub(crate) tg_state: showcase_39_tensor_fields::TensorFieldState,
 
     // --- Showcase 40 ---
     pub(crate) warp_state: showcase_40_vertex_warp::VertexWarpState,
@@ -1560,8 +1560,8 @@ impl App {
             return;
         };
         let mask = match self.mode {
-            // Tensor glyph instances and beam-mesh cells are both point-like.
-            ShowcaseMode::TensorGlyphs => PickMask::POINT_LIKE,
+            // Tensor field samples and beam-mesh cells are both point-like.
+            ShowcaseMode::TensorFields => PickMask::POINT_LIKE,
             _ => PickMask::OBJECT,
         };
         let hit = renderer.pick_object(
@@ -1604,8 +1604,8 @@ impl App {
                 }
                 None => self.scalar_state.selection.clear(),
             },
-            ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::tg_apply_pick(self, hit);
+            ShowcaseMode::TensorFields => {
+                showcase_39_tensor_fields::tg_apply_pick(self, hit);
             }
             ShowcaseMode::Decals => {
                 // Decal placement uses the hit's surface position and normal.

@@ -25,8 +25,8 @@ use viewport_lib_item_types::{GaussianSplatData, GaussianSplatId};
 use viewport_lib_item_types::{PointCloudId, PointCloudItem, PointCloudRefItem};
 use viewport_lib_item_types::{
     RibbonId, RibbonItem, RibbonRefItem, SpriteInstanceSetId, SpriteInstanceUploads, SpriteItem,
-    SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
-    TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem,
+    SpriteSetId, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorFieldId, TensorFieldItem,
+    TensorFieldRefItem, TensorSource, TubeId, TubeItem, TubeRefItem,
 };
 
 use crate::eframe::egui;
@@ -153,7 +153,7 @@ pub(crate) struct AsyncUploadsState {
     pub ribbon_state: AssetState,
     pub point_cloud_state: AssetState,
     pub glyph_set_state: AssetState,
-    pub tensor_glyph_set_state: AssetState,
+    pub tensor_field_set_state: AssetState,
     pub volume_state: AssetState,
     pub gaussian_splat_state: AssetState,
     pub overlay_texture_state: AssetState,
@@ -168,7 +168,7 @@ pub(crate) struct AsyncUploadsState {
     pub loaded_ribbon_id: Option<RibbonId>,
     pub loaded_point_cloud_id: Option<PointCloudId>,
     pub loaded_glyph_set_id: Option<GlyphSetId>,
-    pub loaded_tensor_glyph_set_id: Option<TensorGlyphSetId>,
+    pub loaded_tensor_field_set_id: Option<TensorFieldId>,
     pub loaded_volume_id: Option<VolumeId>,
     pub loaded_gaussian_splat_id: Option<GaussianSplatId>,
     pub loaded_overlay_texture_id: Option<OverlayTextureId>,
@@ -213,7 +213,7 @@ impl Default for AsyncUploadsState {
             ribbon_state: AssetState::Idle,
             point_cloud_state: AssetState::Idle,
             glyph_set_state: AssetState::Idle,
-            tensor_glyph_set_state: AssetState::Idle,
+            tensor_field_set_state: AssetState::Idle,
             volume_state: AssetState::Idle,
             gaussian_splat_state: AssetState::Idle,
             overlay_texture_state: AssetState::Idle,
@@ -227,7 +227,7 @@ impl Default for AsyncUploadsState {
             loaded_ribbon_id: None,
             loaded_point_cloud_id: None,
             loaded_glyph_set_id: None,
-            loaded_tensor_glyph_set_id: None,
+            loaded_tensor_field_set_id: None,
             loaded_volume_id: None,
             loaded_gaussian_splat_id: None,
             loaded_overlay_texture_id: None,
@@ -280,7 +280,7 @@ impl App {
         self.async_uploads_state.ribbon_state = AssetState::Idle;
         self.async_uploads_state.point_cloud_state = AssetState::Idle;
         self.async_uploads_state.glyph_set_state = AssetState::Idle;
-        self.async_uploads_state.tensor_glyph_set_state = AssetState::Idle;
+        self.async_uploads_state.tensor_field_set_state = AssetState::Idle;
         self.async_uploads_state.volume_state = AssetState::Idle;
         self.async_uploads_state.gaussian_splat_state = AssetState::Idle;
         self.async_uploads_state.overlay_texture_state = AssetState::Idle;
@@ -294,7 +294,7 @@ impl App {
         self.async_uploads_state.loaded_ribbon_id = None;
         self.async_uploads_state.loaded_point_cloud_id = None;
         self.async_uploads_state.loaded_glyph_set_id = None;
-        self.async_uploads_state.loaded_tensor_glyph_set_id = None;
+        self.async_uploads_state.loaded_tensor_field_set_id = None;
         self.async_uploads_state.loaded_volume_id = None;
         self.async_uploads_state.loaded_gaussian_splat_id = None;
         self.async_uploads_state.loaded_overlay_texture_id = None;
@@ -692,21 +692,21 @@ impl App {
             }
         }
 
-        // Tensor glyph set: when Ready, take the TensorGlyphSetId.
+        // Tensor glyph set: when Ready, take the TensorFieldId.
         if let AssetState::InFlight { job, started, .. } =
-            self.async_uploads_state.tensor_glyph_set_state.clone()
+            self.async_uploads_state.tensor_field_set_state.clone()
         {
             match renderer.upload_status(job) {
                 UploadStatus::Ready => match renderer.upload_result(job) {
                     Ok(id) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.loaded_tensor_glyph_set_id = Some(id);
-                        self.async_uploads_state.tensor_glyph_set_state =
+                        self.async_uploads_state.loaded_tensor_field_set_id = Some(id);
+                        self.async_uploads_state.tensor_field_set_state =
                             AssetState::Loaded { duration_ms };
                     }
                     Err(e) => {
                         let duration_ms = take_job_duration_ms(renderer, job, &started);
-                        self.async_uploads_state.tensor_glyph_set_state = AssetState::Failed {
+                        self.async_uploads_state.tensor_field_set_state = AssetState::Failed {
                             reason: format!("{e}"),
                             duration_ms,
                         };
@@ -714,13 +714,13 @@ impl App {
                 },
                 UploadStatus::Failed(e) => {
                     let duration_ms = take_job_duration_ms(renderer, job, &started);
-                    self.async_uploads_state.tensor_glyph_set_state = AssetState::Failed {
+                    self.async_uploads_state.tensor_field_set_state = AssetState::Failed {
                         reason: format!("{e}"),
                         duration_ms,
                     };
                 }
                 UploadStatus::Pending { progress } => {
-                    self.async_uploads_state.tensor_glyph_set_state = AssetState::InFlight {
+                    self.async_uploads_state.tensor_field_set_state = AssetState::InFlight {
                         job,
                         progress,
                         started,
@@ -728,7 +728,7 @@ impl App {
                 }
                 UploadStatus::Unknown => {
                     renderer.drop_job_duration(job);
-                    self.async_uploads_state.tensor_glyph_set_state = AssetState::Idle;
+                    self.async_uploads_state.tensor_field_set_state = AssetState::Idle;
                 }
             }
         }
@@ -976,7 +976,7 @@ fn collect_terminal_durations_ms(state: &AsyncUploadsState) -> Vec<u64> {
         read(&state.ribbon_state),
         read(&state.point_cloud_state),
         read(&state.glyph_set_state),
-        read(&state.tensor_glyph_set_state),
+        read(&state.tensor_field_set_state),
         read(&state.volume_state),
         read(&state.gaussian_splat_state),
         read(&state.overlay_texture_state),
@@ -1001,7 +1001,7 @@ fn all_assets_terminal(state: &AsyncUploadsState) -> bool {
         && is_terminal(&state.ribbon_state)
         && is_terminal(&state.point_cloud_state)
         && is_terminal(&state.glyph_set_state)
-        && is_terminal(&state.tensor_glyph_set_state)
+        && is_terminal(&state.tensor_field_set_state)
         && is_terminal(&state.volume_state)
         && is_terminal(&state.gaussian_splat_state)
         && is_terminal(&state.overlay_texture_state)
@@ -1405,21 +1405,22 @@ fn demo_volume(size: PayloadSize) -> (Vec<f32>, [u32; 3]) {
     (data, [dim, dim, dim])
 }
 
-fn demo_tensor_glyph_set() -> TensorGlyphItem {
+fn demo_tensor_field(shape: MeshId) -> TensorFieldItem {
     // A 3x3 grid of ellipsoids around the local origin. The ref item's
     // `model` matrix places it in the showcase grid.
-    let mut item = TensorGlyphItem::default();
+    let mut item = TensorFieldItem::new(shape);
     let n: i32 = 3;
+    let mut components = Vec::new();
     for i in 0..n {
         for j in 0..n {
             let x = (i as f32 - 1.0) * 0.5;
             let z = (j as f32 - 1.0) * 0.5;
             item.positions.push([x, 0.0, z]);
-            item.eigenvalues.push([1.0, 0.6, 0.3]);
-            item.eigenvectors
-                .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+            // Diagonal, so the principal axes stay on the world axes.
+            components.push([1.0, 0.6, 0.3, 0.0, 0.0, 0.0]);
         }
     }
+    item.tensors = TensorSource::Components(components);
     item.scale = 0.25;
     item
 }
@@ -1719,20 +1720,27 @@ impl App {
         }
     }
 
-    fn launch_tensor_glyph_set(&mut self, renderer: &mut ViewportRenderer) {
-        let item = demo_tensor_glyph_set();
+    fn launch_tensor_field_set(&mut self, renderer: &mut ViewportRenderer) {
+        let shape = match renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::icosphere(1.0, 2))
+        {
+            Ok(id) => id,
+            Err(_) => return,
+        };
+        let item = demo_tensor_field(shape);
         let started = Instant::now();
         if self.async_uploads_state.use_sync {
             let id = renderer.upload(&self.device, &self.queue, &item).unwrap();
-            self.async_uploads_state.loaded_tensor_glyph_set_id = Some(id);
-            self.async_uploads_state.tensor_glyph_set_state = AssetState::Loaded {
+            self.async_uploads_state.loaded_tensor_field_set_id = Some(id);
+            self.async_uploads_state.tensor_field_set_state = AssetState::Loaded {
                 duration_ms: started.elapsed().as_millis() as u64,
             };
         } else {
             let job = renderer
                 .begin_upload(&self.device, &self.queue, item)
                 .unwrap();
-            self.async_uploads_state.tensor_glyph_set_state = AssetState::InFlight {
+            self.async_uploads_state.tensor_field_set_state = AssetState::InFlight {
                 job,
                 progress: 0.0,
                 started,
@@ -1899,7 +1907,7 @@ impl App {
         self.launch_ribbon(renderer);
         self.launch_point_cloud(renderer);
         self.launch_glyph_set(renderer);
-        self.launch_tensor_glyph_set(renderer);
+        self.launch_tensor_field_set(renderer);
         self.launch_volume(renderer);
         self.launch_gaussian_splats(renderer);
         self.launch_overlay_texture(renderer);
@@ -1965,11 +1973,11 @@ pub(crate) fn submit_async_uploads_items(app: &mut crate::App, fd: &mut vpl::Fra
             .items_mut::<viewport_lib::GlyphSetRefItem>()
             .push(ref_item);
     }
-    if let Some(id) = app.async_uploads_state.loaded_tensor_glyph_set_id {
-        let mut ref_item = TensorGlyphSetRefItem::new(id);
+    if let Some(id) = app.async_uploads_state.loaded_tensor_field_set_id {
+        let mut ref_item = TensorFieldRefItem::new(id);
         ref_item.model = translate(-2.4, 4.8);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorGlyphSetRefItem>()
+            .items_mut::<viewport_lib_item_types::TensorFieldRefItem>()
             .push(ref_item);
     }
     if let Some(id) = app.async_uploads_state.loaded_volume_id {
@@ -2025,7 +2033,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
         app.async_uploads_state.ribbon_state = AssetState::Idle;
         app.async_uploads_state.point_cloud_state = AssetState::Idle;
         app.async_uploads_state.glyph_set_state = AssetState::Idle;
-        app.async_uploads_state.tensor_glyph_set_state = AssetState::Idle;
+        app.async_uploads_state.tensor_field_set_state = AssetState::Idle;
         app.async_uploads_state.volume_state = AssetState::Idle;
         app.async_uploads_state.gaussian_splat_state = AssetState::Idle;
         app.async_uploads_state.overlay_texture_state = AssetState::Idle;
@@ -2039,7 +2047,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
         app.async_uploads_state.loaded_ribbon_id = None;
         app.async_uploads_state.loaded_point_cloud_id = None;
         app.async_uploads_state.loaded_glyph_set_id = None;
-        app.async_uploads_state.loaded_tensor_glyph_set_id = None;
+        app.async_uploads_state.loaded_tensor_field_set_id = None;
         app.async_uploads_state.loaded_volume_id = None;
         app.async_uploads_state.loaded_gaussian_splat_id = None;
         app.async_uploads_state.loaded_overlay_texture_id = None;
@@ -2156,7 +2164,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
     let mut clicked_ribbon = false;
     let mut clicked_point_cloud = false;
     let mut clicked_glyph_set = false;
-    let mut clicked_tensor_glyph_set = false;
+    let mut clicked_tensor_field_set = false;
     let mut clicked_volume = false;
     let mut clicked_gaussian_splats = false;
     let mut clicked_overlay_texture = false;
@@ -2232,8 +2240,8 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
             asset_row(
                 ui,
                 "Tensor glyph set",
-                &app.async_uploads_state.tensor_glyph_set_state,
-                &mut clicked_tensor_glyph_set,
+                &app.async_uploads_state.tensor_field_set_state,
+                &mut clicked_tensor_field_set,
             );
             asset_row(
                 ui,
@@ -2334,7 +2342,7 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
         || clicked_ribbon
         || clicked_point_cloud
         || clicked_glyph_set
-        || clicked_tensor_glyph_set
+        || clicked_tensor_field_set
         || clicked_volume
         || clicked_gaussian_splats
         || clicked_overlay_texture
@@ -2381,8 +2389,8 @@ pub(crate) fn controls_async_uploads(app: &mut App, ui: &mut egui::Ui, frame: &e
     if clicked_glyph_set {
         app.launch_glyph_set(renderer);
     }
-    if clicked_tensor_glyph_set {
-        app.launch_tensor_glyph_set(renderer);
+    if clicked_tensor_field_set {
+        app.launch_tensor_field_set(renderer);
     }
     if clicked_volume {
         app.launch_volume(renderer);

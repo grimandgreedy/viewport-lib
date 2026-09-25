@@ -1,6 +1,6 @@
-//! Picking for the tensor glyph item type: GPU pick-id, per-instance
+//! Picking for the tensor field item type: GPU pick-id, per-sample
 //! sub-objects, CPU proximity picking, rect select, and the pre-uploaded
-//! reference form.
+//! reference form, plus the component-to-eigen path.
 //!
 //! One file per item type, so a type's coverage travels with it.
 
@@ -8,36 +8,48 @@ mod common;
 use common::*;
 use viewport_lib::plugin_api::Handles;
 
+use viewport_lib::MeshId;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::{
-    TENSOR_GLYPH_TYPE_NAME, TensorGlyphItem, TensorGlyphPlugin, TensorGlyphSetRefItem,
+    TENSOR_FIELD_TYPE_NAME, TensorFieldItem, TensorFieldPlugin, TensorFieldRefItem, TensorSource,
 };
 
-/// Three unit-sphere tensors spread along X; the centre one sits at the origin,
+/// A unit sphere for the field to instance.
+fn sphere_mesh(renderer: &mut ViewportRenderer, device: &viewport_lib::wgpu::Device) -> MeshId {
+    renderer
+        .resources_mut()
+        .upload_mesh_data(device, &viewport_lib::primitives::icosphere(1.0, 2))
+        .expect("sphere mesh uploads")
+}
+
+/// Three isotropic tensors spread along X; the centre one sits at the origin,
 /// under the cursor of a `sub_object_pick_frame` click at (32, 32).
-fn three_tensors() -> TensorGlyphItem {
-    let mut item = TensorGlyphItem::default();
+///
+/// The components are a pure hydrostatic state, so the decomposition gives three
+/// equal eigenvalues and each instance stays a sphere.
+fn three_tensors(shape: MeshId) -> TensorFieldItem {
+    let mut item = TensorFieldItem::new(shape);
     item.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    item.eigenvalues = vec![[1.0, 1.0, 1.0]; 3];
-    item.eigenvectors = vec![[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]; 3];
+    item.tensors = TensorSource::Components(vec![[1.0, 1.0, 1.0, 0.0, 0.0, 0.0]; 3]);
     item.scale = 0.6;
     item
 }
 
 #[test]
-fn gpu_pick_tensor_glyph_resolves_instance() {
+fn gpu_pick_tensor_field_resolves_instance() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
+    let shape = sphere_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let mut item = three_tensors();
+    let mut item = three_tensors(shape);
     item.settings.pick_id = PickId(700);
     frame
         .scene
-        .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+        .items_mut::<viewport_lib_item_types::TensorFieldItem>()
         .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -59,20 +71,21 @@ fn gpu_pick_tensor_glyph_resolves_instance() {
 }
 
 #[test]
-fn cpu_pick_tensor_glyph_resolves_instance() {
+fn cpu_pick_tensor_field_resolves_instance() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
+    let shape = sphere_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let mut item = three_tensors();
+    let mut item = three_tensors(shape);
     item.settings.pick_id = PickId(701);
     frame
         .scene
-        .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+        .items_mut::<viewport_lib_item_types::TensorFieldItem>()
         .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -103,13 +116,14 @@ fn an_object_query_drops_the_instance_sub_object() {
     };
     let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
+    let shape = sphere_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let mut item = three_tensors();
+    let mut item = three_tensors(shape);
     item.settings.pick_id = PickId(702);
     frame
         .scene
-        .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+        .items_mut::<viewport_lib_item_types::TensorFieldItem>()
         .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -133,20 +147,21 @@ fn an_object_query_drops_the_instance_sub_object() {
 }
 
 #[test]
-fn rect_pick_collects_tensor_glyph_instances() {
+fn rect_pick_collects_tensor_field_instances() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
     renderer.set_cpu_pick_cache(true);
+    let shape = sphere_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let mut item = three_tensors();
+    let mut item = three_tensors(shape);
     item.settings.pick_id = PickId(703);
     frame
         .scene
-        .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+        .items_mut::<viewport_lib_item_types::TensorFieldItem>()
         .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -176,7 +191,7 @@ fn rect_pick_collects_tensor_glyph_instances() {
     );
 }
 
-/// A set uploaded once and drawn through `TensorGlyphSetRefItem` picks the same
+/// A set uploaded once and drawn through `TensorFieldRefItem` picks the same
 /// as an inline item, under the reference's own pick id.
 #[test]
 fn a_reference_item_picks_like_an_inline_one() {
@@ -185,15 +200,18 @@ fn a_reference_item_picks_like_an_inline_one() {
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
+    let shape = sphere_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let source = renderer.upload(&device, &queue, &three_tensors()).unwrap();
+    let source = renderer
+        .upload(&device, &queue, &three_tensors(shape))
+        .unwrap();
 
-    let mut item = TensorGlyphSetRefItem::new(source);
+    let mut item = TensorFieldRefItem::new(source);
     item.settings.pick_id = PickId(704);
     frame
         .scene
-        .items_mut::<viewport_lib_item_types::TensorGlyphSetRefItem>()
+        .items_mut::<viewport_lib_item_types::TensorFieldRefItem>()
         .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -222,16 +240,19 @@ fn a_hidden_reference_item_is_skipped() {
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
+    let shape = sphere_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let source = renderer.upload(&device, &queue, &three_tensors()).unwrap();
+    let source = renderer
+        .upload(&device, &queue, &three_tensors(shape))
+        .unwrap();
 
-    let mut item = TensorGlyphSetRefItem::new(source);
+    let mut item = TensorFieldRefItem::new(source);
     item.settings.pick_id = PickId(705);
     item.settings.hidden = true;
     frame
         .scene
-        .items_mut::<viewport_lib_item_types::TensorGlyphSetRefItem>()
+        .items_mut::<viewport_lib_item_types::TensorFieldRefItem>()
         .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
@@ -250,33 +271,36 @@ fn a_hidden_reference_item_is_skipped() {
 // The sets the item type holds
 // ---------------------------------------------------------------------------
 
-fn sample_tensor_glyph_set() -> viewport_lib_item_types::TensorGlyphItem {
-    let mut item = viewport_lib_item_types::TensorGlyphItem::default();
+fn sample_tensor_field(shape: MeshId) -> TensorFieldItem {
+    let mut item = TensorFieldItem::new(shape);
     item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-    item.eigenvalues = vec![[1.0, 0.5, 0.25], [0.5, 0.5, 0.5]];
-    item.eigenvectors = vec![
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-    ];
+    item.tensors = TensorSource::Eigen {
+        values: vec![[1.0, 0.5, 0.25], [0.5, 0.5, 0.5]],
+        vectors: vec![
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        ],
+    };
     item
 }
 
 #[test]
-fn an_uploaded_tensor_glyph_set_resolves_until_it_is_dropped() {
+fn an_uploaded_tensor_field_set_resolves_until_it_is_dropped() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
+    let shape = sphere_mesh(&mut renderer, &device);
     let baseline = renderer.resident_bytes().plugin_bytes;
 
     let id = renderer
-        .upload(&device, &queue, &sample_tensor_glyph_set())
+        .upload(&device, &queue, &sample_tensor_field(shape))
         .unwrap();
     assert!(renderer.resident_bytes().plugin_bytes > baseline);
     assert!(
         renderer
-            .replace(&device, &queue, id, &sample_tensor_glyph_set())
+            .replace(&device, &queue, id, &sample_tensor_field(shape))
             .is_ok()
     );
 
@@ -286,15 +310,16 @@ fn an_uploaded_tensor_glyph_set_resolves_until_it_is_dropped() {
 }
 
 #[test]
-fn begin_upload_tensor_glyph_set_drains_to_a_handle() {
+fn begin_upload_tensor_field_set_drains_to_a_handle() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
+    let shape = sphere_mesh(&mut renderer, &device);
 
     let job = renderer
-        .begin_upload(&device, &queue, sample_tensor_glyph_set())
+        .begin_upload(&device, &queue, sample_tensor_field(shape))
         .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
@@ -307,7 +332,7 @@ fn begin_upload_tensor_glyph_set_drains_to_a_handle() {
             viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
         }
     }
-    let id: viewport_lib_item_types::TensorGlyphSetId = renderer
+    let id: viewport_lib_item_types::TensorFieldId = renderer
         .upload_result(job)
         .expect("the finished job yields a handle");
     assert!(renderer.release(id));
@@ -321,20 +346,20 @@ fn hidden_items_produce_no_draw_data() {
         return;
     };
     let mut renderer = renderer_with_item_types(&device);
-    viewport_lib_item_types::install(&mut renderer, &device);
+    let shape = sphere_mesh(&mut renderer, &device);
     let mut frame = sub_object_pick_frame();
 
-    let visible = three_tensors();
-    let mut hidden = three_tensors();
+    let visible = three_tensors(shape);
+    let mut hidden = three_tensors(shape);
     hidden.settings.hidden = true;
     frame
         .scene
-        .items_mut::<TensorGlyphItem>()
+        .items_mut::<TensorFieldItem>()
         .extend([visible, hidden]);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let plugin = renderer
-        .item_type_plugin::<TensorGlyphPlugin>(TENSOR_GLYPH_TYPE_NAME)
+        .item_type_plugin::<TensorFieldPlugin>(TENSOR_FIELD_TYPE_NAME)
         .expect("registered by install()");
     assert_eq!(
         plugin.drawn_count(),

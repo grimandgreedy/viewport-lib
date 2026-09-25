@@ -21,7 +21,7 @@ fn every_scene_builds_and_renders() {
             || !built.point_clouds.is_empty()
             || !built.polylines.is_empty()
             || !built.glyphs.is_empty()
-            || !built.tensor_glyphs.is_empty()
+            || !built.tensor_fields.is_empty()
             || !built.tube_items.is_empty()
             || !built.streamtube_items.is_empty()
             || !built.ribbon_items.is_empty()

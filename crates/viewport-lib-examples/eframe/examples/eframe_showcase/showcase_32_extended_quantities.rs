@@ -18,9 +18,8 @@ use crate::{App, MeshId};
 use viewport_lib as vpl;
 use viewport_lib_item_types::PointCloudItem;
 use vpl::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, CELL_SENTINEL, ColourmapId,
-    FrameData, GlyphItem, LightingSettings, SceneRenderItem, ViewportRenderer, VolumeMeshData,
-    volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, FrameData,
+    GlyphItem, LightingSettings, SceneRenderItem, ViewportRenderer, VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,23 +118,14 @@ fn vertex_radial_vectors(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
         .collect()
 }
 
-fn cell_radial_vectors(data: &VolumeMeshData) -> Vec<[f32; 3]> {
-    data.cells
+fn cell_radial_vectors(centroids: &[[f32; 3]]) -> Vec<[f32; 3]> {
+    centroids
         .iter()
-        .map(|cell| {
-            let valid: Vec<usize> = cell
-                .iter()
-                .filter(|&&i| i != CELL_SENTINEL && (i as usize) < data.positions.len())
-                .map(|&i| i as usize)
-                .collect();
-            if valid.is_empty() {
+        .map(|&[cx, cy, cz]| {
+            let len = (cx * cx + cy * cy + cz * cz).sqrt();
+            if len < 1e-9 {
                 return [0.0, 1.0, 0.0];
             }
-            let inv = 1.0 / valid.len() as f32;
-            let cx: f32 = valid.iter().map(|&i| data.positions[i][0]).sum::<f32>() * inv;
-            let cy: f32 = valid.iter().map(|&i| data.positions[i][1]).sum::<f32>() * inv;
-            let cz: f32 = valid.iter().map(|&i| data.positions[i][2]).sum::<f32>() * inv;
-            let len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-9);
             [cx / len, cy / len, cz / len]
         })
         .collect()
@@ -342,20 +332,21 @@ impl App {
                 item.mesh_id = self.eq_state.vm_mesh_id;
                 scene_items.push(item);
                 // Vertex vectors: blue (Viridis at 0.15).
-                let vv = vertex_radial_vectors(&self.eq_state.vm_data.positions);
-                let mut vg = volume_mesh_vertex_vectors_to_glyphs(
-                    &self.eq_state.vm_data.positions,
-                    &vv,
-                    0.4,
-                );
+                let mut vg = GlyphItem::default();
+                vg.positions = self.eq_state.vm_data.positions.clone();
+                vg.vectors = vertex_radial_vectors(&self.eq_state.vm_data.positions);
+                vg.scale = 0.4;
                 vg.scalars = vec![0.15; vg.positions.len()];
                 vg.scalar_range = Some((0.0, 1.0));
                 vg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Viridis as usize));
                 glyph_items.push(vg);
                 // Cell vectors: orange (Plasma at 0.65).  Use Plasma to guarantee a
                 // warm hue clearly distinct from the blue vertex arrows.
-                let cv = cell_radial_vectors(&self.eq_state.vm_data);
-                let mut cg = volume_mesh_cell_vectors_to_glyphs(&self.eq_state.vm_data, &cv, 1.5);
+                let centroids = self.eq_state.vm_data.cell_centroids();
+                let mut cg = GlyphItem::default();
+                cg.vectors = cell_radial_vectors(&centroids);
+                cg.positions = centroids;
+                cg.scale = 1.5;
                 cg.scalars = vec![0.65; cg.positions.len()];
                 cg.scalar_range = Some((0.0, 1.0));
                 cg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Plasma as usize));

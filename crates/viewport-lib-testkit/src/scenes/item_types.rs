@@ -17,7 +17,7 @@ use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
 use viewport_lib_item_types::{
-    RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TubeItem,
+    RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
 };
 use viewport_lib_item_types::{ScatterVolume, ScatterVolumeItem};
 
@@ -31,9 +31,9 @@ use viewport_lib_item_types::{
 pub fn scenes() -> Vec<NamedScene> {
     vec![
         NamedScene {
-            name: "tensor_glyphs",
+            name: "tensor_fields",
             cameras: standard_cameras(Vec3::ZERO, 6.0),
-            build: build_tensor_glyphs,
+            build: build_tensor_fields,
         },
         NamedScene {
             name: "tubes",
@@ -244,9 +244,20 @@ fn checker_texture(ctx: &mut BuildCtx<'_>, a: [u8; 3], b: [u8; 3]) -> viewport_l
 
 // --- scenes ------------------------------------------------------------------
 
-fn build_tensor_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // A 4x4 grid of ellipsoids sweeping from needle-like to plate-like.
-    let mut tg = TensorGlyphItem::default();
+fn build_tensor_fields(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let shape = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::icosphere(1.0, 2))
+        .expect("tensor field shape mesh");
+
+    // A 4x4 grid sweeping from needle-like to plate-like, each one turned a
+    // little further about Z and growing in magnitude across the grid, so the
+    // default colouring by dominant eigenvalue has something to spread over.
+    // The scene hands over raw components, the way a solver writes them, so the
+    // decomposition is part of what the image gates.
+    let mut tg = TensorFieldItem::new(shape);
+    let mut components = Vec::new();
     for i in 0..4 {
         for j in 0..4 {
             let x = (i as f32 - 1.5) * 1.1;
@@ -254,26 +265,38 @@ fn build_tensor_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
             tg.positions.push([x, y, 0.0]);
             let linear = 0.15 + i as f32 * 0.14;
             let planar = 0.15 + j as f32 * 0.14;
-            tg.eigenvalues.push([0.55, planar, linear.min(planar)]);
-            tg.eigenvectors
-                .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+            let dominant = 0.30 + (i + j) as f32 * 0.09;
+            let theta = (i * 4 + j) as f32 * 0.19;
+            components.push(rotated_about_z(
+                [dominant, planar.min(dominant), linear.min(planar)],
+                theta,
+            ));
         }
     }
+    tg.tensors = TensorSource::Components(components);
     tg.settings.pick_id = PickId(1601);
 
     // A second, selected item so the outline pass has coverage.
-    let mut sel = TensorGlyphItem::default();
+    let mut sel = TensorFieldItem::new(shape);
     sel.positions.push([0.0, 0.0, 1.4]);
-    sel.eigenvalues.push([0.5, 0.3, 0.2]);
-    sel.eigenvectors
-        .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    sel.tensors = TensorSource::Components(vec![rotated_about_z([0.5, 0.3, 0.2], 0.0)]);
     sel.settings.selected = true;
 
     BuiltScene {
-        tensor_glyphs: vec![tg, sel],
+        tensor_fields: vec![tg, sel],
         lighting: rigs::from_above(),
         ..Default::default()
     }
+}
+
+/// The six components of `diag(values)` turned by `theta` about Z, in the
+/// `[xx, yy, zz, xy, xz, yz]` order a tensor field takes.
+fn rotated_about_z(values: [f32; 3], theta: f32) -> [f32; 6] {
+    let r = glam::Mat3::from_rotation_z(theta);
+    let m = r * glam::Mat3::from_diagonal(glam::Vec3::from(values)) * r.transpose();
+    [
+        m.x_axis.x, m.y_axis.y, m.z_axis.z, m.x_axis.y, m.x_axis.z, m.y_axis.z,
+    ]
 }
 
 fn build_tubes(_ctx: &mut BuildCtx<'_>) -> BuiltScene {

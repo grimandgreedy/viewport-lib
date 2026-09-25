@@ -25,15 +25,17 @@ use viewport_lib_item_types::{
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
-use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+};
 
 use crate::eframe::egui;
 use vpl::{
-    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData, GlyphItem,
-    GlyphType, ItemSettings, LightingSettings, Material, MeshId, NodeId, PickBackend, PickId,
-    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
-    SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData, VolumeMeshData,
-    VolumeMeshItem,
+    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, DecalItem,
+    FrameData, GlyphItem, GlyphType, ItemSettings, LightingSettings, Material, MeshId, NodeId,
+    PickBackend, PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame,
+    SceneRenderItem, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
+    VolumeMeshData, VolumeMeshItem,
 };
 
 use crate::App;
@@ -369,12 +371,14 @@ pub(crate) struct PlState {
     pub polyline_strip_lengths: Vec<u32>,
     /// Positions for the arrow glyph set (pick_id=31).
     pub arrow_glyph_positions: Vec<[f32; 3]>,
-    /// Positions for the tensor glyph set (pick_id=32).
-    pub tensor_glyph_positions: Vec<[f32; 3]>,
-    /// Per-instance eigenvalues for tensor glyphs.
-    pub tensor_glyph_eigenvalues: Vec<[f32; 3]>,
-    /// Per-instance eigenvector bases for tensor glyphs.
-    pub tensor_glyph_eigenvectors: Vec<[[f32; 3]; 3]>,
+    /// Positions for the tensor field (pick_id=32).
+    pub tensor_field_positions: Vec<[f32; 3]>,
+    /// Per-sample eigenvalues for the tensor field.
+    pub tensor_field_eigenvalues: Vec<[f32; 3]>,
+    /// Per-sample eigenvector bases for the tensor field.
+    pub tensor_field_eigenvectors: Vec<[[f32; 3]; 3]>,
+    /// Unit sphere the tensor field instances.
+    pub tensor_shape_id: MeshId,
     /// Positions for the sprite set (pick_id=33).
     pub sprite_positions: Vec<[f32; 3]>,
     /// Per-instance sizes for the sprite arc.
@@ -422,6 +426,7 @@ impl Default for PlState {
             level: PlPickLevel::default(),
             cube_mesh_id: MeshId::INVALID,
             hemi_mesh_id: MeshId::INVALID,
+            tensor_shape_id: MeshId::INVALID,
             mesh_lookup: std::collections::HashMap::new(),
             wireframe: false,
             shift_held: false,
@@ -445,9 +450,9 @@ impl Default for PlState {
             polyline_positions: Vec::new(),
             polyline_strip_lengths: Vec::new(),
             arrow_glyph_positions: Vec::new(),
-            tensor_glyph_positions: Vec::new(),
-            tensor_glyph_eigenvalues: Vec::new(),
-            tensor_glyph_eigenvectors: Vec::new(),
+            tensor_field_positions: Vec::new(),
+            tensor_field_eigenvalues: Vec::new(),
+            tensor_field_eigenvectors: Vec::new(),
             sprite_positions: Vec::new(),
             sprite_sizes: Vec::new(),
             sprite_colours: Vec::new(),
@@ -717,15 +722,19 @@ impl App {
             .map(|i| [(i - 2) as f32 * 2.0, -4.0, 0.0])
             .collect();
 
-        // --- Tensor glyphs: 4 ellipsoids at x=8 (pick_id=32) ---
-        self.pl_state.tensor_glyph_positions = vec![
+        // --- Tensor field: 4 ellipsoids at x=8 (pick_id=32) ---
+        self.pl_state.tensor_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::icosphere(1.0, 2))
+            .expect("pl tensor shape mesh");
+        self.pl_state.tensor_field_positions = vec![
             [8.0, -1.5, -1.5],
             [8.0, 1.5, -1.5],
             [8.0, -1.5, 1.5],
             [8.0, 1.5, 1.5],
         ];
         // Varied eigenvalues: sphere-ish, cigar, disk, mixed.
-        self.pl_state.tensor_glyph_eigenvalues = vec![
+        self.pl_state.tensor_field_eigenvalues = vec![
             [0.8, 0.7, 0.6],
             [1.2, 0.3, 0.3],
             [0.3, 0.3, 1.2],
@@ -747,7 +756,7 @@ impl App {
             let s = 0.866_f32;
             [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]]
         };
-        self.pl_state.tensor_glyph_eigenvectors = vec![id_basis, rot45, rot30, rot60];
+        self.pl_state.tensor_field_eigenvectors = vec![id_basis, rot45, rot30, rot60];
 
         // --- Sprites: 6 in a row at z=6 (pick_id=33) ---
         // Sprites arranged in an arc with graduated sizes and colours so the
@@ -1519,7 +1528,7 @@ impl App {
             12 => Some("TVM Tets"),
             30 => Some("Polyline"),
             31 => Some("Arrow Glyphs"),
-            32 => Some("Tensor Glyphs"),
+            32 => Some("Tensor Field"),
             33 => Some("Sprites"),
             34 => Some("XO Sprites"),
             40 => Some("Streamtube"),
@@ -1891,8 +1900,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         if !app.pl_state.arrow_glyph_positions.is_empty() {
             instance_lookup.insert(31, app.pl_state.arrow_glyph_positions.clone());
         }
-        if !app.pl_state.tensor_glyph_positions.is_empty() {
-            instance_lookup.insert(32, app.pl_state.tensor_glyph_positions.clone());
+        if !app.pl_state.tensor_field_positions.is_empty() {
+            instance_lookup.insert(32, app.pl_state.tensor_field_positions.clone());
         }
         if !app.pl_state.sprite_positions.is_empty() {
             instance_lookup.insert(33, app.pl_state.sprite_positions.clone());
@@ -2050,19 +2059,24 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         g.settings.unlit = false;
         fd.scene.items_mut::<viewport_lib::GlyphItem>().push(g);
     }
-    // Tensor glyphs (pick_id=32).
-    if !app.pl_state.tensor_glyph_positions.is_empty() {
-        let mut tg = TensorGlyphItem::default();
-        tg.positions = app.pl_state.tensor_glyph_positions.clone();
-        tg.eigenvalues = app.pl_state.tensor_glyph_eigenvalues.clone();
-        tg.eigenvectors = app.pl_state.tensor_glyph_eigenvectors.clone();
+    // Tensor field (pick_id=32).
+    if !app.pl_state.tensor_field_positions.is_empty() {
+        let mut tg = TensorFieldItem::new(app.pl_state.tensor_shape_id);
+        tg.positions = app.pl_state.tensor_field_positions.clone();
+        tg.tensors = TensorSource::Eigen {
+            values: app.pl_state.tensor_field_eigenvalues.clone(),
+            vectors: app.pl_state.tensor_field_eigenvectors.clone(),
+        };
         tg.scale = 0.5;
-        tg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+        tg.colour = ColourSource::Natural {
+            range: None,
+            colourmap: Some(ColourmapId(BuiltinColourmap::Coolwarm as usize)),
+        };
         tg.settings.pick_id = PickId(32);
         tg.settings.selected = app.pl_state.selection.contains(32);
         tg.settings.unlit = false;
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
             .push(tg);
     }
     // Sprites: arc of 8 (pick_id=33).

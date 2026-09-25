@@ -1,4 +1,4 @@
-//! Showcase 39: Tensor Glyphs -- Loaded Beam
+//! Showcase 39: Tensor Fields -- Loaded Beam
 //!
 //! A simply-supported rectangular beam under a central point load.
 //!
@@ -6,7 +6,7 @@
 //! (bending stress). This is what a scalar field shows you: the magnitude and
 //! sign of one stress component, but not the principal directions.
 //!
-//! Below: principal stress tensor glyphs at each cell centroid. The same load
+//! Below: principal stress tensor field samples at each cell centroid. The same load
 //! produces three qualitatively different glyph shapes depending on location:
 //!
 //!   - Top fiber (compression zone, +Z): disk-like glyph, compressed along beam axis.
@@ -16,22 +16,22 @@
 //!   - Mixed regions: intermediate rotation between the above extremes.
 //!
 //! This rotation of the principal axes is invisible to a scalar stress field
-//! but immediately readable from the tensor glyphs.
+//! but immediately readable from the tensor field samples.
 
 use crate::App;
 use crate::eframe::egui;
 use std::collections::HashMap;
 use viewport_lib as vpl;
-use viewport_lib_item_types::TensorGlyphItem;
+use viewport_lib_item_types::{TensorFieldItem, TensorSource};
 
 use vpl::{
-    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourmapId,
-    FrameData, MeshId, PickId, SceneRenderItem, SubObjectRef, SubSelection, SubSelectionRef,
-    ViewportRenderer, VolumeMeshData, VolumeMeshItem,
+    AttributeKind, AttributeRef, BackfacePolicy, BuiltinColourmap, CellSelectionInfo, ColourSource,
+    ColourmapId, FrameData, MeshId, PickId, SceneRenderItem, SubObjectRef, SubSelection,
+    SubSelectionRef, ViewportRenderer, VolumeMeshData, VolumeMeshItem,
 };
 
 const PICK_BEAM_MESH: u64 = 3901;
-const PICK_TENSOR_GLYPHS: u64 = 3902;
+const PICK_TENSOR_FIELD: u64 = 3902;
 
 // ---------------------------------------------------------------------------
 // Beam geometry constants
@@ -50,7 +50,7 @@ const BEAM_HALF_W: f32 = 0.5; // Y width: 1.0 total
 
 /// Z center for the upper (volume mesh) region.
 const Z_TOP: f32 = 3.5;
-/// Z center for the lower (tensor glyphs) region.
+/// Z center for the lower (tensor field) region.
 const Z_BOT: f32 = -3.5;
 
 // ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ const GLYPH_COLOURMAPS: &[(BuiltinColourmap, &str)] = &[
 /// What the user last clicked on.
 #[derive(Debug, Clone)]
 pub(crate) enum TgSelection {
-    /// A tensor glyph instance. Stores the glyph index and its stress values.
+    /// A tensor field sample. Stores the glyph index and its stress values.
     Glyph {
         index: usize,
         sigma_xx: f32,
@@ -84,9 +84,12 @@ pub(crate) enum TgSelection {
     },
 }
 
-pub(crate) struct TensorGlyphState {
+pub(crate) struct TensorFieldState {
     pub built: bool,
     pub mesh_id: Option<MeshId>,
+    /// Unit sphere the tensor field instances; each one is scaled by its own
+    /// eigenvalues.
+    pub shape_id: Option<MeshId>,
     pub face_to_cell: Vec<u32>,
     /// Raw beam vertex positions kept for cell selection highlights.
     pub beam_positions: Vec<[f32; 3]>,
@@ -99,11 +102,12 @@ pub(crate) struct TensorGlyphState {
     pub sub_selection: SubSelection,
 }
 
-impl Default for TensorGlyphState {
+impl Default for TensorFieldState {
     fn default() -> Self {
         Self {
             built: false,
             mesh_id: None,
+            shape_id: None,
             face_to_cell: Vec::new(),
             beam_positions: Vec::new(),
             beam_cells: Vec::new(),
@@ -160,38 +164,25 @@ fn von_mises(sigma_xx: f32, tau_xy: f32) -> f32 {
 // The z-component is decoupled: lambda_3 = eps (small out-of-plane).
 // ---------------------------------------------------------------------------
 
-fn stress_eigen(sigma_xx: f32, tau_xy: f32) -> ([f32; 3], [[f32; 3]; 3]) {
-    let mean = sigma_xx * 0.5;
-    let half = sigma_xx * 0.5;
-    let disc = (half * half + tau_xy * tau_xy).sqrt();
-
-    // Floor prevents zero eigenvalues (which occur at extreme fibers under pure
-    // uniaxial stress where sigma_yy = 0). Without the floor those glyphs collapse
-    // to flat lines. The floor is small enough not to distort the stress picture.
-    const FLOOR: f32 = 0.12;
-    let lam1_raw = mean + disc;
-    let lam2_raw = mean - disc;
-    let lam1 = if lam1_raw >= 0.0 {
-        lam1_raw.max(FLOOR)
-    } else {
-        lam1_raw.min(-FLOOR)
-    };
-    let lam2 = if lam2_raw >= 0.0 {
-        lam2_raw.max(FLOOR)
-    } else {
-        lam2_raw.min(-FLOOR)
-    };
-    let lam3 = 0.18f32; // out-of-plane thickness -- enough to look 3-D
-
-    // Rotation angle of principal axes in the xy-plane.
-    let theta = 0.5 * tau_xy.atan2(half);
-    let (s, c) = theta.sin_cos();
-
-    let e1 = [c, 0.0, s]; // primary eigenvector, rotates in XZ (bending plane)
-    let e2 = [-s, 0.0, c]; // secondary eigenvector, in XZ
-    let e3 = [0.0, 1.0, 0.0]; // out-of-plane (Y, beam width axis)
-
-    ([lam1, lam2, lam3], [e1, e2, e3])
+/// The stress tensor at a point, as the six components `[xx, yy, zz, xy, xz, yz]`
+/// a solver writes. The field decomposes them itself.
+///
+/// The beam bends in the X-Z plane, so `sigma_xx` is the axial stress and the
+/// shear sits in `xz`. `yy` carries an out-of-plane thickness so the glyphs read
+/// as three-dimensional, and a small hydrostatic term keeps a glyph at the
+/// neutral axis from collapsing into a flat disc, which is what an unmodified
+/// uniaxial state genuinely looks like but is hard to read in a demo.
+fn stress_components(sigma_xx: f32, tau_xy: f32) -> [f32; 6] {
+    const HYDROSTATIC: f32 = 0.12;
+    const THICKNESS: f32 = 0.18;
+    [
+        sigma_xx + HYDROSTATIC,
+        THICKNESS,
+        HYDROSTATIC,
+        0.0,
+        tau_xy,
+        0.0,
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +274,7 @@ fn build_beam_mesh(z_center: f32) -> VolumeMeshData {
 // Build (one-time GPU upload)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_tensor_glyph_scene(app: &mut App, renderer: &mut ViewportRenderer) {
+pub(crate) fn build_tensor_field_scene(app: &mut App, renderer: &mut ViewportRenderer) {
     let data = build_beam_mesh(Z_TOP);
     app.tg_state.beam_positions = data.positions.clone();
     app.tg_state.beam_cells = data.cells.clone();
@@ -294,6 +285,10 @@ pub(crate) fn build_tensor_glyph_scene(app: &mut App, renderer: &mut ViewportRen
         app.tg_state.mesh_id = Some(item.boundary_mesh_id);
         app.tg_state.face_to_cell = item.face_to_cell;
     }
+    app.tg_state.shape_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &vpl::primitives::icosphere(1.0, 2))
+        .ok();
     app.tg_state.built = true;
 }
 
@@ -301,18 +296,17 @@ pub(crate) fn build_tensor_glyph_scene(app: &mut App, renderer: &mut ViewportRen
 // Submit (called every frame)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
+pub(crate) fn submit_tensor_fields(app: &App, fd: &mut FrameData) {
     let state = &app.tg_state;
 
     // ------------------------------------------------------------------
-    // Below the beam: tensor glyphs at cell centroids.
+    // Below the beam: tensor field samples at cell centroids.
     // iy indexes Z depth (up-down), iz indexes Y width.
     // ------------------------------------------------------------------
     {
         let n_max = GNX * GNY * GNZ;
         let mut positions = Vec::with_capacity(n_max);
-        let mut eigenvalues = Vec::with_capacity(n_max);
-        let mut eigenvectors = Vec::with_capacity(n_max);
+        let mut components = Vec::with_capacity(n_max);
         let mut colour_attr = Vec::with_capacity(n_max);
 
         // Stride-based subsampling over the fine glyph grid.
@@ -334,26 +328,28 @@ pub(crate) fn submit_tensor_glyphs(app: &App, fd: &mut FrameData) {
                     positions.push([cx, cy, Z_BOT + cz_rel]);
 
                     let (sigma_xx, tau_xy) = beam_stress(cx, cz_rel);
-                    let (evals, evecs) = stress_eigen(sigma_xx, tau_xy);
-                    eigenvalues.push(evals);
-                    eigenvectors.push(evecs);
+                    components.push(stress_components(sigma_xx, tau_xy));
                     // Colour by sigma_xx: tension = positive (warm), compression = negative (cool).
                     colour_attr.push(sigma_xx);
                 }
             }
         }
 
-        let mut item = TensorGlyphItem::default();
+        let Some(shape) = state.shape_id else {
+            return;
+        };
+        let mut item = TensorFieldItem::new(shape);
         item.positions = positions;
-        item.eigenvalues = eigenvalues;
-        item.eigenvectors = eigenvectors;
+        item.tensors = TensorSource::Components(components);
         item.scale = state.scale;
-        item.colour_attribute = Some(colour_attr);
-        item.scalar_range = Some((-1.2, 1.2));
-        item.colourmap_id = Some(ColourmapId(state.colourmap as usize));
-        item.settings.pick_id = PickId(PICK_TENSOR_GLYPHS);
+        item.colour = ColourSource::Scalar {
+            values: colour_attr,
+            range: Some((-1.2, 1.2)),
+            colourmap: Some(ColourmapId(state.colourmap as usize)),
+        };
+        item.settings.pick_id = PickId(PICK_TENSOR_FIELD);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
             .push(item);
     }
 }
@@ -400,10 +396,10 @@ pub(crate) fn beam_scene_items(app: &App) -> Vec<SceneRenderItem> {
     vec![item]
 }
 
-/// Apply a resolved pick hit to the tensor glyph showcase selection.
+/// Apply a resolved pick hit to the tensor field showcase selection.
 ///
 /// The hit comes from the unified GPU picker (`pick_object`) at the render site;
-/// this routes a tensor glyph instance or a beam-mesh cell into
+/// this routes a tensor field sample or a beam-mesh cell into
 /// `tg_state.selection` / `tg_state.sub_selection`.
 pub(crate) fn tg_apply_pick(app: &mut App, hit: Option<vpl::PickHit>) {
     let Some(hit) = hit else {
@@ -412,7 +408,7 @@ pub(crate) fn tg_apply_pick(app: &mut App, hit: Option<vpl::PickHit>) {
         return;
     };
 
-    if hit.id == PICK_TENSOR_GLYPHS {
+    if hit.id == PICK_TENSOR_FIELD {
         if let Some(SubObjectRef::Instance(idx)) = hit.sub_object {
             let idx = idx as usize;
             let stride = ((1.0 / app.tg_state.density).ceil() as usize).max(1);
@@ -437,7 +433,7 @@ pub(crate) fn tg_apply_pick(app: &mut App, hit: Option<vpl::PickHit>) {
                             });
                             app.tg_state
                                 .sub_selection
-                                .select_one(PICK_TENSOR_GLYPHS, SubObjectRef::Instance(idx as u32));
+                                .select_one(PICK_TENSOR_FIELD, SubObjectRef::Instance(idx as u32));
                             break 'outer;
                         }
                         glyph_idx += 1;
@@ -500,7 +496,7 @@ pub(crate) fn submit_tg_sub_selection(app: &App, fd: &mut FrameData) {
     fd.interaction.outline_selected = true;
 }
 
-pub(crate) fn controls_tensor_glyphs(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn controls_tensor_fields(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Simply-supported beam under a central point load.");
     ui.label("Click a glyph or beam cell to inspect its stress values.");
     ui.separator();
@@ -538,7 +534,7 @@ pub(crate) fn controls_tensor_glyphs(app: &mut App, ui: &mut egui::Ui) {
     ui.label("  Shows magnitude and sign, but not the principal directions.");
     ui.separator();
 
-    ui.label("Below: principal stress tensor glyphs.");
+    ui.label("Below: principal stress tensor field samples.");
     ui.label("  Top + bottom fibers: elongated along the beam axis.");
     ui.label("  Colour tells you the sign: blue = compression, red = tension.");
     ui.label("  Neutral axis near the supports: glyphs rotated ~45 deg (pure shear).");
@@ -580,7 +576,7 @@ pub(crate) fn needs_build(app: &crate::App) -> bool {
 /// Build this showcase's scene and frame its opening camera. Called once, on
 /// the first frame after it becomes the active showcase.
 pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
-    build_tensor_glyph_scene(app, renderer);
+    build_tensor_field_scene(app, renderer);
     app.camera = vpl::Camera {
         center: glam::Vec3::new(0.0, 0.0, 0.0),
         distance: 16.0,
@@ -630,7 +626,7 @@ pub(crate) fn scene(
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     // Tensor glyph items (Showcase 39) : submitted every frame when built.
     if app.tg_state.built {
-        submit_tensor_glyphs(app, &mut *fd);
+        submit_tensor_fields(app, &mut *fd);
         submit_beam_item(app, &mut *fd);
         submit_tg_sub_selection(app, &mut *fd);
     }
@@ -693,12 +689,12 @@ pub(crate) fn suppress_orbit(_app: &crate::App, _cx: &crate::ViewportCtx) -> boo
 // ---------------------------------------------------------------------------
 
 /// Stateless handle for this showcase; the scene state lives on [`crate::App`].
-pub(crate) struct ScTensorGlyphs;
+pub(crate) struct ScTensorFields;
 
 /// The registry's handle to this showcase.
-pub(crate) static SHOWCASE: ScTensorGlyphs = ScTensorGlyphs;
+pub(crate) static SHOWCASE: ScTensorFields = ScTensorFields;
 
-impl crate::Showcase for ScTensorGlyphs {
+impl crate::Showcase for ScTensorFields {
     fn needs_build(&self, app: &crate::App) -> bool {
         needs_build(app)
     }
@@ -739,6 +735,6 @@ impl crate::Showcase for ScTensorGlyphs {
         ui: &mut crate::eframe::egui::Ui,
         _frame: &crate::eframe::Frame,
     ) {
-        controls_tensor_glyphs(app, ui)
+        controls_tensor_fields(app, ui)
     }
 }

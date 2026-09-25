@@ -102,7 +102,7 @@ fn cnq_helix() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 3]>) {
 }
 
 pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
-    let (positions, tangents, normals_3d) = cnq_helix();
+    let (positions, _tangents, _normals_3d) = cnq_helix();
     let n = positions.len();
 
     // Total segment count for edge quantities.

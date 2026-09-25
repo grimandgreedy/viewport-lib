@@ -16,9 +16,9 @@ use viewport_lib_item_types::{
     RibbonRefItem, ScatterShape, ScatterVolume, ScatterVolumeItem, ShDegree, SliceAxis, SpawnShape,
     SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteInstanceUploads, SpriteItem,
     SpriteLitParams, SpriteNormalMode, SpriteOrientation, SpriteSetId, SpriteSetRefItem,
-    SpriteSizeMode, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorGlyphItem,
-    TensorGlyphSetId, TensorGlyphSetRefItem, TubeId, TubeItem, TubeRefItem, VelocityDist,
-    VolumeItem, VolumeSurfaceSliceItem,
+    SpriteSizeMode, StreamtubeId, StreamtubeItem, StreamtubeRefItem, TensorFieldId,
+    TensorFieldItem, TensorFieldRefItem, TubeId, TubeItem, TubeRefItem, VectorFieldId,
+    VectorFieldItem, VectorFieldRefItem, VelocityDist, VolumeItem, VolumeSurfaceSliceItem,
 };
 
 // The types that read as belonging to one of the above but stay in

@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::ColourSource;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::VolumeItem;
@@ -23,7 +24,9 @@ use viewport_lib_item_types::{
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
 use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
-use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+};
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
@@ -90,7 +93,7 @@ pub struct DecalCoverageShowcase {
     pc: PointCloudItem,
     glyphs: GlyphItem,
     polyline: PolylineItem,
-    tensor: TensorGlyphItem,
+    tensor: TensorFieldItem,
     sprites: SpriteItem,
     streamtube: StreamtubeItem,
     tube: TubeItem,
@@ -154,7 +157,7 @@ impl DecalCoverageShowcase {
             pc: PointCloudItem::default(),
             glyphs: GlyphItem::default(),
             polyline: PolylineItem::default(),
-            tensor: TensorGlyphItem::default(),
+            tensor: TensorFieldItem::default(),
             sprites: SpriteItem::default(),
             streamtube: StreamtubeItem::default(),
             tube: TubeItem::default(),
@@ -257,7 +260,7 @@ impl DecalCoverageShowcase {
         let mut tensor = self.tensor.clone();
         tensor.settings.selected = sel(TENSOR);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
             .push(tensor);
 
         // Sprites.
@@ -426,7 +429,7 @@ const DECAL_TARGETS: [([f32; 3], f32); 15] = [
     ([0.0, 5.0, 1.0], 2.4),    // point cloud
     ([-5.5, -5.0, 0.7], 2.6),  // arrow glyphs
     ([5.5, 5.0, 1.3], 2.6),    // polyline (helix)
-    ([5.5, 0.0, 0.4], 2.6),    // tensor glyphs
+    ([5.5, 0.0, 0.4], 2.6),    // tensor field samples
     ([0.0, 0.0, 1.0], 3.6),    // sprites
     ([0.0, -5.0, 1.8], 3.2),   // streamtube
     ([11.0, 0.0, 0.4], 3.6),   // tube
@@ -460,6 +463,13 @@ impl Showcase for DecalCoverageShowcase {
             .session
             .resources_mut()
             .upload_mesh_data(ctx.device, &sphere_data)
+            .unwrap();
+        // Unit sphere for the tensor field to instance; the field scales each
+        // one by its own eigenvalues.
+        let tensor_shape = ctx
+            .session
+            .resources_mut()
+            .upload_mesh_data(ctx.device, &primitives::icosphere(1.0, 2))
             .unwrap();
 
         // Marker first so it takes node id 0 (PickId(0) == NONE, skipped by GPU
@@ -551,21 +561,27 @@ impl Showcase for DecalCoverageShowcase {
             [6.1, 0.6, 0.4],
         ];
         self.tensor.positions = tpos.clone();
-        self.tensor.eigenvalues = vec![
-            [0.8, 0.7, 0.6],
-            [1.2, 0.3, 0.3],
-            [0.3, 0.3, 1.2],
-            [1.0, 0.6, 0.2],
-        ];
         let c = std::f32::consts::FRAC_1_SQRT_2;
-        self.tensor.eigenvectors = vec![
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            [[c, c, 0.0], [-c, c, 0.0], [0.0, 0.0, 1.0]],
-            [[0.866, 0.0, 0.5], [0.0, 1.0, 0.0], [-0.5, 0.0, 0.866]],
-            [[0.5, 0.866, 0.0], [-0.866, 0.5, 0.0], [0.0, 0.0, 1.0]],
-        ];
+        self.tensor.tensors = TensorSource::Eigen {
+            values: vec![
+                [0.8, 0.7, 0.6],
+                [1.2, 0.3, 0.3],
+                [0.3, 0.3, 1.2],
+                [1.0, 0.6, 0.2],
+            ],
+            vectors: vec![
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                [[c, c, 0.0], [-c, c, 0.0], [0.0, 0.0, 1.0]],
+                [[0.866, 0.0, 0.5], [0.0, 1.0, 0.0], [-0.5, 0.0, 0.866]],
+                [[0.5, 0.866, 0.0], [-0.866, 0.5, 0.0], [0.0, 0.0, 1.0]],
+            ],
+        };
+        self.tensor.shape = tensor_shape;
         self.tensor.scale = 0.5;
-        self.tensor.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+        self.tensor.colour = ColourSource::Natural {
+            range: None,
+            colourmap: Some(ColourmapId(BuiltinColourmap::Coolwarm as usize)),
+        };
         self.tensor.settings.pick_id = PickId(TENSOR);
         self.instance_lookup.insert(TENSOR, tpos);
         self.labels.insert(TENSOR, ("Tensor glyphs".into(), None));

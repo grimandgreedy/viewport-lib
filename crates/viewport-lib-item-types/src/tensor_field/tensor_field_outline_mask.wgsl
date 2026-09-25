@@ -1,18 +1,22 @@
-// tensor_glyph_outline_mask.wgsl : renders selected tensor glyph instances
+// tensor_field_outline_mask.wgsl : renders selected tensor glyph instances
 // as solid geometry into the R8 outline mask texture.  Uses the same bind
-// group layout and vertex transform as tensor_glyph.wgsl but outputs a
+// group layout and vertex transform as tensor_field.wgsl but outputs a
 // flat mask value instead of lit/coloured fragments.
 //
 // Group 0: Camera (view_proj).
-// Group 1: TensorGlyphUniform + LUT texture + sampler (unused, layout must match).
+// Group 1: TensorFieldUniform + LUT texture + sampler (unused, layout must match).
 // Group 2: Per-instance storage buffer (TensorInstance with pre-computed model).
 
-struct TensorGlyphUniform {
-    has_scalars: u32,
+struct TensorFieldUniform {
+    model:       mat4x4<f32>,
+    use_lut:     u32,
     scalar_min:  f32,
     scalar_max:  f32,
+    unlit:       u32,
+    opacity:     f32,
     _pad0:       f32,
-    _pad1:       array<vec4<f32>, 3>,
+    _pad1:       f32,
+    _pad2:       f32,
 };
 
 struct TensorInstance {
@@ -27,9 +31,10 @@ struct TensorInstance {
     _pad0:         f32,
     _pad1:         f32,
     _pad2:         f32,
+    colour:        vec4<f32>,
 };
 
-@group(1) @binding(0) var<uniform>       tg_uniform:  TensorGlyphUniform;
+@group(1) @binding(0) var<uniform>       tf_uniform:  TensorFieldUniform;
 @group(1) @binding(1) var               lut_texture:  texture_2d<f32>;
 @group(1) @binding(2) var               lut_sampler:  sampler;
 @group(2) @binding(0) var<storage, read> instances:   array<TensorInstance>;
@@ -47,7 +52,7 @@ struct VertexIn {
 fn vs_main(in: VertexIn) -> @builtin(position) vec4<f32> {
     let inst  = instances[in.instance_index];
     let model = mat4x4<f32>(inst.model_col0, inst.model_col1, inst.model_col2, inst.model_col3);
-    let world_pos = model * vec4<f32>(in.position, 1.0);
+    let world_pos = tf_uniform.model * (model * vec4<f32>(in.position, 1.0));
     return camera.view_proj * world_pos;
 }
 

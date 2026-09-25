@@ -34,7 +34,7 @@ use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
     GaussianSplatItem, GpuImplicitItem, ImageSliceItem, VolumeSurfaceSliceItem,
 };
-use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorGlyphItem, TubeItem};
+use viewport_lib_item_types::{RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TubeItem};
 
 /// Resources a scene's `build` function may upload into.
 pub struct BuildCtx<'a> {
@@ -72,7 +72,7 @@ pub struct BuiltScene {
     /// Glyph (arrow/sphere/cube instance) items.
     pub glyphs: Vec<GlyphItem>,
     /// Tensor glyph (ellipsoid) items.
-    pub tensor_glyphs: Vec<TensorGlyphItem>,
+    pub tensor_fields: Vec<TensorFieldItem>,
     /// Tube items.
     pub tube_items: Vec<TubeItem>,
     /// Streamtube items.
@@ -197,7 +197,7 @@ pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -
     *sf.items_mut::<PointCloudItem>() = scene.point_clouds.clone();
     *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
     *sf.items_mut::<viewport_lib::GlyphItem>() = scene.glyphs.clone();
-    *sf.items_mut::<viewport_lib_item_types::TensorGlyphItem>() = scene.tensor_glyphs.clone();
+    *sf.items_mut::<viewport_lib_item_types::TensorFieldItem>() = scene.tensor_fields.clone();
     *sf.items_mut::<viewport_lib_item_types::TubeItem>() = scene.tube_items.clone();
     *sf.items_mut::<viewport_lib_item_types::StreamtubeItem>() = scene.streamtube_items.clone();
     *sf.items_mut::<viewport_lib_item_types::RibbonItem>() = scene.ribbon_items.clone();

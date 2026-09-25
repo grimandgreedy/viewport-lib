@@ -1,4 +1,4 @@
-//! Whitney one-form reconstruction and conversion to [`GlyphItem`]s.
+//! Whitney one-form reconstruction.
 //!
 //! A *one-form* assigns a scalar value to each directed edge of a triangle mesh.
 //! The value represents the integral of a covector field along that edge.
@@ -23,13 +23,12 @@
 //! where `eij = pj - pi`, `R(v) = cross(n, v)` (90 deg rotation in the face plane),
 //! and `area` is the signed triangle area (`|n_raw| / 2`).
 
-use viewport_lib_types::render_item::glyph::GlyphItem;
+use crate::vector_samples::VectorSamples;
 
-/// Convert a scalar-per-directed-edge one-form to a [`GlyphItem`] via Whitney
-/// reconstruction.
+/// Reconstruct a vector field from a scalar-per-directed-edge one-form.
 ///
-/// Returns one arrow per triangle placed at the face centroid, pointing in the
-/// direction of the reconstructed vector field.
+/// Returns one sample per triangle, placed at the face centroid, pointing along
+/// the reconstructed field.
 ///
 /// # Arguments
 ///
@@ -38,20 +37,19 @@ use viewport_lib_types::render_item::glyph::GlyphItem;
 /// * `edge_values`  : one scalar per directed edge, in triangle-local order
 ///                    (see [module-level docs](self) for the convention).
 ///                    Length must be `3 x num_triangles`.
-/// * `scale`        : global arrow scale (see [`GlyphItem::scale`])
 ///
-/// Triangles whose `edge_values` slice is shorter than expected are skipped.
-pub fn edge_one_form_to_glyphs(
+/// Degenerate triangles, triangles with out-of-range indices, and triangles whose
+/// `edge_values` slice is short are skipped.
+pub fn edge_one_form_vectors(
     positions: &[[f32; 3]],
     indices: &[u32],
     edge_values: &[f32],
-    scale: f32,
-) -> GlyphItem {
+) -> VectorSamples {
     let num_tris = indices.len() / 3;
     let n = num_tris.min(edge_values.len() / 3);
 
-    let mut glyph_positions = Vec::with_capacity(n);
-    let mut glyph_vectors = Vec::with_capacity(n);
+    let mut out_positions = Vec::with_capacity(n);
+    let mut out_vectors = Vec::with_capacity(n);
 
     for tri in 0..n {
         let i0 = indices[3 * tri] as usize;
@@ -92,15 +90,14 @@ pub fn edge_one_form_to_glyphs(
 
         let centroid = (p0 + p1 + p2) / 3.0;
 
-        glyph_positions.push(centroid.to_array());
-        glyph_vectors.push(f.to_array());
+        out_positions.push(centroid.to_array());
+        out_vectors.push(f.to_array());
     }
 
-    let mut item = GlyphItem::default();
-    item.positions = glyph_positions;
-    item.vectors = glyph_vectors;
-    item.scale = scale;
-    item
+    VectorSamples {
+        positions: out_positions,
+        vectors: out_vectors,
+    }
 }
 
 #[cfg(test)]
@@ -118,10 +115,9 @@ mod tests {
     #[test]
     fn zero_edge_values_produce_zero_vector() {
         let (pos, idx) = xy_triangle();
-        let edge_values = vec![0.0, 0.0, 0.0];
-        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
-        assert_eq!(item.vectors.len(), 1);
-        for c in &item.vectors[0] {
+        let samples = edge_one_form_vectors(&pos, &idx, &[0.0, 0.0, 0.0]);
+        assert_eq!(samples.len(), 1);
+        for c in &samples.vectors[0] {
             assert!(c.abs() < 1e-6);
         }
     }
@@ -131,11 +127,11 @@ mod tests {
         let (pos, idx) = xy_triangle();
         let ev1 = vec![1.0, 0.5, -0.5];
         let ev2: Vec<f32> = ev1.iter().map(|v| v * 3.0).collect();
-        let item1 = edge_one_form_to_glyphs(&pos, &idx, &ev1, 1.0);
-        let item2 = edge_one_form_to_glyphs(&pos, &idx, &ev2, 1.0);
+        let s1 = edge_one_form_vectors(&pos, &idx, &ev1);
+        let s2 = edge_one_form_vectors(&pos, &idx, &ev2);
         for i in 0..3 {
             assert!(
-                (item2.vectors[0][i] - item1.vectors[0][i] * 3.0).abs() < 1e-4,
+                (s2.vectors[0][i] - s1.vectors[0][i] * 3.0).abs() < 1e-4,
                 "linearity failed on component {i}"
             );
         }
@@ -144,9 +140,8 @@ mod tests {
     #[test]
     fn output_position_is_centroid() {
         let (pos, idx) = xy_triangle();
-        let edge_values = vec![1.0, 0.0, 0.0];
-        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
-        let c = item.positions[0];
+        let samples = edge_one_form_vectors(&pos, &idx, &[1.0, 0.0, 0.0]);
+        let c = samples.positions[0];
         let expected = [1.0 / 3.0, 1.0 / 3.0, 0.0];
         for i in 0..3 {
             assert!((c[i] - expected[i]).abs() < 1e-4);
@@ -157,32 +152,23 @@ mod tests {
     fn degenerate_triangle_skipped() {
         let pos = vec![[0.0; 3]; 3];
         let idx = vec![0u32, 1, 2];
-        let edge_values = vec![1.0, 1.0, 1.0];
-        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
-        assert!(item.positions.is_empty());
+        let samples = edge_one_form_vectors(&pos, &idx, &[1.0, 1.0, 1.0]);
+        assert!(samples.is_empty());
     }
 
     #[test]
     fn out_of_bounds_indices_skipped() {
         let pos = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let idx = vec![0u32, 1, 99];
-        let edge_values = vec![1.0, 1.0, 1.0];
-        let item = edge_one_form_to_glyphs(&pos, &idx, &edge_values, 1.0);
-        assert!(item.positions.is_empty());
-    }
-
-    #[test]
-    fn scale_forwarded() {
-        let (pos, idx) = xy_triangle();
-        let item = edge_one_form_to_glyphs(&pos, &idx, &[1.0, 0.0, 0.0], 5.0);
-        assert!((item.scale - 5.0).abs() < 1e-6);
+        let samples = edge_one_form_vectors(&pos, &idx, &[1.0, 1.0, 1.0]);
+        assert!(samples.is_empty());
     }
 
     #[test]
     fn short_edge_values_truncates() {
         let (pos, idx) = xy_triangle();
         // Only 2 edge values instead of 3 : 0 complete triangles
-        let item = edge_one_form_to_glyphs(&pos, &idx, &[1.0, 0.0], 1.0);
-        assert!(item.positions.is_empty());
+        let samples = edge_one_form_vectors(&pos, &idx, &[1.0, 0.0]);
+        assert!(samples.is_empty());
     }
 }

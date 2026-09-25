@@ -1,6 +1,6 @@
 //! Showcase 25: On-Surface Vector Quantities
 //!
-//! Demonstrates the three surface-vector APIs from `viewport_lib::quantities`:
+//! Demonstrates the three surface-vector APIs in `viewport_lib::geometry`:
 //!
 //! - **Vertex intrinsic vectors** : a tangential vortex field on a sphere, where
 //!   each vertex carries a 2D `(u, v)` vector in its tangent frame.
@@ -9,16 +9,16 @@
 //! - **Edge one-forms** : a diverging source field on a plane, reconstructed from
 //!   per-edge scalar values via Whitney form interpolation.
 //!
-//! All three modes produce a [`GlyphItem`] (arrows) submitted to
-//! `SceneFrame::glyphs` each frame. No new GPU pipeline is needed.
+//! All three return positions paired with world-space vectors, which this
+//! showcase turns into arrows submitted to `SceneFrame::glyphs` each frame.
 
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
     BackfacePolicy, BuiltinColourmap, ColourmapId, FrameData, GlyphItem, LightingSettings,
-    MeshData, MeshId, SceneRenderItem,
-    quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
+    MeshData, MeshId, SceneRenderItem, edge_one_form_vectors, face_intrinsic_vectors,
+    vertex_intrinsic_vectors,
 };
 
 // ---------------------------------------------------------------------------
@@ -217,28 +217,29 @@ impl App {
 
     /// Build the [`GlyphItem`] for the active sub-mode.
     pub(crate) fn sv_glyph_item(&self) -> GlyphItem {
-        let mut item = match self.sv_state.mode {
-            SvMode::VertexIntrinsic => vertex_intrinsic_to_glyphs(
+        let samples = match self.sv_state.mode {
+            SvMode::VertexIntrinsic => vertex_intrinsic_vectors(
                 &self.sv_state.positions[0],
                 &self.sv_state.normals[0],
                 self.sv_state.tangents[0].as_deref(),
                 &self.sv_state.vertex_vecs,
-                self.sv_state.scale,
             ),
-            SvMode::FaceIntrinsic => face_intrinsic_to_glyphs(
+            SvMode::FaceIntrinsic => face_intrinsic_vectors(
                 &self.sv_state.positions[1],
                 &self.sv_state.normals[1],
                 &self.sv_state.indices[1],
                 &self.sv_state.face_vecs,
-                self.sv_state.scale,
             ),
-            SvMode::EdgeOneForm => edge_one_form_to_glyphs(
+            SvMode::EdgeOneForm => edge_one_form_vectors(
                 &self.sv_state.positions[2],
                 &self.sv_state.indices[2],
                 &self.sv_state.edge_vals,
-                self.sv_state.scale,
             ),
         };
+        let mut item = GlyphItem::default();
+        item.positions = samples.positions;
+        item.vectors = samples.vectors;
+        item.scale = self.sv_state.scale;
         item.colourmap_id = self.sv_state.rainbow_id;
         item.settings.unlit = true;
         item
@@ -313,11 +314,11 @@ pub(crate) fn controls_surface_vectors(app: &mut App, ui: &mut egui::Ui) {
 /// Compute per-vertex intrinsic vectors for a vortex field rotating around Z.
 ///
 /// The desired 3D world vector at each vertex is `n x Z` (azimuthal direction).
-/// We project it into the Gram-Schmidt tangent frame that the quantities API
-/// will use internally (when `tangents` is `None`), so the encoded `(u, v)`
-/// round-trips correctly through `vertex_intrinsic_to_glyphs`.
+/// We project it into the Gram-Schmidt tangent frame that the conversion uses
+/// internally (when `tangents` is `None`), so the encoded `(u, v)` round-trips
+/// correctly through `vertex_intrinsic_vectors`.
 fn make_sphere_vortex_intrinsic(_positions: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 2]> {
-    use vpl::quantities::tangent_frames::gram_schmidt_tangent;
+    use vpl::geometry::tangent_frames::gram_schmidt_tangent;
 
     let up = glam::Vec3::Z;
     normals
@@ -397,7 +398,7 @@ fn make_torus(major_r: f32, minor_r: f32, major_segs: usize, minor_segs: usize) 
 /// (tube-circle) direction at each triangle's centroid.
 fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
     use glam::Vec3;
-    use vpl::quantities::compute_face_tangent_frames;
+    use vpl::compute_face_tangent_frames;
 
     let num_tris = torus.indices.len() / 3;
     let frames = compute_face_tangent_frames(&torus.positions, &torus.indices);

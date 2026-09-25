@@ -30,7 +30,9 @@ use viewport_lib_item_types::{
     GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
     ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
 };
-use viewport_lib_item_types::{RibbonItem, StreamtubeItem, TensorGlyphItem, TubeItem};
+use viewport_lib_item_types::{
+    RibbonItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+};
 use vpl::{
     ColourmapId, FrameData, GlyphItem, GlyphType, ItemSettings, LightSource, LightingSettings,
     Material, MeshId, PolylineItem, SceneRenderItem, ViewportRenderer, VolumeId, VolumeMeshItem,
@@ -48,6 +50,7 @@ pub(crate) struct LcState {
     pub scene: vpl::scene::Scene,
     pub box_mesh_id: Option<MeshId>,
     pub disk_mesh_id: Option<MeshId>,
+    pub tensor_shape_id: Option<MeshId>,
     pub splat_id: Option<GaussianSplatId>,
     pub volume_id: Option<VolumeId>,
     /// Single-tet volume mesh used to demonstrate transparent volumetric
@@ -84,6 +87,7 @@ impl Default for LcState {
             scene: vpl::scene::Scene::new(),
             box_mesh_id: None,
             disk_mesh_id: None,
+            tensor_shape_id: None,
             splat_id: None,
             volume_id: None,
             tvm_item: None,
@@ -213,6 +217,12 @@ impl App {
             self.lc_state.volume_id = Some(vid);
             self.lc_state.volume_scalar_range = (-0.4, 0.7);
         }
+
+        // --- Unit sphere for the tensor field to instance ---
+        self.lc_state.tensor_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::icosphere(1.0, 2))
+            .ok();
 
         // --- Small disk mesh for the volume surface slice ---
         {
@@ -465,20 +475,21 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
         fd.scene.items_mut::<viewport_lib::GlyphItem>().push(g);
     }
 
-    // Cell (3, 0): tensor glyphs.
-    {
+    // Cell (3, 0): a tensor field.
+    if let Some(shape) = s.tensor_shape_id {
         let p = cell(3, 0);
-        let mut tg = TensorGlyphItem::default();
+        let mut tg = TensorFieldItem::new(shape);
+        let mut components = Vec::new();
         for i in 0..3 {
             let dx = (i as f32 - 1.0) * 0.7;
             tg.positions.push([p.x + dx, p.y, p.z]);
-            tg.eigenvalues.push([0.55, 0.35, 0.20]);
-            tg.eigenvectors
-                .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+            // Diagonal, so the principal axes stay on the world axes.
+            components.push([0.55, 0.35, 0.20, 0.0, 0.0, 0.0]);
         }
+        tg.tensors = TensorSource::Components(components);
         broadcast(s, &mut tg.settings);
         fd.scene
-            .items_mut::<viewport_lib_item_types::TensorGlyphItem>()
+            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
             .push(tg);
     }
 

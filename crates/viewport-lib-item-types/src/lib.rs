@@ -37,8 +37,10 @@ mod image_slice;
 mod point_cloud;
 mod scatter_volume;
 mod shader;
+mod sources;
 mod sprite;
-mod tensor_glyph;
+mod tensor_field;
+mod vector_field;
 mod volume;
 mod volume_surface_slice;
 
@@ -73,9 +75,10 @@ pub use sprite::{
     SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
     SpriteOrientation, SpritePlugin, SpriteSetId, SpriteSetRefItem, SpriteSizeMode,
 };
-pub use tensor_glyph::{
-    TensorGlyphItem, TensorGlyphPlugin, TensorGlyphSetId, TensorGlyphSetRefItem,
+pub use tensor_field::{
+    TensorFieldId, TensorFieldItem, TensorFieldPlugin, TensorFieldRefItem, TensorSource,
 };
+pub use vector_field::{VectorFieldId, VectorFieldItem, VectorFieldPlugin, VectorFieldRefItem};
 pub use volume::{VolumeItem, VolumePlugin};
 pub use volume_surface_slice::{VolumeSurfaceSliceItem, VolumeSurfaceSlicePlugin};
 
@@ -102,9 +105,11 @@ pub const SPRITE_TYPE_NAME: &str = sprite::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const STREAMTUBE_TYPE_NAME: &str = curves::STREAMTUBE_TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
-pub const TENSOR_GLYPH_TYPE_NAME: &str = tensor_glyph::TYPE_NAME;
+pub const TENSOR_FIELD_TYPE_NAME: &str = tensor_field::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const TUBE_TYPE_NAME: &str = curves::TUBE_TYPE_NAME;
+/// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
+pub const VECTOR_FIELD_TYPE_NAME: &str = vector_field::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
 pub const GAUSSIAN_SPLAT_TYPE_NAME: &str = gaussian_splat::TYPE_NAME;
 /// See [`EXTERNAL_INSTANCES_TYPE_NAME`].
@@ -138,7 +143,8 @@ pub fn shader_sources() -> Vec<(&'static str, String)> {
     all.extend(point_cloud::shader_sources());
     all.extend(scatter_volume::shader_sources());
     all.extend(sprite::shader_sources());
-    all.extend(tensor_glyph::shader_sources());
+    all.extend(tensor_field::shader_sources());
+    all.extend(vector_field::shader_sources());
     all.extend(volume::shader_sources());
     all.extend(volume_surface_slice::shader_sources());
     all.extend(helpers::shader_sources());
@@ -165,7 +171,8 @@ pub fn install(renderer: &mut ViewportRenderer, device: &gpu::Device) {
     renderer.with_item_type_plugin(device, Box::new(VolumePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(StreamtubePlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(TubePlugin::default()));
-    renderer.with_item_type_plugin(device, Box::new(TensorGlyphPlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(TensorFieldPlugin::default()));
+    renderer.with_item_type_plugin(device, Box::new(VectorFieldPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(RibbonPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(ExternalInstancesPlugin::default()));
     renderer.with_item_type_plugin(device, Box::new(SpritePlugin::default()));
@@ -389,10 +396,16 @@ standard_uploads!(
 standard_uploads!(TubeItem, TubeId, TUBE_TYPE_NAME, TubePlugin);
 standard_uploads!(RibbonItem, RibbonId, RIBBON_TYPE_NAME, RibbonPlugin);
 standard_uploads!(
-    TensorGlyphItem,
-    TensorGlyphSetId,
-    TENSOR_GLYPH_TYPE_NAME,
-    TensorGlyphPlugin
+    TensorFieldItem,
+    TensorFieldId,
+    TENSOR_FIELD_TYPE_NAME,
+    TensorFieldPlugin
+);
+standard_uploads!(
+    VectorFieldItem,
+    VectorFieldId,
+    VECTOR_FIELD_TYPE_NAME,
+    VectorFieldPlugin
 );
 
 /// Sprites keep two stores behind one item struct: a batch drawn as one set,

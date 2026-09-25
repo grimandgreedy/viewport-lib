@@ -3,18 +3,18 @@
 // Group 0: Camera uniform (view-projection, eye position) : same layout as mesh.wgsl.
 //          + Lights uniform (binding 3)
 //          + ClipPlanes uniform (binding 4) + ClipVolume uniform (binding 6).
-// Group 1: TensorGlyphUniform (scalar mapping params) + LUT texture + sampler.
+// Group 1: TensorFieldUniform (colour mapping params) + LUT texture + sampler.
 // Group 2: Per-instance storage buffer (TensorInstance: pre-computed model matrix,
 //          normal matrix, scalar).
 
 //
-// Vertex input: the glyph sphere base mesh (position vec3, normal vec3 : full Vertex layout).
+// Vertex input: the consumer's shape mesh (position vec3, normal vec3 : full Vertex layout).
 //
 // Each instance is an ellipsoid defined by a pre-computed TRS model matrix. The
 // normal matrix (inverse transpose of the 3x3 rotation-scale block) is also uploaded
 // per-instance for correct shading on the anisotropically-scaled ellipsoid surface.
-// Colour is looked up from the LUT using either a per-instance scalar attribute or a
-// sign-derived value (tension/compression).
+// Colour comes from the instance record, or from the LUT on the instance's
+// scalar when the colour source is a scalar one.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -55,23 +55,22 @@ struct ClipVolumeUB {
     volumes: array<ClipVolumeEntry, 4>,
 };
 
-// TensorGlyphUniform : 128 bytes.
-struct TensorGlyphUniform {
+// TensorFieldUniform : 96 bytes.
+struct TensorFieldUniform {
     // offset 0 : per-frame world-space transform composed on top of the
     //             per-instance ellipsoid model. Identity = no-op.
     model:       mat4x4<f32>, // 64 bytes
-    has_scalars: u32,     //  4 bytes (1 = use per-instance scalar field)
+    use_lut:     u32,     //  4 bytes (1 = colour from LUT(scalar), 0 = instance colour)
     scalar_min:  f32,     //  4 bytes
     scalar_max:  f32,     //  4 bytes
     unlit:       u32,     //  4 bytes (1 = skip lighting, output raw colour)
     opacity:     f32,     //  4 bytes (global opacity multiplier, 0.0-1.0)
-    wireframe:   u32,     //  4 bytes (1 = return flat gray, no lighting)
-    _pad1b:      f32,     //  4 bytes
-    _pad1c:      f32,     //  4 bytes -- end of second 32 bytes
-    _pad2:       array<vec4<f32>, 2>, // 32 bytes padding -- total 128 bytes
+    _pad0:       f32,
+    _pad1:       f32,
+    _pad2:       f32,
 };
 
-// Per-instance data : 128 bytes.
+// Per-instance data : 144 bytes.
 // model    = pre-computed TRS transform for this ellipsoid instance (64 bytes).
 // The normal columns encode the inverse-transpose of the 3x3 rotation-scale block
 // (= R * diag(1/s)) needed for correct ellipsoid normals under anisotropic scaling.
@@ -88,7 +87,8 @@ struct TensorInstance {
     _pad0:         f32,         //  4 bytes  -- three scalar pads, NOT vec3 (which has align 16)
     _pad1:         f32,         //  4 bytes
     _pad2:         f32,         //  4 bytes
-    // Total: 128 bytes, stride 128
+    colour:        vec4<f32>,   // 16 bytes -- used when use_lut is 0
+    // Total: 144 bytes, stride 144
 };
 
 @group(0) @binding(0) var<uniform>       camera:      Camera;
@@ -96,14 +96,14 @@ struct TensorInstance {
 @group(0) @binding(4) var<uniform>       clip_planes: ClipPlanes;
 @group(0) @binding(6) var<uniform>       clip_volume: ClipVolumeUB;
 
-@group(1) @binding(0) var<uniform>       tg_uniform:  TensorGlyphUniform;
+@group(1) @binding(0) var<uniform>       tf_uniform:  TensorFieldUniform;
 @group(1) @binding(1) var               lut_texture:  texture_2d<f32>;
 @group(1) @binding(2) var               lut_sampler:  sampler;
 
 @group(2) @binding(0) var<storage, read> instances: array<TensorInstance>;
 
 struct VertexIn {
-    // Glyph sphere base mesh uses the full Vertex layout (64 bytes stride).
+    // The shape mesh uses the full Vertex layout (64 bytes stride).
     // We only use position (location 0) and normal (location 1).
     @location(0) position: vec3<f32>,
     @location(1) normal:   vec3<f32>,
@@ -140,19 +140,20 @@ fn vs_main(in: VertexIn) -> VertexOut {
     // Apply the per-frame model on top of the per-instance ellipsoid model.
     let instance_pos = (inst_model * vec4<f32>(in.position, 1.0)).xyz;
     let instance_nrm = normalize(normal_mat * in.normal);
-    let world_pos4 = tg_uniform.model * vec4<f32>(instance_pos, 1.0);
-    let world_nrm = normalize((tg_uniform.model * vec4<f32>(instance_nrm, 0.0)).xyz);
+    let world_pos4 = tf_uniform.model * vec4<f32>(instance_pos, 1.0);
+    let world_nrm = normalize((tf_uniform.model * vec4<f32>(instance_nrm, 0.0)).xyz);
 
     out.clip_pos  = camera.view_proj * world_pos4;
     out.world_pos = world_pos4.xyz;
     out.world_nrm = world_nrm;
 
-    // LUT lookup.
-    let scalar = inst.scalar;
-    let range  = tg_uniform.scalar_max - tg_uniform.scalar_min;
-    let t      = select(0.0, (scalar - tg_uniform.scalar_min) / range, range > 0.0);
-    let u      = clamp(t, 0.0, 1.0);
-    out.colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(u, 0.5), 0.0);
+    if tf_uniform.use_lut != 0u {
+        let span = tf_uniform.scalar_max - tf_uniform.scalar_min;
+        let t    = select(0.0, (inst.scalar - tf_uniform.scalar_min) / span, span > 0.0);
+        out.colour = textureSampleLevel(lut_texture, lut_sampler, vec2<f32>(clamp(t, 0.0, 1.0), 0.5), 0.0);
+    } else {
+        out.colour = inst.colour;
+    }
 
     return out;
 }
@@ -168,14 +169,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if !clip_volume_test(in.world_pos) { discard; }
 
-    if tg_uniform.wireframe != 0u {
-        return vec4<f32>(0.75, 0.75, 0.75, 1.0);
-    }
-
-    let alpha = in.colour.a * tg_uniform.opacity;
+    let alpha = in.colour.a * tf_uniform.opacity;
 
     // Unlit early-out: skip lighting entirely and return the LUT colour.
-    if tg_uniform.unlit != 0u {
+    if tf_uniform.unlit != 0u {
         return vec4<f32>(in.colour.rgb, alpha);
     }
 

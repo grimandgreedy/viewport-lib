@@ -147,8 +147,6 @@ pub mod interaction;
 pub mod plugin_api;
 /// Built-in plugins: skinning, animation, constraints, physics, skeleton.
 pub mod plugins;
-/// On-surface vector quantities (intrinsic vectors, Whitney one-forms).
-pub mod quantities;
 /// Main viewport renderer wrapping all GPU resources.
 pub mod renderer;
 /// GPU resource container (pipelines, buffers, bind groups).
@@ -332,10 +330,13 @@ pub use runners::viewport_app_v2::{
     AppConfigV2, FrameCtxV2, InputCtxV2, PaintCtxV2, ViewportAppV2, WindowConfig, WindowId,
 };
 
-pub use quantities::{
-    edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs,
-    volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
+pub use geometry::eigen::{SymmetricEigen, symmetric_eigen_3x3, symmetric_eigenvalues_3x3};
+pub use geometry::intrinsic_vectors::{face_intrinsic_vectors, vertex_intrinsic_vectors};
+pub use geometry::one_forms::edge_one_form_vectors;
+pub use geometry::tangent_frames::{
+    compute_face_tangent_frames, compute_vertex_tangent_frames, tangents_from_explicit,
 };
+pub use geometry::vector_samples::VectorSamples;
 
 #[allow(deprecated)]
 pub use resources::ViewportGpuResources;

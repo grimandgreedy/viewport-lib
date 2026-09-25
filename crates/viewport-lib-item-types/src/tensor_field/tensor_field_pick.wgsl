@@ -1,8 +1,8 @@
 // GPU object-ID pick shader for tensor glyph sets.
 //
-// The vertex stage mirrors `tensor_glyph.wgsl` `vs_main`: it reads the same
+// The vertex stage mirrors `tensor_field.wgsl` `vs_main`: it reads the same
 // per-instance TensorInstance storage buffer (which carries the pre-computed
-// ellipsoid model matrix) and the same TensorGlyphUniform.model the render path
+// ellipsoid model matrix) and the same TensorFieldUniform.model the render path
 // uses, so the pick silhouette tracks the rendered ellipsoid. The fragment stage
 // writes the set's object id plus clip-space depth.
 //
@@ -10,18 +10,17 @@
 // Group 1: tensor glyph uniform (binding 0) + pick id (binding 3).
 // Group 2: per-instance TensorInstance storage buffer (binding 0).
 
-// Matches TensorGlyphUniform in tensor_glyph.wgsl (only `model` is read here).
-struct TensorGlyphUniform {
+// Matches TensorFieldUniform in tensor_field.wgsl (only `model` is read here).
+struct TensorFieldUniform {
     model:       mat4x4<f32>,
-    has_scalars: u32,
+    use_lut:     u32,
     scalar_min:  f32,
     scalar_max:  f32,
     unlit:       u32,
     opacity:     f32,
-    wireframe:   u32,
-    _pad1b:      f32,
-    _pad1c:      f32,
-    _pad2:       array<vec4<f32>, 2>,
+    _pad0:       f32,
+    _pad1:       f32,
+    _pad2:       f32,
 };
 
 struct PickId {
@@ -31,7 +30,7 @@ struct PickId {
     _pad2: u32,
 };
 
-// Matches TensorInstance in tensor_glyph.wgsl.
+// Matches TensorInstance in tensor_field.wgsl.
 struct TensorInstance {
     model_col0:  vec4<f32>,
     model_col1:  vec4<f32>,
@@ -44,10 +43,11 @@ struct TensorInstance {
     _pad0:       f32,
     _pad1:       f32,
     _pad2:       f32,
+    colour:      vec4<f32>,
 };
 
 
-@group(1) @binding(0) var<uniform>       tg_uniform:  TensorGlyphUniform;
+@group(1) @binding(0) var<uniform>       tf_uniform:  TensorFieldUniform;
 @group(1) @binding(3) var<uniform>       pick:        PickId;
 
 @group(2) @binding(0) var<storage, read> instances:   array<TensorInstance>;
@@ -81,7 +81,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     );
 
     let instance_pos = (inst_model * vec4<f32>(in.position, 1.0)).xyz;
-    let world_pos4   = tg_uniform.model * vec4<f32>(instance_pos, 1.0);
+    let world_pos4   = tf_uniform.model * vec4<f32>(instance_pos, 1.0);
 
     out.clip_pos  = camera.view_proj * world_pos4;
     out.world_pos = world_pos4.xyz;
