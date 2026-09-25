@@ -635,8 +635,12 @@ fn build_point_cloud(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     let mut pc = PointCloudItem::default();
     pc.positions = positions;
-    pc.scalars = scalars;
-    pc.point_size = 5.0;
+    pc.colour = viewport_lib::ColourSource::Scalar {
+        values: scalars,
+        range: None,
+        colourmap: None,
+    };
+    pc.size = viewport_lib::SizeSource::Uniform(5.0);
 
     // A second, much coarser cloud off to one side, marked selected so the
     // reference carries a legible per-point selection outline. Outlining the
@@ -648,8 +652,9 @@ fn build_point_cloud(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [2.3 + t.cos() * 0.5, 0.0, t.sin() * 0.5]
         })
         .collect();
-    selected.point_size = 14.0;
-    selected.default_colour = viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15);
+    selected.size = viewport_lib::SizeSource::Uniform(14.0);
+    selected.colour =
+        viewport_lib::ColourSource::Solid(viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15));
     selected.settings.pick_id = viewport_lib::PickId(1614);
     selected.settings.selected = true;
 

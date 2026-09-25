@@ -1,5 +1,4 @@
-use viewport_lib::resources::ColourmapId;
-use viewport_lib::{Colour, ItemSettings};
+use viewport_lib::{Colour, ColourSource, ItemSettings, SizeSource};
 
 const IDENTITY_MAT4: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
 
@@ -26,44 +25,54 @@ pub enum PointRenderMode {
 }
 
 /// A point cloud item to render in the viewport.
+///
+/// Sizes are in **pixels**: a point is a screen-space billboard, so its radius
+/// is a screen measurement rather than a world one.
+///
+/// A point cloud has **no natural scalar**, so
+/// [`ColourSource::Natural`](viewport_lib::ColourSource::Natural) colours every
+/// point opaque white and [`SizeSource::Natural`](viewport_lib::SizeSource)
+/// gives every point the bottom of its output range. Name what you want
+/// instead.
+///
+/// ```no_run
+/// # use viewport_lib_item_types::PointCloudItem;
+/// # use viewport_lib::{ColourSource, SizeSource};
+/// # let (positions, temperatures) = (Vec::new(), Vec::new());
+/// let mut cloud = PointCloudItem::default();
+/// cloud.positions = positions;
+/// cloud.colour = ColourSource::Scalar {
+///     values: temperatures,
+///     range: None,
+///     colourmap: None,
+/// };
+/// cloud.size = SizeSource::Uniform(6.0);
+/// ```
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct PointCloudItem {
     /// World-space positions (one vec3 per point).
     pub positions: Vec<[f32; 3]>,
-    /// Optional per-point RGBA colours in linear `[0,1]`. If empty, uses `default_colour`.
-    pub colours: Vec<Colour>,
-    /// Optional per-point scalar values for LUT colouring. If non-empty, overrides `colours`.
-    pub scalars: Vec<f32>,
-    /// Scalar range for LUT mapping. None = auto from min/max of `scalars`.
-    pub scalar_range: Option<(f32, f32)>,
-    /// Colourmap for scalar colouring. None = use default builtin (viridis).
-    pub colourmap_id: Option<ColourmapId>,
-    /// Screen-space point size in pixels. Default: 4.0.
-    pub point_size: f32,
-    /// Fallback colour when neither `colours` nor `scalars` are provided.
-    pub default_colour: Colour,
+
+    /// How each point is coloured. Default: opaque white for every point.
+    ///
+    /// Points past the end of a short
+    /// [`PerSample`](viewport_lib::ColourSource::PerSample) list are drawn
+    /// opaque white.
+    pub colour: ColourSource,
+    /// Each point's radius, in pixels. Default: four pixels for every point.
+    pub size: SizeSource,
+
     /// World-space model matrix. Default: identity.
     pub model: [[f32; 4]; 4],
     /// Render mode. Default: ScreenSpaceCircle.
     pub render_mode: PointRenderMode,
-    /// Optional per-point radii in pixels. If non-empty, overrides `point_size` for each point.
-    pub radii: Vec<f32>,
     /// Optional per-point opacity values in `[0, 1]`. If non-empty, scales each point's alpha.
     pub transparencies: Vec<f32>,
     /// When true, each point is rendered as a soft Gaussian splat instead of a flat circle.
     /// The alpha falls off as `exp(-3 * d^2)` where `d` is the normalised distance from the
     /// point centre. Default: false.
     pub gaussian: bool,
-    /// Optional per-point scalars that drive the splat radius.  If non-empty, these values
-    /// are mapped from `radius_scalar_range` (or data min/max when `None`) to `radius_range`
-    /// (pixels) and used as per-point radii, overriding `radii` and `point_size`.
-    pub radius_scalars: Vec<f32>,
-    /// Normalization range for `radius_scalars`.  `None` = auto from data min/max.
-    pub radius_scalar_range: Option<(f32, f32)>,
-    /// Output pixel-radius range `[min_px, max_px]` for the radius scalar mapping.
-    /// Default: `(2.0, 12.0)`.
-    pub radius_range: (f32, f32),
     /// Per-item render settings (visibility, appearance, pick identity, selection state).
     pub settings: ItemSettings,
 }
@@ -72,20 +81,12 @@ impl Default for PointCloudItem {
     fn default() -> Self {
         Self {
             positions: Vec::new(),
-            colours: Vec::new(),
-            scalars: Vec::new(),
-            scalar_range: None,
-            colourmap_id: None,
-            point_size: 4.0,
-            default_colour: [1.0, 1.0, 1.0, 1.0].into(),
-            model: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            colour: ColourSource::Solid(Colour::WHITE),
+            size: SizeSource::Uniform(4.0),
+            model: IDENTITY_MAT4,
             render_mode: PointRenderMode::ScreenSpaceCircle,
-            radii: Vec::new(),
             transparencies: Vec::new(),
             gaussian: false,
-            radius_scalars: Vec::new(),
-            radius_scalar_range: None,
-            radius_range: (2.0, 12.0),
             settings: ItemSettings::default(),
         }
     }
@@ -155,8 +156,8 @@ impl PointCloudItem {
         }
         Some(Self {
             positions,
-            colours,
-            radii,
+            colour: ColourSource::PerSample(colours),
+            size: SizeSource::PerSample(radii),
             ..Self::default()
         })
     }

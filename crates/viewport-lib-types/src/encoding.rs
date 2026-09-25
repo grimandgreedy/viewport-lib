@@ -104,6 +104,14 @@ pub enum SizeSource {
     /// One size for every sample.
     Uniform(f32),
 
+    /// One size per sample, in submission order, in whatever unit the item
+    /// measures size in.
+    ///
+    /// Shorter than the sample count leaves the remainder at zero, so those
+    /// samples are not drawn; longer is ignored. Unlike
+    /// [`Scalar`](Self::Scalar) these are sizes, not values to be mapped.
+    PerSample(Vec<f32>),
+
     /// A scalar per sample, mapped from `domain` onto `output`.
     Scalar {
         /// One value per sample, in submission order.
@@ -137,6 +145,7 @@ impl SizeSource {
     /// per-sample.
     pub fn per_sample_len(&self) -> Option<usize> {
         match self {
+            Self::PerSample(sizes) => Some(sizes.len()),
             Self::Scalar { values, .. } => Some(values.len()),
             Self::Uniform(_) | Self::Natural { .. } => None,
         }
@@ -147,6 +156,9 @@ impl SizeSource {
     pub fn output_range(&self) -> (f32, f32) {
         match self {
             Self::Uniform(size) => (*size, *size),
+            // The sizes are the range, so it comes from the data rather than
+            // from a bound the caller set.
+            Self::PerSample(sizes) => auto_range(sizes).unwrap_or((0.0, 0.0)),
             Self::Scalar { output, .. } | Self::Natural { output, .. } => *output,
         }
     }
@@ -253,5 +265,17 @@ mod tests {
             .output_range(),
             (0.1, 3.0)
         );
+    }
+
+    #[test]
+    fn a_per_sample_size_reports_its_own_span() {
+        let s = SizeSource::PerSample(vec![3.0, 11.0, 7.0]);
+        assert_eq!(s.output_range(), (3.0, 11.0));
+        assert_eq!(s.per_sample_len(), Some(3));
+    }
+
+    #[test]
+    fn an_empty_per_sample_size_has_no_span() {
+        assert_eq!(SizeSource::PerSample(Vec::new()).output_range(), (0.0, 0.0));
     }
 }

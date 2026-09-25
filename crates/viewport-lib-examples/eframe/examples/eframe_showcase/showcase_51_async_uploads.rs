@@ -1275,8 +1275,8 @@ fn demo_point_cloud(size: PayloadSize) -> PointCloudItem {
         }
     }
     item.positions = positions;
-    item.point_size = 6.0;
-    item.default_colour = [0.35, 0.85, 0.55, 1.0].into();
+    item.size = vpl::SizeSource::Uniform(6.0);
+    item.colour = vpl::ColourSource::Solid([0.35, 0.85, 0.55, 1.0].into());
     item
 }
 

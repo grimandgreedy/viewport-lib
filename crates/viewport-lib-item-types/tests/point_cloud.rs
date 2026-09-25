@@ -9,6 +9,7 @@ use viewport_lib::plugin_api::Uploads;
 
 mod common;
 use common::*;
+use viewport_lib::SizeSource;
 use viewport_lib::plugin_api::Handles;
 use viewport_lib_item_types::*;
 
@@ -26,7 +27,7 @@ fn gpu_pick_point_cloud_resolves_point() {
     // instance_index, which needs no device feature.
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    cloud.point_size = 20.0;
+    cloud.size = SizeSource::Uniform(20.0);
     cloud.settings.pick_id = PickId(444);
     frame.scene.items_mut::<PointCloudItem>().push(cloud);
 
@@ -66,7 +67,7 @@ fn gpu_pick_rect_resolves_point_cloud_elements() {
     // Three fat points spread across the centre of the view.
     let mut pc = PointCloudItem::default();
     pc.positions = vec![[-1.2, 0.0, 0.0], [0.0, 0.0, 0.0], [1.2, 0.0, 0.0]];
-    pc.point_size = 24.0;
+    pc.size = SizeSource::Uniform(24.0);
     pc.settings.pick_id = PickId(500);
     frame.scene.items_mut::<PointCloudItem>().push(pc);
 
@@ -113,7 +114,7 @@ fn cpu_pick_hits_point_cloud() {
 
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    cloud.point_size = 20.0;
+    cloud.size = SizeSource::Uniform(20.0);
     cloud.settings.pick_id = PickId(445);
     frame.scene.items_mut::<PointCloudItem>().push(cloud);
 
@@ -145,7 +146,7 @@ fn an_object_query_drops_the_point_sub_object() {
 
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0]];
-    cloud.point_size = 20.0;
+    cloud.size = SizeSource::Uniform(20.0);
     cloud.settings.pick_id = PickId(446);
     frame.scene.items_mut::<PointCloudItem>().push(cloud);
 
@@ -179,7 +180,7 @@ fn a_reference_item_picks_like_an_inline_one() {
 
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    cloud.point_size = 20.0;
+    cloud.size = SizeSource::Uniform(20.0);
     let source = renderer.upload(&device, &queue, &cloud).unwrap();
 
     let mut item = PointCloudRefItem::new(source);
@@ -212,7 +213,7 @@ fn a_hidden_reference_item_is_skipped() {
 
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0]];
-    cloud.point_size = 20.0;
+    cloud.size = SizeSource::Uniform(20.0);
     let source = renderer.upload(&device, &queue, &cloud).unwrap();
 
     let mut item = PointCloudRefItem::new(source);
@@ -244,7 +245,7 @@ fn sample_point_cloud() -> PointCloudItem {
         [0.0, 1.0, 0.0],
         [0.0, 0.0, 1.0],
     ];
-    item.point_size = 6.0;
+    item.size = SizeSource::Uniform(6.0);
     item
 }
 

@@ -499,17 +499,17 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
     if !unsel.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = unsel;
-        pc.default_colour = [0.5, 0.7, 1.0, 1.0].into();
+        pc.colour = vpl::ColourSource::Solid([0.5, 0.7, 1.0, 1.0].into());
         pc.gaussian = true;
-        pc.point_size = 8.0;
+        pc.size = vpl::SizeSource::Uniform(8.0);
         fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
     if !sel.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = sel;
-        pc.default_colour = [1.0, 0.55, 0.1, 1.0].into();
+        pc.colour = vpl::ColourSource::Solid([1.0, 0.55, 0.1, 1.0].into());
         pc.gaussian = true;
-        pc.point_size = 14.0;
+        pc.size = vpl::SizeSource::Uniform(14.0);
         fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
 }

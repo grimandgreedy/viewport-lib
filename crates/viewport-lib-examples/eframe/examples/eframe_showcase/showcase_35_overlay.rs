@@ -1873,10 +1873,12 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     if app.ovl_state.cloud_built {
         let mut pc = PointCloudItem::default();
         pc.positions = app.ovl_state.cloud_positions.clone();
-        pc.scalars = app.ovl_state.cloud_scalars.clone();
-        pc.scalar_range = Some((-1.5, 1.5));
-        pc.colourmap_id = Some(vpl::ColourmapId(app.ovl_state.colourmap as usize));
-        pc.point_size = 4.0;
+        pc.colour = vpl::ColourSource::Scalar {
+            values: app.ovl_state.cloud_scalars.clone(),
+            range: Some((-1.5, 1.5)),
+            colourmap: Some(vpl::ColourmapId(app.ovl_state.colourmap as usize)),
+        };
+        pc.size = vpl::SizeSource::Uniform(4.0);
         fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
 }

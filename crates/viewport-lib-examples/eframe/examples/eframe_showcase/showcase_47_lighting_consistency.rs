@@ -448,8 +448,8 @@ pub(crate) fn submit_lc_items(app: &App, fd: &mut FrameData) {
                 p.z + r * theta.sin(),
             ]);
         }
-        pc.point_size = 8.0;
-        pc.default_colour = [0.10, 0.26, 0.68, 1.0].into();
+        pc.size = vpl::SizeSource::Uniform(8.0);
+        pc.colour = vpl::ColourSource::Solid([0.10, 0.26, 0.68, 1.0].into());
         broadcast(s, &mut pc.settings);
         fd.scene.items_mut::<PointCloudItem>().push(pc);
     }

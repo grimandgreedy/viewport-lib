@@ -34,8 +34,8 @@ use vpl::{
     BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, DecalItem,
     FrameData, GlyphItem, GlyphType, ItemSettings, LightingSettings, Material, MeshId, NodeId,
     PickBackend, PickId, PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame,
-    SceneRenderItem, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
-    VolumeMeshData, VolumeMeshItem,
+    SceneRenderItem, SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer,
+    VolumeData, VolumeMeshData, VolumeMeshItem,
 };
 
 use crate::App;
@@ -1828,8 +1828,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.pc_positions.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = app.pl_state.pc_positions.clone();
-        pc.point_size = 18.0;
-        pc.default_colour = [0.10, 0.26, 0.68, 1.0].into();
+        pc.size = SizeSource::Uniform(18.0);
+        pc.colour = ColourSource::Solid([0.10, 0.26, 0.68, 1.0].into());
         pc.settings.pick_id = PickId(100);
         pc.settings.selected = app.pl_state.selection.contains(100);
         pc.settings.unlit = false;
@@ -2002,8 +2002,8 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         if let Some(marker_pos) = app.pl_state.hit_marker {
             let mut marker = PointCloudItem::default();
             marker.positions = vec![marker_pos.to_array()];
-            marker.point_size = 16.0;
-            marker.default_colour = [1.0, 0.35, 0.0, 1.0].into();
+            marker.size = SizeSource::Uniform(16.0);
+            marker.colour = ColourSource::Solid([1.0, 0.35, 0.0, 1.0].into());
             fd.scene.items_mut::<PointCloudItem>().push(marker);
         }
     }

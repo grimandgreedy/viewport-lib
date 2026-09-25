@@ -98,7 +98,7 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
 
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]];
-    cloud.point_size = 8.0;
+    cloud.size = viewport_lib::SizeSource::Uniform(8.0);
     let source = h.renderer.upload(&h.device, &h.queue, &cloud).unwrap();
 
     let _ = h.render(&base, 200, 150);

@@ -13,6 +13,7 @@
 use super::types::{PointCloudId, PointCloudItem, PointRenderMode};
 use viewport_lib::gpu;
 use viewport_lib::resources::DeviceResources;
+use viewport_lib::{Colour, ColourSource, SizeSource};
 
 /// Build the point cloud group-1 bind group layout.
 pub(super) fn build_bgl(device: &gpu::Device) -> gpu::BindGroupLayout {
@@ -105,7 +106,7 @@ pub(super) struct PointCloudBindings {
     bgl: gpu::BindGroupLayout,
 }
 
-/// Resolve the colourmap LUT and sampler an item names.
+/// Resolve the colourmap LUT and the clamping LUT sampler an item names.
 ///
 /// An item that names no colourmap gets Viridis, the same default the draw has
 /// always used; a stale id falls back to the neutral LUT.
@@ -114,16 +115,99 @@ pub(super) fn resolve_bindings(
     bgl: &gpu::BindGroupLayout,
     item: &PointCloudItem,
 ) -> PointCloudBindings {
-    let lut_view = item
-        .colourmap_id
+    let lut_view = crate::sources::requested_colourmap(&item.colour)
         .and_then(|id| resources.colourmap_view(id))
         .unwrap_or_else(|| {
             resources.builtin_colourmap_view(viewport_lib::resources::BuiltinColourmap::Viridis)
         });
     PointCloudBindings {
         lut_view: lut_view.clone(),
-        lut_sampler: resources.material_sampler().clone(),
+        // The LUT sampler clamps; the material sampler repeats, which makes a
+        // lookup at exactly 0 wrap onto the far end of the colourmap.
+        lut_sampler: resources.lut_sampler().clone(),
         bgl: bgl.clone(),
+    }
+}
+
+/// What the draw needs out of a [`ColourSource`], in the shape the uniform and
+/// the two storage buffers already take.
+///
+/// The point cloud resolves its own rather than going through
+/// `crate::sources::colour_plan`, because a cloud can hold millions of points
+/// and `Solid` has to stay one uniform colour rather than becoming a buffer of
+/// identical ones.
+struct ResolvedColour {
+    /// Per-point scalars for the colourmap path; empty otherwise.
+    scalars: Vec<f32>,
+    /// The scalar domain the colourmap spans.
+    scalar_range: (f32, f32),
+    /// Per-point RGBA; empty unless the source is per-sample.
+    colours: Vec<[f32; 4]>,
+    /// The one colour used when neither list is in play.
+    flat: [f32; 4],
+}
+
+/// Colour for a point past the end of a short per-sample list, and for a source
+/// with no natural scalar to read.
+const FALLBACK_COLOUR: Colour = Colour::WHITE;
+
+fn resolve_colour(item: &PointCloudItem) -> ResolvedColour {
+    let count = item.positions.len();
+    let flat = FALLBACK_COLOUR.to_linear_rgba();
+    match &item.colour {
+        ColourSource::Solid(c) => ResolvedColour {
+            scalars: Vec::new(),
+            scalar_range: (0.0, 1.0),
+            colours: Vec::new(),
+            flat: c.to_linear_rgba(),
+        },
+        ColourSource::PerSample(list) => ResolvedColour {
+            scalars: Vec::new(),
+            scalar_range: (0.0, 1.0),
+            colours: (0..count)
+                .map(|i| {
+                    list.get(i)
+                        .copied()
+                        .unwrap_or(FALLBACK_COLOUR)
+                        .to_linear_rgba()
+                })
+                .collect(),
+            flat,
+        },
+        ColourSource::Scalar { values, range, .. } => ResolvedColour {
+            scalar_range: crate::sources::resolved_domain(*range, values),
+            scalars: (0..count)
+                .map(|i| values.get(i).copied().unwrap_or(0.0))
+                .collect(),
+            colours: Vec::new(),
+            flat,
+        },
+        // A point cloud has no natural scalar, so this is the flat fallback,
+        // which is what `ColourSource` documents for an item without one.
+        _ => ResolvedColour {
+            scalars: Vec::new(),
+            scalar_range: (0.0, 1.0),
+            colours: Vec::new(),
+            flat,
+        },
+    }
+}
+
+/// Each point's pixel radius, or `None` when every point takes the same one.
+///
+/// `SizeSource::Natural` lands here with an empty natural slice, because a point
+/// cloud has none, and resolves to the bottom of its output range.
+fn resolve_sizes(item: &PointCloudItem) -> (Option<Vec<f32>>, f32) {
+    match &item.size {
+        SizeSource::Uniform(px) => (None, *px),
+        other => (
+            Some(crate::sources::sample_sizes(
+                other,
+                item.positions.len(),
+                &[],
+            )),
+            0.0,
+        ),
     }
 }
 
@@ -154,25 +238,18 @@ pub(super) fn build_point_cloud(
         });
         queue.write_buffer(&vertex_buffer, 0, &pos_bytes);
 
-        let (scalar_buf, has_scalars, scalar_min, scalar_max) = if !item.scalars.is_empty() {
-            let min = item
-                .scalar_range
-                .map(|r| r.0)
-                .unwrap_or_else(|| item.scalars.iter().cloned().fold(f32::INFINITY, f32::min));
-            let max = item.scalar_range.map(|r| r.1).unwrap_or_else(|| {
-                item.scalars
-                    .iter()
-                    .cloned()
-                    .fold(f32::NEG_INFINITY, f32::max)
-            });
+        let colour = resolve_colour(item);
+        let (scalar_min, scalar_max) = colour.scalar_range;
+
+        let (scalar_buf, has_scalars) = if !colour.scalars.is_empty() {
             let buf = device.create_buffer(&gpu::BufferDescriptor {
                 label: Some("pc_scalar_buf"),
-                size: (std::mem::size_of::<f32>() * item.scalars.len()).max(4) as u64,
+                size: (std::mem::size_of::<f32>() * colour.scalars.len()).max(4) as u64,
                 usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.scalars));
-            (buf, 1u32, min, max)
+            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&colour.scalars));
+            (buf, 1u32)
         } else {
             let buf = device.create_buffer(&gpu::BufferDescriptor {
                 label: Some("pc_scalar_buf_fallback"),
@@ -180,11 +257,11 @@ pub(super) fn build_point_cloud(
                 usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            (buf, 0u32, 0.0f32, 1.0f32)
+            (buf, 0u32)
         };
 
-        let (colour_buf, has_colours) = if !item.colours.is_empty() && has_scalars == 0 {
-            let bytes: &[u8] = bytemuck::cast_slice(&item.colours);
+        let (colour_buf, has_colours) = if !colour.colours.is_empty() {
+            let bytes: &[u8] = bytemuck::cast_slice(&colour.colours);
             let buf = device.create_buffer(&gpu::BufferDescriptor {
                 label: Some("pc_colour_buf"),
                 size: bytes.len().max(16) as u64,
@@ -203,47 +280,15 @@ pub(super) fn build_point_cloud(
             (buf, 0u32)
         };
 
-        // Radius buffer: radius_scalars (mapped to radius_range) take priority over
-        // explicit per-point radii.
-        let (radius_buf, has_radius) = if !item.radius_scalars.is_empty() {
-            let r_min = item.radius_scalar_range.map(|r| r.0).unwrap_or_else(|| {
-                item.radius_scalars
-                    .iter()
-                    .cloned()
-                    .fold(f32::INFINITY, f32::min)
-            });
-            let r_max = item.radius_scalar_range.map(|r| r.1).unwrap_or_else(|| {
-                item.radius_scalars
-                    .iter()
-                    .cloned()
-                    .fold(f32::NEG_INFINITY, f32::max)
-            });
-            let range = (r_max - r_min).max(f32::EPSILON);
-            let (out_min, out_max) = item.radius_range;
-            let mapped: Vec<f32> = item
-                .radius_scalars
-                .iter()
-                .map(|&s| {
-                    let t = ((s - r_min) / range).clamp(0.0, 1.0);
-                    out_min + t * (out_max - out_min)
-                })
-                .collect();
+        let (per_point_radii, uniform_radius) = resolve_sizes(item);
+        let (radius_buf, has_radius) = if let Some(radii) = per_point_radii {
             let buf = device.create_buffer(&gpu::BufferDescriptor {
                 label: Some("pc_radius_buf"),
-                size: (std::mem::size_of::<f32>() * mapped.len()).max(4) as u64,
+                size: (std::mem::size_of::<f32>() * radii.len()).max(4) as u64,
                 usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&mapped));
-            (buf, 1u32)
-        } else if !item.radii.is_empty() {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_radius_buf"),
-                size: (std::mem::size_of::<f32>() * item.radii.len()).max(4) as u64,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.radii));
+            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&radii));
             (buf, 1u32)
         } else {
             let buf = device.create_buffer(&gpu::BufferDescriptor {
@@ -293,8 +338,8 @@ pub(super) fn build_point_cloud(
         }
         let uniform_data = PointCloudUniform {
             model: item.model,
-            default_colour: item.default_colour.to_linear_rgba(),
-            point_size: item.point_size,
+            default_colour: colour.flat,
+            point_size: uniform_radius,
             has_scalars,
             scalar_min,
             scalar_max,

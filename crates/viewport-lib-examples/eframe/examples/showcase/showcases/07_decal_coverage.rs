@@ -15,8 +15,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
-use viewport_lib::ColourSource;
 use viewport_lib::plugin_api::Uploads;
+use viewport_lib::{ColourSource, SizeSource};
 use viewport_lib_item_types::PointCloudItem;
 use viewport_lib_item_types::VolumeItem;
 use viewport_lib_item_types::{
@@ -513,9 +513,12 @@ impl Showcase for DecalCoverageShowcase {
         // Point cloud (cloud points).
         let (pos, sca) = noisy_sphere(Vec3::new(0.0, 5.0, 1.0), 0.9, 400);
         self.pc.positions = pos.clone();
-        self.pc.scalars = sca;
-        self.pc.colourmap_id = Some(ColourmapId(BuiltinColourmap::Viridis as usize));
-        self.pc.point_size = 9.0;
+        self.pc.colour = ColourSource::Scalar {
+            values: sca,
+            range: None,
+            colourmap: Some(ColourmapId(BuiltinColourmap::Viridis as usize)),
+        };
+        self.pc.size = SizeSource::Uniform(9.0);
         self.pc.settings.pick_id = PickId(PC);
         self.point_positions.insert(PC, pos);
         self.model_matrices.insert(PC, Mat4::IDENTITY);

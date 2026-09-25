@@ -152,7 +152,9 @@ One axis-aligned cross-section of an uploaded volume as a flat coloured quad. Ch
 
 `PointCloudItem`, with `PointCloudRefItem`, `PointCloudId` and `PointRenderMode`.
 
-Points as flat screen-space discs or shaded sphere impostors (`PointRenderMode`), with per-point radius, colour, scalar and transparency. The most-used type in the crate, and the one whose pick paths are the most exercised.
+Points as flat screen-space discs or shaded sphere impostors (`PointRenderMode`), optionally as soft gaussian splats, with per-point transparency. Colour and size come from `viewport_lib::ColourSource` and `SizeSource`, the same pair the field types use; sizes are in pixels, because a point is a screen-space billboard. A point cloud has no natural scalar, so `Natural` on either source falls back rather than deriving anything.
+
+The most-used type in the crate, and the one whose pick paths are the most exercised.
 
 ### `scatter_volume`
 

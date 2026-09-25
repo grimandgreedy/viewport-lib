@@ -18,8 +18,9 @@ use crate::{App, MeshId};
 use viewport_lib as vpl;
 use viewport_lib_item_types::PointCloudItem;
 use vpl::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, ColourmapId, FrameData,
-    GlyphItem, LightingSettings, SceneRenderItem, ViewportRenderer, VolumeMeshData,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, ColourSource, ColourmapId,
+    FrameData, GlyphItem, LightingSettings, SceneRenderItem, SizeSource, ViewportRenderer,
+    VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -360,8 +361,12 @@ impl App {
 
                 let mut pc = PointCloudItem::default();
                 pc.positions = self.eq_state.pc_positions.clone();
-                pc.scalars = self.eq_state.pc_scalars.clone();
-                pc.radii = self.eq_state.pc_radii.clone();
+                pc.colour = ColourSource::Scalar {
+                    values: self.eq_state.pc_scalars.clone(),
+                    range: None,
+                    colourmap: None,
+                };
+                pc.size = SizeSource::PerSample(self.eq_state.pc_radii.clone());
                 pc.transparencies = self.eq_state.pc_transp.clone();
                 pc_items.push(pc);
             }

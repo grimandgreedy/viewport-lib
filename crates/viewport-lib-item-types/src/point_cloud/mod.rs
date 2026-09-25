@@ -224,9 +224,10 @@ impl ItemTypePlugin for PointCloudPlugin {
             if item.settings.pick_id == PickId::NONE || item.positions.is_empty() {
                 continue;
             }
-            // The disc is `point_size` pixels across, with a floor so a
-            // one-pixel cloud is still clickable.
-            let radius_px = item.point_size.max(4.0);
+            // The largest disc the size source can produce, with a floor so a
+            // one-pixel cloud is still clickable. Taking the largest keeps the
+            // hit circle over every point rather than only the small ones.
+            let radius_px = item.size.output_range().1.max(4.0);
             let Some(mut hit) = viewport_lib::picking::pick_gaussian_splat_cpu(
                 ctx.click_pos,
                 item.settings.pick_id.0,
@@ -452,7 +453,7 @@ fn build_outlines(
         if item.settings.hidden || item.positions.is_empty() {
             continue;
         }
-        let pixel_radius = (item.point_size * 0.5).max(1.0);
+        let pixel_radius = (item.size.output_range().1 * 0.5).max(1.0);
         if item.settings.selected {
             outlines.push(gpu.outline_entry(
                 device,

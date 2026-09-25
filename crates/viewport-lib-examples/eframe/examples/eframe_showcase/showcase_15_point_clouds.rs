@@ -15,8 +15,8 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib_item_types::PointCloudItem;
 use vpl::{
-    BuiltinColourmap, ColourmapId, FrameData, GlyphItem, GlyphType, LightingSettings,
-    PostProcessSettings, SceneRenderItem,
+    BuiltinColourmap, ColourSource, ColourmapId, FrameData, GlyphItem, GlyphType, LightingSettings,
+    PostProcessSettings, SceneRenderItem, SizeSource,
 };
 
 // ---------------------------------------------------------------------------
@@ -114,10 +114,12 @@ impl App {
         };
         let mut item = PointCloudItem::default();
         item.positions = s.cloud_positions.clone();
-        item.scalars = s.cloud_scalars.clone();
-        item.scalar_range = scalar_range;
-        item.colourmap_id = colourmap_id;
-        item.point_size = s.point_size;
+        item.colour = ColourSource::Scalar {
+            values: s.cloud_scalars.clone(),
+            range: scalar_range,
+            colourmap: colourmap_id,
+        };
+        item.size = SizeSource::Uniform(s.point_size);
         item
     }
 
@@ -152,13 +154,17 @@ impl App {
         };
         let mut item = PointCloudItem::default();
         item.positions = s.cloud_positions.clone();
-        item.scalars = s.cloud_scalars.clone();
-        item.scalar_range = scalar_range;
-        item.colourmap_id = colourmap_id;
-        // Use radius_scalars to drive the point-gaussian radius from the same scalar field.
-        item.radius_scalars = s.cloud_scalars.clone();
-        item.radius_scalar_range = scalar_range;
-        item.radius_range = (s.gaussian_radius_min, s.gaussian_radius_max);
+        item.colour = ColourSource::Scalar {
+            values: s.cloud_scalars.clone(),
+            range: scalar_range,
+            colourmap: colourmap_id,
+        };
+        // The same scalar field drives the splat radius as well as the colour.
+        item.size = SizeSource::Scalar {
+            values: s.cloud_scalars.clone(),
+            domain: scalar_range,
+            output: (s.gaussian_radius_min, s.gaussian_radius_max),
+        };
         item.gaussian = true;
         item
     }

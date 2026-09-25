@@ -20,10 +20,15 @@ pub(crate) fn resolved_domain(domain: Option<(f32, f32)>, values: &[f32]) -> (f3
 /// Every sample's resolved size, before any global scale the item applies.
 ///
 /// `natural` is the item's own scalar, one per sample, which the
-/// [`SizeSource::Natural`] case reads.
+/// [`SizeSource::Natural`] case reads. An item with no natural scalar passes an
+/// empty slice, and `Natural` then resolves to the bottom of its output range
+/// for every sample.
 pub(crate) fn sample_sizes(size: &SizeSource, count: usize, natural: &[f32]) -> Vec<f32> {
     match size {
         SizeSource::Uniform(s) => vec![*s; count],
+        SizeSource::PerSample(sizes) => (0..count)
+            .map(|i| sizes.get(i).copied().unwrap_or(0.0))
+            .collect(),
         SizeSource::Scalar {
             values,
             domain,
