@@ -237,7 +237,7 @@ fn a_stale_mc_volume_handle_does_not_alias_after_slot_reuse() {
 }
 
 #[test]
-fn mc_volume_bytes_are_reported_and_reclaimed() {
+fn mc_volumes_are_reported_and_reclaimed() {
     let Some((device, queue)) = headless_device() else {
         eprintln!("skipping: no GPU adapter available");
         return;
