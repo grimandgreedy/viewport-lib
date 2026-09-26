@@ -167,3 +167,64 @@ pub trait Writes<C: Channel> {
     /// feed decide between a write and a replace.
     fn extent(&self, channel: C, id: C::Id) -> Option<Extent>;
 }
+
+/// Replacing a channel's storage with a buffer the caller owns and keeps filled.
+///
+/// The other end of [`Writes`]. A ranged write moves bytes from the host into
+/// storage the item type allocated; this points the item type at storage the
+/// consumer allocated, and then no bytes move at all. For a producer whose data
+/// is already on the device (a compute simulation, a GPU decoder, a solver) that
+/// removes the readback and the upload rather than shrinking them, which is the
+/// larger win where it applies.
+///
+/// Keyed on the channel for the same reason [`Writes`] is: the handle names the
+/// object but not which of its arrays to re-point.
+///
+/// # What the item type keeps
+///
+/// The item type still owns the channel's original allocation and its length. A
+/// source stands in for the *contents*: the draw reads the caller's buffer for as
+/// many elements as the channel is long, and
+/// [`set_source(.., None)`](Self::set_source) puts the original back with
+/// whatever it last held. So a consumer can hand a buffer over for a few frames
+/// and take it back without re-uploading.
+///
+/// # Synchronisation is submission order
+///
+/// The renderer neither waits on nor fences the caller's writes: submit the work
+/// that fills the buffer before the frame that draws from it. This is the same
+/// contract the mesh position-override buffers carry.
+///
+/// # Reallocation
+///
+/// The renderer holds a clone of the buffer handle, which keeps the allocation
+/// alive but does not track it. A consumer who grows and reallocates must call
+/// this again with the new buffer; holding the old one draws whatever was last
+/// written to the old allocation.
+pub trait Sourced<C: Channel> {
+    /// Draw this channel from `source` instead of from the item type's own
+    /// buffer, or from its own buffer again when `source` is `None`.
+    ///
+    /// The buffer must carry the usage the channel is bound with and hold at
+    /// least as many elements as the channel is long. Both are checked here
+    /// rather than at draw time, because a wgpu validation failure on a binding
+    /// takes the device down and a returned error does not.
+    ///
+    /// `device` is passed rather than held: swapping a binding means building a
+    /// bind group, and this library keeps no device or queue of its own.
+    fn set_source(
+        &mut self,
+        channel: C,
+        device: &crate::gpu::Device,
+        id: C::Id,
+        source: Option<crate::gpu::Buffer>,
+    ) -> crate::error::ViewportResult<()>;
+
+    /// Whether this channel is currently drawn from a caller-owned buffer.
+    ///
+    /// `None` when the handle does not resolve. Worth reading back before a
+    /// consumer decides whether a [`Writes::write_range`] would be ignored: a
+    /// write still lands in the item type's own buffer, which is not what draws
+    /// while a source is set.
+    fn has_source(&self, channel: C, id: C::Id) -> Option<bool>;
+}

@@ -337,6 +337,43 @@ point_cloud_writes!(
     encode = cast_bytes
 );
 
+/// Caller-owned buffers for a stored point cloud's channels.
+///
+/// The counterpart to the writes above: a producer whose points are already on the
+/// device points the cloud at its buffer and no bytes move at all.
+macro_rules! point_cloud_sources {
+    ($marker:ty, $variant:ident) => {
+        impl viewport_lib::plugin_api::Sourced<$marker> for ViewportRenderer {
+            fn set_source(
+                &mut self,
+                _channel: $marker,
+                device: &gpu::Device,
+                id: PointCloudId,
+                source: Option<gpu::Buffer>,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME).set_channel_source(
+                    device,
+                    id,
+                    point_cloud::PointChannel::$variant,
+                    <$marker as viewport_lib::plugin_api::Channel>::NAME,
+                    source,
+                )
+            }
+
+            fn has_source(&self, _channel: $marker, id: PointCloudId) -> Option<bool> {
+                self.item_type_plugin::<PointCloudPlugin>(POINT_CLOUD_TYPE_NAME)?
+                    .channel_has_source(id, point_cloud::PointChannel::$variant)
+            }
+        }
+    };
+}
+
+point_cloud_sources!(channels::point_cloud::Positions, Positions);
+point_cloud_sources!(channels::point_cloud::Scalars, Scalars);
+point_cloud_sources!(channels::point_cloud::Colours, Colours);
+point_cloud_sources!(channels::point_cloud::Sizes, Sizes);
+point_cloud_sources!(channels::point_cloud::Transparencies, Transparencies);
+
 impl viewport_lib::plugin_api::Uploads<GaussianSplatData> for ViewportRenderer {
     type Id = GaussianSplatId;
 

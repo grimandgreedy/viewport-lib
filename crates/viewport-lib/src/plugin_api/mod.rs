@@ -161,7 +161,7 @@ pub use target_desc::{
     OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
 };
 pub use uploads::{Handles, Uploads};
-pub use writes::{Channel, Extent, Span, Writes};
+pub use writes::{Channel, Extent, Sourced, Span, Writes};
 
 /// Group-0 bind layout shared by every scene pipeline.
 ///

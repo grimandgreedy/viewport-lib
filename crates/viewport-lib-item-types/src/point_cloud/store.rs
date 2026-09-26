@@ -376,6 +376,11 @@ pub(super) fn build_point_cloud(
         binds: binds.clone(),
         bind_group,
         pick_id: item.settings.pick_id,
+        position_source: None,
+        scalar_source: None,
+        colour_source: None,
+        radius_source: None,
+        transparency_source: None,
     }
 }
 
@@ -602,6 +607,15 @@ pub(crate) struct PointCloudGpuData {
     binds: PointCloudBindings,
     bind_group: gpu::BindGroup,
     pick_id: viewport_lib::PickId,
+    /// Per channel, a buffer the consumer owns and keeps filled, standing in for
+    /// this cloud's own storage. The cloud keeps its allocation and its length
+    /// either way, so a source can be handed over and taken back without an
+    /// upload.
+    position_source: Option<gpu::Buffer>,
+    scalar_source: Option<gpu::Buffer>,
+    colour_source: Option<gpu::Buffer>,
+    radius_source: Option<gpu::Buffer>,
+    transparency_source: Option<gpu::Buffer>,
 }
 
 /// What a draw needs out of a point cloud, cheap to clone into a frame list.
@@ -622,7 +636,7 @@ impl PointCloudGpuData {
     /// and the cloned vertex buffer keeps the positions.
     pub(crate) fn draw(&self) -> PointCloudDraw {
         PointCloudDraw {
-            vertex_buffer: self.positions.buffer().clone(),
+            vertex_buffer: self.bound_buffer(PointChannel::Positions).clone(),
             point_count: self.positions.len(),
             pick_id: self.pick_id,
             bind_group: self.bind_group.clone(),
@@ -687,6 +701,127 @@ impl PointCloudGpuData {
         Ok(())
     }
 
+    /// Draw one channel from a caller-owned buffer, or from this cloud's own
+    /// buffer again.
+    ///
+    /// The cloud keeps its own allocation and its length either way, so handing a
+    /// buffer over and taking it back costs two bind-group builds and no upload.
+    /// `true` when the bind group had to be rebuilt, which is every call that
+    /// changes a storage channel's binding.
+    pub(crate) fn set_channel_source(
+        &mut self,
+        device: &gpu::Device,
+        which: PointChannel,
+        name: &'static str,
+        source: Option<gpu::Buffer>,
+    ) -> ViewportResult<bool> {
+        if !self.has_channel(which) {
+            return Err(ViewportError::ChannelNotPresent {
+                type_name: super::TYPE_NAME,
+                channel: name,
+            });
+        }
+        if let Some(buffer) = source.as_ref() {
+            let (needed_usage, missing) = match which {
+                PointChannel::Positions => (gpu::BufferUsages::VERTEX, "VERTEX"),
+                _ => (gpu::BufferUsages::STORAGE, "STORAGE"),
+            };
+            if !buffer.usage().contains(needed_usage) {
+                return Err(ViewportError::ExternalBufferUsageMissing { missing });
+            }
+            let cb = self.channel(which);
+            let needed = cb.len() as u64 * cb.stride_bytes() as u64;
+            if buffer.size() < needed {
+                return Err(ViewportError::ContentBufferWriteOutOfRange {
+                    first_element: 0,
+                    element_count: cb.len(),
+                    capacity: (buffer.size() / cb.stride_bytes() as u64) as u32,
+                    stride_bytes: cb.stride_bytes(),
+                });
+            }
+        }
+        let slot = match which {
+            PointChannel::Positions => &mut self.position_source,
+            PointChannel::Scalars => &mut self.scalar_source,
+            PointChannel::Colours => &mut self.colour_source,
+            PointChannel::Sizes => &mut self.radius_source,
+            PointChannel::Transparencies => &mut self.transparency_source,
+        };
+        *slot = source;
+        // Positions are the vertex stream, bound at draw time rather than through
+        // the group, so only the storage channels move a binding.
+        if which == PointChannel::Positions {
+            return Ok(false);
+        }
+        self.rebuild_bind_group(device);
+        Ok(true)
+    }
+
+    /// Whether one channel currently draws from a caller-owned buffer.
+    pub(crate) fn channel_has_source(&self, which: PointChannel) -> bool {
+        match which {
+            PointChannel::Positions => self.position_source.is_some(),
+            PointChannel::Scalars => self.scalar_source.is_some(),
+            PointChannel::Colours => self.colour_source.is_some(),
+            PointChannel::Sizes => self.radius_source.is_some(),
+            PointChannel::Transparencies => self.transparency_source.is_some(),
+        }
+    }
+
+    /// The buffer a channel's binding should name: the caller's if one is set,
+    /// this cloud's own otherwise.
+    fn bound_buffer(&self, which: PointChannel) -> &gpu::Buffer {
+        let source = match which {
+            PointChannel::Positions => &self.position_source,
+            PointChannel::Scalars => &self.scalar_source,
+            PointChannel::Colours => &self.colour_source,
+            PointChannel::Sizes => &self.radius_source,
+            PointChannel::Transparencies => &self.transparency_source,
+        };
+        source
+            .as_ref()
+            .unwrap_or_else(|| self.channel(which).buffer())
+    }
+
+    fn rebuild_bind_group(&mut self, device: &gpu::Device) {
+        self.bind_group = device.create_bind_group(&gpu::BindGroupDescriptor {
+            label: Some("pc_bind_group"),
+            layout: &self.binds.bgl,
+            entries: &[
+                gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buf.as_entire_binding(),
+                },
+                gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: gpu::BindingResource::TextureView(&self.binds.lut_view),
+                },
+                gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: gpu::BindingResource::Sampler(&self.binds.lut_sampler),
+                },
+                gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.bound_buffer(PointChannel::Scalars).as_entire_binding(),
+                },
+                gpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.bound_buffer(PointChannel::Colours).as_entire_binding(),
+                },
+                gpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.bound_buffer(PointChannel::Sizes).as_entire_binding(),
+                },
+                gpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self
+                        .bound_buffer(PointChannel::Transparencies)
+                        .as_entire_binding(),
+                },
+            ],
+        });
+    }
+
     /// Write bytes into one channel at an element offset.
     pub(crate) fn write_channel(
         &mut self,
@@ -727,15 +862,9 @@ impl PointCloudGpuData {
             }
         }
         if moved {
-            self.bind_group = build_bind_group(
-                device,
-                &self.binds,
-                &self.uniform_buf,
-                &self.scalars,
-                &self.colours,
-                &self.radii,
-                &self.transparencies,
-            );
+            // Through the same builder the sources use, so a grow does not
+            // silently drop a caller-owned buffer back to this cloud's own.
+            self.rebuild_bind_group(device);
         }
         moved
     }

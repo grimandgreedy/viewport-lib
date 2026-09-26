@@ -9,7 +9,7 @@ use viewport_lib::plugin_api::Uploads;
 
 mod common;
 use common::*;
-use viewport_lib::plugin_api::{Handles, Span, Writes};
+use viewport_lib::plugin_api::{Handles, Sourced, Span, Writes};
 use viewport_lib::{ColourSource, SizeSource};
 use viewport_lib_item_types::channels::point_cloud as pc;
 use viewport_lib_item_types::*;
@@ -548,5 +548,144 @@ fn set_len_hides_points_without_freeing_them() {
     assert!(
         renderer.set_len(pc::Positions, id, 101).is_err(),
         "past the capacity is an error rather than a grow"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Caller-owned channel sources
+// ---------------------------------------------------------------------------
+
+/// The other end of a partial update: a producer whose points are already on the
+/// device hands its buffer over and no bytes move at all.
+#[test]
+fn a_channel_can_be_drawn_from_a_caller_owned_buffer() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 64];
+    let id = renderer.upload(&device, &queue, &cloud).expect("upload");
+
+    assert_eq!(renderer.has_source(pc::Positions, id), Some(false));
+
+    let theirs = device.create_buffer(&gpu::BufferDescriptor {
+        label: Some("consumer_positions"),
+        size: 64 * 12,
+        usage: gpu::BufferUsages::VERTEX | gpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    renderer
+        .set_source(pc::Positions, &device, id, Some(theirs.clone()))
+        .expect("a VERTEX buffer big enough for 64 points");
+    assert_eq!(renderer.has_source(pc::Positions, id), Some(true));
+
+    // It still draws, through their buffer.
+    let mut frame = sub_object_pick_frame();
+    frame
+        .scene
+        .items_mut::<PointCloudRefItem>()
+        .push(PointCloudRefItem::new(id));
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    // And handing it back restores the cloud's own storage without an upload.
+    renderer
+        .set_source(pc::Positions, &device, id, None)
+        .expect("handing it back");
+    assert_eq!(renderer.has_source(pc::Positions, id), Some(false));
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+}
+
+/// A source is checked when it is set, not at draw time: a wgpu validation
+/// failure on a binding takes the device down and a returned error does not.
+#[test]
+fn a_source_is_refused_for_the_wrong_usage_or_size() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 64];
+    let id = renderer.upload(&device, &queue, &cloud).expect("upload");
+
+    let no_vertex_usage = device.create_buffer(&gpu::BufferDescriptor {
+        label: Some("wrong_usage"),
+        size: 64 * 12,
+        usage: gpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let err = renderer
+        .set_source(pc::Positions, &device, id, Some(no_vertex_usage))
+        .expect_err("the positions are a vertex stream");
+    assert!(
+        matches!(
+            err,
+            viewport_lib::error::ViewportError::ExternalBufferUsageMissing { .. }
+        ),
+        "{err}"
+    );
+
+    let too_small = device.create_buffer(&gpu::BufferDescriptor {
+        label: Some("too_small"),
+        size: 16 * 12,
+        usage: gpu::BufferUsages::VERTEX,
+        mapped_at_creation: false,
+    });
+    let err = renderer
+        .set_source(pc::Positions, &device, id, Some(too_small))
+        .expect_err("16 points cannot feed a 64-point cloud");
+    assert!(
+        matches!(
+            err,
+            viewport_lib::error::ViewportError::ContentBufferWriteOutOfRange { .. }
+        ),
+        "{err}"
+    );
+
+    // A channel the upload never populated has nothing to re-point.
+    let err = renderer
+        .set_source(pc::Colours, &device, id, None)
+        .expect_err("this cloud holds no colour channel");
+    assert!(matches!(
+        err,
+        viewport_lib::error::ViewportError::ChannelNotPresent { .. }
+    ));
+}
+
+/// Growing the cloud must not silently drop a caller-owned buffer back to the
+/// cloud's own storage.
+#[test]
+fn a_source_survives_a_reserve() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 8];
+    cloud.transparencies = vec![0.5; 8];
+    let id = renderer.upload(&device, &queue, &cloud).expect("upload");
+
+    let theirs = device.create_buffer(&gpu::BufferDescriptor {
+        label: Some("consumer_transparencies"),
+        size: 8 * 4,
+        usage: gpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    renderer
+        .set_source(pc::Transparencies, &device, id, Some(theirs))
+        .expect("set");
+    renderer
+        .reserve(pc::Positions, &device, &queue, id, 256)
+        .expect("grow");
+    assert_eq!(
+        renderer.has_source(pc::Transparencies, id),
+        Some(true),
+        "a grow rebuilds the bind group and must rebuild it with the source"
     );
 }

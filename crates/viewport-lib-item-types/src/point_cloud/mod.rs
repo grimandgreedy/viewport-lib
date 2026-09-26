@@ -415,6 +415,38 @@ impl PointCloudPlugin {
         gpu.write_channel(queue, which, name, first_element, data)
     }
 
+    /// Point one channel of a stored cloud at a caller-owned buffer, or back at
+    /// the cloud's own.
+    pub(crate) fn set_channel_source(
+        &mut self,
+        device: &gpu::Device,
+        id: PointCloudId,
+        which: store::PointChannel,
+        name: &'static str,
+        source: Option<gpu::Buffer>,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(gpu) = self.stored.get_mut(id) else {
+            return Err(self.stored.stale(id));
+        };
+        if gpu.set_channel_source(device, which, name, source)? {
+            // The bind group was replaced, so a per-viewport cache built over the
+            // old one is stale. Nothing keys on it for this type today, and that
+            // is exactly why it is bumped here rather than left for whoever adds
+            // the first cache to discover.
+            self.stored.bump_revision(id);
+        }
+        Ok(())
+    }
+
+    /// Whether one channel of a stored cloud draws from a caller-owned buffer.
+    pub(crate) fn channel_has_source(
+        &self,
+        id: PointCloudId,
+        which: store::PointChannel,
+    ) -> Option<bool> {
+        self.stored.get(id).map(|gpu| gpu.channel_has_source(which))
+    }
+
     /// Grow a stored cloud to hold at least `capacity` points.
     pub(crate) fn reserve_stored(
         &mut self,
