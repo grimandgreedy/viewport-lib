@@ -60,10 +60,11 @@ impl ItemTypePlugin for LoggingItemTypePlugin {
         items: &ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
         self.log.record(format!(
-            "prepare:{}:items={}:vp={}",
+            "prepare:{}:items={}:vp={}:gen={}",
             self.type_name,
             items.len(),
-            ctx.viewport_index
+            ctx.viewport_index,
+            ctx.scene_generation
         ));
         Vec::new()
     }

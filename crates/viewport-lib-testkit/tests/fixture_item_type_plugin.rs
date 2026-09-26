@@ -49,7 +49,7 @@ fn item_type_fixture_dispatches_only_when_submitted() {
         .submit_plugin_items("probe_items", CountedItemCollection::new(3));
     harness.render(&frame, SIZE, SIZE);
     log.assert_take(&[
-        "prepare:probe_items:items=3:vp=0",
+        "prepare:probe_items:items=3:vp=0:gen=0",
         "paint:probe_items:items=3:vp=0",
     ]);
 }
@@ -108,7 +108,7 @@ fn item_type_fixture_receives_hidden_items() {
     harness.render(&frame, SIZE, SIZE);
 
     assert_eq!(
-        log.count("prepare:probe_items:items=2"),
+        log.count("prepare:probe_items:items=2:vp=0:gen=0"),
         1,
         "the collection must arrive unfiltered; log holds {:?}",
         log.entries()
@@ -201,5 +201,51 @@ fn a_plugin_may_register_under_any_unreserved_name() {
             .renderer
             .has_item_type_plugin(&format!("{reserved}sprite")),
         "the built-in sprite type is still the one under its own name"
+    );
+}
+
+/// The host's scene generation reaches a plugin's `prepare`, which is what lets
+/// one skip a rebuild when the scene did not change.
+///
+/// Not a per-collection signal and not the library's own counter: it is whatever
+/// the host put on `SceneFrame::generation`, forwarded unchanged. A plugin that
+/// gates on it alone trusts the host to have bumped it, which is the same hazard
+/// the instanced mesh path carries.
+#[test]
+fn item_type_fixture_sees_the_scene_generation() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let log = CallLog::new();
+    harness.renderer.with_item_type_plugin(
+        &harness.device,
+        Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
+    );
+    log.clear();
+
+    for generation in [7u64, 7, 9] {
+        let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+        frame.scene.generation = generation;
+        frame
+            .scene
+            .submit_plugin_items("probe_items", CountedItemCollection::new(1));
+        harness.render(&frame, SIZE, SIZE);
+    }
+
+    let prepares: Vec<String> = log
+        .entries()
+        .into_iter()
+        .filter(|e| e.starts_with("prepare:"))
+        .collect();
+    assert_eq!(
+        prepares,
+        vec![
+            "prepare:probe_items:items=1:vp=0:gen=7".to_string(),
+            "prepare:probe_items:items=1:vp=0:gen=7".to_string(),
+            "prepare:probe_items:items=1:vp=0:gen=9".to_string(),
+        ],
+        "the generation must arrive unchanged, repeats included; log holds {:?}",
+        log.entries()
     );
 }

@@ -106,6 +106,7 @@ fn non_mesh_pipelines_drop_hidden_items_at_upload() {
             viewport_size: glam::Vec2::from(fd.camera.viewport_size),
             viewport_index: 0,
             frame_index: 0,
+            scene_generation: 0,
             jobs: crate::resources::Jobs::new(resources),
             resources,
             wireframe_mode: false,

@@ -260,6 +260,26 @@ pub struct ItemFrameContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter assigned by the lib.
     pub frame_index: u64,
+    /// The host's scene version counter for this frame (`SceneFrame::generation`).
+    ///
+    /// A plugin that rebuilds per-frame state from an inline collection can keep
+    /// the value it last prepared at and skip the rebuild when this matches. That
+    /// is what the instanced mesh path does with the same counter.
+    ///
+    /// **It is the host's counter, not the library's, and it says nothing on its
+    /// own.** A host that never bumps it reports `0` every frame, and one that
+    /// bumps it per frame reports a new value whether or not anything moved. It is
+    /// also per frame rather than per collection: a bump means something in the
+    /// scene changed, not that your items did.
+    ///
+    /// Because of that, never gate on the generation alone. Pair it with something
+    /// that catches the case the host got wrong, as the instanced path pairs it
+    /// with the item count: equal generation *and* equal count is the condition
+    /// that is safe to skip on, and even then a host that mutates items in place
+    /// without bumping draws stale content. If skipping is wrong for your type,
+    /// ignore this field. Rebuilding every frame is the correct default and is
+    /// what every built-in item type does.
+    pub scene_generation: u64,
     /// Handle to the upload-job runner. Plugins call
     /// `ctx.jobs.submit_cpu(...)` to spawn background work and
     /// `ctx.jobs.take::<T>(id)` to retrieve the result once the matching
