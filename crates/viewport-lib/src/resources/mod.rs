@@ -1,6 +1,8 @@
 /// Shared constructors for common wgpu bind-group-layout, sampler, and
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
+/// A growable GPU buffer addressed in elements, with a ranged write.
+pub mod content_buffer;
 pub(crate) mod custom_data;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;
@@ -45,6 +47,7 @@ pub mod upload_jobs;
 /// Volume, marching-cubes, and unstructured volume-mesh resources.
 pub mod volume;
 
+pub use self::content_buffer::ContentBuffer;
 pub use self::gpu::compute_filter::ComputeFilterResult;
 pub use self::handle::ContentHandle;
 pub use self::light_probes::{

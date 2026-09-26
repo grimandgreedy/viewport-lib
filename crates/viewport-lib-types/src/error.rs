@@ -88,6 +88,30 @@ pub enum ViewportError {
         offset_bytes: u64,
     },
 
+    /// A ranged write does not fit a [`ContentBuffer`]: either the window runs
+    /// past the allocation, or the byte length is not a whole number of
+    /// elements at the buffer's stride.
+    ///
+    /// The buffer does not grow to accommodate a write. Growing behind a call
+    /// the caller believes is cheap is the cost this whole family of APIs
+    /// exists to remove, so `reserve` is an explicit step.
+    ///
+    /// [`ContentBuffer`]: https://docs.rs/viewport-lib
+    #[error(
+        "content buffer write [{first_element}..{first_element}+{element_count}) at stride {stride_bytes} does not fit {capacity} elements"
+    )]
+    ContentBufferWriteOutOfRange {
+        /// First element of the requested window.
+        first_element: u32,
+        /// Elements the supplied bytes cover, or `0` when the byte length is
+        /// not a whole multiple of the stride.
+        element_count: u32,
+        /// Elements the current allocation holds.
+        capacity: u32,
+        /// Bytes per element.
+        stride_bytes: u32,
+    },
+
     /// A ranged deform-slot write does not fit the data attached to that slot:
     /// `first_element + element_count` exceeds what the slot holds.
     #[error(
