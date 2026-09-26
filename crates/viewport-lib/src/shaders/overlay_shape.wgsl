@@ -145,6 +145,9 @@ struct VertexOutput {
     @location(5) fill_colour2:    vec4<f32>,
     @location(6) gradient_params: vec4<f32>,
     @location(7) @interpolate(flat) shadow_index:   vec3<f32>,
+    // rotation, pivot_x, pivot_y, and the group's uniform scale. The vertex
+    // buffer pads the fourth channel; the vertex stage fills it from the
+    // per-draw instance so the fragment can size its anti-aliasing band.
     @location(8) @interpolate(flat) rotation_pivot: vec4<f32>,
     @location(9) @interpolate(flat) clip_rect: vec4<f32>,
     @location(10) @interpolate(flat) clip_index: f32,
@@ -183,7 +186,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.fill_colour2    = vec4<f32>(in.fill_colour2.rgb * t.rgb, in.fill_colour2.a * a * t.a);
     out.gradient_params = in.gradient_params;
     out.shadow_index    = in.shadow_index;
-    out.rotation_pivot  = in.rotation_pivot;
+    out.rotation_pivot  = vec4<f32>(in.rotation_pivot.xyz, inst.scale);
     // Intersect the baked per-vertex clip with the per-frame group clip (identity
     // for immediate draws), so a retained shape group clips to its outer rect.
     out.clip_rect       = combine_clip(in.clip_rect, inst.clip_rect);
@@ -521,8 +524,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let d = eval_sdf(p, hs, in.shape_type, in.radii);
 
-    // Anti-aliasing: 1 pixel smoothstep at the boundary.
-    let aa = 1.0;
+    // Anti-aliasing: 1 pixel smoothstep at the boundary. The band is in the
+    // shape's own units and the group transform scales the quad without
+    // scaling them, so one unit covers `scale` framebuffer pixels: divide by
+    // the scale to keep the edge one pixel wide whatever size the group is
+    // drawn at. The identity instance scales by 1, so an immediate shape and
+    // an unscaled group both land on exactly 1.0.
+    let aa = 1.0 / max(in.rotation_pivot.w, 1.0e-6);
 
     // shadow_index: (base_index, outer_count, inner_count).
     let base_index = i32(in.shadow_index.x + 0.5);

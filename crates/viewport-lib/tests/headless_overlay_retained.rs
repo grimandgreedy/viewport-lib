@@ -134,8 +134,8 @@ fn retained_per_frame_tint() {
     }
 }
 
-/// The per-frame scale shrinks a retained text-stream group about its local origin
-/// without recompiling; the SDF-shape stream is left unscaled for now (P2 scope).
+/// The per-frame scale shrinks a retained group about its local origin without
+/// recompiling, on both the text and the SDF-shape stream.
 #[test]
 fn retained_per_frame_scale() {
     let Some((device, queue)) = headless_device() else {
@@ -674,5 +674,69 @@ fn retained_group_anchors_to_a_corner_and_a_world_point() {
     assert!(
         px.chunks_exact(4).all(|p| !is_red((p[0], p[1], p[2]))),
         "a culled world anchor should draw nothing"
+    );
+}
+
+/// Count pixels along row `y` that are neither inside the red fill nor clear
+/// background: the anti-aliased transition band at the shape's edges. The green
+/// channel separates them cleanly, since the fill is opaque red (0) and the
+/// background is mid grey (~149 encoded).
+fn edge_band_pixels(px: &[u8], size: u32, y: u32) -> usize {
+    (0..size)
+        .filter(|&x| {
+            let g = rgb_at(px, size, x, y).1;
+            g > 20 && g < 130
+        })
+        .count()
+}
+
+/// A scaled-up retained group keeps a one-pixel anti-aliased edge.
+///
+/// The SDF is evaluated in the shape's own units while the group transform
+/// scales the quad, so a band measured in those units widens with the scale
+/// unless the shader divides it back out: at scale 4 the edge used to fade over
+/// four framebuffer pixels instead of one.
+#[test]
+fn retained_scaled_shape_keeps_a_one_pixel_edge() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let size = 64u32;
+
+    // A rect over 4..12, so scale 4 about the origin maps it onto 16..48.
+    let rect = OverlayShapeItem::new(
+        OverlayShape::Rect { corner_radius: 0.0 },
+        [4.0, 4.0],
+        [8.0, 8.0],
+    )
+    .with_fill(OverlayFill::Solid([1.0, 0.0, 0.0, 1.0].into()));
+    let id = renderer.compile_overlay_geometry(&device, &queue, &[], &[rect], &[], &[], 1.0);
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 8, 8)),
+        "test premise: the unscaled rect covers its own centre"
+    );
+    let unscaled_band = edge_band_pixels(&px, size, 8);
+
+    let mut frame = overlay_frame(size);
+    frame.overlays.retained = vec![RetainedOverlay::new(id).with_scale(4.0)];
+    let px = renderer.render_offscreen(&device, &queue, &frame, size, size);
+    assert!(
+        is_red(rgb_at(&px, size, 32, 32)),
+        "test premise: the scaled rect covers the centre"
+    );
+    let scaled_band = edge_band_pixels(&px, size, 32);
+
+    // Two edges on the row either way, so the counts are directly comparable.
+    // The band scaled with the group before the fix: 4x the width, 4x the count.
+    assert!(
+        scaled_band <= unscaled_band + 2,
+        "scaling a group should not widen its anti-aliased edge: \
+         {unscaled_band} transition pixels unscaled, {scaled_band} at scale 4"
     );
 }
