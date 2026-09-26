@@ -139,6 +139,23 @@ pub enum ViewportError {
         slot: usize,
     },
 
+    /// A volume sub-region write does not fit inside the volume it addresses:
+    /// `origin + dims` exceeds the texture's own dimensions on at least one
+    /// axis, or `dims` has a zero extent.
+    ///
+    /// The texture does not grow to accommodate a region write. Resizing a 3D
+    /// texture means reallocating it, which is what
+    /// `replace_volume` is for.
+    #[error("volume region at {origin:?} sized {dims:?} does not fit a {volume_dims:?} volume")]
+    VolumeRegionOutOfRange {
+        /// First texel of the requested box.
+        origin: [u32; 3],
+        /// Size of the requested box.
+        dims: [u32; 3],
+        /// Dimensions of the volume being written.
+        volume_dims: [u32; 3],
+    },
+
     /// A ranged channel write named a channel the stored object does not hold.
     ///
     /// Which channels an object has is fixed when it is uploaded: a point cloud
