@@ -91,6 +91,108 @@ pub struct RectPickContext<'a> {
     pub meshes: crate::resources::MeshGeometry<'a>,
 }
 
+/// One submittable item of an item type, tying the item struct to the type
+/// name its plugin registered under.
+///
+/// Implementing this is what lets a `Vec<T>` be submitted with
+/// [`SceneFrame::items_mut`](crate::renderer::SceneFrame::items_mut) and read
+/// back by a plugin with [`ItemFrameContext::items_of`], with no per-type
+/// wiring in the lib. An item type may have several item structs sharing one
+/// `TYPE_NAME`: an inline form carrying its data and a reference form naming
+/// pre-uploaded content, say, or a second reference form. They travel together
+/// under the name and the plugin tells them apart by downcasting.
+pub trait PluginItem: Any + Send + Sync + 'static {
+    /// The registering plugin's [`ItemTypePlugin::type_name`].
+    const TYPE_NAME: &'static str;
+
+    /// Shared per-item flags (`hidden`, `selected`, `pick_id`, ...).
+    fn settings(&self) -> &ItemSettings;
+}
+
+impl<T: PluginItem> PluginItemCollection for Vec<T> {
+    fn len(&self) -> usize {
+        <[T]>::len(self)
+    }
+
+    fn item_settings(&self, index: usize) -> &ItemSettings {
+        self[index].settings()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Every collection submitted under one item type's name this frame.
+///
+/// An item type may have several item forms sharing a type name: an inline
+/// form carrying its data, a reference form naming pre-uploaded content, a
+/// second reference form. They arrive together and a hook picks the one it
+/// wants by type with [`of`](Self::of), so submission order does not matter.
+#[derive(Clone, Copy)]
+pub struct ItemCollections<'a>(&'a [Box<dyn PluginItemCollection>]);
+
+impl<'a> ItemCollections<'a> {
+    /// Wrap the collections submitted under one name.
+    pub fn new(collections: &'a [Box<dyn PluginItemCollection>]) -> Self {
+        Self(collections)
+    }
+
+    /// This frame's items of type `T`, or an empty slice if none were
+    /// submitted.
+    pub fn of<T: 'static>(&self) -> &'a [T] {
+        self.0
+            .iter()
+            .find_map(|c| c.as_any().downcast_ref::<Vec<T>>())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The submitted collection whose concrete type is `C`, for an item type
+    /// that submits its own collection type rather than a plain `Vec`.
+    pub fn downcast<C: PluginItemCollection>(&self) -> Option<&'a C> {
+        self.0.iter().find_map(|c| c.as_any().downcast_ref::<C>())
+    }
+
+    /// Total items across every form.
+    pub fn len(&self) -> usize {
+        self.0.iter().map(|c| c.len()).sum()
+    }
+
+    /// `true` when no form carried anything.
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|c| c.is_empty())
+    }
+
+    /// Each submitted collection in turn.
+    pub fn iter(&self) -> impl Iterator<Item = &'a dyn PluginItemCollection> {
+        self.0.iter().map(|b| b.as_ref())
+    }
+
+    /// Settings for the item at `index`, counting across every form in
+    /// submission order, so the range `0..len()` addresses each item once.
+    pub fn item_settings(&self, index: usize) -> &'a ItemSettings {
+        let mut rest = index;
+        for c in self.0 {
+            if rest < c.len() {
+                return c.item_settings(rest);
+            }
+            rest -= c.len();
+        }
+        panic!("item index {index} out of range for {} items", self.len());
+    }
+
+    /// Pick id for the item at `index`, indexed as
+    /// [`item_settings`](Self::item_settings).
+    pub fn pick_id(&self, index: usize) -> PickId {
+        self.item_settings(index).pick_id
+    }
+}
+
 /// Per-frame item collection owned by the consumer and read by the lib.
 ///
 /// A plugin defines its own collection type (typically a wrapper around a
@@ -133,6 +235,10 @@ pub trait PluginItemCollection: Any + Send + Sync {
     /// back to its concrete collection type. Implementations should
     /// return `self`.
     fn as_any(&self) -> &dyn Any;
+
+    /// Cast to `&mut dyn Any`, so a host can reach a submitted collection
+    /// again to push into it. Implementations should return `self`.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// Information forwarded to a plugin's per-frame `prepare`.
@@ -154,6 +260,26 @@ pub struct ItemFrameContext<'a> {
     pub viewport_index: usize,
     /// Monotonically increasing frame counter assigned by the lib.
     pub frame_index: u64,
+    /// The host's scene version counter for this frame (`SceneFrame::generation`).
+    ///
+    /// A plugin that rebuilds per-frame state from an inline collection can keep
+    /// the value it last prepared at and skip the rebuild when this matches. That
+    /// is what the instanced mesh path does with the same counter.
+    ///
+    /// **It is the host's counter, not the library's, and it says nothing on its
+    /// own.** A host that never bumps it reports `0` every frame, and one that
+    /// bumps it per frame reports a new value whether or not anything moved. It is
+    /// also per frame rather than per collection: a bump means something in the
+    /// scene changed, not that your items did.
+    ///
+    /// Because of that, never gate on the generation alone. Pair it with something
+    /// that catches the case the host got wrong, as the instanced path pairs it
+    /// with the item count: equal generation *and* equal count is the condition
+    /// that is safe to skip on, and even then a host that mutates items in place
+    /// without bumping draws stale content. If skipping is wrong for your type,
+    /// ignore this field. Rebuilding every frame is the correct default and is
+    /// what every built-in item type does.
+    pub scene_generation: u64,
     /// Handle to the upload-job runner. Plugins call
     /// `ctx.jobs.submit_cpu(...)` to spawn background work and
     /// `ctx.jobs.take::<T>(id)` to retrieve the result once the matching
@@ -207,7 +333,7 @@ pub struct ItemFrameContext<'a> {
     /// The opaque surfaces that opted out of decal projection this frame, as
     /// `(mesh_id, model)` pairs, with hidden items already dropped.
     ///
-    /// Crate-internal, like [`ref_items`](Self::ref_items), and for the same
+    /// Crate-internal, unlike [`collections`](Self::collections), and for a
     /// reason: the opt-out is `SceneRenderItem::receives_decals`, a field on
     /// the mesh family that nothing outside this crate can populate for an
     /// item type of its own. Exposing it would be public surface no external
@@ -216,35 +342,30 @@ pub struct ItemFrameContext<'a> {
     /// question to settle first is what the general opt-out looks like on
     /// `SceneRenderItem`, not how to widen this field.
     pub(crate) decal_excluded_surfaces: &'a [(crate::MeshId, [[f32; 4]; 4])],
-    /// Per-frame references to pre-uploaded content of this same item type,
-    /// for the built-in types that have a reference form (`point_clouds` has
-    /// `point_cloud_refs`, and so on). The reference items carry their own
-    /// `ItemSettings` and a per-frame model matrix; the payload lives in the
-    /// upload store. A type may have more than one reference form: a sprite
-    /// batch can name a pre-uploaded sprite set or a pre-uploaded instance
-    /// set, which are different item types over the same draw. Read them with
-    /// [`refs_of`](Self::refs_of) rather than by index, since which slot a
-    /// form occupies is not meaningful. Empty for an externally registered
-    /// plugin, whose items all arrive on one collection; the whole field goes
-    /// away when `SceneFrame` merges items and references.
-    pub(crate) ref_items: [Option<&'a dyn PluginItemCollection>; MAX_REF_COLLECTIONS],
+    /// Every collection submitted under this item type's name this frame.
+    ///
+    /// One item type may submit several: an inline form carrying its data, a
+    /// reference form naming pre-uploaded content, and so on. Sprite submits
+    /// three. Read them by type with [`items_of`](Self::items_of) rather than
+    /// by index; the order they were submitted in is not meaningful.
+    pub collections: &'a [Box<dyn PluginItemCollection>],
 }
 
-/// How many reference collections one item type may submit in a frame. Two
-/// today, for sprite; raise it if a type grows a third form.
-pub(crate) const MAX_REF_COLLECTIONS: usize = 2;
-
 impl<'a> ItemFrameContext<'a> {
-    /// This frame's reference items of type `T`, or an empty slice if the
-    /// frame carried none. A type with two reference forms calls this once per
-    /// form; the order the forms were routed in does not matter.
-    pub(crate) fn refs_of<T: 'static>(&self) -> &'a [T] {
-        self.ref_items
+    /// This frame's items of type `T`, or an empty slice if the frame carried
+    /// none. A type with several item forms calls this once per form.
+    pub fn items_of<T: 'static>(&self) -> &'a [T] {
+        self.collections
             .iter()
-            .flatten()
             .find_map(|c| c.as_any().downcast_ref::<Vec<T>>())
             .map(|v| v.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Alias of [`items_of`](Self::items_of), for reading a reference form.
+    /// The two are the same lookup: a reference item is an item.
+    pub fn refs_of<T: 'static>(&self) -> &'a [T] {
+        self.items_of::<T>()
     }
 }
 
@@ -620,6 +741,26 @@ impl<T: Any> AsAnyItemTypePlugin for T {
     }
 }
 
+/// A scene item category owned by a plugin: its GPU data, its pipelines, and
+/// the draws that put it on screen.
+///
+/// Implement this to add an item type the library does not have. Register it
+/// with
+/// [`ViewportRenderer::with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin),
+/// and submit its items each frame through
+/// [`SceneFrame::items_mut`](crate::renderer::SceneFrame::items_mut) or
+/// [`submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items).
+///
+/// [`type_name`](Self::type_name) is the only required method. Every other hook
+/// is default-empty, so implement the ones the item type needs and leave the
+/// rest: a type that only draws opaque geometry implements `prepare` and
+/// `paint` and nothing else. The module documentation above lists what each
+/// hook is called from and in what order.
+///
+/// The plugin owns its buffers, textures, layouts and pipelines, built from the
+/// `&Device` its hooks are given. Content shared with other item types
+/// (meshes, textures, volumes, colourmaps) stays with the library and is read
+/// through [`ItemFrameContext::resources`].
 pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a
@@ -648,7 +789,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// vector (the default) for a type that emits nothing.
     fn contribute_lights(
         &self,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
         _ctx: &LightContext<'_>,
     ) -> Vec<crate::renderer::LightSource> {
         Vec::new()
@@ -667,6 +808,36 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// caches that grow and shrink with the viewport are not part of the
     /// evictable working set and are better left out.
     fn resident_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Draw calls this plugin issued for the most recently prepared frame.
+    ///
+    /// Summed into [`FrameStats::plugin_draw_calls`](crate::renderer::stats::FrameStats::plugin_draw_calls)
+    /// and reported per plugin by
+    /// [`ViewportRenderer::plugin_frame_counters`](crate::renderer::ViewportRenderer::plugin_frame_counters).
+    /// `FrameStats::draw_calls` counts mesh-family draws only and cannot see
+    /// yours, so a plugin that leaves this at the default is invisible in the
+    /// frame's draw-call figure however much it draws.
+    ///
+    /// This is a per-frame count, not a running total: reset it in your
+    /// `prepare` and accumulate as you record draws. The renderer reads it
+    /// during `prepare` and does not reset it for you, so a plugin that only
+    /// ever adds will report a number that climbs for the process lifetime.
+    fn draw_calls(&self) -> u32 {
+        0
+    }
+
+    /// Bytes this plugin uploaded for the most recently prepared frame.
+    ///
+    /// Summed into [`FrameStats::plugin_upload_bytes`](crate::renderer::stats::FrameStats::plugin_upload_bytes).
+    /// Same per-frame contract as [`Self::draw_calls`]: reset it in `prepare`.
+    ///
+    /// Count what crossed to the GPU this frame. That is a different question
+    /// from [`Self::resident_bytes`], which is the steady-state working set: a
+    /// plugin holding 100 MB and uploading nothing reports a large
+    /// `resident_bytes` and a zero here, which is the healthy shape.
+    fn upload_bytes(&self) -> u64 {
         0
     }
 
@@ -705,7 +876,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         _device: &crate::gpu::Device,
         _queue: &crate::gpu::Queue,
         _ctx: &ItemFrameContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         Vec::new()
     }
@@ -728,7 +899,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -766,7 +937,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -807,7 +978,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &DepthReadContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -838,7 +1009,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -888,7 +1059,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// a data polyline gets.
     fn wireframe_polylines(
         &self,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
         _ctx: &ItemFrameContext<'_>,
     ) -> Vec<crate::renderer::PolylineItem> {
         Vec::new()
@@ -922,12 +1093,12 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// frame:
     ///
     /// ```no_run
-    /// # use viewport_lib::{FrameData, Aabb, aabb_wireframe_polyline};
+    /// # use viewport_lib::{FrameData, Aabb, PolylineItem, aabb_wireframe_polyline};
     /// # fn example(fd: &mut FrameData, bounds: &Aabb, selected: bool) {
     /// if selected {
     ///     // The same yellow the built-in bounds outlines use.
     ///     fd.scene
-    ///         .polylines
+    ///         .items_mut::<PolylineItem>()
     ///         .push(aabb_wireframe_polyline(bounds, [1.0, 0.9, 0.2, 1.0]));
     /// }
     /// # }
@@ -941,7 +1112,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -981,7 +1152,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _encoder: &mut crate::gpu::CommandEncoder,
         _ctx: &EncoderScopeContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -999,7 +1170,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &mut self,
         _frustum: &crate::camera::frustum::Frustum,
         _ctx: &ItemFrameContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -1019,7 +1190,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &ShadowCastContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -1108,7 +1279,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
         &self,
         _pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
     }
 
@@ -1174,7 +1345,7 @@ pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// point-like feature to snap to.
     fn sub_object_position(
         &self,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
         _pick_id: PickId,
         _sub_object: crate::renderer::SubObjectRef,
     ) -> Option<glam::Vec3> {

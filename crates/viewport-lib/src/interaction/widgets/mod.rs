@@ -82,6 +82,118 @@ pub enum WidgetResult {
 }
 
 // ---------------------------------------------------------------------------
+// HandleMarkers
+// ---------------------------------------------------------------------------
+
+/// Where a widget's draggable handles are and how big they should be, so the
+/// caller can draw them however it likes.
+///
+/// A widget knows three things about its handles: where they sit, how large
+/// they should appear on screen, and which one the pointer is on. It does not
+/// know, and should not decide, what they are drawn as. Build the visual from
+/// this: [`to_mesh_instances`](Self::to_mesh_instances) covers the usual case
+/// of a small sphere per handle, and a caller wanting screen-space handles
+/// that ignore depth can build overlay shapes from the same data instead.
+///
+/// Hit testing does not go through this. Each widget tests its own handles on
+/// the CPU inside `update()`, so a caller that draws nothing still interacts.
+#[derive(Clone, Debug)]
+pub struct HandleMarkers {
+    /// World-space centre of each handle.
+    pub positions: Vec<glam::Vec3>,
+    /// World radius per handle, back-solved from a target size in pixels, so a
+    /// handle holds its apparent size as the camera moves. Same length as
+    /// `positions`.
+    pub radii: Vec<f32>,
+    /// Colour per handle, with the widget's hover and drag state already
+    /// applied. Same length as `positions`.
+    pub colours: Vec<crate::Colour>,
+    /// The pick id the whole set answers with, or [`PickId::NONE`](crate::renderer::PickId::NONE) when the
+    /// widget was given none. Handles share one id: the widget resolves which
+    /// handle the pointer is on itself, so picking only has to say that the
+    /// widget was hit.
+    pub pick_id: crate::renderer::PickId,
+}
+
+impl Default for HandleMarkers {
+    fn default() -> Self {
+        Self {
+            positions: Vec::new(),
+            radii: Vec::new(),
+            colours: Vec::new(),
+            pick_id: crate::renderer::PickId::NONE,
+        }
+    }
+}
+
+impl HandleMarkers {
+    /// How many handles there are.
+    pub fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    /// Whether the widget produced no handles this frame.
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
+    /// Draw each handle as `mesh`, scaled to its radius.
+    ///
+    /// `mesh` should be a unit-radius shape centred on the origin;
+    /// `primitives::icosphere(1.0, 2)` is the usual choice and is what the
+    /// widgets were drawn with before. Nothing here depends on it being a
+    /// sphere.
+    pub fn to_mesh_instances(
+        &self,
+        mesh: crate::resources::mesh::mesh_store::MeshId,
+    ) -> crate::renderer::MeshInstanceItem {
+        let mut item = crate::renderer::MeshInstanceItem::default();
+        item.mesh_id = mesh;
+        item.transforms = self
+            .positions
+            .iter()
+            .zip(self.radii.iter())
+            .map(|(p, r)| {
+                glam::Mat4::from_scale_rotation_translation(
+                    glam::Vec3::splat(*r),
+                    glam::Quat::IDENTITY,
+                    *p,
+                )
+                .to_cols_array_2d()
+            })
+            .collect();
+        item.colours = self.colours.clone();
+        item.settings.pick_id = self.pick_id;
+        // A handle is an affordance, not scene geometry: it should not darken
+        // the scene or be darkened by it.
+        item.settings.cast_shadows = false;
+        item.settings.receive_shadows = false;
+        item
+    }
+}
+
+/// The colour one handle draws with, given the widget's handle colour and
+/// whether the pointer is on it.
+///
+/// `highlight` is 0.0 for an idle handle and 1.0 for the hovered or dragged
+/// one. The active handle comes out darker rather than brighter, which is what
+/// the widgets have always done.
+pub(super) fn handle_colour(base: crate::Colour, highlight: f32) -> crate::Colour {
+    // A widget left at the default transparent handle colour used to fall
+    // through to a colourmap lookup keyed on the highlight, which put an
+    // arbitrary palette on a UI affordance. A neutral grey is what that was
+    // reaching for.
+    let base = if base.alpha() > 0.0 {
+        base
+    } else {
+        crate::Colour::linear(0.75, 0.75, 0.78, 1.0)
+    };
+    let [r, g, b, a] = base.to_linear_rgba();
+    let brightness = 1.0 - highlight.clamp(0.0, 1.0) * 0.7;
+    crate::Colour::linear(r * brightness, g * brightness, b * brightness, a)
+}
+
+// ---------------------------------------------------------------------------
 // Shared internal helpers
 // ---------------------------------------------------------------------------
 

@@ -329,12 +329,11 @@ pub(crate) const CSM_SHADOW_BIAS: crate::gpu::DepthBiasState = crate::gpu::Depth
 /// confined to two-sided surfaces resting on something else, whose contact
 /// shadow can lift by roughly `slope_scale` shadow texels; drop the factor if a
 /// draped two-sided surface ever needs a tighter contact.
-pub(crate) const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState =
-    crate::gpu::DepthBiasState {
-        constant: 1000,
-        slope_scale: 8.0,
-        clamp: 0.0,
-    };
+pub const CSM_SHADOW_BIAS_TWO_SIDED: crate::gpu::DepthBiasState = crate::gpu::DepthBiasState {
+    constant: 1000,
+    slope_scale: 8.0,
+    clamp: 0.0,
+};
 
 /// `shadow.wgsl`: depth-only shadow pass pipeline.
 ///

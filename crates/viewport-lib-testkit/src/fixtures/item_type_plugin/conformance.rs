@@ -44,8 +44,8 @@ use viewport_lib::plugin_api::shared_wgsl::{
     SHARED_BINDINGS_WGSL, SHARED_MASK_WGSL, SHARED_PICK_WGSL, SHARED_SHADOW_BINDINGS_WGSL,
 };
 use viewport_lib::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, ShadowCastContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItemCollection, ShadowCastContext,
 };
 use viewport_lib::resources::{
     DeviceResources, JobId, Jobs, PluginPipelineOpts, ResourceGate, Revalidate, TextureId,
@@ -137,6 +137,10 @@ impl PluginItemCollection for ConformanceItems {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }
@@ -508,10 +512,10 @@ impl ConformanceItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         pipeline: &wgpu::RenderPipeline,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         selected_only: bool,
     ) {
-        let Some(items) = items.as_any().downcast_ref::<ConformanceItems>() else {
+        let Some(items) = items.downcast::<ConformanceItems>() else {
             return;
         };
         pass.set_pipeline(pipeline);
@@ -551,7 +555,7 @@ impl ItemTypePlugin for ConformanceItemTypePlugin {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
         // Before anything reads a stored bind group: a texture the host freed
         // or replaced since the last frame has to be dealt with first.
@@ -559,7 +563,7 @@ impl ItemTypePlugin for ConformanceItemTypePlugin {
 
         // The pick pass reads the id out of the entry uniform, and the host is
         // free to change an item's pick id between frames.
-        if let Some(items) = items.as_any().downcast_ref::<ConformanceItems>() {
+        if let Some(items) = items.downcast::<ConformanceItems>() {
             for (index, quad) in items.quads.iter().enumerate() {
                 let pick_id = items.settings[index].pick_id;
                 let Some(slot) = self.store.get_mut(quad.index) else {
@@ -586,7 +590,7 @@ impl ItemTypePlugin for ConformanceItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.draw(pass, &self.opaque, items, false);
     }
@@ -595,7 +599,7 @@ impl ItemTypePlugin for ConformanceItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &ShadowCastContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.draw(pass, &self.shadow, items, false);
     }
@@ -604,7 +608,7 @@ impl ItemTypePlugin for ConformanceItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.draw(pass, &self.pick, items, false);
     }
@@ -613,17 +617,17 @@ impl ItemTypePlugin for ConformanceItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.draw(pass, &self.mask, items, true);
     }
 
     fn wireframe_polylines(
         &self,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
         ctx: &ItemFrameContext<'_>,
     ) -> Vec<PolylineItem> {
-        let Some(items) = items.as_any().downcast_ref::<ConformanceItems>() else {
+        let Some(items) = items.downcast::<ConformanceItems>() else {
             return Vec::new();
         };
         let mut out = Vec::new();

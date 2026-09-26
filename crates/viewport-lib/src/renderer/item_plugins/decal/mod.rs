@@ -12,23 +12,19 @@ mod pipeline;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    EncoderScope, EncoderScopeContext, ItemFrameContext, ItemTypePlugin, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext, ItemTypePlugin,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use crate::renderer::picking::helpers::{ray_unit_box_toi, segment_in_rect};
 use crate::renderer::{DecalBlendMode, DecalItem, PickHit, PickId, PickMask};
 
 pub(crate) const TYPE_NAME: &str = "vpl.decal";
 
-impl PluginItemCollection for Vec<DecalItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for DecalItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -128,13 +124,9 @@ impl ItemTypePlugin for DecalPlugin {
         device: &crate::gpu::Device,
         _queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
-        let decals = items
-            .as_any()
-            .downcast_ref::<Vec<DecalItem>>()
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
+        let decals = items.of::<DecalItem>();
         let res = ctx.resources;
 
         self.draws.clear();
@@ -273,7 +265,7 @@ impl ItemTypePlugin for DecalPlugin {
         &self,
         encoder: &mut crate::gpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if self.draws.is_empty() && self.exclude_draws.is_empty() {
             return;
@@ -301,7 +293,7 @@ impl ItemTypePlugin for DecalPlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx.mask.intersects(PickMask::OBJECT) {
             return;

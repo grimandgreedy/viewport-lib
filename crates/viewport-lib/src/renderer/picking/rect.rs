@@ -248,7 +248,7 @@ impl ViewportRenderer {
             }
         }
 
-        // 6. Instance picks (INSTANCE or OBJECT) for glyphs, tensor glyphs, sprites.
+        // 6. Instance picks (INSTANCE or OBJECT) for fields and sprites.
         let wants_instance = mask.intersects(PickMask::INSTANCE);
         if wants_instance || wants_object {}
 

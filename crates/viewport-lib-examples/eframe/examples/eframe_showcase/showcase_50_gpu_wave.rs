@@ -26,6 +26,10 @@ use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
 use viewport_lib::wgpu;
+use viewport_lib_item_types::{
+    ExternalInstanceSetConfig, ExternalInstanceSetId, ExternalInstanceUploads,
+    ExternalInstancesItem,
+};
 use vpl::{
     LightKind, LightSource, LightingSettings, Material, MeshId, SceneRenderItem, ViewportRenderer,
     runtime::GpuPlugin,
@@ -68,7 +72,7 @@ pub(crate) struct WaveState {
     pub plane_id: Option<MeshId>,
     /// External instance set drawing one sphere per buoy centre out of
     /// `BuoyPlugin`'s output buffer.
-    pub buoy_set: Option<vpl::ExternalInstanceSetId>,
+    pub buoy_set: Option<ExternalInstanceSetId>,
     /// Boxed so the showcase state stays Sized when the plugin is absent.
     pub plugin: Option<Box<WavePlugin>>,
     pub buoy_plugin: Option<Box<BuoyPlugin>>,
@@ -229,7 +233,7 @@ impl App {
         let buoy_set = renderer
             .create_external_instance_set(
                 &self.device,
-                &vpl::ExternalInstanceSetConfig::new(buoy_sphere_id, buoy_plugin.output_buffer()),
+                &ExternalInstanceSetConfig::new(buoy_sphere_id, buoy_plugin.output_buffer()),
             )
             .expect("create buoy instance set");
 
@@ -329,14 +333,14 @@ pub(crate) fn submit_wave_items(
         && app.wave_state.mode == DeformMode::Gpu
         && let Some(set) = app.wave_state.buoy_set
     {
-        let mut item = vpl::ExternalInstancesItem::new(
+        let mut item = ExternalInstancesItem::new(
             set,
             app.wave_state
                 .shown_buoys
                 .min((BUOY_GRID * BUOY_GRID) as u32),
         );
         item.colour = [1.0, 0.40, 0.04, 1.0].into();
-        fd.scene.external_instances.push(item);
+        fd.scene.items_mut::<ExternalInstancesItem>().push(item);
     }
 
     // Keep the outline pass on while the surface is selected so the halo

@@ -316,8 +316,10 @@ impl ViewportRenderer {
         frame: &FrameData,
     ) -> Option<glam::Vec3> {
         self.item_type_plugins.iter().find_map(|(name, plugin)| {
-            let items = crate::renderer::item_plugins::plugin_items_for(frame, name)?;
-            plugin.sub_object_position(items, crate::renderer::PickId(id), sub_object)
+            let items = crate::plugin_api::ItemCollections::new(
+                crate::renderer::item_plugins::plugin_collections_slice(frame, name),
+            );
+            plugin.sub_object_position(&items, crate::renderer::PickId(id), sub_object)
         })
     }
 

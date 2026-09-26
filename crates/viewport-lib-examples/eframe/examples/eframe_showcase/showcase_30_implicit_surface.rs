@@ -18,10 +18,13 @@ use crate::eframe::egui;
 use crate::{App, MeshId};
 use glam::Vec3;
 use viewport_lib as vpl;
+use viewport_lib_item_types::{
+    GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
+};
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
 use vpl::{
-    Camera, GpuImplicitItem, GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode,
-    ImplicitPrimitive, LightKind, LightSource, LightingSettings, Material, SceneRenderItem,
-    VolumeData, extract_isosurface, primitives,
+    Camera, LightKind, LightSource, LightingSettings, Material, SceneRenderItem, VolumeData,
+    extract_isosurface, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -60,7 +63,7 @@ pub(crate) struct IsState {
     pub mesh_id: MeshId,
     pub mc_mesh_id: Option<MeshId>,
     pub sdf_variant: IsSdfVariant,
-    pub gmc_volume_id: Option<vpl::McVolumeId>,
+    pub gmc_volume_id: Option<McVolumeId>,
     pub gmc_isovalue: f32,
 }
 
@@ -311,7 +314,7 @@ impl App {
             hit_threshold: 5e-4,
             max_distance: self.camera.zfar,
         };
-        fd.scene.gpu_implicit.push(item);
+        fd.scene.items_mut::<GpuImplicitItem>().push(item);
     }
 
     /// Submit a GPU marching cubes item for the gyroid field.
@@ -328,13 +331,15 @@ impl App {
         let mut mat = Material::from_colour([0.45, 0.48, 0.52]);
         mat.roughness = 0.4;
 
-        fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
-            volume_id,
-            isovalue: self.is_state.gmc_isovalue,
-            material: mat,
-            settings: Default::default(),
-            cpu_data: None,
-        });
+        fd.scene
+            .items_mut::<GpuMarchingCubesItem>()
+            .push(GpuMarchingCubesItem {
+                volume_id,
+                isovalue: self.is_state.gmc_isovalue,
+                material: mat,
+                settings: Default::default(),
+                cpu_data: None,
+            });
     }
 
     /// Lighting for Showcase 30.

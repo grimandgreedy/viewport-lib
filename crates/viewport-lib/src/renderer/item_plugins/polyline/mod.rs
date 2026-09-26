@@ -2,21 +2,20 @@
 //! points drawn as screen-space thick lines. Consumers submit [`PolylineItem`]s
 //! on `SceneFrame::polylines`, or [`PolylineRefItem`]s on
 //! `SceneFrame::polyline_refs` to draw a polyline uploaded once through
-//! `upload_polyline`; the renderer routes both fields to this plugin.
+//! `Uploads::upload`; the renderer routes both forms to this plugin.
 //!
 //! The pipelines this draws with belong to `resources`, not to the plugin: they
 //! are the shared line substrate that isolines, scatter-volume bounds, volume
 //! bounding boxes, clip-object outlines and the splat and sprite wireframe
 //! overlays also render through. See [`pipeline`] for why.
 
-mod decoration;
 mod pipeline;
 mod store;
 pub(crate) mod types;
 
 use crate::plugin_api::{
-    ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext,
+    ItemCollections, ItemFrameContext, ItemTypePlugin, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, RectPickContext,
 };
 use crate::renderer::{
     PickHit, PickId, PickMask, PickRectResult, PolylineItem, PolylineRefItem, SubObjectRef,
@@ -25,27 +24,19 @@ use crate::resources::{HDR_COLOR_FORMAT, PolylineKey};
 
 pub(crate) const TYPE_NAME: &str = "vpl.polyline";
 
-impl PluginItemCollection for Vec<PolylineItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for PolylineItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
-impl PluginItemCollection for Vec<PolylineRefItem> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-    fn item_settings(&self, index: usize) -> &crate::scene::material::ItemSettings {
-        &self[index].settings
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+impl PluginItem for PolylineRefItem {
+    const TYPE_NAME: &'static str = TYPE_NAME;
+
+    fn settings(&self) -> &crate::scene::material::ItemSettings {
+        &self.settings
     }
 }
 
@@ -59,9 +50,6 @@ pub(crate) struct PolylinePlugin {
     /// Per drawn item, rebuilt each prepare: the inline items first, then the
     /// references.
     frame: Vec<pipeline::PolylineFrame>,
-    /// The vector-quantity decoration: arrow glyphs generated from the
-    /// `node_vectors` / `edge_vectors` of the drawn items.
-    decoration: decoration::Decoration,
     /// Every inline item from the last prepared frame, hidden included,
     /// matching what the CPU pick cache used to retain. Reference items are not
     /// here: their segments live on the GPU, so they answer the GPU pick only.
@@ -80,7 +68,6 @@ impl ItemTypePlugin for PolylinePlugin {
     fn on_device_recreated(&mut self, _device: &crate::gpu::Device, _queue: &crate::gpu::Queue) {
         self.gpu = None;
         self.frame.clear();
-        self.decoration.reset();
     }
 
     fn prepare(
@@ -88,14 +75,10 @@ impl ItemTypePlugin for PolylinePlugin {
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         ctx: &ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<crate::gpu::CommandBuffer> {
         self.frame.clear();
-        self.decoration.clear_frame();
-        let items = items
-            .as_any()
-            .downcast_ref::<Vec<PolylineItem>>()
-            .expect("polyline collection is the SceneFrame field");
+        let items = items.of::<PolylineItem>();
         let refs = ctx.refs_of::<PolylineRefItem>();
         self.pick_items.clear();
         self.pick_items.extend_from_slice(items);
@@ -123,8 +106,6 @@ impl ItemTypePlugin for PolylinePlugin {
                 pick_bind_group,
                 outlined: ctx.outline_selected && item.settings.selected,
             });
-
-            self.decoration.add_for_item(device, queue, ctx, item);
         }
 
         // Pre-uploaded references. The model matrix lives at offset 0 of the
@@ -166,7 +147,7 @@ impl ItemTypePlugin for PolylinePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PaintContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
@@ -193,9 +174,6 @@ impl ItemTypePlugin for PolylinePlugin {
                 pass.draw(0..6, 0..gd.segment_count);
             }
         }
-        // The vector decoration draws after the lines it belongs to, the order
-        // the shared scivis loop gave it.
-        self.decoration.paint(pass, is_hdr);
     }
 
     fn draws_ldr(&self) -> bool {
@@ -206,7 +184,7 @@ impl ItemTypePlugin for PolylinePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         _ctx: &OutlineMaskContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         let Some(gpu) = &self.gpu else { return };
         let mut bound = false;
@@ -437,7 +415,7 @@ impl ItemTypePlugin for PolylinePlugin {
         &self,
         pass: &mut crate::gpu::RenderPass<'_>,
         ctx: &PickPassContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) {
         if !ctx.mask.intersects(
             PickMask::OBJECT | PickMask::POLY_NODE | PickMask::SEGMENT | PickMask::STRIP,
@@ -528,12 +506,13 @@ impl PolylinePlugin {
         resources: &crate::resources::DeviceResources,
         id: types::PolylineId,
         item: &crate::renderer::PolylineItem,
-    ) -> bool {
+    ) -> crate::error::ViewportResult<()> {
         if !self.stored.contains(id) {
-            return false;
+            return Err(self.stored.stale(id));
         }
         let gpu = build(device, queue, resources, item);
-        self.stored.replace_sized(id, gpu).is_some()
+        self.stored.replace_sized(id, gpu);
+        Ok(())
     }
 
     /// Hand a built polyline to the job runner so the handle is minted by the

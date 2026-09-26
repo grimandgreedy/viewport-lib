@@ -1,29 +1,5 @@
 //! World-to-screen projection and clip helpers used when placing overlays.
 
-/// Project a world-space position to screen pixels (top-left origin).
-/// Returns `None` if behind the camera or outside the frustum.
-pub(super) fn project_to_screen(
-    pos: [f32; 3],
-    view: &glam::Mat4,
-    proj: &glam::Mat4,
-    vp_w: f32,
-    vp_h: f32,
-) -> Option<[f32; 2]> {
-    let p = glam::Vec3::from(pos);
-    let clip = *proj * *view * p.extend(1.0);
-    if clip.w <= 0.0 {
-        return None;
-    }
-    let ndc_x = clip.x / clip.w;
-    let ndc_y = clip.y / clip.w;
-    if ndc_x < -1.0 || ndc_x > 1.0 || ndc_y < -1.0 || ndc_y > 1.0 {
-        return None;
-    }
-    let x = (ndc_x * 0.5 + 0.5) * vp_w;
-    let y = (1.0 - (ndc_y * 0.5 + 0.5)) * vp_h;
-    Some([x, y])
-}
-
 /// The screen-pixel position stored in an overlay vertex.
 ///
 /// Overlay geometry is stored in local logical-pixel space; the overlay shaders

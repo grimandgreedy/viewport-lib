@@ -34,25 +34,6 @@ pub const PICK_COLOR_FORMAT: crate::gpu::TextureFormat = crate::gpu::TextureForm
 pub const PICK_DEPTH_CHANNEL_FORMAT: crate::gpu::TextureFormat =
     crate::gpu::TextureFormat::R32Float;
 
-/// Read-only borrows of one cached glyph base mesh, from
-/// [`DeviceResources::glyph_base_mesh`].
-///
-/// Vertices use the lib's full 64-byte `Vertex` layout; `edge_index_buffer`
-/// holds deduplicated line-list pairs for wireframe rendering.
-#[non_exhaustive]
-pub struct GlyphBaseMeshRef<'a> {
-    /// Vertex buffer (64-byte `Vertex` stride).
-    pub vertex_buffer: &'a crate::gpu::Buffer,
-    /// Triangle index buffer (`Uint32`).
-    pub index_buffer: &'a crate::gpu::Buffer,
-    /// Number of triangle indices.
-    pub index_count: u32,
-    /// Edge index buffer for LineList wireframe rendering (`Uint32`).
-    pub edge_index_buffer: &'a crate::gpu::Buffer,
-    /// Number of edge indices.
-    pub edge_index_count: u32,
-}
-
 impl DeviceResources {
     // ------------------------------------------------------------------
     // Target descriptors and SharedBindings accessor
@@ -351,43 +332,9 @@ impl DeviceResources {
     /// `None` until the mesh has been built; use
     /// [`ensure_glyph_base_mesh`](Self::ensure_glyph_base_mesh) to build it on
     /// the spot instead. Vertices use the lib's full 64-byte `Vertex` layout,
-    /// the same one the built-in glyph pipelines consume.
-    pub fn glyph_base_mesh(
-        &self,
-        glyph_type: crate::renderer::GlyphType,
-    ) -> Option<GlyphBaseMeshRef<'_>> {
-        use crate::renderer::GlyphType;
-        let mesh = match glyph_type {
-            GlyphType::Arrow => self.glyph.arrow_mesh.get(),
-            GlyphType::Sphere => self.glyph.sphere_mesh.get(),
-            GlyphType::Cube => self.glyph.cube_mesh.get(),
-        }?;
-        Some(GlyphBaseMeshRef {
-            vertex_buffer: &mesh.vertex_buffer,
-            index_buffer: &mesh.index_buffer,
-            index_count: mesh.index_count,
-            edge_index_buffer: &mesh.edge_index_buffer,
-            edge_index_count: mesh.edge_index_count,
-        })
-    }
 
     /// Borrow the shared base mesh for a glyph shape, building and caching it
     /// on the first call. Idempotent and cheap once cached, and callable from
-    /// `prepare`, which holds a shared borrow of the resources.
-    pub fn ensure_glyph_base_mesh(
-        &self,
-        device: &crate::gpu::Device,
-        glyph_type: crate::renderer::GlyphType,
-    ) -> GlyphBaseMeshRef<'_> {
-        let mesh = self.ensure_glyph_mesh(device, glyph_type);
-        GlyphBaseMeshRef {
-            vertex_buffer: &mesh.vertex_buffer,
-            index_buffer: &mesh.index_buffer,
-            index_count: mesh.index_count,
-            edge_index_buffer: &mesh.edge_index_buffer,
-            edge_index_count: mesh.edge_index_count,
-        }
-    }
 
     // ------------------------------------------------------------------
     // Pipeline builders

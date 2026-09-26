@@ -18,17 +18,25 @@
 use crate::eframe;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib::plugin_api::Uploads;
+use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
+    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+};
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+    VectorFieldItem,
+};
 
 use crate::eframe::egui;
 use vpl::{
-    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourmapId, DecalItem, FrameData,
-    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem,
-    GpuImplicitOptions, GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings,
-    LightingSettings, Material, McVolumeId, MeshId, NodeId, PickBackend, PickId, PickMask,
-    PickRectResult, PointCloudItem, PolylineItem, PolylineSelectionInfo, RibbonItem, SceneFrame,
-    SceneRenderItem, ShDegree, SpriteItem, StreamtubeItem, SubObjectRef, SubSelectionRef,
-    TensorGlyphItem, TextureId, TubeItem, ViewportRenderer, VolumeData, VolumeMeshData,
-    VolumeMeshItem, VolumeSurfaceSliceItem,
+    BuiltinColourmap, CameraFrame, CellSelectionInfo, ColourSource, ColourmapId, DecalItem,
+    FrameData, ItemSettings, LightingSettings, Material, MeshId, NodeId, PickBackend, PickId,
+    PickMask, PickRectResult, PolylineItem, PolylineSelectionInfo, SceneFrame, SceneRenderItem,
+    SizeSource, SubObjectRef, SubSelectionRef, TextureId, ViewportRenderer, VolumeData,
+    VolumeMeshData, VolumeMeshItem,
 };
 
 use crate::App;
@@ -362,14 +370,18 @@ pub(crate) struct PlState {
     pub polyline_positions: Vec<[f32; 3]>,
     /// Strip lengths for the multi-strip polyline.
     pub polyline_strip_lengths: Vec<u32>,
-    /// Positions for the arrow glyph set (pick_id=31).
-    pub arrow_glyph_positions: Vec<[f32; 3]>,
-    /// Positions for the tensor glyph set (pick_id=32).
-    pub tensor_glyph_positions: Vec<[f32; 3]>,
-    /// Per-instance eigenvalues for tensor glyphs.
-    pub tensor_glyph_eigenvalues: Vec<[f32; 3]>,
-    /// Per-instance eigenvector bases for tensor glyphs.
-    pub tensor_glyph_eigenvectors: Vec<[[f32; 3]; 3]>,
+    /// Positions for the vector field (pick_id=31).
+    pub vector_field_positions: Vec<[f32; 3]>,
+    /// Arrow the vector field instances.
+    pub arrow_shape_id: MeshId,
+    /// Positions for the tensor field (pick_id=32).
+    pub tensor_field_positions: Vec<[f32; 3]>,
+    /// Per-sample eigenvalues for the tensor field.
+    pub tensor_field_eigenvalues: Vec<[f32; 3]>,
+    /// Per-sample eigenvector bases for the tensor field.
+    pub tensor_field_eigenvectors: Vec<[[f32; 3]; 3]>,
+    /// Unit sphere the tensor field instances.
+    pub tensor_shape_id: MeshId,
     /// Positions for the sprite set (pick_id=33).
     pub sprite_positions: Vec<[f32; 3]>,
     /// Per-instance sizes for the sprite arc.
@@ -417,6 +429,7 @@ impl Default for PlState {
             level: PlPickLevel::default(),
             cube_mesh_id: MeshId::INVALID,
             hemi_mesh_id: MeshId::INVALID,
+            tensor_shape_id: MeshId::INVALID,
             mesh_lookup: std::collections::HashMap::new(),
             wireframe: false,
             shift_held: false,
@@ -439,10 +452,11 @@ impl Default for PlState {
             tvm_tet_face_to_cell: Vec::new(),
             polyline_positions: Vec::new(),
             polyline_strip_lengths: Vec::new(),
-            arrow_glyph_positions: Vec::new(),
-            tensor_glyph_positions: Vec::new(),
-            tensor_glyph_eigenvalues: Vec::new(),
-            tensor_glyph_eigenvectors: Vec::new(),
+            vector_field_positions: Vec::new(),
+            arrow_shape_id: MeshId::INVALID,
+            tensor_field_positions: Vec::new(),
+            tensor_field_eigenvalues: Vec::new(),
+            tensor_field_eigenvectors: Vec::new(),
             sprite_positions: Vec::new(),
             sprite_sizes: Vec::new(),
             sprite_colours: Vec::new(),
@@ -650,7 +664,7 @@ impl App {
         }
         let splat_data = make_pl_splat_data(&splat_positions);
         let splat_id = renderer
-            .upload_gaussian_splat(&self.device, &self.queue, &splat_data)
+            .upload(&self.device, &self.queue, &splat_data)
             .expect("example: splat data is validated at construction");
         self.pl_state.splat_positions = splat_positions;
         self.pl_state.splat_id = Some(splat_id);
@@ -707,20 +721,28 @@ impl App {
         self.pl_state.polyline_positions = pl_pos;
         self.pl_state.polyline_strip_lengths = pl_lens;
 
-        // --- Arrow glyphs: 5 arrows at y=-4 pointing up (pick_id=31) ---
-        self.pl_state.arrow_glyph_positions = (0..5_i32)
+        // --- Vector field: 5 arrows at y=-4 pointing up (pick_id=31) ---
+        self.pl_state.arrow_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+            .expect("pl arrow shape mesh");
+        self.pl_state.vector_field_positions = (0..5_i32)
             .map(|i| [(i - 2) as f32 * 2.0, -4.0, 0.0])
             .collect();
 
-        // --- Tensor glyphs: 4 ellipsoids at x=8 (pick_id=32) ---
-        self.pl_state.tensor_glyph_positions = vec![
+        // --- Tensor field: 4 ellipsoids at x=8 (pick_id=32) ---
+        self.pl_state.tensor_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::icosphere(1.0, 2))
+            .expect("pl tensor shape mesh");
+        self.pl_state.tensor_field_positions = vec![
             [8.0, -1.5, -1.5],
             [8.0, 1.5, -1.5],
             [8.0, -1.5, 1.5],
             [8.0, 1.5, 1.5],
         ];
         // Varied eigenvalues: sphere-ish, cigar, disk, mixed.
-        self.pl_state.tensor_glyph_eigenvalues = vec![
+        self.pl_state.tensor_field_eigenvalues = vec![
             [0.8, 0.7, 0.6],
             [1.2, 0.3, 0.3],
             [0.3, 0.3, 1.2],
@@ -742,7 +764,7 @@ impl App {
             let s = 0.866_f32;
             [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]]
         };
-        self.pl_state.tensor_glyph_eigenvectors = vec![id_basis, rot45, rot30, rot60];
+        self.pl_state.tensor_field_eigenvectors = vec![id_basis, rot45, rot30, rot60];
 
         // --- Sprites: 6 in a row at z=6 (pick_id=33) ---
         // Sprites arranged in an arc with graduated sizes and colours so the
@@ -1036,7 +1058,7 @@ impl App {
                     .volume_id
                     .zip(self.pl_state.volume_data.as_ref())
                     .and_then(|(vol_id, vol_data)| {
-                        let mut item = vpl::VolumeItem::default();
+                        let mut item = viewport_lib_item_types::VolumeItem::default();
                         item.volume_id = vol_id;
                         item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                             .to_cols_array_2d();
@@ -1045,7 +1067,7 @@ impl App {
                         item.scalar_range = (0.0, 1.0);
                         item.threshold_min = 0.15;
                         item.threshold_max = 1.0;
-                        vpl::pick_volume_cpu(ray_origin, ray_dir, 20, &item, vol_data)
+                        vpl::pick_volume_cpu(ray_origin, ray_dir, 20, &item.region(), vol_data)
                     });
 
                 if let Some(hit) = hit {
@@ -1065,10 +1087,18 @@ impl App {
             }
 
             PlPickLevel::Point => {
-                let mut pc_item = vpl::PointCloudItem::default();
+                let mut pc_item = PointCloudItem::default();
                 pc_item.positions = self.pl_state.pc_positions.clone();
                 pc_item.settings.pick_id = PickId(100);
-                let hit = vpl::pick_point_cloud_cpu(pos, 100, &pc_item, view_proj, vp_size, 20.0);
+                let hit = vpl::picking::pick_gaussian_splat_cpu(
+                    pos,
+                    100,
+                    &pc_item.positions,
+                    glam::Mat4::from_cols_array_2d(&pc_item.model),
+                    view_proj,
+                    vp_size,
+                    20.0,
+                );
                 if let Some(hit) = hit {
                     let sub = hit.sub_object.unwrap();
                     select_sub!(100, sub);
@@ -1286,7 +1316,7 @@ impl App {
                 if let (Some(vol_id), Some(vol_data)) =
                     (self.pl_state.volume_id, self.pl_state.volume_data.as_ref())
                 {
-                    let mut item = vpl::VolumeItem::default();
+                    let mut item = viewport_lib_item_types::VolumeItem::default();
                     item.volume_id = vol_id;
                     item.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0))
                         .to_cols_array_2d();
@@ -1295,7 +1325,13 @@ impl App {
                     item.threshold_min = 0.15;
                     item.threshold_max = 1.0;
                     let result = vpl::pick_volume_rect(
-                        r_min, r_max, 20, &item, vol_data, view_proj, vp_size,
+                        r_min,
+                        r_max,
+                        20,
+                        &item.region(),
+                        vol_data,
+                        view_proj,
+                        vp_size,
                     );
                     for (_, subs) in &result.hits {
                         for &sub in subs {
@@ -1404,7 +1440,7 @@ impl App {
             Some(SubObjectRef::Vertex(_)) => "Mesh",
             Some(SubObjectRef::Point(_)) => "Point Cloud",
             Some(SubObjectRef::Splat(_)) => "Gaussian Splat",
-            Some(SubObjectRef::Instance(_)) => "Glyph",
+            Some(SubObjectRef::Instance(_)) => "Instance",
             Some(SubObjectRef::Segment(_)) => "Polyline",
             Some(SubObjectRef::Strip(_)) => "Polyline",
             Some(SubObjectRef::Cell(_)) => "Volume Mesh",
@@ -1499,8 +1535,8 @@ impl App {
             11 => Some("Volume Mesh"),
             12 => Some("TVM Tets"),
             30 => Some("Polyline"),
-            31 => Some("Arrow Glyphs"),
-            32 => Some("Tensor Glyphs"),
+            31 => Some("Vector Field"),
+            32 => Some("Tensor Field"),
             33 => Some("Sprites"),
             34 => Some("XO Sprites"),
             40 => Some("Streamtube"),
@@ -1800,12 +1836,12 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
     if !app.pl_state.pc_positions.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = app.pl_state.pc_positions.clone();
-        pc.point_size = 18.0;
-        pc.default_colour = [0.10, 0.26, 0.68, 1.0].into();
+        pc.size = SizeSource::Uniform(18.0);
+        pc.colour = ColourSource::Solid([0.10, 0.26, 0.68, 1.0].into());
         pc.settings.pick_id = PickId(100);
         pc.settings.selected = app.pl_state.selection.contains(100);
         pc.settings.unlit = false;
-        fd.scene.point_clouds.push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
     // Gaussian splat grid (pick_id=10).
     if let Some(splat_id) = app.pl_state.splat_id {
@@ -1815,7 +1851,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.pick_id = PickId(10);
         item.settings.selected = app.pl_state.selection.contains(10);
         item.settings.unlit = false;
-        fd.scene.gaussian_splats.push(item);
+        fd.scene.items_mut::<GaussianSplatItem>().push(item);
     }
     // Hex cylinder: rendered through projected-tet (pick_id=12).
     if let (Some(tet_mesh_id), Some(tet_data)) = (
@@ -1861,7 +1897,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         }
         let mut point_positions: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
         point_positions.insert(100, app.pl_state.pc_positions.clone());
-        // Instance / splat highlight positions. Glyphs and sprites carry
+        // Instance / splat highlight positions. Fields and sprites carry
         // world-space positions (no model entry); splats carry object-space
         // positions and get the splat model matrix so they highlight in place.
         let mut instance_lookup: HashMap<u64, Vec<[f32; 3]>> = HashMap::new();
@@ -1869,11 +1905,11 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             instance_lookup.insert(10, app.pl_state.splat_positions.clone());
             model_matrices.insert(10, pl_splat_model());
         }
-        if !app.pl_state.arrow_glyph_positions.is_empty() {
-            instance_lookup.insert(31, app.pl_state.arrow_glyph_positions.clone());
+        if !app.pl_state.vector_field_positions.is_empty() {
+            instance_lookup.insert(31, app.pl_state.vector_field_positions.clone());
         }
-        if !app.pl_state.tensor_glyph_positions.is_empty() {
-            instance_lookup.insert(32, app.pl_state.tensor_glyph_positions.clone());
+        if !app.pl_state.tensor_field_positions.is_empty() {
+            instance_lookup.insert(32, app.pl_state.tensor_field_positions.clone());
         }
         if !app.pl_state.sprite_positions.is_empty() {
             instance_lookup.insert(33, app.pl_state.sprite_positions.clone());
@@ -1974,14 +2010,14 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         if let Some(marker_pos) = app.pl_state.hit_marker {
             let mut marker = PointCloudItem::default();
             marker.positions = vec![marker_pos.to_array()];
-            marker.point_size = 16.0;
-            marker.default_colour = [1.0, 0.35, 0.0, 1.0].into();
-            fd.scene.point_clouds.push(marker);
+            marker.size = SizeSource::Uniform(16.0);
+            marker.colour = ColourSource::Solid([1.0, 0.35, 0.0, 1.0].into());
+            fd.scene.items_mut::<PointCloudItem>().push(marker);
         }
     }
     // Volume (pick_id=20).
     if let Some(vol_id) = app.pl_state.volume_id {
-        let mut vol = vpl::VolumeItem::default();
+        let mut vol = viewport_lib_item_types::VolumeItem::default();
         vol.volume_id = vol_id;
         vol.model = glam::Mat4::from_translation(glam::vec3(-2.0, -1.0, -6.0)).to_cols_array_2d();
         vol.bbox_min = [0.0, 0.0, 0.0];
@@ -1999,7 +2035,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             .volume_data
             .as_ref()
             .map(|d| std::sync::Arc::new(d.clone()));
-        fd.scene.volumes.push(vol);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::VolumeItem>()
+            .push(vol);
     }
     // Polyline: 3 spiral strips (pick_id=30).
     if !app.pl_state.polyline_positions.is_empty() {
@@ -2011,36 +2049,41 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         pl.settings.pick_id = PickId(30);
         pl.settings.selected = app.pl_state.selection.contains(30);
         pl.settings.unlit = false;
-        fd.scene.polylines.push(pl);
+        fd.scene.items_mut::<viewport_lib::PolylineItem>().push(pl);
     }
-    // Arrow glyphs (pick_id=31).
-    if !app.pl_state.arrow_glyph_positions.is_empty() {
-        let n = app.pl_state.arrow_glyph_positions.len();
-        let mut g = GlyphItem::default();
-        g.positions = app.pl_state.arrow_glyph_positions.clone();
+    // Vector field (pick_id=31).
+    if !app.pl_state.vector_field_positions.is_empty() {
+        let n = app.pl_state.vector_field_positions.len();
+        let mut g = VectorFieldItem::new(app.pl_state.arrow_shape_id);
+        g.positions = app.pl_state.vector_field_positions.clone();
         g.vectors = vec![[0.0, 0.0, 1.0]; n];
         g.scale = 0.8;
-        g.scale_by_magnitude = false;
-        g.use_default_colour = true;
-        g.default_colour = [0.75, 0.1, 1.0, 1.0].into();
-        g.glyph_type = GlyphType::Arrow;
+        g.size = SizeSource::Uniform(1.0);
+        g.colour = ColourSource::Solid([0.75, 0.1, 1.0, 1.0].into());
         g.settings.pick_id = PickId(31);
         g.settings.selected = app.pl_state.selection.contains(31);
         g.settings.unlit = false;
-        fd.scene.glyphs.push(g);
+        fd.scene.items_mut::<VectorFieldItem>().push(g);
     }
-    // Tensor glyphs (pick_id=32).
-    if !app.pl_state.tensor_glyph_positions.is_empty() {
-        let mut tg = TensorGlyphItem::default();
-        tg.positions = app.pl_state.tensor_glyph_positions.clone();
-        tg.eigenvalues = app.pl_state.tensor_glyph_eigenvalues.clone();
-        tg.eigenvectors = app.pl_state.tensor_glyph_eigenvectors.clone();
+    // Tensor field (pick_id=32).
+    if !app.pl_state.tensor_field_positions.is_empty() {
+        let mut tg = TensorFieldItem::new(app.pl_state.tensor_shape_id);
+        tg.positions = app.pl_state.tensor_field_positions.clone();
+        tg.tensors = TensorSource::Eigen {
+            values: app.pl_state.tensor_field_eigenvalues.clone(),
+            vectors: app.pl_state.tensor_field_eigenvectors.clone(),
+        };
         tg.scale = 0.5;
-        tg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+        tg.colour = ColourSource::Natural {
+            range: None,
+            colourmap: Some(ColourmapId(BuiltinColourmap::Coolwarm as usize)),
+        };
         tg.settings.pick_id = PickId(32);
         tg.settings.selected = app.pl_state.selection.contains(32);
         tg.settings.unlit = false;
-        fd.scene.tensor_glyphs.push(tg);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
+            .push(tg);
     }
     // Sprites: arc of 8 (pick_id=33).
     if !app.pl_state.sprite_positions.is_empty() {
@@ -2060,7 +2103,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.settings.pick_id = PickId(33);
         s.settings.selected = app.pl_state.selection.contains(33);
         s.settings.unlit = false;
-        fd.scene.sprite_items.push(s);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .push(s);
     }
     // XO sprites (pick_id=34).
     if !app.pl_state.xo_sprite_positions.is_empty() {
@@ -2080,7 +2125,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         s.settings.pick_id = PickId(34);
         s.settings.selected = app.pl_state.selection.contains(34);
         s.settings.unlit = false;
-        fd.scene.sprite_items.push(s);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .push(s);
     }
     // Streamtube (pick_id=40).
     if !app.pl_state.streamtube_positions.is_empty() {
@@ -2092,7 +2139,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         st.settings.pick_id = PickId(40);
         st.settings.selected = app.pl_state.selection.contains(40);
         st.settings.unlit = false;
-        fd.scene.streamtube_items.push(st);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
+            .push(st);
     }
     // Tube (pick_id=41).
     if !app.pl_state.tube_positions.is_empty() {
@@ -2104,7 +2153,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         tb.settings.pick_id = PickId(41);
         tb.settings.selected = app.pl_state.selection.contains(41);
         tb.settings.unlit = false;
-        fd.scene.tube_items.push(tb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .push(tb);
     }
     // Ribbon (pick_id=42).
     if !app.pl_state.ribbon_positions.is_empty() {
@@ -2116,7 +2167,9 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         rb.settings.pick_id = PickId(42);
         rb.settings.selected = app.pl_state.selection.contains(42);
         rb.settings.unlit = false;
-        fd.scene.ribbon_items.push(rb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .push(rb);
     }
     // Volume surface slice (pick_id=51): plane tilted 60 degrees inside the volume bbox.
     if let (Some(vol_id), Some(mesh_id)) =
@@ -2134,7 +2187,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.pick_id = PickId(51);
         item.settings.selected = app.pl_state.selection.contains(51);
         item.settings.unlit = false;
-        fd.scene.volume_surface_slices.push(item);
+        fd.scene.items_mut::<VolumeSurfaceSliceItem>().push(item);
     }
     // GPU implicit (pick_id=53): two smooth-blended spheres.
     {
@@ -2162,7 +2215,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         item.settings.pick_id = PickId(53);
         item.settings.selected = app.pl_state.selection.contains(53);
         item.settings.unlit = false;
-        fd.scene.gpu_implicit.push(item);
+        fd.scene.items_mut::<GpuImplicitItem>().push(item);
     }
     // GPU marching cubes (pick_id=54): gyroid surface.
     if let Some(mc_vol_id) = app.pl_state.mc_volume_id {
@@ -2172,13 +2225,15 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
         mc_settings.unlit = false;
         mc_settings.pick_id = PickId(54);
         mc_settings.selected = app.pl_state.selection.contains(54);
-        fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
-            volume_id: mc_vol_id,
-            isovalue: 0.0,
-            material: mat,
-            settings: mc_settings,
-            cpu_data: app.pl_state.mc_volume_data.clone(),
-        });
+        fd.scene
+            .items_mut::<GpuMarchingCubesItem>()
+            .push(GpuMarchingCubesItem {
+                volume_id: mc_vol_id,
+                isovalue: 0.0,
+                material: mat,
+                settings: mc_settings,
+                cpu_data: app.pl_state.mc_volume_data.clone(),
+            });
     }
     // Decals: two target stickers projected onto the cube tops (pick_id 60, 61).
     // Decals are pickable through the unified picker via their projection box.
@@ -2197,7 +2252,7 @@ pub(crate) fn submit_pl_items(app: &App, fd: &mut FrameData) {
             d.texture_id = tex;
             d.settings.pick_id = PickId(pick);
             d.settings.selected = app.pl_state.selection.contains(pick);
-            fd.scene.decals.push(d);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(d);
         }
     }
 }

@@ -16,9 +16,9 @@
 //! Controls:
 //! - Speed slider: how fast the arm bends
 
-use viewport_lib::wgpu;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib::wgpu;
 use vpl::{
     BuiltinMatcap, MatcapId, Material, MeshData, MeshId, PickAccelerator, RuntimeFrameContext,
     RuntimePlugin, RuntimeStepContext, ViewportRuntime,
@@ -1493,14 +1493,18 @@ pub(crate) fn apply_skin47_updates(app: &mut App, renderer: &mut vpl::ViewportRe
                     app.skin_state.skin_weights_uploaded.insert(u.mesh_id);
                 }
             }
-            skinning.attach_palette(
+            // False means the mesh has no weights attached, which would skin it
+            // against no palette and collapse the geometry. Skip it instead.
+            if !skinning.attach_palette(
                 renderer.resources_mut(),
                 &app.device,
                 &app.queue,
                 u.mesh_id,
                 u.instance_id,
                 &u.joint_matrices,
-            );
+            ) {
+                continue;
+            }
         }
     }
 }
@@ -1880,8 +1884,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::new(0.0, 0.0, 2.0),
         distance: 12.0,
-        orientation: glam::Quat::from_rotation_z(0.5)
-            * glam::Quat::from_rotation_x(1.0),
+        orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()
     };
 }
@@ -1937,14 +1940,12 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 
-
 // ---------------------------------------------------------------------------
 // Viewport overlay and per-frame tick
 // ---------------------------------------------------------------------------
 
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
-
 
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
@@ -1955,13 +1956,7 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
         let cursor = app.cursor_viewport;
         let viewport_size = glam::Vec2::new(cx.rect.width(), cx.rect.height());
         let clicked = cx.response.clicked();
-        update_skin47(
-            app,
-            dt,
-            cursor,
-            viewport_size,
-            clicked,
-        );
+        update_skin47(app, dt, cursor, viewport_size, clicked);
         cx.egui.request_repaint();
     }
 }
@@ -1970,21 +1965,15 @@ pub(crate) fn tick(app: &mut crate::App, cx: &crate::ViewportCtx) {
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -2025,13 +2014,23 @@ impl crate::Showcase for ScSkinnedAnimation {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         tick(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -2040,7 +2039,12 @@ impl crate::Showcase for ScSkinnedAnimation {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_skin47(app, ui)
     }
 }

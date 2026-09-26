@@ -56,8 +56,8 @@ fn expected(name: &str) -> Option<Expected> {
         // path; visual correctness is covered by the snapshot test.
         "point_cloud" => e(0, 0, 0, 0, 0, 0),
         "polyline" => e(0, 0, 0, 0, 0, 0),
-        "glyphs" => e(0, 0, 0, 0, 0, 0),
-        "tensor_glyphs" => e(0, 0, 0, 0, 0, 0),
+        "vector_fields" => e(0, 0, 0, 0, 0, 0),
+        "tensor_fields" => e(0, 0, 0, 0, 0, 0),
         "tubes" => e(0, 0, 0, 0, 0, 0),
         "streamtubes" => e(0, 0, 0, 0, 0, 0),
         "ribbons" => e(0, 0, 0, 0, 0, 0),

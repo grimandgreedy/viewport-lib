@@ -1,6 +1,8 @@
 /// Shared constructors for common wgpu bind-group-layout, sampler, and
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
+/// A growable GPU buffer addressed in elements, with a ranged write.
+pub mod content_buffer;
 pub(crate) mod custom_data;
 /// `DeviceResources` and its content, scope, and feature-resource structs.
 pub(crate) mod device_resources;
@@ -45,6 +47,7 @@ pub mod upload_jobs;
 /// Volume, marching-cubes, and unstructured volume-mesh resources.
 pub mod volume;
 
+pub use self::content_buffer::ContentBuffer;
 pub use self::gpu::compute_filter::ComputeFilterResult;
 pub use self::handle::ContentHandle;
 pub use self::light_probes::{
@@ -56,7 +59,8 @@ pub use self::material::environment::{EnvironmentMapId, EnvironmentZone};
 pub use self::material::texture_store::TextureId;
 pub use self::material::textures::{CompressedTextureDesc, supports_texture_format};
 pub use self::memory::vram_budget;
-use self::mesh::geometry::{build_glyph_arrow, build_glyph_sphere, build_unit_cube};
+use self::mesh::geometry::build_unit_cube;
+pub use self::mesh::geometry::generate_edge_indices;
 pub use self::mesh::lod::{LodGroup, LodGroupId, LodLevel, LodTransition, projected_screen_size};
 pub use self::mesh::meshes::OverrideBufferSlice;
 pub use self::mesh::meshes::lerp_attributes;
@@ -73,28 +77,12 @@ pub use self::mesh_sidecar::shade::{
 pub use self::overlay::font::{FontError, FontHandle, TextMetrics};
 pub(crate) use self::overlay::geometry::{CompiledOverlay, CompiledSource, OverlayInstance};
 pub use self::plugin_builders::{
-    GlyphBaseMeshRef, HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry,
-    PICK_COLOR_FORMAT, PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT,
-    SHADOW_DEPTH_FORMAT,
+    HDR_COLOR_FORMAT, MASK_COLOR_FORMAT, MeshDraw, MeshGeometry, PICK_COLOR_FORMAT,
+    PICK_DEPTH_CHANNEL_FORMAT, PluginPipelineOpts, SCENE_DEPTH_FORMAT, SHADOW_DEPTH_FORMAT,
 };
 pub use self::resource_deps::{ResourceGate, Revalidate};
-pub use crate::renderer::item_plugins::curves::types::{RibbonId, StreamtubeId, TubeId};
-pub use crate::renderer::item_plugins::external_instances::types::{
-    ExternalInstanceSetConfig, ExternalInstanceSetId,
-};
-pub use crate::renderer::item_plugins::glyph::types::GlyphSetId;
-pub use crate::renderer::item_plugins::gpu_particles::types::{
-    GpuParticleSystemConfig, GpuParticleSystemId, ParticleRender,
-};
-pub use crate::renderer::item_plugins::point_cloud::types::PointCloudId;
-pub use crate::renderer::item_plugins::polyline::types::PolylineId;
-pub use crate::renderer::item_plugins::sprite::types::{SpriteInstanceSetId, SpriteSetId};
-pub use crate::renderer::item_plugins::tensor_glyph::types::TensorGlyphSetId;
-// Gaussian splat upload vocabulary. Owned here (not in `renderer`) so nothing in
-// `resources` reaches up to `renderer` for these types.
 pub(crate) use self::scivis::polyline::{PolylineKey, PolylineVariantSet};
-pub use viewport_lib_types::data::point::{GaussianSplatData, ShDegree};
-pub use viewport_lib_types::ids::GaussianSplatId;
+pub use crate::renderer::item_plugins::polyline::types::PolylineId;
 // BatchMeta is published to plugins through `plugin_api::cull`; keep the
 // `resources` path crate-internal so there is a single public home for it.
 pub(crate) use self::types::BatchMeta;
@@ -108,14 +96,13 @@ pub(crate) use self::postprocess::lic::LIC_STRENGTH_ENCODE_MAX;
 pub(crate) use self::postprocess::producer::{PostStage, ProducerFrameInputs, ProducerTiming};
 pub(crate) use self::types::{
     AtlasBlitUniform, BackdropBlurState, BloomUniform, ClipPlanesUniform, ClipShapeGpu,
-    ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform, GlyphBaseMesh,
+    ContactShadowUniform, DofUniform, DualPipeline, FrustumPlane, FrustumUniform,
     GpuProjectedTetMesh, GridUniform, GroundPlaneUniform, InstanceAabb, InstanceData, LabelGpuData,
     LicAdvectUniform, LicObjectUniform, LicSurfaceGpuData, MeshInstanceGpuData, ObjectUniform,
     OutlineEdgeUniform, OutlineObjectBuffers, OutlineUniform, OverlayShadowLayerGpu,
     OverlayShapeGpuData, OverlayShapeTexBatch, OverlayShapeTexVertex, OverlayShapeVertex,
-    OverlayTextVertex, OverlayUniform, PickInstance, PointDiscMaskUniform, ProjectedTetUniform,
-    SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState, SsaoUniform, SubHighlightGpuData,
-    ToneMapUniform, ViewportCullState, ViewportHdrState,
+    OverlayTextVertex, ProjectedTetUniform, SHADOW_ATLAS_SIZE, ShadowAtlasUniform, ShadowCullState,
+    SsaoUniform, SubHighlightGpuData, ToneMapUniform, ViewportCullState, ViewportHdrState,
 };
 pub use self::types::{
     AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, BuiltinMatcap, CLIP_VOLUME_MAX,
@@ -129,8 +116,16 @@ pub use self::types::{
 // `plugin_api::shared_wgsl` instead.
 pub(crate) use self::types::{
     CameraUniform, GpuMesh, GpuTexture, LightUniform, LightsUniform, MAX_SCENE_LIGHTS,
-    OverlayVertex, PolylineGpuData, SingleLightUniform, Vertex, VertexBufferLayoutExt,
+    OverlayVertex, PolylineGpuData, SingleLightUniform, VertexBufferLayoutExt,
 };
+// The mesh vertex is the exception: `plugin_api::builders::mesh_vertex_layout`
+// publishes its buffer layout, so an item type building geometry for a
+// pipeline that declares that layout has to be able to fill the struct too.
+pub use self::types::Vertex;
+// Likewise the per-instance pick record: `plugin_api::shared_wgsl`'s
+// `SHARED_PICK_INSTANCE_WGSL` declares its shader-side counterpart, so an item
+// type drawing instanced pick geometry has to be able to fill it.
+pub use self::types::PickInstance;
 #[cfg(feature = "future")]
 pub use self::upload_jobs::JobHandle;
 pub use self::upload_jobs::{FrameBudget, JobId, Jobs, ProgressHandle, ResultSlot, UploadStatus};
@@ -138,8 +133,3 @@ pub use self::volume::sparse_volume::SparseVolumeGridData;
 #[allow(deprecated)]
 pub use self::volume::tetmesh::{TetMesh, TetMeshAttributes};
 pub use self::volume::volume_mesh::{CELL_SENTINEL, VolumeMeshData};
-pub use crate::renderer::GpuMarchingCubesItem;
-pub use crate::renderer::item_plugins::gpu_marching_cubes::types::McVolumeId;
-pub use crate::renderer::{
-    GpuImplicitItem, GpuImplicitOptions, ImplicitBlendMode, ImplicitPrimitive,
-};

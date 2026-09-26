@@ -10,16 +10,17 @@
 use std::sync::Arc;
 use viewport_lib as vpl;
 
-use vpl::{ButtonState, PostProcessSettings, ScrollUnits};
+use vpl::wgpu;
 use vpl::{
-    Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    BindingPreset, Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController,
+    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    primitives,
 };
+use vpl::{ButtonState, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-use vpl::wgpu;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -54,6 +55,9 @@ struct AppState {
     camera: Camera,
     mesh_id: MeshId,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +138,10 @@ impl ApplicationHandler for App {
             ..Camera::default()
         };
 
-        // Prime the controller for the first frame of events.
-        let mut controller = OrbitCameraController::viewport_primitives();
-        controller.begin_frame(ViewportContext {
+        // Prime the resolver for the first frame of events.
+        let controller = OrbitCameraController::new_stateless();
+        let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
+        input.begin_frame(ViewportContext {
             hovered: true,
             focused: true,
             viewport_size: [config.width as f32, config.height as f32],
@@ -152,6 +157,7 @@ impl ApplicationHandler for App {
             camera,
             mesh_id,
             controller,
+            input,
         });
     }
 
@@ -186,9 +192,7 @@ impl ApplicationHandler for App {
                 m.shift = mods.state().shift_key();
                 m.ctrl = mods.state().control_key();
                 m.alt = mods.state().alt_key();
-                state
-                    .controller
-                    .push_event(ViewportEvent::ModifiersChanged(m));
+                state.input.push_event(ViewportEvent::ModifiersChanged(m));
             }
 
             WindowEvent::MouseInput {
@@ -207,7 +211,7 @@ impl ApplicationHandler for App {
                 } else {
                     ButtonState::Released
                 };
-                state.controller.push_event(ViewportEvent::MouseButton {
+                state.input.push_event(ViewportEvent::MouseButton {
                     button: vp_button,
                     state: vp_state,
                 });
@@ -215,18 +219,18 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                state.controller.push_event(ViewportEvent::PointerMoved {
+                state.input.push_event(ViewportEvent::PointerMoved {
                     position: glam::Vec2::new(position.x as f32, position.y as f32),
                 });
                 state.window.request_redraw();
             }
 
             WindowEvent::CursorLeft { .. } => {
-                state.controller.push_event(ViewportEvent::PointerLeft);
+                state.input.push_event(ViewportEvent::PointerLeft);
             }
 
             WindowEvent::Focused(false) => {
-                state.controller.push_event(ViewportEvent::FocusLost);
+                state.input.push_event(ViewportEvent::FocusLost);
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
@@ -240,14 +244,14 @@ impl ApplicationHandler for App {
                     ),
                 };
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
 
             WindowEvent::RotationGesture { delta, .. } => {
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::TrackpadRotate(delta.to_radians()));
                 state.window.request_redraw();
             }
@@ -275,7 +279,8 @@ impl ApplicationHandler for App {
                 let h = state.surface_config.height as f32;
 
                 // Apply accumulated events to camera.
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 state.camera.set_aspect_ratio(w, h);
 
                 // Build scene: 4 cubes in a grid.
@@ -322,11 +327,13 @@ impl ApplicationHandler for App {
                 frame.present();
 
                 // Begin accumulation for the next frame's events.
-                state.controller.begin_frame(ViewportContext {
+                state.input.begin_frame(ViewportContext {
                     hovered: true,
                     focused: true,
                     viewport_size: [w, h],
                 });
+                // Pan reads the viewport height off the controller.
+                state.controller.set_viewport_size([w, h]);
             }
 
             _ => {}

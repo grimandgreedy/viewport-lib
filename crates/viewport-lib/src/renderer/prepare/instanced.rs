@@ -324,9 +324,9 @@ impl ViewportRenderer {
         // uses the per-object wireframe_pipeline, not the instanced path, so
         // instance data is now viewport-agnostic.
         //
-        // Items with active_attribute, matcap, warp, deform, submesh materials,
-        // or overrides are excluded from the instanced batch filter (see
-        // `is_instanceable`). Items whose mesh has an active compute filter result
+        // Items with active_attribute, matcap, warp, deform slot data (per-mesh
+        // or per-instance), submesh materials, or overrides are excluded from
+        // the instanced batch filter (see `is_instanceable`). Items whose mesh has an active compute filter result
         // are also excluded so the per-object path can apply the filtered index
         // buffer (instanced draws always use the full index buffer).
         // These flags are set on render items AFTER collect_render_items() (per-frame

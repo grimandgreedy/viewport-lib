@@ -1,7 +1,7 @@
 //! Picking: choose which levels to pick (object, point-like, edge-like,
 //! face-like), then click or drag a box to select. The scene holds one of every
 //! pickable item type (meshes, point cloud, glyphs, polyline, volume, gaussian
-//! splats, a volume mesh, tensor glyphs, sprites, streamtube / tube / ribbon,
+//! splats, a volume mesh, tensor field samples, sprites, streamtube / tube / ribbon,
 //! a volume surface slice, a GPU implicit surface, a GPU marching-cubes
 //! surface, and a decal). Every one highlights at the object
 //! level (outline / selected tint) and, where it has sub-elements, at the
@@ -15,18 +15,27 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use viewport_lib as vpl;
+use viewport_lib::plugin_api::Uploads;
+use viewport_lib::{ColourSource, SizeSource};
+use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::VolumeItem;
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatId, GaussianSplatItem, GpuImplicitItem, GpuImplicitOptions,
+    ImplicitBlendMode, ImplicitPrimitive, ShDegree, VolumeSurfaceSliceItem,
+};
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumeId, McVolumes};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TensorSource, TubeItem,
+    VectorFieldItem,
+};
 
 use crate::eframe::egui;
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, GaussianSplatData,
-    GaussianSplatId, GaussianSplatItem, GlyphItem, GlyphType, GpuImplicitItem, GpuImplicitOptions,
-    GpuMarchingCubesItem, ImplicitBlendMode, ImplicitPrimitive, ItemSettings, Material, McVolumeId,
-    MeshId, NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask, PointCloudItem,
-    PolylineItem, PolylineSelectionInfo, RibbonItem, ShDegree, SpriteItem, StreamtubeItem,
-    SubObjectRef, SubSelection, SubSelectionRef, TensorGlyphItem, TextureId, TubeItem, VolumeData,
-    VolumeId, VolumeItem, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo,
-    VolumeSurfaceSliceItem, primitives,
+    BuiltinColourmap, CellSelectionInfo, ColourmapId, DecalItem, ItemSettings, Material, MeshId,
+    NodeId, OverlayFill, OverlayShape, OverlayShapeItem, PickId, PickMask, PolylineItem,
+    PolylineSelectionInfo, SubObjectRef, SubSelection, SubSelectionRef, TextureId, VolumeData,
+    VolumeId, VolumeMeshData, VolumeMeshItem, VolumeSelectionInfo, primitives,
 };
 
 use crate::showcase::{SetupCtx, Showcase, ShowcaseCtx};
@@ -82,9 +91,9 @@ pub struct PickingShowcase {
     // Vec-backed items are stored whole and cloned; items that own a GPU handle
     // are rebuilt each frame from the handle plus stored CPU data.
     pc: PointCloudItem,
-    glyphs: GlyphItem,
+    glyphs: VectorFieldItem,
     polyline: PolylineItem,
-    tensor: TensorGlyphItem,
+    tensor: TensorFieldItem,
     sprites: SpriteItem,
     streamtube: StreamtubeItem,
     tube: TubeItem,
@@ -133,9 +142,9 @@ impl PickingShowcase {
             pick_face: false,
             labels: HashMap::new(),
             pc: PointCloudItem::default(),
-            glyphs: GlyphItem::default(),
+            glyphs: VectorFieldItem::default(),
             polyline: PolylineItem::default(),
-            tensor: TensorGlyphItem::default(),
+            tensor: TensorFieldItem::default(),
             sprites: SpriteItem::default(),
             streamtube: StreamtubeItem::default(),
             tube: TubeItem::default(),
@@ -216,38 +225,50 @@ impl PickingShowcase {
         // Point cloud.
         let mut pc = self.pc.clone();
         pc.settings.selected = sel(PC);
-        fd.scene.point_clouds.push(pc);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
 
         // Arrow glyphs.
         let mut glyphs = self.glyphs.clone();
         glyphs.settings.selected = sel(GLYPH);
-        fd.scene.glyphs.push(glyphs);
+        fd.scene.items_mut::<VectorFieldItem>().push(glyphs);
 
         // Multi-strip polyline.
         let mut polyline = self.polyline.clone();
         polyline.settings.selected = sel(POLY);
-        fd.scene.polylines.push(polyline);
+        fd.scene
+            .items_mut::<viewport_lib::PolylineItem>()
+            .push(polyline);
 
         // Tensor glyphs.
         let mut tensor = self.tensor.clone();
         tensor.settings.selected = sel(TENSOR);
-        fd.scene.tensor_glyphs.push(tensor);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::TensorFieldItem>()
+            .push(tensor);
 
         // Sprites.
         let mut sprites = self.sprites.clone();
         sprites.settings.selected = sel(SPRITE);
-        fd.scene.sprite_items.push(sprites);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::SpriteItem>()
+            .push(sprites);
 
         // Streamtube / tube / ribbon.
         let mut st = self.streamtube.clone();
         st.settings.selected = sel(STREAMTUBE);
-        fd.scene.streamtube_items.push(st);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::StreamtubeItem>()
+            .push(st);
         let mut tb = self.tube.clone();
         tb.settings.selected = sel(TUBE);
-        fd.scene.tube_items.push(tb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::TubeItem>()
+            .push(tb);
         let mut rb = self.ribbon.clone();
         rb.settings.selected = sel(RIBBON);
-        fd.scene.ribbon_items.push(rb);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::RibbonItem>()
+            .push(rb);
 
         // Ray-marched volume.
         if let (Some(vol_id), Some(data)) = (self.volume_id, self.volume_data.as_ref()) {
@@ -265,7 +286,9 @@ impl PickingShowcase {
             vol.settings.pick_id = PickId(VOLUME);
             vol.settings.selected = sel(VOLUME);
             vol.volume_data = Some(data.clone());
-            fd.scene.volumes.push(vol);
+            fd.scene
+                .items_mut::<viewport_lib_item_types::VolumeItem>()
+                .push(vol);
         }
 
         // Gaussian splats.
@@ -276,7 +299,7 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(SPLAT);
             item.settings.selected = sel(SPLAT);
             item.settings.unlit = false;
-            fd.scene.gaussian_splats.push(item);
+            fd.scene.items_mut::<GaussianSplatItem>().push(item);
         }
 
         // Volume mesh (capsule): opaque boundary surface, so point-like picking
@@ -304,7 +327,7 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(SLICE);
             item.settings.selected = sel(SLICE);
             item.settings.unlit = false;
-            fd.scene.volume_surface_slices.push(item);
+            fd.scene.items_mut::<VolumeSurfaceSliceItem>().push(item);
         }
 
         // GPU implicit: two smooth-blended spheres.
@@ -333,7 +356,7 @@ impl PickingShowcase {
             item.settings.pick_id = PickId(IMPLICIT);
             item.settings.selected = sel(IMPLICIT);
             item.settings.unlit = false;
-            fd.scene.gpu_implicit.push(item);
+            fd.scene.items_mut::<GpuImplicitItem>().push(item);
         }
 
         // GPU marching cubes: gyroid surface.
@@ -344,13 +367,15 @@ impl PickingShowcase {
             settings.unlit = false;
             settings.pick_id = PickId(MC);
             settings.selected = sel(MC);
-            fd.scene.gpu_mc_items.push(GpuMarchingCubesItem {
-                volume_id: mc_id,
-                isovalue: 0.0,
-                material: mat,
-                settings,
-                cpu_data: self.mc_data.clone(),
-            });
+            fd.scene
+                .items_mut::<GpuMarchingCubesItem>()
+                .push(GpuMarchingCubesItem {
+                    volume_id: mc_id,
+                    isovalue: 0.0,
+                    material: mat,
+                    settings,
+                    cpu_data: self.mc_data.clone(),
+                });
         }
 
         // Decal: a target sticker straddling the cube's top face.
@@ -360,7 +385,7 @@ impl PickingShowcase {
             d.texture_id = tex;
             d.settings.pick_id = PickId(DECAL);
             d.settings.selected = sel(DECAL);
-            fd.scene.decals.push(d);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(d);
         }
     }
 }
@@ -386,6 +411,19 @@ impl Showcase for PickingShowcase {
             .session
             .resources_mut()
             .upload_mesh_data(ctx.device, &sphere_data)
+            .unwrap();
+        // Unit sphere for the tensor field to instance; the field scales each
+        // one by its own eigenvalues.
+        let tensor_shape = ctx
+            .session
+            .resources_mut()
+            .upload_mesh_data(ctx.device, &primitives::icosphere(1.0, 2))
+            .unwrap();
+        // Arrow for the vector field, pointing along +Z.
+        let arrow_shape = ctx
+            .session
+            .resources_mut()
+            .upload_mesh_data(ctx.device, &primitives::arrow(0.06, 0.15, 0.35, 12))
             .unwrap();
 
         // Marker first so it takes node id 0 (PickId(0) == NONE, skipped by GPU
@@ -428,9 +466,12 @@ impl Showcase for PickingShowcase {
         // Point cloud (cloud points).
         let (pos, sca) = noisy_sphere(Vec3::new(0.0, 5.0, 1.0), 0.9, 400);
         self.pc.positions = pos.clone();
-        self.pc.scalars = sca;
-        self.pc.colourmap_id = Some(ColourmapId(BuiltinColourmap::Viridis as usize));
-        self.pc.point_size = 9.0;
+        self.pc.colour = ColourSource::Scalar {
+            values: sca,
+            range: None,
+            colourmap: Some(ColourmapId(BuiltinColourmap::Viridis as usize)),
+        };
+        self.pc.size = SizeSource::Uniform(9.0);
         self.pc.settings.pick_id = PickId(PC);
         self.point_positions.insert(PC, pos);
         self.model_matrices.insert(PC, Mat4::IDENTITY);
@@ -450,9 +491,8 @@ impl Showcase for PickingShowcase {
         self.glyphs.positions = gpos.clone();
         self.glyphs.vectors = vec![[0.0, 0.0, 1.0]; n];
         self.glyphs.scale = 0.7;
-        self.glyphs.use_default_colour = true;
-        self.glyphs.default_colour = [0.55, 0.10, 0.75, 1.0].into();
-        self.glyphs.glyph_type = GlyphType::Arrow;
+        self.glyphs.shape = arrow_shape;
+        self.glyphs.colour = ColourSource::Solid([0.55, 0.10, 0.75, 1.0].into());
         self.glyphs.settings.pick_id = PickId(GLYPH);
         self.instance_lookup.insert(GLYPH, gpos);
         self.model_matrices.insert(GLYPH, Mat4::IDENTITY);
@@ -476,21 +516,27 @@ impl Showcase for PickingShowcase {
             [6.1, 0.6, 0.4],
         ];
         self.tensor.positions = tpos.clone();
-        self.tensor.eigenvalues = vec![
-            [0.8, 0.7, 0.6],
-            [1.2, 0.3, 0.3],
-            [0.3, 0.3, 1.2],
-            [1.0, 0.6, 0.2],
-        ];
         let c = std::f32::consts::FRAC_1_SQRT_2;
-        self.tensor.eigenvectors = vec![
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            [[c, c, 0.0], [-c, c, 0.0], [0.0, 0.0, 1.0]],
-            [[0.866, 0.0, 0.5], [0.0, 1.0, 0.0], [-0.5, 0.0, 0.866]],
-            [[0.5, 0.866, 0.0], [-0.866, 0.5, 0.0], [0.0, 0.0, 1.0]],
-        ];
+        self.tensor.tensors = TensorSource::Eigen {
+            values: vec![
+                [0.8, 0.7, 0.6],
+                [1.2, 0.3, 0.3],
+                [0.3, 0.3, 1.2],
+                [1.0, 0.6, 0.2],
+            ],
+            vectors: vec![
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                [[c, c, 0.0], [-c, c, 0.0], [0.0, 0.0, 1.0]],
+                [[0.866, 0.0, 0.5], [0.0, 1.0, 0.0], [-0.5, 0.0, 0.866]],
+                [[0.5, 0.866, 0.0], [-0.866, 0.5, 0.0], [0.0, 0.0, 1.0]],
+            ],
+        };
+        self.tensor.shape = tensor_shape;
         self.tensor.scale = 0.5;
-        self.tensor.colourmap_id = Some(ColourmapId(BuiltinColourmap::Coolwarm as usize));
+        self.tensor.colour = ColourSource::Natural {
+            range: None,
+            colourmap: Some(ColourmapId(BuiltinColourmap::Coolwarm as usize)),
+        };
         self.tensor.settings.pick_id = PickId(TENSOR);
         self.instance_lookup.insert(TENSOR, tpos);
         self.labels.insert(TENSOR, ("Tensor glyphs".into(), None));
@@ -594,7 +640,7 @@ impl Showcase for PickingShowcase {
             if let Ok(id) = ctx
                 .session
                 .renderer_mut()
-                .upload_gaussian_splat(ctx.device, ctx.queue, &data)
+                .upload(ctx.device, ctx.queue, &data)
             {
                 self.splat_id = Some(id);
                 self.instance_lookup.insert(SPLAT, positions.clone());

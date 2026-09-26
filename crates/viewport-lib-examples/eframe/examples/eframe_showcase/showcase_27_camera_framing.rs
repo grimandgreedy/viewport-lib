@@ -659,7 +659,9 @@ pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate:
     // Auxiliary frustums (Showcase 27) : submitted every frame.
     if app.aux_state.built {
         for f in &app.aux_state.frustums {
-            fd.scene.polylines.push(frustum_to_polyline(f));
+            fd.scene
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(frustum_to_polyline(f));
         }
     }
 

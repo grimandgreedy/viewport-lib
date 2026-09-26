@@ -23,10 +23,10 @@ use crate::eframe::egui;
 use viewport_lib as vpl;
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo, GizmoAxis,
-    GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext, ManipulationController,
-    Material, Modifiers, MouseButton, NodeId, OrbitCameraController, PickBackend, PickMask,
-    Projection, SceneFrame, ScrollUnits, Selection, ViewportContext, ViewportEvent,
-    ViewportRenderer,
+    GizmoInfo, GizmoMode, GizmoSpace, LightingSettings, ManipResult, ManipulationContext,
+    ManipulationController, Material, Modifiers, MouseButton, NodeId, OrbitCameraController,
+    PickBackend, PickMask, Projection, SceneFrame, ScrollUnits, Selection, ViewportContext,
+    ViewportEvent, ViewportInput, ViewportRenderer,
     gizmo::{compute_gizmo_scale, gizmo_center_from_selection},
 };
 
@@ -39,6 +39,9 @@ pub(crate) struct MvState {
     pub selection: Selection,
     pub cameras: [Camera; 4],
     pub controllers: [OrbitCameraController; 4],
+    /// One resolver per quadrant: each owns its bindings and resolves the
+    /// events routed to it. The controllers keep only their sensitivities.
+    pub inputs: [ViewportInput; 4],
     pub viewports: Option<[vpl::ViewportId; 4]>,
     pub built: bool,
     pub gizmo: Gizmo,
@@ -91,10 +94,16 @@ impl Default for MvState {
                 },
             ],
             controllers: [
-                OrbitCameraController::new(BindingPreset::Default),
-                OrbitCameraController::new(BindingPreset::Default),
-                OrbitCameraController::new(BindingPreset::Default),
-                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new_stateless(),
+                OrbitCameraController::new_stateless(),
+                OrbitCameraController::new_stateless(),
+                OrbitCameraController::new_stateless(),
+            ],
+            inputs: [
+                ViewportInput::from_preset(BindingPreset::Default),
+                ViewportInput::from_preset(BindingPreset::Default),
+                ViewportInput::from_preset(BindingPreset::Default),
+                ViewportInput::from_preset(BindingPreset::Default),
             ],
             viewports: None,
             built: false,
@@ -213,19 +222,21 @@ impl App {
         }
         let hq = self.mv_state.hovered_quad;
 
-        // begin_frame for all four controllers.
+        // begin_frame for all four resolvers; the controllers only need the size
+        // their pan reads.
         for i in 0..4 {
             let qr = quad_rects[i];
-            self.mv_state.controllers[i].begin_frame(ViewportContext {
+            self.mv_state.inputs[i].begin_frame(ViewportContext {
                 hovered: i == hq && response.hovered(),
                 focused: i == hq && response.hovered(),
                 viewport_size: [qr.width(), qr.height()],
             });
+            self.mv_state.controllers[i].set_viewport_size([qr.width(), qr.height()]);
         }
 
         // Notify the previously hovered quad that the pointer left.
         if hq != prev_hq {
-            self.mv_state.controllers[prev_hq].push_event(ViewportEvent::PointerLeft);
+            self.mv_state.inputs[prev_hq].push_event(ViewportEvent::PointerLeft);
         }
 
         let manip_active_for_text = self.mv_state.manip.is_active();
@@ -237,8 +248,8 @@ impl App {
                 shift: i.modifiers.shift,
                 ctrl: i.modifiers.command,
             };
-            self.mv_state.controllers[hq].push_event(ViewportEvent::ModifiersChanged(mods));
-            self.mv_state.controllers[hq].push_event(ViewportEvent::PointerMoved {
+            self.mv_state.inputs[hq].push_event(ViewportEvent::ModifiersChanged(mods));
+            self.mv_state.inputs[hq].push_event(ViewportEvent::PointerMoved {
                 position: self.mv_state.cursor_local,
             });
 
@@ -251,7 +262,7 @@ impl App {
                         ..
                     } => {
                         if let Some(kc) = crate::shared::egui_key_to_keycode(*key) {
-                            self.mv_state.controllers[hq].push_event(ViewportEvent::Key {
+                            self.mv_state.inputs[hq].push_event(ViewportEvent::Key {
                                 key: kc,
                                 state: if *pressed {
                                     ButtonState::Pressed
@@ -265,7 +276,7 @@ impl App {
 
                     egui::Event::Text(text) if manip_active_for_text => {
                         for c in text.chars() {
-                            self.mv_state.controllers[hq].push_event(ViewportEvent::Character(c));
+                            self.mv_state.inputs[hq].push_event(ViewportEvent::Character(c));
                         }
                     }
 
@@ -297,7 +308,7 @@ impl App {
                         } else {
                             ButtonState::Released
                         };
-                        self.mv_state.controllers[hq].push_event(ViewportEvent::MouseButton {
+                        self.mv_state.inputs[hq].push_event(ViewportEvent::MouseButton {
                             button: vp_button,
                             state,
                         });
@@ -311,7 +322,7 @@ impl App {
                                 egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                                 egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                             };
-                            self.mv_state.controllers[hq].push_event(ViewportEvent::Wheel {
+                            self.mv_state.inputs[hq].push_event(ViewportEvent::Wheel {
                                 delta: glam::Vec2::new(delta.x, delta.y),
                                 units,
                             });
@@ -387,12 +398,13 @@ impl App {
                 clicked: response.clicked(),
             };
 
-            // Orbit: resolve hq controller while manipulation is active.
-            let action_frame = if self.mv_state.manip.is_active() {
-                self.mv_state.controllers[hq].resolve()
-            } else {
-                self.mv_state.controllers[hq].apply_to_camera(&mut self.mv_state.cameras[hq])
-            };
+            // One resolve for the hovered quadrant; its camera holds still while
+            // a manipulation session owns the pointer.
+            let action_frame = self.mv_state.inputs[hq].resolve();
+            if !self.mv_state.manip.is_active() {
+                let camera = &mut self.mv_state.cameras[hq];
+                self.mv_state.controllers[hq].apply(camera, &action_frame);
+            }
 
             // Tab cycles gizmo mode when no session is active.
             if !self.mv_state.manip.is_active() && action_frame.is_active(Action::CycleGizmoMode) {
@@ -425,7 +437,9 @@ impl App {
             // Apply remaining controllers (non-hq); hq already applied/resolved above.
             for i in 0..4 {
                 if i != hq {
-                    self.mv_state.controllers[i].apply_to_camera(&mut self.mv_state.cameras[i]);
+                    let frame = self.mv_state.inputs[i].resolve();
+                    let camera = &mut self.mv_state.cameras[i];
+                    self.mv_state.controllers[i].apply(camera, &frame);
                 }
                 self.mv_state.cameras[i]
                     .set_aspect_ratio(quad_rects[i].width(), quad_rects[i].height());

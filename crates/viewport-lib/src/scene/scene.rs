@@ -1423,7 +1423,7 @@ pub struct DecalHandle(u64);
 /// Created via [`Scene::add_decal`] or [`Scene::add_decal_with_lifetime`].
 /// Call [`Scene::update_decals`] once per frame with the frame delta-time to
 /// advance ages and expire finished decals. Call [`Scene::collect_decal_items`]
-/// to get the current [`DecalItem`] list ready to push into `fd.scene.decals`.
+/// to get the current [`DecalItem`] list ready to push into `fd.scene.items_mut::<crate::DecalItem>()`.
 pub struct LiveDecal {
     id: u64,
     /// The base decal parameters. `uv_offset` and `uv_scale` are recomputed
@@ -1485,7 +1485,7 @@ impl Scene {
             .retain(|ld| ld.lifetime.map_or(true, |lt| ld.age < lt));
     }
 
-    /// Build the [`DecalItem`] list for this frame's `fd.scene.decals`.
+    /// Build the [`DecalItem`] list for this frame's `fd.scene.items_mut::<crate::DecalItem>()`.
     ///
     /// Applies lifetime fading (alpha ramps to 0 in the last 20% of life) and
     /// computes UV offset/scale for animated decals.

@@ -711,7 +711,7 @@ impl ViewportRenderer {
         frame: &FrameData,
         mask: PickMask,
         scene_items: &'a [SceneRenderItem],
-        flags: &PickPipelineFlags,
+        _flags: &PickPipelineFlags,
     ) -> PickDrawSet {
         // --- build PickInstance data ---
         // Every mesh-backed pickable item draws through the surface pipeline:
@@ -732,7 +732,7 @@ impl ViewportRenderer {
             }
         };
 
-        let instance_from = |model: [[f32; 4]; 4], pick_id: PickId| PickInstance {
+        let _instance_from = |model: [[f32; 4]; 4], pick_id: PickId| PickInstance {
             model_c0: model[0],
             model_c1: model[1],
             model_c2: model[2],

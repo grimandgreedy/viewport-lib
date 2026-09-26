@@ -95,7 +95,7 @@ pub struct ViewportInstance {
     outline_width_px: f32,
 
     // Retained non-mesh items, re-injected into the scene sub-frame each
-    // assembly so static point clouds/glyphs/volumes/splats are added once.
+    // assembly so static point clouds/fields/volumes/splats are added once.
     extras: Vec<(ExtraId, extras::SceneExtra)>,
     next_extra_id: u64,
 }
@@ -579,7 +579,7 @@ impl ViewportInstance {
 mod tests {
     use super::*;
     use crate::interaction::input::{ButtonState, MouseButton};
-    use crate::{Material, OrbitCameraController, PointCloudItem, primitives};
+    use crate::{Material, OrbitCameraController, PolylineItem, primitives};
 
     fn headless_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
         let instance = crate::gpu::default_instance();
@@ -743,18 +743,26 @@ mod tests {
         let mut orbit = OrbitCameraController::new_stateless();
 
         // A retained extra is re-injected into the scene every frame.
-        let mut pc = PointCloudItem::default();
-        pc.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let id = session.add_point_cloud(pc);
+        let mut line = PolylineItem::default();
+        line.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        line.strip_lengths = vec![2];
+        let id = session.add_item(line);
         let frame = session.update_orbit(&mut orbit);
-        assert_eq!(frame.scene.point_clouds.len(), 1, "retained extra injected");
+        assert_eq!(
+            frame.scene.items_of::<crate::PolylineItem>().len(),
+            1,
+            "retained extra injected"
+        );
 
         // The injection closure runs after assembly, so per-frame items land.
         let frame = session.update_orbit_with(&mut orbit, |f| {
-            f.scene.point_clouds.push(PointCloudItem::default());
+            let mut extra = PolylineItem::default();
+            extra.positions = vec![[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]];
+            extra.strip_lengths = vec![2];
+            f.scene.items_mut::<crate::PolylineItem>().push(extra);
         });
         assert_eq!(
-            frame.scene.point_clouds.len(),
+            frame.scene.items_of::<crate::PolylineItem>().len(),
             2,
             "retained + per-frame injected item"
         );
@@ -762,6 +770,10 @@ mod tests {
         // Removing the retained extra drops it from later frames.
         assert!(session.remove_extra(id));
         let frame = session.update_orbit(&mut orbit);
-        assert_eq!(frame.scene.point_clouds.len(), 0, "removed extra gone");
+        assert_eq!(
+            frame.scene.items_of::<crate::PolylineItem>().len(),
+            0,
+            "removed extra gone"
+        );
     }
 }

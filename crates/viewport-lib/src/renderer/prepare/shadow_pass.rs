@@ -1075,10 +1075,13 @@ impl ViewportRenderer {
                             frame_index: plugin_frame_index,
                         };
                         for (name, plugin) in plugins.iter() {
-                            if let Some(items) =
-                                crate::renderer::item_plugins::plugin_items_for(frame, name)
-                            {
-                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, items);
+                            let items = crate::plugin_api::ItemCollections::new(
+                                crate::renderer::item_plugins::plugin_collections_slice(
+                                    frame, name,
+                                ),
+                            );
+                            if !items.is_empty() {
+                                plugin.cast_shadow_pass(&mut shadow_pass, &ctx, &items);
                             }
                         }
                     }

@@ -1,12 +1,15 @@
 //! Box widget: draggable center, face, and rotation-arc handles for an oriented box.
 
 use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::PolylineItem;
 use crate::scene::aabb::Aabb;
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
-use super::{WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_world_radius};
+use super::{
+    HandleMarkers, WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_colour,
+    handle_world_radius,
+};
 
 /// Which handle on the box is being interacted with.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -25,7 +28,7 @@ enum BoxHandle {
 /// Three rotation arc handles (one per world axis) are rendered as circle overlays.
 ///
 /// Use `wireframe_item()` for the box outline, `rotation_arcs_item()` for the arc circles,
-/// and `handle_glyphs()` for all 10 draggable sphere handles.
+/// and `handle_markers()` for all 10 draggable handles.
 ///
 /// # Usage
 ///
@@ -34,9 +37,10 @@ enum BoxHandle {
 ///
 /// // Each frame:
 /// bw.update(&ctx);
-/// fd.scene.polylines.push(bw.wireframe_item(BOX_ID));
-/// fd.scene.polylines.push(bw.rotation_arcs_item(ARC_ID));
-/// fd.scene.glyphs.push(bw.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(bw.wireframe_item(BOX_ID));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(bw.rotation_arcs_item(ARC_ID));
+/// let markers = bw.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 /// ```
 pub struct BoxWidget {
     /// World-space center of the box.
@@ -315,12 +319,12 @@ impl BoxWidget {
         }
     }
 
-    /// Build a `GlyphItem` with 10 sphere handles: center, 6 face handles, and 3 rotation grips.
+    /// Handle markers for the centre, the six face grips and the three
+    /// rotation arcs.
     ///
-    /// Pick IDs: `id_base` = center, `id_base + 1..6` = faces (+X,-X,+Y,-Y,+Z,-Z),
-    /// `id_base + 7..9` = rotation arc grips (X, Y, Z).
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
-        let all_handles = [
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
+        const ALL: [BoxHandle; 10] = [
             BoxHandle::Center,
             BoxHandle::Face(0),
             BoxHandle::Face(1),
@@ -333,42 +337,34 @@ impl BoxWidget {
             BoxHandle::RotArc(2),
         ];
 
-        let mut positions = Vec::with_capacity(10);
-        let mut vectors = Vec::with_capacity(10);
-        let mut scalars = Vec::with_capacity(10);
-
-        for handle in all_handles {
+        let mut markers = HandleMarkers {
+            pick_id: crate::renderer::PickId(id_base),
+            ..Default::default()
+        };
+        for handle in ALL {
             let pos = self.handle_pos(handle);
+            // The rotation arcs sit closer together, so they take a smaller
+            // grip to stay distinguishable.
             let target_px = if matches!(handle, BoxHandle::RotArc(_)) {
                 7.0
             } else {
                 9.0
             };
-            let r = handle_world_radius(pos, &ctx.camera, ctx.viewport_size.y, target_px);
-            let s = if self.hovered_handle == Some(handle) || self.active_handle == Some(handle) {
+            let hot = if self.hovered_handle == Some(handle) || self.active_handle == Some(handle) {
                 1.0_f32
             } else {
                 0.2
             };
-            positions.push(pos.to_array());
-            vectors.push([r, 0.0, 0.0]);
-            scalars.push(s);
+            markers.positions.push(pos);
+            markers.radii.push(handle_world_radius(
+                pos,
+                &ctx.camera,
+                ctx.viewport_size.y,
+                target_px,
+            ));
+            markers.colours.push(handle_colour(self.handle_colour, hot));
         }
-
-        let mut g = GlyphItem::default();
-        g.positions = positions;
-        g.vectors = vectors;
-        g.scalars = scalars;
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        markers
     }
 
     // -----------------------------------------------------------------------
@@ -515,7 +511,7 @@ mod tests {
         let w = BoxWidget::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
         assert!(!w.wireframe_item(1).positions.is_empty());
         assert!(!w.rotation_arcs_item(2).positions.is_empty());
-        assert!(!w.handle_glyphs(3, &ctx).positions.is_empty());
+        assert!(!w.handle_markers(3, &ctx).positions.is_empty());
     }
 
     #[test]

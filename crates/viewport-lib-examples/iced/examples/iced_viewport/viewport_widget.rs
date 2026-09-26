@@ -3,17 +3,18 @@
 //! `ViewportState` owns the camera and input tracking so `shader::Program::update()`
 //! can translate Iced events directly into orbit, pan, and zoom changes.
 
-use viewport_lib::wgpu;
 use std::collections::HashMap;
 use viewport_lib as vpl;
+use viewport_lib::wgpu;
 
 use iced::event::Event;
 use iced::widget::shader;
 use iced::{Element, Fill, Rectangle, mouse};
 use vpl::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshId, Modifiers, MouseButton,
-    OffscreenViewportTarget, OrbitCameraController, RenderCamera, SceneFrame, SceneRenderItem,
-    ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, MeshId,
+    Modifiers, MouseButton, OffscreenViewportTarget, OrbitCameraController, RenderCamera,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer, primitives,
 };
 
 use crate::Message;
@@ -37,11 +38,15 @@ pub struct ObjSnapshot {
 // ViewportState - persists across frames, tracks mouse + camera
 // ---------------------------------------------------------------------------
 
-/// Iced shader widget state. Owns the camera and controller so that input
-/// events in `update()` are forwarded to `OrbitCameraController` via `push_event`.
+/// Iced shader widget state. Owns the camera, the resolver, and the controller,
+/// so that input events in `update()` resolve into an `ActionFrame` the
+/// controller applies.
 pub struct ViewportState {
     pub camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     /// Track dragging state for cursor interaction display.
     any_pressed: bool,
 }
@@ -55,7 +60,8 @@ impl Default for ViewportState {
                 orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
                 ..Camera::default()
             },
-            controller: OrbitCameraController::viewport_primitives(),
+            controller: OrbitCameraController::new_stateless(),
+            input: ViewportInput::from_preset(BindingPreset::Viewer),
             any_pressed: false,
         }
     }
@@ -378,11 +384,11 @@ impl shader::Program<Message> for SceneSnapshot {
     type State = ViewportState;
     type Primitive = ViewportPrimitive;
 
-    /// Translate Iced events into `ViewportEvent`s, forward them to
-    /// `OrbitCameraController`, and apply the result to the camera immediately.
+    /// Translate Iced events into `ViewportEvent`s, resolve them through the
+    /// widget's `ViewportInput`, and apply the result to the camera immediately.
     ///
     /// Because iced delivers one event per `update()` call (no explicit frame
-    /// boundary), we call `begin_frame` + `apply_to_camera` around each event.
+    /// boundary), we call `begin_frame` then resolve and apply around each event.
     /// `begin_frame` only resets the per-frame drag/wheel accumulators : it
     /// preserves `pointer_pos` and `button_held` : so delta computation remains
     /// correct across consecutive `PointerMoved` events.
@@ -398,18 +404,21 @@ impl shader::Program<Message> for SceneSnapshot {
             focused: true,
             viewport_size: glam::vec2(bounds.width, bounds.height).into(),
         };
+        // Pan reads the viewport height off the controller.
+        state.controller.set_viewport_size(vp_ctx.viewport_size);
 
         match event {
             Event::Keyboard(iced::keyboard::Event::ModifiersChanged(mods)) => {
-                state.controller.begin_frame(vp_ctx);
+                state.input.begin_frame(vp_ctx);
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::ModifiersChanged(if mods.shift() {
                         Modifiers::SHIFT
                     } else {
                         Modifiers::NONE
                     }));
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 None
             }
 
@@ -421,15 +430,16 @@ impl shader::Program<Message> for SceneSnapshot {
                     mouse::Button::Middle => MouseButton::Middle,
                     _ => return None,
                 };
-                state.controller.begin_frame(vp_ctx);
-                state.controller.push_event(ViewportEvent::PointerMoved {
+                state.input.begin_frame(vp_ctx);
+                state.input.push_event(ViewportEvent::PointerMoved {
                     position: glam::vec2(pos.x, pos.y),
                 });
-                state.controller.push_event(ViewportEvent::MouseButton {
+                state.input.push_event(ViewportEvent::MouseButton {
                     button: vp_btn,
                     state: ButtonState::Pressed,
                 });
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 state.any_pressed = true;
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
             }
@@ -441,23 +451,25 @@ impl shader::Program<Message> for SceneSnapshot {
                     mouse::Button::Middle => MouseButton::Middle,
                     _ => return None,
                 };
-                state.controller.begin_frame(vp_ctx);
-                state.controller.push_event(ViewportEvent::MouseButton {
+                state.input.begin_frame(vp_ctx);
+                state.input.push_event(ViewportEvent::MouseButton {
                     button: vp_btn,
                     state: ButtonState::Released,
                 });
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 state.any_pressed = false;
                 None
             }
 
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 let pos = cursor.position_in(bounds)?;
-                state.controller.begin_frame(vp_ctx);
-                state.controller.push_event(ViewportEvent::PointerMoved {
+                state.input.begin_frame(vp_ctx);
+                state.input.push_event(ViewportEvent::PointerMoved {
                     position: glam::vec2(pos.x, pos.y),
                 });
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 if state.any_pressed {
                     Some(iced::widget::shader::Action::request_redraw().and_capture())
                 } else {
@@ -471,19 +483,21 @@ impl shader::Program<Message> for SceneSnapshot {
                     mouse::ScrollDelta::Lines { y, .. } => (*y, ScrollUnits::Lines),
                     mouse::ScrollDelta::Pixels { y, .. } => (*y, ScrollUnits::Pixels),
                 };
-                state.controller.begin_frame(vp_ctx);
-                state.controller.push_event(ViewportEvent::Wheel {
+                state.input.begin_frame(vp_ctx);
+                state.input.push_event(ViewportEvent::Wheel {
                     delta: glam::vec2(0.0, scroll_y),
                     units,
                 });
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 Some(iced::widget::shader::Action::request_redraw().and_capture())
             }
 
             Event::Mouse(mouse::Event::CursorLeft) => {
-                state.controller.begin_frame(vp_ctx);
-                state.controller.push_event(ViewportEvent::PointerLeft);
-                state.controller.apply_to_camera(&mut state.camera);
+                state.input.begin_frame(vp_ctx);
+                state.input.push_event(ViewportEvent::PointerLeft);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 state.any_pressed = false;
                 None
             }
@@ -499,7 +513,7 @@ impl shader::Program<Message> for SceneSnapshot {
         bounds: Rectangle,
     ) -> Self::Primitive {
         // Snapshot the camera with the current aspect ratio.
-        // Camera is updated in update() via apply_to_camera.
+        // Camera is updated in update() by applying the resolved frame.
         let mut cam = state.camera.clone();
         cam.set_aspect_ratio(bounds.width, bounds.height);
 

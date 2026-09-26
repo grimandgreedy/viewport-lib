@@ -17,8 +17,8 @@ pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightingSettings, ManipResult,
     ManipulationContext, ManipulationController, Material, MeshId, OrbitCameraController,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
-    primitives,
+    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput,
+    ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -56,6 +56,9 @@ fn main() -> eframe::Result {
 struct App {
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     manip: ManipulationController,
     scene_items: Vec<SceneRenderItem>,
     selected: Option<usize>,
@@ -85,7 +88,8 @@ impl App {
                 distance: 10.0,
                 ..Camera::default()
             },
-            controller: OrbitCameraController::viewport_primitives(),
+            controller: OrbitCameraController::new_stateless(),
+            input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             manip: ManipulationController::new(),
             scene_items: vec![
                 make(m_sphere, [-2.5, 0.0, 0.0], [0.9, 0.5, 0.2]),
@@ -135,14 +139,17 @@ impl App {
         self.drag_started = false;
         self.clicked = false;
 
-        self.controller.begin_frame(ViewportContext {
+        self.input.begin_frame(ViewportContext {
             hovered: response.hovered(),
             focused: response.has_focus(),
             viewport_size: [rect.width(), rect.height()],
         });
+        // Pan reads the viewport height off the controller.
+        self.controller
+            .set_viewport_size([rect.width(), rect.height()]);
 
         ui.input(|i| {
-            self.controller
+            self.input
                 .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                     alt: i.modifiers.alt,
                     shift: i.modifiers.shift,
@@ -157,7 +164,7 @@ impl App {
             self.cursor_prev = self.cursor_viewport;
             self.cursor_viewport = local_pos;
             if let Some(pos) = local_pos {
-                self.controller
+                self.input
                     .push_event(ViewportEvent::PointerMoved { position: pos });
             }
 
@@ -172,7 +179,7 @@ impl App {
                             egui::PointerButton::Middle => vpl::MouseButton::Middle,
                             _ => continue,
                         };
-                        self.controller.push_event(ViewportEvent::MouseButton {
+                        self.input.push_event(ViewportEvent::MouseButton {
                             button: vp_button,
                             state: if *pressed {
                                 ButtonState::Pressed
@@ -206,7 +213,7 @@ impl App {
                             egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                             egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                         };
-                        self.controller.push_event(ViewportEvent::Wheel {
+                        self.input.push_event(ViewportEvent::Wheel {
                             delta: glam::Vec2::new(delta.x, delta.y),
                             units,
                         });
@@ -242,11 +249,12 @@ impl App {
             clicked: self.clicked,
         };
 
-        let action_frame = if self.manip.is_active() {
-            self.controller.resolve()
-        } else {
-            self.controller.apply_to_camera(&mut self.camera)
-        };
+        // One resolve per frame; the camera only moves when no manipulation
+        // session is holding the pointer.
+        let action_frame = self.input.resolve();
+        if !self.manip.is_active() {
+            self.controller.apply(&mut self.camera, &action_frame);
+        }
         self.camera.set_aspect_ratio(w, h);
 
         match self.manip.update(&action_frame, manip_ctx) {

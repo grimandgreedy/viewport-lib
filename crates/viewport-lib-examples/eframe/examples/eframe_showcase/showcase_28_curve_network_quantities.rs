@@ -7,13 +7,14 @@
 //! - **NodeColour**: per-node direct RGBA (smooth gradient along strip)
 //! - **EdgeColour**: per-edge direct RGBA (flat constant colour per segment)
 //! - **NodeRadius**: per-node line width that varies along the strip
-//! - **NodeVectors**: tangent arrows at each node (auto-rendered via GlyphItem)
+//! - **NodeVectors**: tangent arrows at each node, as their own vector field
 //! - **EdgeVectors**: normal arrows at each segment midpoint
 
 use crate::App;
 use crate::eframe::egui;
 use std::f32::consts::TAU;
 use viewport_lib as vpl;
+use viewport_lib_item_types::VectorFieldItem;
 use vpl::{
     BuiltinColourmap, ColourmapId, FrameData, LightingSettings, PolylineItem, SceneRenderItem,
 };
@@ -31,6 +32,8 @@ pub enum CnqMode {
 pub(crate) struct CnqState {
     pub mode: CnqMode,
     pub line_width: f32,
+    /// Arrow the two vector modes instance, uploaded on first build.
+    pub arrow_shape_id: vpl::MeshId,
 }
 
 impl Default for CnqState {
@@ -38,6 +41,7 @@ impl Default for CnqState {
         Self {
             mode: CnqMode::EdgeScalar,
             line_width: 4.0,
+            arrow_shape_id: vpl::MeshId::INVALID,
         }
     }
 }
@@ -66,13 +70,14 @@ pub(crate) fn controls_cnq(app: &mut App, ui: &mut egui::Ui) {
 ///
 /// Uses a helix with 120 nodes as the base geometry.  All quantity data is
 /// derived analytically from the helix parameter `t` in [0, 2pi].
-pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
+/// The helix every mode is built on: positions, unit tangents, and radial
+/// outward normals.
+fn cnq_helix() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 3]>) {
     let n = 120usize;
     let turns = 3.0_f32;
     let radius = 2.0_f32;
     let height = 4.0_f32;
 
-    // Build helix positions and analytic per-node data.
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(n);
     let mut tangents: Vec<[f32; 3]> = Vec::with_capacity(n);
     let mut normals_3d: Vec<[f32; 3]> = Vec::with_capacity(n);
@@ -96,6 +101,13 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
         let ny = t.sin();
         normals_3d.push([nx, ny, 0.0]);
     }
+
+    (positions, tangents, normals_3d)
+}
+
+pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
+    let (positions, _tangents, _normals_3d) = cnq_helix();
+    let n = positions.len();
 
     // Total segment count for edge quantities.
     let num_segs = n - 1;
@@ -160,32 +172,60 @@ pub(crate) fn make_cnq_polyline_item(app: &App) -> PolylineItem {
                 .collect();
         }
 
-        CnqMode::NodeVectors => {
-            // Per-node vectors: scaled tangents.
-            item.node_vectors = tangents
-                .iter()
-                .map(|&[tx, ty, tz]| [tx * 0.3, ty * 0.3, tz * 0.3])
-                .collect();
-            item.vector_scale = 0.8;
-        }
-
-        CnqMode::EdgeVectors => {
-            // Per-edge vectors: radial outward normals at each midpoint.
-            item.edge_vectors = (0..num_segs)
-                .map(|i| {
-                    let n0 = normals_3d[i];
-                    let n1 = normals_3d[i + 1];
-                    let mx = (n0[0] + n1[0]) * 0.5 * 0.4;
-                    let my = (n0[1] + n1[1]) * 0.5 * 0.4;
-                    let mz = (n0[2] + n1[2]) * 0.5 * 0.4;
-                    [mx, my, mz]
-                })
-                .collect();
-            item.vector_scale = 0.8;
-        }
+        // The vector modes draw their arrows as a separate item: a curve
+        // carries positions, not a vector field.
+        CnqMode::NodeVectors | CnqMode::EdgeVectors => {}
     }
 
     item
+}
+
+/// Arrows for the two vector modes, as their own item rather than something
+/// the polyline generates.
+pub(crate) fn make_cnq_vectors(app: &App) -> Option<VectorFieldItem> {
+    let (positions, tangents, normals_3d) = cnq_helix();
+    let num_segs = positions.len().saturating_sub(1);
+
+    let (at, vectors) = match app.cnq_state.mode {
+        CnqMode::NodeVectors => (
+            positions.clone(),
+            tangents
+                .iter()
+                .map(|&[tx, ty, tz]| [tx * 0.3, ty * 0.3, tz * 0.3])
+                .collect::<Vec<_>>(),
+        ),
+        CnqMode::EdgeVectors => (
+            (0..num_segs)
+                .map(|i| {
+                    let a = positions[i];
+                    let b = positions[i + 1];
+                    [
+                        (a[0] + b[0]) * 0.5,
+                        (a[1] + b[1]) * 0.5,
+                        (a[2] + b[2]) * 0.5,
+                    ]
+                })
+                .collect(),
+            (0..num_segs)
+                .map(|i| {
+                    let n0 = normals_3d[i];
+                    let n1 = normals_3d[i + 1];
+                    [
+                        (n0[0] + n1[0]) * 0.5 * 0.4,
+                        (n0[1] + n1[1]) * 0.5 * 0.4,
+                        (n0[2] + n1[2]) * 0.5 * 0.4,
+                    ]
+                })
+                .collect(),
+        ),
+        _ => return None,
+    };
+
+    let mut g = VectorFieldItem::new(app.cnq_state.arrow_shape_id);
+    g.positions = at;
+    g.vectors = vectors;
+    g.scale = 0.8;
+    Some(g)
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +239,12 @@ pub(crate) fn cnq_collect_scene_items(
 }
 
 pub(crate) fn submit_cnq_items(app: &App, fd: &mut FrameData) {
-    fd.scene.polylines.push(make_cnq_polyline_item(app));
+    fd.scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .push(make_cnq_polyline_item(app));
+    if let Some(vectors) = make_cnq_vectors(app) {
+        fd.scene.items_mut::<VectorFieldItem>().push(vectors);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,13 +252,20 @@ pub(crate) fn submit_cnq_items(app: &App, fd: &mut FrameData) {
 // ---------------------------------------------------------------------------
 
 /// Whether the host should call [`build`] before the next frame.
-pub(crate) fn needs_build(_app: &crate::App) -> bool {
-    false
+pub(crate) fn needs_build(app: &crate::App) -> bool {
+    app.cnq_state.arrow_shape_id == vpl::MeshId::INVALID
+}
+
+/// Upload the arrow the two vector modes instance.
+pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+    app.cnq_state.arrow_shape_id = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+        .expect("cnq arrow shape mesh");
 }
 
 /// Build this showcase's scene and frame its opening camera. Called once, on
 /// the first frame after it becomes the active showcase.
-
 
 // ---------------------------------------------------------------------------
 // Per-frame scene contents
@@ -227,8 +279,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            cnq_collect_scene_items(app);
+        let (items, lighting, sg, ss) = cnq_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -247,11 +298,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
     // Curve network quantities (Showcase 28) : submitted every frame.
     submit_cnq_items(app, &mut *fd);
 }
@@ -263,30 +310,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -324,13 +363,26 @@ impl crate::Showcase for ScCurveNetworkQuantities {
     fn needs_build(&self, app: &crate::App) -> bool {
         needs_build(app)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
+        build(app, renderer)
+    }
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -339,7 +391,12 @@ impl crate::Showcase for ScCurveNetworkQuantities {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_cnq(app, ui)
     }
 }

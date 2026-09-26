@@ -21,10 +21,7 @@
 //!
 //! // After step: convert accumulated primitives to render items.
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
-//!     frame_data.scene.polylines.extend(dd.to_polylines());
-//!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.point_clouds.push(pc);
-//!     }
+//!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
 //!     frame_data.overlays.labels.extend(dd.to_labels());
 //! }
 //! ```
@@ -55,10 +52,7 @@
 //! ```rust,ignore
 //! // After step():
 //! if let Some(dd) = runtime.resources().get::<DebugDraw>() {
-//!     frame_data.scene.polylines.extend(dd.to_polylines());
-//!     if let Some(pc) = dd.to_point_cloud() {
-//!         frame_data.scene.point_clouds.push(pc);
-//!     }
+//!     frame_data.scene.items_mut::<crate::PolylineItem>().extend(dd.to_polylines());
 //!     frame_data.overlays.labels.extend(dd.to_labels());
 //! }
 //! ```
@@ -71,7 +65,7 @@
 
 use std::collections::HashMap;
 
-use crate::renderer::{LabelItem, PointCloudItem, PolylineItem};
+use crate::renderer::{LabelItem, PolylineItem};
 
 // ---------------------------------------------------------------------------
 // DebugLayer
@@ -629,48 +623,6 @@ impl DebugDraw {
             .collect()
     }
 
-    /// Convert accumulated point primitives to a single point cloud render item.
-    ///
-    /// Returns `None` when no point primitives are present or when `enabled` is `false`.
-    /// Dev-layer points are skipped when [`dev_enabled`](Self::dev_enabled) is `false`.
-    pub fn to_point_cloud(&self) -> Option<PointCloudItem> {
-        if !self.enabled {
-            return None;
-        }
-
-        let mut positions = Vec::new();
-        let mut colours = Vec::new();
-        let mut radii = Vec::new();
-
-        for prim in self.prims() {
-            if prim.layer() == DebugLayer::Dev && !self.dev_enabled {
-                continue;
-            }
-            if let DebugPrim::Point {
-                position,
-                radius,
-                colour,
-                ..
-            } = prim
-            {
-                positions.push((*position).into());
-                colours.push((*colour).into());
-                radii.push(*radius);
-            }
-        }
-
-        if positions.is_empty() {
-            return None;
-        }
-
-        Some(PointCloudItem {
-            positions,
-            colours,
-            radii,
-            ..PointCloudItem::default()
-        })
-    }
-
     /// Convert accumulated label primitives to label render items.
     ///
     /// Returns an empty `Vec` when no label primitives are present or when `enabled` is `false`.
@@ -893,7 +845,6 @@ mod tests {
         dd.label(glam::Vec3::ZERO, "text", red());
         assert_eq!(dd.transient_count(), 0);
         assert!(dd.to_polylines().is_empty());
-        assert!(dd.to_point_cloud().is_none());
         assert!(dd.to_labels().is_empty());
     }
 
@@ -972,19 +923,6 @@ mod tests {
         // 3 circles * 33 points each (32 segs + close).
         let total: usize = polylines.iter().map(|p| p.positions.len()).sum();
         assert_eq!(total, 3 * 33);
-    }
-
-    #[test]
-    fn test_to_point_cloud_produces_output() {
-        let mut dd = DebugDraw::new();
-        dd.point(glam::Vec3::ZERO, 5.0, red());
-        dd.point(glam::Vec3::X, 3.0, green());
-        let pc = dd.to_point_cloud();
-        assert!(pc.is_some());
-        let pc = pc.unwrap();
-        assert_eq!(pc.positions.len(), 2);
-        assert_eq!(pc.colours.len(), 2);
-        assert_eq!(pc.radii.len(), 2);
     }
 
     #[test]

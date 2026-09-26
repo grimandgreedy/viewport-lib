@@ -11,7 +11,9 @@ see it: the only symptom is a blank page in one browser.
 
 So this hands the composed shader set to the browser's own front end. It reads
 the `.wgsl` files `build.rs` writes into `OUT_DIR` (includes already resolved),
-loads them in headless Chrome, and calls `createShaderModule` on each one.
+adds the shaders the item-type crates compose at runtime (asked for by name and
+source through their own dump-shaders example), loads the lot in headless
+Chrome, and calls `createShaderModule` on each one.
 
 What it does not cover: the substitutions the renderer makes at runtime, such as
 stripping the debug-vis block or composing a registered deformer into the mesh
@@ -132,6 +134,23 @@ def out_dir_from_cargo(repo_root, build):
     return out
 
 
+def item_type_shaders(repo_root, build):
+    """The item-type crates compose their shaders in Rust, so ask them.
+
+    A body under `src/` is a fragment: it declares no group-0 bindings and
+    calls helpers it does not define. Only the crate knows what the pipeline
+    actually compiles, so it prints the composed set.
+    """
+    cmd = ["cargo", "run", "-q", "-p", "viewport-lib-item-types", "--example", "dump_shaders"]
+    if not build:
+        cmd.append("--offline")
+    result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        raise SystemExit("dumping the item-type shaders failed")
+    return json.loads(result.stdout)
+
+
 def find_chrome(explicit):
     if explicit:
         return explicit
@@ -167,6 +186,10 @@ def main():
     shaders = {p.name: p.read_text() for p in sorted(out_dir.glob("*.wgsl"))}
     if not shaders:
         raise SystemExit(f"no .wgsl files in {out_dir}")
+    # Namespaced, because a name can legitimately appear in both sets while a
+    # type is mid-migration and the two copies are different sources.
+    for name, source in item_type_shaders(repo_root, build=not args.no_build).items():
+        shaders[f"item-types/{name}"] = source
     print(f"checking {len(shaders)} shaders from {out_dir}")
 
     page_dir = pathlib.Path(tempfile.mkdtemp(prefix="vpl-shader-check-"))

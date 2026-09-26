@@ -20,16 +20,18 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::GpuParticleSystems;
+use viewport_lib_item_types::{
+    ForceField, GpuParticleSystemConfig, GpuParticleSystemId, GpuParticleSystemItem,
+    ParticleMeshAlign, ParticleRender, RibbonItem, SpawnShape, SpriteItem, SpriteLitParams,
+    SpriteNormalMode, SpriteOrientation, SpriteSizeMode, VelocityDist,
+};
 use vpl::Selection;
 #[allow(unused_imports)]
-use vpl::renderer::{SpriteLitParams, SpriteNormalMode};
-use vpl::scene::{Scene, build_light_glyphs};
+use vpl::scene::{Scene, build_light_indicators};
 use vpl::{
-    BackfacePolicy, ForceField, FrameData, GpuParticleSystemConfig, GpuParticleSystemId,
-    GpuParticleSystemItem, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
-    ParticleMeshAlign, ParticleRender, PolylineItem, RibbonItem, SceneRenderItem, SpawnShape,
-    SpriteBlend, SpriteItem, SpriteOrientation, SpriteSizeMode, VelocityDist, ViewportRenderer,
-    primitives,
+    BackfacePolicy, FrameData, LightKind, LightSource, LightingSettings, MeshId, MeshInstanceItem,
+    PolylineItem, SceneRenderItem, SpriteBlend, ViewportRenderer, primitives,
 };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +125,9 @@ pub(crate) struct Particle {
 
 pub(crate) struct SpriteState {
     pub built: bool,
+    /// Meshes the light indicators are drawn with.
+    pub light_arrow: MeshId,
+    pub light_sphere: MeshId,
     pub sub_mode: SpriteSubMode,
 
     // Mode A
@@ -178,7 +183,7 @@ pub(crate) struct SpriteState {
     pub lit_show_both: bool,
     /// Scene-graph that owns the directional light driving the Lit demo. A
     /// scene-graph light is required to render the built-in light glyph
-    /// (`build_light_glyphs`), so the rotating arrow shows up in the viewport.
+    /// (`build_light_indicators`), so the rotating arrow shows up in the viewport.
     pub lit_scene: Scene,
     /// Node id for the directional light in `lit_scene`.
     pub lit_light_id: u64,
@@ -222,6 +227,8 @@ impl Default for SpriteState {
         // Particle phase data is populated in build_sprite_scene, not here.
         Self {
             built: false,
+            light_arrow: MeshId::INVALID,
+            light_sphere: MeshId::INVALID,
             sub_mode: SpriteSubMode::Particles,
             sphere_id: MeshId::INVALID,
             sprite_tex: vpl::TextureId::INVALID,
@@ -293,6 +300,18 @@ impl Default for SpriteState {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn build_sprite_scene(app: &mut App, renderer: &mut ViewportRenderer) {
+    // The light indicators are drawn as meshes, so the app supplies the shapes.
+    let light_arrow = primitives::arrow(0.05, 0.12, 0.3, 16);
+    let light_sphere = primitives::icosphere(1.0, 2);
+    app.sprite_state.light_arrow = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &light_arrow)
+        .expect("light indicator arrow upload");
+    app.sprite_state.light_sphere = renderer
+        .resources_mut()
+        .upload_mesh_data(&app.device, &light_sphere)
+        .expect("light indicator sphere upload");
+
     // Upload a sphere mesh for Mode A.
     let sphere_mesh = primitives::sphere(2.0, 32, 16);
     let sphere_id = renderer
@@ -1725,15 +1744,25 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
     if !app.sprite_state.built {
         return;
     }
-    fd.scene.sprite_items.extend(sprite_items(app));
-    fd.scene.polylines.extend(ring_polylines(app));
+    fd.scene
+        .items_mut::<viewport_lib_item_types::SpriteItem>()
+        .extend(sprite_items(app));
+    fd.scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .extend(ring_polylines(app));
     fd.scene.mesh_instances.extend(mesh_instance_items(app));
-    fd.scene.ribbon_items.extend(trail_ribbon_items(app));
+    fd.scene
+        .items_mut::<viewport_lib_item_types::RibbonItem>()
+        .extend(trail_ribbon_items(app));
     if let Some(item) = gpu_particle_item(app, dt) {
-        fd.scene.gpu_particle_systems.push(item);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::GpuParticleSystemItem>()
+            .push(item);
     }
     if let Some(item) = gpu_mesh_particle_item(app, dt) {
-        fd.scene.gpu_particle_systems.push(item);
+        fd.scene
+            .items_mut::<viewport_lib_item_types::GpuParticleSystemItem>()
+            .push(item);
     }
 
     // Lit sub-mode: rewrite the scene-graph directional light each frame so
@@ -1770,10 +1799,14 @@ pub(crate) fn submit_sprite_items(app: &mut App, fd: &mut FrameData, dt: f32) {
         fd.scene
             .lights
             .extend(app.sprite_state.lit_scene.collect_lights());
-        let (glyphs, polylines) =
-            build_light_glyphs(&app.sprite_state.lit_scene, &Selection::new());
-        fd.scene.glyphs.extend(glyphs);
-        fd.scene.polylines.extend(polylines);
+        let indicators = build_light_indicators(&app.sprite_state.lit_scene, &Selection::new());
+        fd.scene.mesh_instances.extend(
+            indicators
+                .to_mesh_instances(app.sprite_state.light_arrow, app.sprite_state.light_sphere),
+        );
+        fd.scene
+            .items_mut::<viewport_lib::PolylineItem>()
+            .extend(indicators.outlines);
     }
 }
 

@@ -14,7 +14,7 @@ use viewport_lib::wgpu;
 mod common;
 use common::*;
 
-use viewport_lib::{FillRule, OutlineMode, OverlayFill, OverlayShape, OverlayShapeItem, SubPath};
+use viewport_lib::{FillRule, OutlineMode, OverlayFill, OverlayShapeItem, SubPath};
 
 /// A 64x64 frame looking at nothing, flat grey background, chrome off.
 fn overlay_frame(size: u32) -> FrameData {

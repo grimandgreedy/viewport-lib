@@ -892,7 +892,7 @@ pub(crate) fn decal46_scene_items(app: &mut App) -> Vec<SceneRenderItem> {
         .collect_render_items(&app.decal46_state.selection)
 }
 
-/// Push all active decals into `fd.scene.decals`.
+/// Push all active decals into `fd.scene.items_mut::<viewport_lib::DecalItem>()`.
 pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
     let st = &app.decal46_state;
 
@@ -912,7 +912,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.metallic = 0.0;
             item.alpha = 1.0;
             item.sort_key = 10;
-            fd.scene.decals.push(item);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
         }
     }
 
@@ -946,7 +946,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.roughness = 1.0;
             item.metallic = 0.0;
             item.alpha = 1.0;
-            fd.scene.decals.push(item);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
         }
     }
 
@@ -965,7 +965,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.roughness = 1.0;
             item.metallic = 0.0;
             item.alpha = 1.0;
-            fd.scene.decals.push(item);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
         }
     }
 
@@ -1011,11 +1011,13 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         } else {
             0.0
         };
-        fd.scene.decals.push(item);
+        fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
     }
 
     // live decals (fading + animation) from the scene.
-    fd.scene.decals.extend(st.scene.collect_decal_items());
+    fd.scene
+        .items_mut::<viewport_lib::DecalItem>()
+        .extend(st.scene.collect_decal_items());
 
     // glowing rune on the wall, center-right.
     if st.show_rune {
@@ -1028,7 +1030,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.alpha = 1.0;
             item.emissive = st.rune_emissive.into();
             item.edge_fade = 0.1;
-            fd.scene.decals.push(item);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
         }
     }
 
@@ -1053,7 +1055,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             } else {
                 vpl::DecalProjection::Planar
             };
-            fd.scene.decals.push(item);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
         }
     }
 
@@ -1077,7 +1079,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
         item.projection = DecalProjection::Cylindrical {
             facing: st.cyl_facing,
         };
-        fd.scene.decals.push(item);
+        fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
     }
 
     // spark-impact on the wall, alongside the rune.
@@ -1090,7 +1092,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.texture_id = spark;
             item.alpha = 1.0;
             item.emissive = st.spark_emissive.into();
-            fd.scene.decals.push(item);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
         }
     }
 
@@ -1111,7 +1113,7 @@ pub(crate) fn submit_decal46_items(app: &App, fd: &mut vpl::FrameData) {
             item.blend_mode = DecalBlendMode::Additive;
             item.alpha = st.fire_alpha;
             item.emissive = 1.5;
-            fd.scene.decals.push(item);
+            fd.scene.items_mut::<viewport_lib::DecalItem>().push(item);
         }
     }
 }
@@ -1426,7 +1428,7 @@ pub(crate) fn scene(
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
 pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
-    // Decals (Showcase 48): push placed decals into fd.scene.decals.
+    // Decals (Showcase 48): push placed decals into fd.scene.items_mut::<viewport_lib::DecalItem>().
     if app.decal46_state.built {
         submit_decal46_items(app, &mut *fd);
     }

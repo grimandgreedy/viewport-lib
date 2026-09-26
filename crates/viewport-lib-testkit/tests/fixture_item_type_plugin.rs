@@ -49,7 +49,7 @@ fn item_type_fixture_dispatches_only_when_submitted() {
         .submit_plugin_items("probe_items", CountedItemCollection::new(3));
     harness.render(&frame, SIZE, SIZE);
     log.assert_take(&[
-        "prepare:probe_items:items=3:vp=0",
+        "prepare:probe_items:items=3:vp=0:gen=0",
         "paint:probe_items:items=3:vp=0",
     ]);
 }
@@ -108,7 +108,7 @@ fn item_type_fixture_receives_hidden_items() {
     harness.render(&frame, SIZE, SIZE);
 
     assert_eq!(
-        log.count("prepare:probe_items:items=2"),
+        log.count("prepare:probe_items:items=2:vp=0:gen=0"),
         1,
         "the collection must arrive unfiltered; log holds {:?}",
         log.entries()
@@ -158,22 +158,25 @@ fn item_type_fixture_is_consulted_by_cpu_pick() {
 // resolves, matching the other test binaries in this crate.
 const _: Option<wgpu::TextureFormat> = None;
 
-/// The `vpl.` prefix belongs to the built-in item types, and the
-/// renderer's per-type calls (`upload_sprite_set` and the rest) resolve their
-/// plugin by that name and downcast it. A plugin that took one of those names
-/// would leave those calls looking at a type that is not what they expect, so
-/// the registration is refused where the mistake is made.
+/// The renderer's per-type calls resolve their plugin by name and downcast it.
+/// A plugin that took the name of a type the renderer installs itself would
+/// leave those calls looking at a type that is not what they expect, so the
+/// registration is refused where the mistake is made. Only the names the
+/// renderer still owns are refused: a type that has moved to a crate of its own
+/// registers the way any other plugin does.
 #[test]
-#[should_panic(expected = "is reserved")]
+#[should_panic(expected = "is taken by a type the renderer installed itself")]
 fn a_plugin_cannot_take_a_built_in_item_type_name() {
     let Some(mut harness) = Harness::new() else {
         // Nothing to assert without a device, and the test is `should_panic`,
         // so panic deliberately rather than reporting a false pass.
-        panic!("skipping: no GPU adapter available (is reserved)");
+        panic!(
+            "skipping: no GPU adapter available (is taken by a type the renderer installed itself)"
+        );
     };
     harness.renderer.with_item_type_plugin(
         &harness.device,
-        Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.sprite")),
+        Box::new(LoggingItemTypePlugin::new(CallLog::new(), "vpl.polyline")),
     );
 }
 
@@ -198,5 +201,51 @@ fn a_plugin_may_register_under_any_unreserved_name() {
             .renderer
             .has_item_type_plugin(&format!("{reserved}sprite")),
         "the built-in sprite type is still the one under its own name"
+    );
+}
+
+/// The host's scene generation reaches a plugin's `prepare`, which is what lets
+/// one skip a rebuild when the scene did not change.
+///
+/// Not a per-collection signal and not the library's own counter: it is whatever
+/// the host put on `SceneFrame::generation`, forwarded unchanged. A plugin that
+/// gates on it alone trusts the host to have bumped it, which is the same hazard
+/// the instanced mesh path carries.
+#[test]
+fn item_type_fixture_sees_the_scene_generation() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let log = CallLog::new();
+    harness.renderer.with_item_type_plugin(
+        &harness.device,
+        Box::new(LoggingItemTypePlugin::new(log.clone(), "probe_items")),
+    );
+    log.clear();
+
+    for generation in [7u64, 7, 9] {
+        let mut frame = probe_frame(SIZE, [0.1, 0.1, 0.1, 1.0]);
+        frame.scene.generation = generation;
+        frame
+            .scene
+            .submit_plugin_items("probe_items", CountedItemCollection::new(1));
+        harness.render(&frame, SIZE, SIZE);
+    }
+
+    let prepares: Vec<String> = log
+        .entries()
+        .into_iter()
+        .filter(|e| e.starts_with("prepare:"))
+        .collect();
+    assert_eq!(
+        prepares,
+        vec![
+            "prepare:probe_items:items=1:vp=0:gen=7".to_string(),
+            "prepare:probe_items:items=1:vp=0:gen=7".to_string(),
+            "prepare:probe_items:items=1:vp=0:gen=9".to_string(),
+        ],
+        "the generation must arrive unchanged, repeats included; log holds {:?}",
+        log.entries()
     );
 }

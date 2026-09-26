@@ -510,7 +510,7 @@ impl DeviceResources {
                         }
                     }
                     SubObjectRef::Instance(i) | SubObjectRef::Splat(i) => {
-                        // Instanced items (glyphs, tensor glyphs, sprites) and
+                        // Instanced items (vector and tensor fields, sprites) and
                         // Gaussian splats highlight as a sprite marker at the
                         // instance position, transformed by the node model.
                         if let Some(positions) = sel.instance_lookup.get(node_id) {
@@ -663,24 +663,6 @@ pub(crate) struct OutlineObjectBuffers {
     pub deform_instance: Option<u32>,
     pub _mask_uniform_buf: crate::gpu::Buffer,
     pub mask_bind_group: crate::gpu::BindGroup,
-}
-
-/// Per-item uniform for the point-disc outline mask pass (112 bytes).
-///
-/// Used by every item type that draws its selection mask as screen-space discs
-/// over point positions: gaussian splats and point clouds today.
-///
-/// Padded to 112 bytes to match `OutlineUniform`. Both structs share the same
-/// bind group layout (`outline_bgl`) and wgpu enforces the maximum required
-/// size across all pipelines using that layout.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct PointDiscMaskUniform {
-    pub(crate) model: [[f32; 4]; 4], // 64 bytes
-    pub(crate) viewport_w: f32,      //  4 bytes
-    pub(crate) viewport_h: f32,      //  4 bytes
-    pub(crate) pixel_radius: f32,    //  4 bytes
-    pub(crate) _pad: [f32; 9],       // 36 bytes  (total: 112)
 }
 
 /// Uniform for the fullscreen outline edge-detection pass (32 bytes).

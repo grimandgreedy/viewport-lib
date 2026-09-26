@@ -13,8 +13,8 @@
 // textures, and (optionally) real model files. All behind the `scenes` feature
 // with this module.
 pub mod item_types;
-pub mod overlays;
 pub mod meshes;
+pub mod overlays;
 #[cfg(feature = "real_models")]
 pub mod real_models;
 pub mod rigs;
@@ -23,11 +23,19 @@ pub mod textures;
 use glam::{Mat4, Quat, Vec3};
 use viewport_lib::wgpu;
 use viewport_lib::{
-    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, GaussianSplatItem, GlyphItem,
-    GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, LightingSettings, Material, MeshData,
-    MeshId, MeshInstanceItem, PointCloudItem, PolylineItem, RibbonItem, ScatterSettings,
-    ScatterVolumeItem, SceneFrame, SceneRenderItem, SpriteItem, StreamtubeItem, TensorGlyphItem,
-    TubeItem, ViewportRenderer, VolumeItem, VolumeSurfaceSliceItem, primitives,
+    BackfacePolicy, Camera, CameraFrame, DecalItem, FrameData, LightingSettings, Material,
+    MeshData, MeshId, MeshInstanceItem, PolylineItem, ScatterSettings, SceneFrame, SceneRenderItem,
+    ViewportRenderer, primitives,
+};
+use viewport_lib_item_types::GpuMarchingCubesItem;
+use viewport_lib_item_types::PointCloudItem;
+use viewport_lib_item_types::ScatterVolumeItem;
+use viewport_lib_item_types::VolumeItem;
+use viewport_lib_item_types::{
+    GaussianSplatItem, GpuImplicitItem, ImageSliceItem, VolumeSurfaceSliceItem,
+};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, StreamtubeItem, TensorFieldItem, TubeItem, VectorFieldItem,
 };
 
 /// Resources a scene's `build` function may upload into.
@@ -63,10 +71,10 @@ pub struct BuiltScene {
     pub point_clouds: Vec<PointCloudItem>,
     /// Polyline items.
     pub polylines: Vec<PolylineItem>,
-    /// Glyph (arrow/sphere/cube instance) items.
-    pub glyphs: Vec<GlyphItem>,
-    /// Tensor glyph (ellipsoid) items.
-    pub tensor_glyphs: Vec<TensorGlyphItem>,
+    /// Vector field items.
+    pub vector_fields: Vec<VectorFieldItem>,
+    /// Tensor field items.
+    pub tensor_fields: Vec<TensorFieldItem>,
     /// Tube items.
     pub tube_items: Vec<TubeItem>,
     /// Streamtube items.
@@ -80,7 +88,7 @@ pub struct BuiltScene {
     /// only reproducible because the emit RNG is seeded from a frame counter
     /// rather than from the clock, and the harness pumps a fixed number of
     /// frames.
-    pub gpu_particle_systems: Vec<viewport_lib::GpuParticleSystemItem>,
+    pub gpu_particle_systems: Vec<viewport_lib_item_types::GpuParticleSystemItem>,
     /// Ray-marched volume items.
     pub volumes: Vec<VolumeItem>,
     /// Gaussian splat items.
@@ -188,23 +196,24 @@ pub const TEST_BACKGROUND: [f32; 4] = [0.0437, 0.0437, 0.0513, 1.0];
 pub fn frame_for(scene: &BuiltScene, camera: &Camera, viewport_size: [f32; 2]) -> FrameData {
     let mut sf = SceneFrame::from_surface_items(scene.items.clone());
     sf.generation = scene.generation;
-    sf.point_clouds = scene.point_clouds.clone();
-    sf.polylines = scene.polylines.clone();
-    sf.glyphs = scene.glyphs.clone();
-    sf.tensor_glyphs = scene.tensor_glyphs.clone();
-    sf.tube_items = scene.tube_items.clone();
-    sf.streamtube_items = scene.streamtube_items.clone();
-    sf.ribbon_items = scene.ribbon_items.clone();
-    sf.sprite_items = scene.sprite_items.clone();
-    sf.gpu_particle_systems = scene.gpu_particle_systems.clone();
-    sf.volumes = scene.volumes.clone();
-    sf.gaussian_splats = scene.gaussian_splats.clone();
-    sf.image_slices = scene.image_slices.clone();
-    sf.volume_surface_slices = scene.volume_surface_slices.clone();
-    sf.gpu_implicit = scene.gpu_implicit.clone();
-    sf.gpu_mc_items = scene.gpu_mc_items.clone();
-    sf.scatter_volumes = scene.scatter_volumes.clone();
-    sf.decals = scene.decals.clone();
+    *sf.items_mut::<PointCloudItem>() = scene.point_clouds.clone();
+    *sf.items_mut::<viewport_lib::PolylineItem>() = scene.polylines.clone();
+    *sf.items_mut::<viewport_lib_item_types::VectorFieldItem>() = scene.vector_fields.clone();
+    *sf.items_mut::<viewport_lib_item_types::TensorFieldItem>() = scene.tensor_fields.clone();
+    *sf.items_mut::<viewport_lib_item_types::TubeItem>() = scene.tube_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::StreamtubeItem>() = scene.streamtube_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::RibbonItem>() = scene.ribbon_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::SpriteItem>() = scene.sprite_items.clone();
+    *sf.items_mut::<viewport_lib_item_types::GpuParticleSystemItem>() =
+        scene.gpu_particle_systems.clone();
+    *sf.items_mut::<viewport_lib_item_types::VolumeItem>() = scene.volumes.clone();
+    *sf.items_mut::<GaussianSplatItem>() = scene.gaussian_splats.clone();
+    *sf.items_mut::<ImageSliceItem>() = scene.image_slices.clone();
+    *sf.items_mut::<VolumeSurfaceSliceItem>() = scene.volume_surface_slices.clone();
+    *sf.items_mut::<GpuImplicitItem>() = scene.gpu_implicit.clone();
+    *sf.items_mut::<GpuMarchingCubesItem>() = scene.gpu_mc_items.clone();
+    *sf.items_mut::<ScatterVolumeItem>() = scene.scatter_volumes.clone();
+    *sf.items_mut::<viewport_lib::DecalItem>() = scene.decals.clone();
     sf.mesh_instances = scene.mesh_instances.clone();
     let mut fd = FrameData::new(CameraFrame::from_camera(camera, viewport_size), sf);
     fd.effects.lighting = scene.lighting.clone();
@@ -628,8 +637,12 @@ fn build_point_cloud(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     let mut pc = PointCloudItem::default();
     pc.positions = positions;
-    pc.scalars = scalars;
-    pc.point_size = 5.0;
+    pc.colour = viewport_lib::ColourSource::Scalar {
+        values: scalars,
+        range: None,
+        colourmap: None,
+    };
+    pc.size = viewport_lib::SizeSource::Uniform(5.0);
 
     // A second, much coarser cloud off to one side, marked selected so the
     // reference carries a legible per-point selection outline. Outlining the
@@ -641,8 +654,9 @@ fn build_point_cloud(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
             [2.3 + t.cos() * 0.5, 0.0, t.sin() * 0.5]
         })
         .collect();
-    selected.point_size = 14.0;
-    selected.default_colour = viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15);
+    selected.size = viewport_lib::SizeSource::Uniform(14.0);
+    selected.colour =
+        viewport_lib::ColourSource::Solid(viewport_lib::Colour::srgb_rgb(0.85, 0.15, 0.15));
     selected.settings.pick_id = viewport_lib::PickId(1614);
     selected.settings.selected = true;
 
@@ -672,30 +686,6 @@ fn build_polyline(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
     pl.line_width = 4.0;
     BuiltScene {
         polylines: vec![pl],
-        lighting: rigs::from_above(),
-        ..Default::default()
-    }
-}
-
-fn build_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // An 8x8 grid of arrow glyphs following a simple swirl field.
-    let mut positions = Vec::new();
-    let mut vectors = Vec::new();
-    for i in 0..8 {
-        for j in 0..8 {
-            let x = (i as f32 - 3.5) * 0.7;
-            let y = (j as f32 - 3.5) * 0.7;
-            positions.push([x, y, 0.0]);
-            // Swirl: vector perpendicular to the radius, rising slightly.
-            vectors.push([-y * 0.3, x * 0.3, 0.25]);
-        }
-    }
-    let mut g = GlyphItem::default();
-    g.positions = positions;
-    g.vectors = vectors;
-    g.scale = 0.6;
-    BuiltScene {
-        glyphs: vec![g],
         lighting: rigs::from_above(),
         ..Default::default()
     }
@@ -794,11 +784,6 @@ pub fn catalogue() -> Vec<NamedScene> {
             name: "polyline",
             cameras: standard_cameras(Vec3::ZERO, 7.0),
             build: build_polyline,
-        },
-        NamedScene {
-            name: "glyphs",
-            cameras: standard_cameras(Vec3::ZERO, 8.0),
-            build: build_glyphs,
         },
     ];
     scenes.extend(item_types::scenes());

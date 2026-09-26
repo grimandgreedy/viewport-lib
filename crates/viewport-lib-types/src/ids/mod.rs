@@ -4,7 +4,7 @@
 //! the individual handle types are defined in the domain submodules and
 //! re-exported.
 //!
-//! Most GPU content the renderer stores (meshes, textures, splat sets, volumes,
+//! Most GPU content the renderer stores (meshes, textures, volumes,
 //! curves) is keyed by a handle into a slotted store. A removed entry leaves an
 //! empty slot that a later insert reuses; the handle carries the generation its
 //! slot had when it was issued, and the store bumps that generation on removal.
@@ -124,7 +124,6 @@ pub mod gpu;
 pub mod matcap;
 pub mod mesh;
 pub mod pick;
-pub mod splat;
 pub mod texture;
 pub mod volume;
 
@@ -133,6 +132,5 @@ pub use gpu::{ExternalInstanceSetId, GpuParticleSystemId};
 pub use matcap::MatcapId;
 pub use mesh::{LodGroupId, MeshId};
 pub use pick::PickId;
-pub use splat::GaussianSplatId;
 pub use texture::TextureId;
 pub use volume::{ProjectedTetId, VolumeId};

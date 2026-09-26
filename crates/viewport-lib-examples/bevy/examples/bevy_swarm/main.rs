@@ -21,7 +21,6 @@
 //!   Scroll             : zoom
 //!   Left click a boid  : inspect it (position / velocity in the panel)
 
-use viewport_lib::wgpu;
 use bevy::camera::{ClearColorConfig, Viewport};
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::math::Vec3 as BVec3;
@@ -35,12 +34,13 @@ use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::PrimaryWindow;
 use viewport_lib as vpl;
+use viewport_lib::wgpu;
 
 use glam::{Mat4, Vec2, Vec3};
 use vpl::{
-    ButtonState, Camera as VplCamera, CameraFrame, FrameData, LightingSettings, Material, MeshId,
-    OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera as VplCamera, CameraFrame, FrameData, LightingSettings,
+    Material, MeshId, OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 // Flocking / world tuning.
@@ -103,6 +103,9 @@ struct MainCam3d;
 struct CamState {
     camera: VplCamera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
 }
 
 /// Currently inspected boid, if any.
@@ -267,14 +270,19 @@ fn setup(
     camera.set_fov_y(FOV_Y);
     camera.orbit(0.7, 0.45);
 
-    let mut controller = OrbitCameraController::viewport_primitives();
-    controller.begin_frame(ViewportContext {
+    let controller = OrbitCameraController::new_stateless();
+    let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
+    input.begin_frame(ViewportContext {
         hovered: true,
         focused: true,
         viewport_size: [half_w as f32, h as f32],
     });
 
-    commands.insert_resource(CamState { camera, controller });
+    commands.insert_resource(CamState {
+        camera,
+        controller,
+        input,
+    });
     commands.insert_resource(SwarmRenderData {
         target: target.clone(),
         width: half_w,
@@ -492,11 +500,13 @@ fn camera_input(
     );
 
     let cam = &mut *cam;
-    cam.controller.begin_frame(ViewportContext {
+    cam.input.begin_frame(ViewportContext {
         hovered: true,
         focused: true,
         viewport_size: [vw as f32, h as f32],
     });
+    // Pan reads the viewport height off the controller.
+    cam.controller.set_viewport_size([vw as f32, h as f32]);
 
     for (bevy_btn, vpl_btn) in [
         (MouseButton::Left, vpl::MouseButton::Left),
@@ -504,13 +514,13 @@ fn camera_input(
         (MouseButton::Right, vpl::MouseButton::Right),
     ] {
         if buttons.just_pressed(bevy_btn) {
-            cam.controller.push_event(ViewportEvent::MouseButton {
+            cam.input.push_event(ViewportEvent::MouseButton {
                 button: vpl_btn,
                 state: ButtonState::Pressed,
             });
         }
         if buttons.just_released(bevy_btn) {
-            cam.controller.push_event(ViewportEvent::MouseButton {
+            cam.input.push_event(ViewportEvent::MouseButton {
                 button: vpl_btn,
                 state: ButtonState::Released,
             });
@@ -518,11 +528,11 @@ fn camera_input(
     }
 
     if let Some(p) = win.cursor_position() {
-        cam.controller.push_event(ViewportEvent::PointerMoved {
+        cam.input.push_event(ViewportEvent::PointerMoved {
             position: Vec2::from_array(p.to_array()),
         });
     } else {
-        cam.controller.push_event(ViewportEvent::PointerLeft);
+        cam.input.push_event(ViewportEvent::PointerLeft);
     }
 
     for ev in wheel.read() {
@@ -530,14 +540,15 @@ fn camera_input(
             MouseScrollUnit::Line => ScrollUnits::Lines,
             MouseScrollUnit::Pixel => ScrollUnits::Pixels,
         };
-        cam.controller.push_event(ViewportEvent::Wheel {
+        cam.input.push_event(ViewportEvent::Wheel {
             delta: Vec2::new(ev.x, ev.y),
             units,
         });
     }
 
     // Aspect is set in sync_layout so it always matches the Bevy viewport.
-    let _ = cam.controller.apply_to_camera(&mut cam.camera);
+    let action_frame = cam.input.resolve();
+    cam.controller.apply(&mut cam.camera, &action_frame);
 }
 
 /// Drive the Bevy 3D camera from the shared orbit camera so both views match.

@@ -23,12 +23,12 @@ use viewport_lib as vpl;
 use glam::{Mat4, Vec3};
 use vpl::primitives;
 use vpl::raytrace::{RtBackend, RtCamera, RtLight, RtMaterial, RtScene, RtSettings, Tracer};
+use vpl::wgpu;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
-use vpl::wgpu;
 
 /// Samples to converge to when the camera is idle.
 const TARGET_SPP: u32 = 512;
@@ -562,7 +562,7 @@ impl ApplicationHandler for App {
             );
         }
 
-        let mut state = AppState {
+        let state = AppState {
             window,
             surface,
             device,

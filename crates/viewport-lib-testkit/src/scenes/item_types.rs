@@ -8,24 +8,38 @@
 //! settings that make a still frame repeatable (see the scatter scene).
 
 use glam::{Mat4, Vec3};
+use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
-    Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, GaussianSplatData,
-    GaussianSplatItem, GpuImplicitItem, GpuMarchingCubesItem, ImageSliceItem, ImplicitBlendMode,
-    ImplicitPrimitive, Material, MeshInstanceItem, PickId, RibbonItem, ScatterQuality,
-    ScatterSettings, ScatterVolume, ScatterVolumeItem, ShDegree, SliceAxis, SpriteBlend,
-    SpriteItem, SpriteSizeMode, StreamtubeItem, TensorGlyphItem, TextureData, TubeItem, VolumeData,
-    VolumeItem, VolumeSurfaceSliceItem, primitives,
+    Aabb, ColourmapId, DecalBlendMode, DecalItem, Material, MeshInstanceItem, PickId,
+    ScatterQuality, ScatterSettings, SpriteBlend, TextureData, VolumeData, primitives,
 };
+use viewport_lib_item_types::GpuParticleSystems;
+use viewport_lib_item_types::VolumeItem;
+use viewport_lib_item_types::{GpuMarchingCubesItem, McVolumes};
+use viewport_lib_item_types::{
+    RibbonItem, SpriteItem, SpriteSizeMode, StreamtubeItem, TensorFieldItem, TensorSource,
+    TubeItem, VectorFieldItem,
+};
+use viewport_lib_item_types::{ScatterVolume, ScatterVolumeItem};
 
 use super::{BuildCtx, BuiltScene, NamedCamera, NamedScene, orbit_camera, rigs, standard_cameras};
+use viewport_lib_item_types::{
+    GaussianSplatData, GaussianSplatItem, GpuImplicitItem, ImageSliceItem, ImplicitBlendMode,
+    ImplicitPrimitive, ShDegree, SliceAxis, VolumeSurfaceSliceItem,
+};
 
 /// The item-type scenes appended to the main catalogue.
 pub fn scenes() -> Vec<NamedScene> {
     vec![
         NamedScene {
-            name: "tensor_glyphs",
+            name: "vector_fields",
+            cameras: standard_cameras(Vec3::ZERO, 8.0),
+            build: build_vector_fields,
+        },
+        NamedScene {
+            name: "tensor_fields",
             cameras: standard_cameras(Vec3::ZERO, 6.0),
-            build: build_tensor_glyphs,
+            build: build_tensor_fields,
         },
         NamedScene {
             name: "tubes",
@@ -236,9 +250,48 @@ fn checker_texture(ctx: &mut BuildCtx<'_>, a: [u8; 3], b: [u8; 3]) -> viewport_l
 
 // --- scenes ------------------------------------------------------------------
 
-fn build_tensor_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
-    // A 4x4 grid of ellipsoids sweeping from needle-like to plate-like.
-    let mut tg = TensorGlyphItem::default();
+fn build_vector_fields(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let shape = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::arrow(0.06, 0.15, 0.35, 12))
+        .expect("vector field shape mesh");
+
+    // An 8x8 grid following a simple swirl field, so both the direction and the
+    // magnitude vary across the grid.
+    let mut field = VectorFieldItem::new(shape);
+    for i in 0..8 {
+        for j in 0..8 {
+            let x = (i as f32 - 3.5) * 0.7;
+            let y = (j as f32 - 3.5) * 0.7;
+            field.positions.push([x, y, 0.0]);
+            // Swirl: perpendicular to the radius, rising slightly.
+            field.vectors.push([-y * 0.3, x * 0.3, 0.25]);
+        }
+    }
+    field.scale = 0.6;
+
+    BuiltScene {
+        vector_fields: vec![field],
+        lighting: rigs::from_above(),
+        ..Default::default()
+    }
+}
+
+fn build_tensor_fields(ctx: &mut BuildCtx<'_>) -> BuiltScene {
+    let shape = ctx
+        .renderer
+        .resources_mut()
+        .upload_mesh_data(ctx.device, &primitives::icosphere(1.0, 2))
+        .expect("tensor field shape mesh");
+
+    // A 4x4 grid sweeping from needle-like to plate-like, each one turned a
+    // little further about Z and growing in magnitude across the grid, so the
+    // default colouring by dominant eigenvalue has something to spread over.
+    // The scene hands over raw components, the way a solver writes them, so the
+    // decomposition is part of what the image gates.
+    let mut tg = TensorFieldItem::new(shape);
+    let mut components = Vec::new();
     for i in 0..4 {
         for j in 0..4 {
             let x = (i as f32 - 1.5) * 1.1;
@@ -246,26 +299,38 @@ fn build_tensor_glyphs(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
             tg.positions.push([x, y, 0.0]);
             let linear = 0.15 + i as f32 * 0.14;
             let planar = 0.15 + j as f32 * 0.14;
-            tg.eigenvalues.push([0.55, planar, linear.min(planar)]);
-            tg.eigenvectors
-                .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+            let dominant = 0.30 + (i + j) as f32 * 0.09;
+            let theta = (i * 4 + j) as f32 * 0.19;
+            components.push(rotated_about_z(
+                [dominant, planar.min(dominant), linear.min(planar)],
+                theta,
+            ));
         }
     }
+    tg.tensors = TensorSource::Components(components);
     tg.settings.pick_id = PickId(1601);
 
     // A second, selected item so the outline pass has coverage.
-    let mut sel = TensorGlyphItem::default();
+    let mut sel = TensorFieldItem::new(shape);
     sel.positions.push([0.0, 0.0, 1.4]);
-    sel.eigenvalues.push([0.5, 0.3, 0.2]);
-    sel.eigenvectors
-        .push([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    sel.tensors = TensorSource::Components(vec![rotated_about_z([0.5, 0.3, 0.2], 0.0)]);
     sel.settings.selected = true;
 
     BuiltScene {
-        tensor_glyphs: vec![tg, sel],
+        tensor_fields: vec![tg, sel],
         lighting: rigs::from_above(),
         ..Default::default()
     }
+}
+
+/// The six components of `diag(values)` turned by `theta` about Z, in the
+/// `[xx, yy, zz, xy, xz, yz]` order a tensor field takes.
+fn rotated_about_z(values: [f32; 3], theta: f32) -> [f32; 6] {
+    let r = glam::Mat3::from_rotation_z(theta);
+    let m = r * glam::Mat3::from_diagonal(glam::Vec3::from(values)) * r.transpose();
+    [
+        m.x_axis.x, m.y_axis.y, m.z_axis.z, m.x_axis.y, m.x_axis.z, m.y_axis.z,
+    ]
 }
 
 fn build_tubes(_ctx: &mut BuildCtx<'_>) -> BuiltScene {
@@ -570,9 +635,9 @@ fn build_supersampled_sprite_refraction(ctx: &mut BuildCtx<'_>) -> BuiltScene {
 /// and the image would pin almost nothing.
 fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     let tex = checker_texture(ctx, [255, 170, 60], [90, 40, 150]);
-    let mut config = viewport_lib::GpuParticleSystemConfig::default();
+    let mut config = viewport_lib_item_types::GpuParticleSystemConfig::default();
     config.capacity = 2048;
-    config.render = viewport_lib::ParticleRender::Sprite {
+    config.render = viewport_lib_item_types::ParticleRender::Sprite {
         texture_id: Some(tex),
         blend: SpriteBlend::AlphaBlend,
         size_mode: SpriteSizeMode::WorldSpace,
@@ -585,16 +650,16 @@ fn build_gpu_particles(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         .renderer
         .create_gpu_particle_system(ctx.device, ctx.queue, &config);
 
-    let mut item = viewport_lib::GpuParticleSystemItem::new(system, 0.4);
+    let mut item = viewport_lib_item_types::GpuParticleSystemItem::new(system, 0.4);
     item.emitter.rate = 400.0;
     item.emitter.lifetime = (4.0, 6.0);
     item.emitter.size = 0.3;
     item.emitter.colour = [1.0, 1.0, 1.0, 0.9].into();
-    item.emitter.spawn_shape = viewport_lib::SpawnShape::Sphere {
+    item.emitter.spawn_shape = viewport_lib_item_types::SpawnShape::Sphere {
         center: [0.0, 0.0, -1.8],
         radius: 0.25,
     };
-    item.emitter.initial_velocity = viewport_lib::VelocityDist::UniformCone {
+    item.emitter.initial_velocity = viewport_lib_item_types::VelocityDist::UniformCone {
         axis: [0.0, 0.0, 1.0],
         half_angle: 0.6,
         min_speed: 2.5,
@@ -705,7 +770,7 @@ fn build_gaussian_splats(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     let sid = ctx
         .renderer
-        .upload_gaussian_splat(ctx.device, ctx.queue, &sd)
+        .upload(ctx.device, ctx.queue, &sd)
         .expect("splat upload");
     let mut item = GaussianSplatItem::default();
     item.source = sid;
@@ -950,10 +1015,10 @@ fn build_scatter_layered(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     // it in the wrong order is obvious rather than subtle.
     let mut core = ScatterVolume::sphere_uniform([-0.8, 0.6, 1.3], 1.5, 0.9, [1.0, 0.72, 0.4]);
     core.anisotropy = 0.6;
-    core.density_remap = viewport_lib::DensityRemap::Smoothstep { lo: 0.0, hi: 0.8 };
-    core.emission = viewport_lib::Emission::Strength {
+    core.density_remap = viewport_lib_item_types::DensityRemap::Smoothstep { lo: 0.0, hi: 0.8 };
+    core.emission = viewport_lib_item_types::Emission::Strength {
         strength: 0.8,
-        curve: viewport_lib::EmissionCurve::Power(2.0),
+        curve: viewport_lib_item_types::EmissionCurve::Power(2.0),
     };
 
     let mut fog_item = ScatterVolumeItem::new(fog);
@@ -1006,8 +1071,8 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         [1.0, 1.0, 1.0],
     );
     textured.density_texture = Some(vid);
-    textured.colour = viewport_lib::ColourSource::Ramp(ColourmapId(0));
-    textured.density_remap = viewport_lib::DensityRemap::Smoothstep { lo: 0.1, hi: 0.7 };
+    textured.colour = viewport_lib_item_types::ColourSource::Ramp(ColourmapId(0));
+    textured.density_remap = viewport_lib_item_types::DensityRemap::Smoothstep { lo: 0.1, hi: 0.7 };
 
     // Static noise: scroll velocity and time scale are both zero, so the
     // field does not move and a still frame repeats exactly.
@@ -1019,7 +1084,7 @@ fn build_scatter_textured(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.85,
         [0.55, 0.85, 1.0],
     );
-    let mut noise = viewport_lib::NoiseDriver::default();
+    let mut noise = viewport_lib_item_types::NoiseDriver::default();
     noise.scale = 1.4;
     noise.octaves = 4;
     noise.scroll_velocity = [0.0; 3];
@@ -1091,7 +1156,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.9,
         [0.72, 0.76, 0.85],
     );
-    let mut noise = viewport_lib::NoiseDriver::default();
+    let mut noise = viewport_lib_item_types::NoiseDriver::default();
     noise.scale = 1.1;
     noise.octaves = 3;
     noise.scroll_velocity = [0.9, 0.0, 0.35];
@@ -1108,7 +1173,7 @@ fn build_scatter_animated(ctx: &mut BuildCtx<'_>) -> BuiltScene {
         0.35,
         [1.0, 0.85, 0.7],
     );
-    let mut refraction = viewport_lib::RefractionParams::default();
+    let mut refraction = viewport_lib_item_types::RefractionParams::default();
     refraction.strength = 0.035;
     refraction.density_threshold = 0.0;
     refraction.noise_scale = 1.6;
@@ -1184,7 +1249,7 @@ fn build_item_wireframes(ctx: &mut BuildCtx<'_>) -> BuiltScene {
     }
     let splat_id = ctx
         .renderer
-        .upload_gaussian_splat(ctx.device, ctx.queue, &sd)
+        .upload(ctx.device, ctx.queue, &sd)
         .expect("splat upload");
     let mut splats = GaussianSplatItem::default();
     splats.source = splat_id;

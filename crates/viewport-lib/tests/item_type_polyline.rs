@@ -9,6 +9,8 @@ use viewport_lib::wgpu;
 
 mod common;
 use common::*;
+use viewport_lib::plugin_api::Handles;
+use viewport_lib::plugin_api::Uploads;
 
 use viewport_lib::PolylineRefItem;
 
@@ -39,7 +41,10 @@ fn gpu_pick_hits_polyline() {
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
     polyline.settings.pick_id = PickId(888);
-    frame.scene.polylines.push(polyline);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .push(polyline);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
@@ -69,7 +74,10 @@ fn gpu_pick_polyline_resolves_segment() {
     polyline.strip_lengths = vec![3];
     polyline.line_width = 20.0;
     polyline.settings.pick_id = PickId(888);
-    frame.scene.polylines.push(polyline);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .push(polyline);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -110,7 +118,10 @@ fn gpu_pick_polyline_resolves_strip_without_cpu_cache() {
     polyline.strip_lengths = vec![2, 3];
     polyline.line_width = 20.0;
     polyline.settings.pick_id = PickId(889);
-    frame.scene.polylines.push(polyline);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .push(polyline);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -142,7 +153,10 @@ fn cpu_pick_polyline_resolves_segment() {
     polyline.strip_lengths = vec![3];
     polyline.line_width = 20.0;
     polyline.settings.pick_id = PickId(890);
-    frame.scene.polylines.push(polyline);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .push(polyline);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer
@@ -174,7 +188,10 @@ fn rect_pick_collects_polyline_segments() {
     polyline.strip_lengths = vec![3];
     polyline.line_width = 10.0;
     polyline.settings.pick_id = PickId(891);
-    frame.scene.polylines.push(polyline);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .push(polyline);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let result = renderer.pick_rect_objects(
@@ -219,11 +236,14 @@ fn a_reference_item_picks_like_an_inline_one() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    let source = renderer.upload_polyline(&device, &queue, &polyline);
+    let source = renderer.upload(&device, &queue, &polyline).unwrap();
 
     let mut item = PolylineRefItem::new(source);
     item.settings.pick_id = PickId(892);
-    frame.scene.polyline_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -251,12 +271,15 @@ fn a_hidden_reference_item_is_skipped() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    let source = renderer.upload_polyline(&device, &queue, &polyline);
+    let source = renderer.upload(&device, &queue, &polyline).unwrap();
 
     let mut item = PolylineRefItem::new(source);
     item.settings.pick_id = PickId(893);
     item.settings.hidden = true;
-    frame.scene.polyline_refs.push(item);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineRefItem>()
+        .push(item);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -285,10 +308,11 @@ fn a_decorated_polyline_still_picks() {
     polyline.positions = vec![[-2.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
     polyline.strip_lengths = vec![2];
     polyline.line_width = 20.0;
-    polyline.node_vectors = vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]];
-    polyline.vector_scale = 0.5;
     polyline.settings.pick_id = PickId(894);
-    frame.scene.polylines.push(polyline);
+    frame
+        .scene
+        .items_mut::<viewport_lib::PolylineItem>()
+        .push(polyline);
 
     let _ = renderer.pass().prepare(&device, &queue, &frame);
     let hit = renderer.pick_object(
@@ -322,21 +346,21 @@ fn an_uploaded_polyline_resolves_until_it_is_dropped() {
         item.line_width = 2.0;
         item
     };
-    let id = renderer.upload_polyline(&device, &queue, &item);
+    let id = renderer.upload(&device, &queue, &item).unwrap();
     assert!(
         renderer.resident_bytes().plugin_bytes > baseline,
         "an uploaded polyline counts toward the plugin working set"
     );
-    assert!(renderer.replace_polyline(&device, &queue, id, &item));
+    assert!(renderer.replace(&device, &queue, id, &item).is_ok());
 
     // A dropped handle stops resolving, and the freed slot comes back at a new
     // generation so it cannot alias its successor.
-    assert!(renderer.drop_polyline(id));
-    assert!(!renderer.drop_polyline(id), "a handle drops once");
-    let reused = renderer.upload_polyline(&device, &queue, &item);
+    assert!(renderer.release(id));
+    assert!(!renderer.release(id), "a handle drops once");
+    let reused = renderer.upload(&device, &queue, &item).unwrap();
     assert_ne!(id, reused, "the reused slot carries a new generation");
-    assert!(!renderer.replace_polyline(&device, &queue, id, &item));
-    assert!(renderer.drop_polyline(reused));
+    assert!(renderer.replace(&device, &queue, id, &item).is_err());
+    assert!(renderer.release(reused));
     assert_eq!(renderer.resident_bytes().plugin_bytes, baseline);
 }
 
@@ -348,13 +372,15 @@ fn begin_upload_polyline_drains_to_a_handle() {
     };
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
-    let job = renderer.begin_upload_polyline(&device, &queue, {
-        let mut item = viewport_lib::renderer::PolylineItem::default();
-        item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]];
-        item.strip_lengths = vec![3];
-        item.line_width = 2.0;
-        item
-    });
+    let job = renderer
+        .begin_upload(&device, &queue, {
+            let mut item = viewport_lib::renderer::PolylineItem::default();
+            item.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]];
+            item.strip_lengths = vec![3];
+            item.line_width = 2.0;
+            item
+        })
+        .unwrap();
     for _ in 0..200 {
         renderer.resources_mut().process_uploads(&device, &queue);
         match renderer.upload_status(job) {
@@ -366,8 +392,8 @@ fn begin_upload_polyline_drains_to_a_handle() {
             viewport_lib::resources::UploadStatus::Unknown => panic!("job id disappeared"),
         }
     }
-    let id = renderer
-        .upload_result_polyline(job)
+    let id: viewport_lib::resources::PolylineId = renderer
+        .upload_result(job)
         .expect("the finished job yields a handle");
-    assert!(renderer.drop_polyline(id));
+    assert!(renderer.release(id));
 }

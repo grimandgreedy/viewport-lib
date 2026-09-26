@@ -6,8 +6,8 @@ use viewport_lib::plugin_api::shared_wgsl::{
     SHARED_BINDINGS_WGSL, SHARED_PICK_WGSL, SHARED_SHADOW_BINDINGS_WGSL,
 };
 use viewport_lib::plugin_api::{
-    DepthReadContext, EncoderScope, EncoderScopeContext, ItemTypePlugin, PaintContext,
-    PickPassContext, PluginItemCollection, ShadowCastContext, SharedBindings,
+    DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections, ItemTypePlugin,
+    PaintContext, PickPassContext, ShadowCastContext, SharedBindings,
 };
 use viewport_lib::resources::{DeviceResources, PluginPipelineOpts};
 use viewport_lib::wgpu;
@@ -176,7 +176,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
         self.log.record(format!("prepare:items={}", items.len()));
         if items.is_empty() {
@@ -208,7 +208,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PaintContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.log.record("paint");
         if items.is_empty() || items.item_settings(0).hidden {
@@ -223,7 +223,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         ctx: &ShadowCastContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.log
             .record(format!("cast_shadow_pass:cascade={}", ctx.cascade_idx));
@@ -244,7 +244,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &DepthReadContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.log.record("paint_depth_read");
         if items.is_empty() || items.item_settings(0).hidden {
@@ -265,7 +265,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         ctx: &EncoderScopeContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.log.record(format!("encode:scope={:?}", ctx.scope));
         if items.is_empty() || items.item_settings(0).hidden {
@@ -307,7 +307,7 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &ItemCollections<'_>,
     ) {
         self.log.record("render_pick");
         let Some(group) = self.pick_id_group.as_ref() else {

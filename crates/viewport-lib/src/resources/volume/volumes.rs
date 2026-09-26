@@ -61,7 +61,7 @@ impl DeviceResources {
     /// `data` must be a flat array of `dims[0] * dims[1] * dims[2]` scalars in
     /// x-fastest order (index = x + y*nx + z*nx*ny).
     ///
-    /// Returns a [`VolumeId`](crate::resources::VolumeId) that can be stored in [`VolumeItem::volume_id`](crate::renderer::VolumeItem::volume_id).
+    /// Returns a [`VolumeId`](crate::resources::VolumeId) that can be stored in `VolumeItem::volume_id`.
     pub fn upload_volume(
         &mut self,
         device: &crate::gpu::Device,
@@ -98,16 +98,106 @@ impl DeviceResources {
             return false;
         }
         let (texture, view, volume_bytes) = Self::build_volume_texture(device, queue, data, dims);
-        let replaced = self
-            .content
+        // Nothing to invalidate: every item type that samples a volume builds its
+        // bind group from the item each frame, and the scatter pass clears its
+        // per-volume cache at the top of every prepare. A replace that reallocated
+        // the texture is therefore picked up on the next frame without any signal
+        // from here.
+        self.content
             .volume_textures
             .replace(id, (texture, view), volume_bytes)
-            .is_some();
-        if replaced {
-            // Drop any scatter bind group built against this slot's old texture
-            // so the previous field's GPU memory is actually released.
+            .is_some()
+    }
+
+    /// Overwrite an axis-aligned box of the 3D texture behind `id`, leaving the
+    /// rest of the field alone.
+    ///
+    /// The partial update for volumes. A time-varying field whose change is local
+    /// (a simulation front, an edited brush stroke, a newly streamed tile) pays
+    /// for the box it wrote rather than for the whole grid, where
+    /// [`replace_volume`](Self::replace_volume) reallocates the texture and
+    /// re-uploads every texel.
+    ///
+    /// `data` is `dims[0] * dims[1] * dims[2]` scalars in x-fastest order within
+    /// the box (`index = x + y * dims[0] + z * dims[0] * dims[1]`), not indices
+    /// into the whole volume. The box must fit: this does not resize the texture,
+    /// because resizing means reallocating it, and that is what `replace_volume`
+    /// is for.
+    ///
+    /// # Errors
+    ///
+    /// [`StaleHandle`](crate::error::ViewportError::StaleHandle) for a handle that
+    /// does not resolve, [`VolumeRegionOutOfRange`](crate::error::ViewportError::VolumeRegionOutOfRange)
+    /// for a box that does not fit or has a zero extent, and
+    /// [`VolumeDataLengthMismatch`](crate::error::ViewportError::VolumeDataLengthMismatch)
+    /// when `data` is not the size the box needs.
+    pub fn write_volume_region(
+        &self,
+        queue: &crate::gpu::Queue,
+        id: VolumeId,
+        origin: [u32; 3],
+        dims: [u32; 3],
+        data: &[f32],
+    ) -> crate::error::ViewportResult<()> {
+        let Some((texture, _)) = self.content.volume_textures.get(id) else {
+            return Err(self.content.volume_textures.stale(id));
+        };
+        let volume_dims = [
+            texture.width(),
+            texture.height(),
+            texture.depth_or_array_layers(),
+        ];
+        let fits = (0..3).all(|axis| {
+            dims[axis] > 0
+                && origin[axis]
+                    .checked_add(dims[axis])
+                    .is_some_and(|end| end <= volume_dims[axis])
+        });
+        if !fits {
+            return Err(crate::error::ViewportError::VolumeRegionOutOfRange {
+                origin,
+                dims,
+                volume_dims,
+            });
         }
-        replaced
+        let expected = (dims[0] as usize) * (dims[1] as usize) * (dims[2] as usize);
+        if data.len() != expected {
+            return Err(crate::error::ViewportError::VolumeDataLengthMismatch {
+                actual: data.len(),
+                expected,
+                dims,
+            });
+        }
+
+        let format = texture.format();
+        let bpt = volume_bytes_per_texel(format);
+        let texels = encode_volume_texels(format, data);
+        queue.write_texture(
+            crate::gpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: crate::gpu::Origin3d {
+                    x: origin[0],
+                    y: origin[1],
+                    z: origin[2],
+                },
+                aspect: crate::gpu::TextureAspect::All,
+            },
+            &texels,
+            crate::gpu::TexelCopyBufferLayout {
+                offset: 0,
+                // Rows and layers of the box, not of the volume: the source is
+                // packed to the box and wgpu strides the destination itself.
+                bytes_per_row: Some(dims[0] * bpt),
+                rows_per_image: Some(dims[1]),
+            },
+            crate::gpu::Extent3d {
+                width: dims[0],
+                height: dims[1],
+                depth_or_array_layers: dims[2],
+            },
+        );
+        Ok(())
     }
 
     /// Free the 3D texture behind `id`, reclaiming its slot and byte charge.
@@ -117,9 +207,7 @@ impl DeviceResources {
     /// aliasing whatever next occupies the slot. Returns `false` if `id` was
     /// already freed or is stale.
     pub fn free_volume(&mut self, id: VolumeId) -> bool {
-        let freed = self.content.volume_textures.remove(id).is_some();
-        if freed {}
-        freed
+        self.content.volume_textures.remove(id).is_some()
     }
 
     /// Create a filterable 3D texture from `data`, upload it, and return the
@@ -325,7 +413,7 @@ impl DeviceResources {
 #[cfg(test)]
 mod tests {
     use crate::DeviceResources;
-    use crate::geometry::marching_cubes::VolumeData;
+
     use crate::resources::UploadStatus;
 
     fn try_make_device() -> Option<(crate::gpu::Device, crate::gpu::Queue)> {
@@ -376,6 +464,113 @@ mod tests {
             }
         }
         panic!("{label} upload did not complete in time");
+    }
+
+    /// The partial update: a box inside the grid is written and the handle, the
+    /// texture and the byte charge are all untouched.
+    #[test]
+    fn a_region_write_keeps_the_texture_and_the_charge() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        let before = resources.resident_bytes().volume_bytes;
+
+        resources
+            .write_volume_region(&queue, id, [2, 2, 2], [4, 4, 4], &vec![1.0; 64])
+            .expect("a box inside an 8x8x8 grid");
+
+        assert_eq!(
+            resources.resident_bytes().volume_bytes,
+            before,
+            "a region write allocates nothing, so the charge cannot move"
+        );
+        assert_eq!(resources.volume_dims(id), Some([8, 8, 8]));
+        assert!(
+            resources.volume_view(id).is_some(),
+            "the handle still resolves"
+        );
+    }
+
+    /// The whole grid as one box is the degenerate case and has to work, because
+    /// it is what a consumer reaches for before it knows its dirty extent.
+    #[test]
+    fn a_region_write_covering_the_whole_grid_is_accepted() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert!(
+            resources
+                .write_volume_region(&queue, id, [0, 0, 0], [8, 8, 8], &sample_volume_data())
+                .is_ok()
+        );
+    }
+
+    /// A box that runs off the grid, a zero extent, and the wrong data length are
+    /// each refused rather than clamped: the texture does not resize, and a
+    /// miscounted feed is a failure and not silently short geometry.
+    #[test]
+    fn a_region_write_refuses_a_box_that_does_not_fit() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+
+        let overrun = resources
+            .write_volume_region(&queue, id, [6, 0, 0], [4, 4, 4], &vec![0.0; 64])
+            .expect_err("x runs from 6 to 10 in an 8-wide grid");
+        assert!(
+            matches!(
+                overrun,
+                crate::error::ViewportError::VolumeRegionOutOfRange { .. }
+            ),
+            "{overrun}"
+        );
+
+        let empty = resources
+            .write_volume_region(&queue, id, [0, 0, 0], [4, 0, 4], &[])
+            .expect_err("a zero extent writes nothing and is a caller mistake");
+        assert!(matches!(
+            empty,
+            crate::error::ViewportError::VolumeRegionOutOfRange { .. }
+        ));
+
+        let short = resources
+            .write_volume_region(&queue, id, [0, 0, 0], [4, 4, 4], &vec![0.0; 63])
+            .expect_err("63 scalars do not fill a 4x4x4 box");
+        assert!(matches!(
+            short,
+            crate::error::ViewportError::VolumeDataLengthMismatch { .. }
+        ));
+    }
+
+    /// A freed handle stops taking writes, the same way `replace_volume` refuses
+    /// one.
+    #[test]
+    fn a_region_write_refuses_a_freed_handle() {
+        let Some((device, queue)) = try_make_device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut resources =
+            DeviceResources::new(&device, crate::gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let id = resources.upload_volume(&device, &queue, &sample_volume_data(), [8, 8, 8]);
+        assert!(resources.free_volume(id));
+        assert!(
+            resources
+                .write_volume_region(&queue, id, [0, 0, 0], [1, 1, 1], &[1.0])
+                .is_err()
+        );
     }
 
     #[test]

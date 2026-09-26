@@ -26,20 +26,18 @@
 //!   Digits while active       : numeric input
 //!   Enter / left-click        : confirm   Esc : cancel
 
-
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use std::collections::HashMap;
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     Action, BackfacePolicy, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Gizmo,
     GizmoAxis, GizmoInfo, GizmoMode, GizmoSpace, KeyCode, LightingSettings, ManipResult,
-    ManipulationContext,
-    ManipulationController, Material, MeshId, Modifiers, MouseButton, OffscreenViewportTarget,
-    OrbitCameraController,
-    Projection, SceneFrame, SceneRenderItem, ScrollUnits, Selection, ViewportContext,
-    ViewportEvent, ViewportId, ViewportRenderer, gizmo::compute_gizmo_scale,
-    gizmo_center_for_pivot, picking::screen_to_ray, primitives,
+    ManipulationContext, ManipulationController, Material, MeshId, Modifiers, MouseButton,
+    OffscreenViewportTarget, OrbitCameraController, Projection, SceneFrame, SceneRenderItem,
+    ScrollUnits, Selection, ViewportContext, ViewportEvent, ViewportId, ViewportInput,
+    ViewportRenderer, gizmo::compute_gizmo_scale, gizmo_center_for_pivot, picking::screen_to_ray,
+    primitives,
 };
 
 const QUAD_LABELS: [&str; 4] = ["Perspective", "Top", "Front", "Right"];
@@ -158,6 +156,9 @@ struct App {
 
     cameras: [Camera; 4],
     controllers: [OrbitCameraController; 4],
+    /// One resolver per quadrant: each owns its bindings and resolves the events
+    /// routed to it. The controllers keep only their sensitivities.
+    inputs: [ViewportInput; 4],
     gizmo: Gizmo,
     gizmo_center: Option<glam::Vec3>,
     gizmo_scales: [f32; 4],
@@ -228,10 +229,16 @@ impl App {
             selection: Selection::new(),
             cameras,
             controllers: [
-                OrbitCameraController::new(BindingPreset::Default),
-                OrbitCameraController::new(BindingPreset::Default),
-                OrbitCameraController::new(BindingPreset::Default),
-                OrbitCameraController::new(BindingPreset::Default),
+                OrbitCameraController::new_stateless(),
+                OrbitCameraController::new_stateless(),
+                OrbitCameraController::new_stateless(),
+                OrbitCameraController::new_stateless(),
+            ],
+            inputs: [
+                ViewportInput::from_preset(BindingPreset::Default),
+                ViewportInput::from_preset(BindingPreset::Default),
+                ViewportInput::from_preset(BindingPreset::Default),
+                ViewportInput::from_preset(BindingPreset::Default),
             ],
             gizmo: Gizmo::new(),
             gizmo_center: None,
@@ -407,19 +414,21 @@ impl App {
                 }
                 let hq = self.hovered_quad;
 
-                // begin_frame for every controller.
+                // begin_frame for every resolver; the controllers only need the
+                // size their pan reads.
                 for i in 0..4 {
                     let qr = quads[i];
-                    self.controllers[i].begin_frame(ViewportContext {
+                    self.inputs[i].begin_frame(ViewportContext {
                         hovered: i == hq && ui.rect_contains_pointer(rect),
                         focused: i == hq && ui.rect_contains_pointer(rect),
                         viewport_size: [qr.width(), qr.height()],
                     });
+                    self.controllers[i].set_viewport_size([qr.width(), qr.height()]);
                 }
 
                 // Notify the previously hovered quad on quad switch.
                 if hq != prev_hq {
-                    self.controllers[prev_hq].push_event(ViewportEvent::PointerLeft);
+                    self.inputs[prev_hq].push_event(ViewportEvent::PointerLeft);
                 }
 
                 let manip_active_for_text = self.manip.is_active();
@@ -431,8 +440,8 @@ impl App {
                         shift: i.modifiers.shift,
                         ctrl: i.modifiers.command,
                     };
-                    self.controllers[hq].push_event(ViewportEvent::ModifiersChanged(mods));
-                    self.controllers[hq].push_event(ViewportEvent::PointerMoved {
+                    self.inputs[hq].push_event(ViewportEvent::ModifiersChanged(mods));
+                    self.inputs[hq].push_event(ViewportEvent::PointerMoved {
                         position: self.cursor_local,
                     });
 
@@ -445,7 +454,7 @@ impl App {
                                 ..
                             } => {
                                 if let Some(kc) = egui_key_to_keycode(*key) {
-                                    self.controllers[hq].push_event(ViewportEvent::Key {
+                                    self.inputs[hq].push_event(ViewportEvent::Key {
                                         key: kc,
                                         state: if *pressed {
                                             ButtonState::Pressed
@@ -458,7 +467,7 @@ impl App {
                             }
                             egui::Event::Text(text) if manip_active_for_text => {
                                 for c in text.chars() {
-                                    self.controllers[hq].push_event(ViewportEvent::Character(c));
+                                    self.inputs[hq].push_event(ViewportEvent::Character(c));
                                 }
                             }
                             egui::Event::PointerButton {
@@ -479,7 +488,7 @@ impl App {
                                 if *button == egui::PointerButton::Primary {
                                     self.left_held = *pressed;
                                 }
-                                self.controllers[hq].push_event(ViewportEvent::MouseButton {
+                                self.inputs[hq].push_event(ViewportEvent::MouseButton {
                                     button: vp_button,
                                     state: if *pressed {
                                         ButtonState::Pressed
@@ -496,7 +505,7 @@ impl App {
                                         egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                                         egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                                     };
-                                    self.controllers[hq].push_event(ViewportEvent::Wheel {
+                                    self.inputs[hq].push_event(ViewportEvent::Wheel {
                                         delta: glam::Vec2::new(delta.x, delta.y),
                                         units,
                                     });
@@ -551,12 +560,13 @@ impl App {
                     clicked: ui.input(|i| i.pointer.any_click()),
                 };
 
-                // Apply hovered controller (or resolve while manipulating).
-                let action_frame = if self.manip.is_active() {
-                    self.controllers[hq].resolve()
-                } else {
-                    self.controllers[hq].apply_to_camera(&mut self.cameras[hq])
-                };
+                // One resolve for the hovered quadrant; its camera holds still
+                // while a manipulation session owns the pointer.
+                let action_frame = self.inputs[hq].resolve();
+                if !self.manip.is_active() {
+                    let camera = &mut self.cameras[hq];
+                    self.controllers[hq].apply(camera, &action_frame);
+                }
 
                 // Tab cycles gizmo mode when no session is active.
                 if !self.manip.is_active() && action_frame.is_active(Action::CycleGizmoMode) {
@@ -589,7 +599,9 @@ impl App {
                 // Apply remaining cameras and set aspect ratios.
                 for i in 0..4 {
                     if i != hq {
-                        self.controllers[i].apply_to_camera(&mut self.cameras[i]);
+                        let frame = self.inputs[i].resolve();
+                        let camera = &mut self.cameras[i];
+                        self.controllers[i].apply(camera, &frame);
                     }
                     let qr = quads[i];
                     self.cameras[i].set_aspect_ratio(qr.width(), qr.height());
@@ -718,12 +730,9 @@ impl App {
                 }
                 if let Some(renderer) = guard.callback_resources.get_mut::<ViewportRenderer>() {
                     let (scene_fx, _) = frames[0].effects.split();
-                    let token = renderer.owned().prepare_scene(
-                        &rs.device,
-                        &rs.queue,
-                        &frames[0],
-                        &scene_fx,
-                    );
+                    let token = renderer
+                        .owned()
+                        .prepare_scene(&rs.device, &rs.queue, &frames[0], &scene_fx);
                     for i in 0..4 {
                         renderer.owned().prepare_viewport(
                             &rs.device,

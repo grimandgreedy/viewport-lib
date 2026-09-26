@@ -156,8 +156,10 @@ pub(crate) struct ViewportHdrState {
 /// primary scene colour attachment, which may be either format depending on
 /// whether post-processing is active.
 #[derive(Clone)]
-pub(crate) struct DualPipeline {
+pub struct DualPipeline {
+    /// Variant compiled for the LDR swapchain format.
     pub ldr: crate::gpu::RenderPipeline,
+    /// Variant compiled for the HDR intermediate format (`Rgba16Float`).
     pub hdr: crate::gpu::RenderPipeline,
 }
 
@@ -514,11 +516,6 @@ pub struct DeviceResources {
 
     // --- point cloud pipelines (lazily created) ---
     /// Point-cloud render pipeline and bind group layout (lazy).
-
-    // --- glyph rendering (lazily created) ---
-    /// Arrow/sphere/cube glyph pipelines, layouts, and cached base meshes.
-    pub(crate) glyph: crate::resources::scivis::glyph::GlyphResources,
-    /// Tensor glyph pipelines and layouts.
 
     // --- polyline / streamtube / ribbon rendering (lazily created) ---
     /// Polyline pipelines and layouts.

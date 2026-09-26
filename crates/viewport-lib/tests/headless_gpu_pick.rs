@@ -178,74 +178,6 @@ fn gpu_pick_async_begin_on_empty_space_reports_no_hit() {
     assert!(resolved, "async pick never resolved");
 }
 
-fn scatter_pick_frame() -> FrameData {
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-    frame.scene.surfaces = SurfaceSubmission::Flat(vec![].into());
-    frame
-}
-
-#[test]
-fn gpu_pick_hits_box_scatter_volume() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = scatter_pick_frame();
-
-    // A box scatter volume centred on the origin. The pick rasterises the actual
-    // box (cube proxy) and reads back its id.
-    let aabb = Aabb {
-        min: glam::Vec3::splat(-0.5),
-        max: glam::Vec3::splat(0.5),
-    };
-    let mut item = ScatterVolumeItem::new(ScatterVolume::box_uniform(aabb, 1.0, [1.0, 1.0, 1.0]));
-    item.settings.pick_id = PickId(41);
-    frame.scene.scatter_volumes = vec![item];
-
-    // The volume's pick binding is built during prepare, like every other item
-    // type that answers the id pass with geometry of its own.
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(41)));
-}
-
-#[test]
-fn gpu_pick_hits_sphere_scatter_volume() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = scatter_pick_frame();
-
-    // A sphere scatter volume centred on the origin. The pick rasterises the
-    // icosphere proxy and reads back its id at the viewport centre.
-    let mut item = ScatterVolumeItem::new(ScatterVolume::sphere_uniform(
-        [0.0, 0.0, 0.0],
-        0.5,
-        1.0,
-        [1.0, 1.0, 1.0],
-    ));
-    item.settings.pick_id = PickId(42);
-    frame.scene.scatter_volumes = vec![item];
-
-    // The volume's pick binding is built during prepare, like every other item
-    // type that answers the id pass with geometry of its own.
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(42)));
-}
-
 #[test]
 fn gpu_pick_hits_decal_box() {
     let Some((device, queue)) = headless_device() else {
@@ -271,7 +203,7 @@ fn gpu_pick_hits_decal_box() {
     // box in the pick pass and reads back its pick_id.
     let mut decal = DecalItem::default();
     decal.settings.pick_id = PickId(77);
-    frame.scene.decals = vec![decal];
+    *frame.scene.items_mut::<viewport_lib::DecalItem>() = vec![decal];
 
     // The decal's pick binding is built during prepare, like every other item
     // type that answers the id pass with geometry of its own.
@@ -370,114 +302,6 @@ fn gpu_pick_object_honors_type_mask() {
         PickMask::INSTANCE,
     );
     assert!(miss.is_none());
-}
-
-#[test]
-fn gpu_pick_hits_glyph_set() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-
-    // One large sphere glyph at the origin. Glyph sets are uploaded during
-    // prepare(), and the pick pass reuses the render glyph transform, so the
-    // prepare path must run before picking.
-    let mut glyph = GlyphItem::default();
-    glyph.positions = vec![[0.0, 0.0, 0.0]];
-    glyph.vectors = vec![[0.0, 0.0, 1.0]];
-    glyph.scale = 2.0;
-    glyph.scale_by_magnitude = false;
-    glyph.glyph_type = GlyphType::Sphere;
-    glyph.settings.pick_id = PickId(555);
-    frame.scene.glyphs.push(glyph);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(555)));
-}
-
-#[test]
-fn gpu_pick_hits_sprite_set() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-
-    let cam = Camera::default();
-    let mut frame = FrameData::default();
-    frame.camera.render_camera = {
-        let mut rc = RenderCamera::from_camera(&cam);
-        rc.aspect = 1.0;
-        rc
-    };
-    frame.camera.viewport_size = [64.0, 64.0];
-    frame.viewport.show_grid = false;
-    frame.viewport.show_axes_indicator = false;
-
-    // One large world-space sprite at the origin. Sprite billboards are expanded
-    // during the render vertex stage, which the pick pipeline reuses, so prepare
-    // must run first to build the sprite buffers.
-    let mut sprite = SpriteItem::default();
-    sprite.positions = vec![[0.0, 0.0, 0.0]];
-    sprite.default_size = 4.0;
-    sprite.size_mode = SpriteSizeMode::WorldSpace;
-    sprite.settings.pick_id = PickId(777);
-    frame.scene.sprite_items.push(sprite);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_scene_gpu(&device, &queue, glam::Vec2::new(32.0, 32.0), &frame);
-    assert_eq!(hit.map(|h| h.object_id), Some(PickId(777)));
-}
-
-#[test]
-fn gpu_pick_glyph_resolves_instance() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // Three sphere glyphs spread along X. Instance index follows position order,
-    // so the centre glyph under the cursor is instance 1. Instance-level picking
-    // reads the instance_index channel, which needs no device feature.
-    let mut glyph = GlyphItem::default();
-    glyph.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    glyph.vectors = vec![[0.0, 0.0, 1.0]; 3];
-    glyph.scale = 1.0;
-    glyph.scale_by_magnitude = false;
-    glyph.glyph_type = GlyphType::Sphere;
-    glyph.settings.pick_id = PickId(555);
-    frame.scene.glyphs.push(glyph);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::INSTANCE,
-    );
-    let hit = hit.expect("centre glyph should be hit");
-    assert_eq!(hit.id, 555);
-    assert_eq!(
-        hit.sub_object,
-        Some(viewport_lib::SubObjectRef::Instance(1))
-    );
 }
 
 #[test]
@@ -907,6 +731,10 @@ impl PluginItemCollection for MockPickCollection {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 /// Vertex stage: a fullscreen triangle that reads its pick id from a group-1
@@ -1036,9 +864,9 @@ impl ItemTypePlugin for MockPickPlugin {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return Vec::new();
         };
         let Some(id_bgl) = self.id_bgl.as_ref() else {
@@ -1067,12 +895,12 @@ impl ItemTypePlugin for MockPickPlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;
         };
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return;
         };
         if coll.settings.hidden || coll.settings.pick_id == PickId::NONE {
@@ -1305,9 +1133,9 @@ impl ItemTypePlugin for SubPickPlugin {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return Vec::new();
         };
         let Some(id_bgl) = self.id_bgl.as_ref() else {
@@ -1336,12 +1164,12 @@ impl ItemTypePlugin for SubPickPlugin {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         _ctx: &PickPassContext<'_>,
-        items: &dyn PluginItemCollection,
+        items: &viewport_lib::plugin_api::ItemCollections<'_>,
     ) {
         let (Some(pipeline), Some(id_bg)) = (self.pipeline.as_ref(), self.id_bg.as_ref()) else {
             return;
         };
-        let Some(coll) = items.as_any().downcast_ref::<MockPickCollection>() else {
+        let Some(coll) = items.downcast::<MockPickCollection>() else {
             return;
         };
         if coll.settings.hidden || coll.settings.pick_id == PickId::NONE {
@@ -1525,85 +1353,6 @@ fn gpu_pick_rect_resolves_plugin_faces() {
             result.elements
         );
     }
-}
-
-// ---------------------------------------------------------------------------
-// GPU pick: Gaussian splats, image slices and volume surface slices
-// ---------------------------------------------------------------------------
-
-#[test]
-fn gpu_pick_splat_resolves_splat() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    // Three splats spread along X, large enough to cover the centre pixel.
-    // The centre splat (index 1) sits at world origin, under the cursor.
-    let mut data = GaussianSplatData::default();
-    data.positions = vec![[-3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-    data.scales = vec![[0.5, 0.5, 0.5]; 3];
-    data.rotations = vec![[0.0, 0.0, 0.0, 1.0]; 3];
-    data.opacities = vec![1.0; 3];
-    data.sh_coefficients = vec![0.0; 9];
-    data.sh_degree = ShDegree::Zero;
-    let splat_id = renderer
-        .upload_gaussian_splat(&device, &queue, &data)
-        .expect("upload splat set");
-
-    let mut item = GaussianSplatItem::default();
-    item.source = splat_id;
-    item.settings.pick_id = PickId(777);
-    frame.scene.gaussian_splats.push(item);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::SPLAT,
-    );
-    let hit = hit.expect("centre splat should be hit");
-    assert_eq!(hit.id, 777);
-    assert_eq!(hit.sub_object, Some(viewport_lib::SubObjectRef::Splat(1)));
-}
-
-#[test]
-fn gpu_pick_hits_image_slice() {
-    let Some((device, queue)) = headless_device() else {
-        eprintln!("skipping: no GPU adapter available");
-        return;
-    };
-    let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
-    let mut frame = sub_object_pick_frame();
-
-    let volume_id = renderer
-        .resources_mut()
-        .upload_volume(&device, &queue, &[0.5; 8], [2, 2, 2]);
-
-    let mut slice = ImageSliceItem::default();
-    slice.volume_id = volume_id;
-    slice.axis = SliceAxis::Z;
-    slice.offset = 0.5;
-    slice.bbox_min = [-1.0, -1.0, -1.0];
-    slice.bbox_max = [1.0, 1.0, 1.0];
-    slice.settings.pick_id = PickId(222);
-    frame.scene.image_slices.push(slice);
-
-    let _ = renderer.pass().prepare(&device, &queue, &frame);
-    let hit = renderer.pick_object(
-        PickBackend::Gpu,
-        glam::Vec2::new(32.0, 32.0),
-        &frame,
-        &device,
-        &queue,
-        PickMask::OBJECT,
-    );
-    assert_eq!(hit.map(|h| h.id), Some(222));
 }
 
 #[test]

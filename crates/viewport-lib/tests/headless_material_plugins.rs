@@ -427,6 +427,9 @@ fn shade_surface(surf: ShadingSurface) -> SurfaceOverride {
 // ShadingSurface field). The sources live with the examples that demonstrate
 // them, so this test reaches across to them rather than keeping a second copy
 // that could drift.
+// A shared example module: the showcase uses every plugin in it, this test
+// registers only the two it exercises.
+#[allow(dead_code)]
 #[path = "../../viewport-lib-examples/eframe/examples/plugins/surface_detail_plugin.rs"]
 mod surface_detail_plugin;
 #[path = "../../viewport-lib-examples/eframe/examples/plugins/toon_plugin.rs"]

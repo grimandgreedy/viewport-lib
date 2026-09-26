@@ -38,7 +38,7 @@ pub fn project_to_screen(
 /// Pixel radius of a world-space radius `world_r` measured at `world_centre`.
 ///
 /// Item types whose instances are drawn at a world size but picked by
-/// screen-space proximity (glyphs, tensor glyphs, world-space sprites) need
+/// screen-space proximity (vector and tensor fields, world-space sprites) need
 /// their pick tolerance in pixels. Measuring at the instance centroid rather
 /// than at the model origin keeps the estimate right when the instances sit
 /// far from the origin. The result is floored at 4 pixels so a distant set is
@@ -108,7 +108,7 @@ pub fn ray_unit_box_toi(origin: glam::Vec3, dir: glam::Vec3) -> Option<f32> {
 // ---------------------------------------------------------------------------
 
 /// Map a global node index to its strip index by walking `strip_lengths`.
-pub(crate) fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
+pub fn strip_for_node(node_idx: u32, strip_lengths: &[u32]) -> u32 {
     let mut offset = 0u32;
     for (i, &len) in strip_lengths.iter().enumerate() {
         offset += len;
@@ -224,7 +224,7 @@ pub fn segment_in_rect(
 }
 
 /// Map a global segment index to its strip index by walking `strip_lengths`.
-pub(crate) fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
+pub fn strip_for_segment(seg_idx: u32, strip_lengths: &[u32]) -> u32 {
     let mut offset = 0u32;
     for (i, &len) in strip_lengths.iter().enumerate() {
         let segs = len.saturating_sub(1);
@@ -284,8 +284,8 @@ pub fn ray_triangle(
 /// positions live in an upload store rather than on the frame.
 ///
 /// [`ItemTypePlugin::sub_object_position`]: crate::plugin_api::ItemTypePlugin::sub_object_position
-pub(crate) fn inline_point_position<T: 'static>(
-    items: &dyn crate::plugin_api::PluginItemCollection,
+pub fn inline_point_position<T: 'static>(
+    items: &crate::plugin_api::ItemCollections<'_>,
     pick_id: crate::renderer::PickId,
     sub_object: crate::renderer::SubObjectRef,
     parts: impl Fn(&T) -> (crate::renderer::PickId, &[[f32; 3]], &[[f32; 4]; 4]),
@@ -293,7 +293,7 @@ pub(crate) fn inline_point_position<T: 'static>(
     let crate::renderer::SubObjectRef::Point(index) = sub_object else {
         return None;
     };
-    let items = items.as_any().downcast_ref::<Vec<T>>()?;
+    let items = items.of::<T>();
     let (_, positions, model) = items.iter().map(&parts).find(|(id, _, _)| *id == pick_id)?;
     let p = positions.get(index as usize)?;
     Some(glam::Mat4::from_cols_array_2d(model).transform_point3(glam::Vec3::from(*p)))

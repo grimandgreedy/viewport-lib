@@ -1,13 +1,16 @@
 //! Spline widget: N draggable control points connected by a Catmull-Rom spline.
 
-use super::{WidgetContext, WidgetResult, ctx_ray, handle_world_radius, ray_point_dist};
+use super::{
+    HandleMarkers, WidgetContext, WidgetResult, ctx_ray, handle_colour, handle_world_radius,
+    ray_point_dist,
+};
 use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::PolylineItem;
 
 /// An interactive spline widget with N draggable Catmull-Rom control points.
 ///
 /// Each frame call `update()` to advance state, then push `polyline_item()` into
-/// `fd.scene.polylines` and `handle_glyphs()` into `fd.scene.glyphs`.
+/// `fd.scene.items_mut::<crate::PolylineItem>()`, and build the handle visual from `handle_markers()`.
 pub struct SplineWidget {
     /// Control point positions.
     pub points: Vec<glam::Vec3>,
@@ -119,25 +122,21 @@ impl SplineWidget {
         }
     }
 
-    /// Build a `GlyphItem` with sphere handles for each control point.
+    /// Handle markers for the control points.
     ///
-    /// Hovered and active handles are brightened via `use_default_colour` and `default_colour`.
-    /// For per-handle highlight, call with a separate GlyphItem for the active handle.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
+    /// Every handle takes its size from the first control point rather than
+    /// its own depth, so they stay the same size as each other along the
+    /// curve. Push the visual built from these into the frame; see
+    /// [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         let ref_pos = self.points.first().copied().unwrap_or(glam::Vec3::ZERO);
         let radius = handle_world_radius(ref_pos, &ctx.camera, ctx.viewport_size.y, 8.0);
-        let mut g = GlyphItem::default();
-        g.positions = self.points.iter().map(|p| p.to_array()).collect();
-        g.glyph_type = GlyphType::Sphere;
-        g.scale = radius;
-        g.use_default_colour = true;
-        g.default_colour = self.handle_colour.into();
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g
+        HandleMarkers {
+            positions: self.points.clone(),
+            radii: vec![radius; self.points.len()],
+            colours: vec![handle_colour(self.handle_colour, 0.0); self.points.len()],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     /// Evaluate the Catmull-Rom spline and return sampled world-space positions.

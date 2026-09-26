@@ -133,6 +133,7 @@
 //! plugin follows whichever version the build chose; a plugin that names its own
 //! `wgpu` dependency is coupled to one version and must match the library's.
 
+pub mod builders;
 pub mod cull;
 pub mod install;
 pub mod item_type;
@@ -140,13 +141,16 @@ pub mod pick_helpers;
 pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
+pub mod uploads;
+pub mod writes;
 
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
 pub use item_type::{
-    AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemFrameContext,
-    ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext, PickContext,
-    PickPassContext, PickRay, PluginItemCollection, RectPickContext, ShadowCastContext,
+    AsAnyItemTypePlugin, DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections,
+    ItemFrameContext, ItemTypeHost, ItemTypePlugin, LightContext, OutlineMaskContext, PaintContext,
+    PickContext, PickPassContext, PickRay, PluginItem, PluginItemCollection, RectPickContext,
+    ShadowCastContext,
 };
 pub use post_effect::{
     PostEffectContext, PostEffectProducer, PostEffectProducerId, PostEffectResizeContext,
@@ -156,6 +160,8 @@ pub use target_desc::{
     DepthReadTargetDesc, ForegroundTargetDesc, MaskTargetDesc, OIT_ACCUM_BLEND, OIT_REVEAL_BLEND,
     OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
 };
+pub use uploads::{Handles, Uploads};
+pub use writes::{Channel, Extent, Sourced, Span, Writes};
 
 /// Group-0 bind layout shared by every scene pipeline.
 ///

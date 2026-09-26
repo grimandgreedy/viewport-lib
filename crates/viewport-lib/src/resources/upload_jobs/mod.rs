@@ -55,7 +55,7 @@ pub(crate) struct JobResults {
     >,
     /// Async point cloud uploads.
     /// Async glyph set uploads.
-    /// Async tensor glyph set uploads.
+    /// Async tensor field uploads.
     /// Async volume texture uploads.
     pub volume: std::sync::Mutex<std::collections::HashMap<JobId, ResultSlot<super::VolumeId>>>,
     /// Async volume-mesh uploads: mesh id plus face-to-cell map.

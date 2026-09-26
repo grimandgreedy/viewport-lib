@@ -1,13 +1,13 @@
 //! Plane widget: a draggable infinite plane defined by a center point and normal.
 
 use crate::geometry::intersect::ray_plane_intersection;
-use crate::renderer::{GlyphItem, GlyphType, PolylineItem};
+use crate::renderer::PolylineItem;
 use parry3d::math::{Pose, Vector};
 use parry3d::query::{Ray, RayCast};
 
 use super::{
-    WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_world_radius,
-    ray_point_dist,
+    HandleMarkers, WidgetContext, WidgetResult, any_perpendicular_pair, ctx_ray, handle_colour,
+    handle_world_radius, ray_point_dist,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -28,8 +28,9 @@ enum PlaneHandle {
 ///
 /// // Each frame:
 /// plane.update(&ctx);
-/// fd.scene.polylines.push(plane.plane_item(PLANE_ID));
-/// fd.scene.glyphs.push(plane.handle_glyphs(HANDLE_ID, &ctx));
+/// fd.scene.items_mut::<crate::PolylineItem>().push(plane.plane_item(PLANE_ID));
+/// let markers = plane.handle_markers(HANDLE_ID, &ctx);
+/// fd.scene.mesh_instances.push(markers.to_mesh_instances(handle_mesh));
 ///
 /// // Suppress orbit while dragging:
 /// if plane.is_active() { orbit.resolve(); } else { orbit.apply_to_camera(&mut camera); }
@@ -186,43 +187,30 @@ impl PlaneWidget {
         }
     }
 
-    /// Build a `GlyphItem` with two sphere handles: center and normal tip.
+    /// Handle markers for the centre and the normal tip.
     ///
-    /// `id_base` is the pick ID for the center handle; `id_base + 1` for the normal-tip handle.
-    pub fn handle_glyphs(&self, id_base: u64, ctx: &WidgetContext) -> GlyphItem {
+    /// Push the visual built from these into the frame; see [`HandleMarkers`].
+    pub fn handle_markers(&self, id_base: u64, ctx: &WidgetContext) -> HandleMarkers {
         let tip = self.normal_tip_pos();
-        let rc = handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0);
-        let rt = handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0);
-
-        let sc = if matches!(self.hovered_handle, Some(PlaneHandle::Center))
-            || matches!(self.active_handle, Some(PlaneHandle::Center))
-        {
-            1.0_f32
-        } else {
-            0.2
+        let hot = |h: PlaneHandle| {
+            if self.hovered_handle == Some(h) || self.active_handle == Some(h) {
+                1.0_f32
+            } else {
+                0.2
+            }
         };
-        let st = if matches!(self.hovered_handle, Some(PlaneHandle::NormalTip))
-            || matches!(self.active_handle, Some(PlaneHandle::NormalTip))
-        {
-            1.0_f32
-        } else {
-            0.2
-        };
-
-        let mut g = GlyphItem::default();
-        g.positions = vec![self.center.to_array(), tip.to_array()];
-        g.vectors = vec![[rc, 0.0, 0.0], [rt, 0.0, 0.0]];
-        g.scalars = vec![sc, st];
-        g.scalar_range = Some((0.0, 1.0));
-        g.glyph_type = GlyphType::Sphere;
-        g.settings = {
-            let mut s = crate::scene::material::ItemSettings::default();
-            s.pick_id = crate::renderer::PickId(id_base);
-            s
-        };
-        g.default_colour = self.handle_colour.into();
-        g.use_default_colour = self.handle_colour.alpha() > 0.0;
-        g
+        HandleMarkers {
+            positions: vec![self.center, tip],
+            radii: vec![
+                handle_world_radius(self.center, &ctx.camera, ctx.viewport_size.y, 10.0),
+                handle_world_radius(tip, &ctx.camera, ctx.viewport_size.y, 8.0),
+            ],
+            colours: vec![
+                handle_colour(self.handle_colour, hot(PlaneHandle::Center)),
+                handle_colour(self.handle_colour, hot(PlaneHandle::NormalTip)),
+            ],
+            pick_id: crate::renderer::PickId(id_base),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -305,7 +293,7 @@ mod tests {
         let ctx = ctx_at(CENTRE);
         let w = PlaneWidget::new(Vec3::ZERO, Vec3::Z);
         assert!(!w.plane_item(1).positions.is_empty());
-        assert!(!w.handle_glyphs(2, &ctx).positions.is_empty());
+        assert!(!w.handle_markers(2, &ctx).positions.is_empty());
     }
 
     #[test]

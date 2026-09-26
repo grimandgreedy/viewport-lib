@@ -1429,6 +1429,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // exercises PathTrack, which is deprecated but still supported
     fn bezier_path_hits_endpoints() {
         // Cubic with p0 = (0,0), p3 = (100, 0) and arched control handles.
         let track = PathTrack::<[f32; 2]>::bezier(
@@ -1447,6 +1448,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // exercises PathTrack, which is deprecated but still supported
     fn polyline_path_hits_waypoints() {
         let track =
             PathTrack::<[f32; 2]>::polyline(0.0, 1.0, vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]);
@@ -1459,6 +1461,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // exercises PathTrack, which is deprecated but still supported
     fn path_track_custom_closure_loops() {
         // A non-curve path: harmonic motion via a custom closure.
         let track = PathTrack::<f32>::new(0.0, 1.0, |t| (t * std::f32::consts::TAU).sin())

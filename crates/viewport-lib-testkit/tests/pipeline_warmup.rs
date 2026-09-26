@@ -4,10 +4,10 @@
 //! is the observable: it counts lazy pipeline builds since the previous
 //! prepare, so a frame that hits a cold pipeline reads non-zero.
 
-use viewport_lib::{
-    CameraFrame, DecalItem, FrameData, Material, PointCloudItem, PointCloudRefItem, SceneFrame,
-    SceneRenderItem, VolumeItem,
-};
+use viewport_lib::plugin_api::Uploads;
+use viewport_lib::{CameraFrame, DecalItem, FrameData, Material, SceneFrame, SceneRenderItem};
+use viewport_lib_item_types::VolumeItem;
+use viewport_lib_item_types::{PointCloudItem, PointCloudRefItem};
 use viewport_lib_testkit::{Harness, meshes, orbit_camera};
 
 fn mesh_frame(item: SceneRenderItem, size: [f32; 2]) -> FrameData {
@@ -64,7 +64,10 @@ fn first_decal_frame_builds_no_pipelines() {
     decal.texture_id = tex_id;
     decal.transform = glam::Mat4::from_scale(glam::Vec3::splat(2.0)).to_cols_array_2d();
     let mut with_decal = mesh_frame(item, [200.0, 150.0]);
-    with_decal.scene.decals.push(decal);
+    with_decal
+        .scene
+        .items_mut::<viewport_lib::DecalItem>()
+        .push(decal);
     let _ = h.render(&with_decal, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
@@ -95,8 +98,8 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
 
     let mut cloud = PointCloudItem::default();
     cloud.positions = vec![[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]];
-    cloud.point_size = 8.0;
-    let source = h.renderer.upload_point_cloud(&h.device, &h.queue, &cloud);
+    cloud.size = viewport_lib::SizeSource::Uniform(8.0);
+    let source = h.renderer.upload(&h.device, &h.queue, &cloud).unwrap();
 
     let _ = h.render(&base, 200, 150);
     assert_eq!(
@@ -110,7 +113,7 @@ fn point_cloud_pipelines_are_owned_by_the_plugin() {
     let mut with_cloud = mesh_frame(item, [200.0, 150.0]);
     with_cloud
         .scene
-        .point_cloud_refs
+        .items_mut::<PointCloudRefItem>()
         .push(PointCloudRefItem::new(source));
     let _ = h.render(&with_cloud, 200, 150);
     assert_eq!(
@@ -162,7 +165,10 @@ fn volume_pipelines_are_owned_by_the_plugin() {
     let mut volume = VolumeItem::default();
     volume.volume_id = volume_id;
     let mut with_volume = mesh_frame(item, [200.0, 150.0]);
-    with_volume.scene.volumes.push(volume);
+    with_volume
+        .scene
+        .items_mut::<viewport_lib_item_types::VolumeItem>()
+        .push(volume);
     let _ = h.render(&with_volume, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,
@@ -222,11 +228,11 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     let base = mesh_frame(item.clone(), [200.0, 150.0]);
     let _ = h.render_two_frames(&base, 200, 150);
 
-    let mut ribbon = viewport_lib::RibbonItem::default();
+    let mut ribbon = viewport_lib_item_types::RibbonItem::default();
     ribbon.positions = vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
     ribbon.strip_lengths = vec![3];
     ribbon.width = 0.5;
-    let source = h.renderer.upload_ribbon(&h.device, &h.queue, &ribbon);
+    let source = h.renderer.upload(&h.device, &h.queue, &ribbon).unwrap();
 
     let _ = h.render(&base, 200, 150);
     assert_eq!(
@@ -240,16 +246,22 @@ fn curve_pipelines_are_owned_by_the_plugins() {
     let mut with_curves = mesh_frame(item, [200.0, 150.0]);
     with_curves
         .scene
-        .ribbon_refs
-        .push(viewport_lib::RibbonRefItem::new(source));
-    let mut streamtube = viewport_lib::StreamtubeItem::default();
+        .items_mut::<viewport_lib_item_types::RibbonRefItem>()
+        .push(viewport_lib_item_types::RibbonRefItem::new(source));
+    let mut streamtube = viewport_lib_item_types::StreamtubeItem::default();
     streamtube.positions = vec![[-1.0, 0.5, 0.0], [0.0, 0.5, 0.0], [1.0, 0.5, 0.0]];
     streamtube.strip_lengths = vec![3];
-    with_curves.scene.streamtube_items.push(streamtube);
-    let mut tube = viewport_lib::TubeItem::default();
+    with_curves
+        .scene
+        .items_mut::<viewport_lib_item_types::StreamtubeItem>()
+        .push(streamtube);
+    let mut tube = viewport_lib_item_types::TubeItem::default();
     tube.positions = vec![[-1.0, -0.5, 0.0], [0.0, -0.5, 0.0], [1.0, -0.5, 0.0]];
     tube.strip_lengths = vec![3];
-    with_curves.scene.tube_items.push(tube);
+    with_curves
+        .scene
+        .items_mut::<viewport_lib_item_types::TubeItem>()
+        .push(tube);
     let _ = h.render(&with_curves, 200, 150);
     assert_eq!(
         h.stats().pipelines_built_this_frame,

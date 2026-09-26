@@ -206,6 +206,35 @@ pub(crate) struct DeformationState {
     /// bound to an external buffer source. Lets the per-frame copy pass skip its
     /// encoder entirely when nothing is buffer-backed.
     pub external_source_count: usize,
+    /// Slot-write costs accumulated since the last `take_counters`. Read and
+    /// reset once per frame by `prepare`.
+    pub counters: DeformCounters,
+}
+
+/// What deform-slot writes did to their GPU storage since the counters were
+/// last taken.
+///
+/// A slot write that fits its existing buffer is a `write_buffer` and touches
+/// none of these. One that does not reallocates the buffer, which invalidates
+/// every bind group pointing at it, so the rebuild counts are the ones that
+/// scale: a per-mesh reallocation rebuilds one mesh bind group plus one bind
+/// group per instance attached to that mesh.
+///
+/// Surfaced per frame as the `deform_*` fields on
+/// [`FrameStats`](crate::renderer::stats::FrameStats).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeformCounters {
+    /// Slot-storage buffers reallocated, per-mesh and per-instance together.
+    /// Counts only reallocation of storage that already existed; a mesh's or
+    /// instance's first buffer is not counted.
+    pub buffer_reallocations: u32,
+    /// Per-mesh bind groups rebuilt because the mesh's slot buffer was
+    /// replaced.
+    pub mesh_bind_groups_rebuilt: u32,
+    /// Per-instance bind groups rebuilt. A per-instance reallocation rebuilds
+    /// one; a per-mesh reallocation rebuilds every instance bind group on that
+    /// mesh, because they bind the mesh buffer too.
+    pub instance_bind_groups_rebuilt: u32,
 }
 
 /// The `@group(2)` layout: a header uniform plus the per-mesh and per-instance
@@ -305,6 +334,7 @@ impl DeformationState {
             header_cpu,
             registrations: Vec::new(),
             external_source_count: 0,
+            counters: DeformCounters::default(),
         }
     }
 
@@ -329,6 +359,22 @@ impl DeformationState {
             .get(&mesh_id)
             .map(|m| &m.bind_group)
             .unwrap_or(&self.dummy_bind_group)
+    }
+
+    /// Take the accumulated slot-write counters, resetting them. Called once
+    /// per frame by `prepare` so each frame's figures cover that frame alone.
+    pub fn take_counters(&mut self) -> DeformCounters {
+        std::mem::take(&mut self.counters)
+    }
+
+    /// Whether `mesh_id` has any *per-mesh* slot data attached, CPU or
+    /// external-buffer-backed.
+    ///
+    /// Deliberately excludes per-instance data, which
+    /// [`Self::has_per_instance_deform_data`] covers: the two route differently
+    /// at draw time, so a caller deciding a draw path needs them apart.
+    pub(crate) fn has_mesh_slot_data(&self, mesh_id: MeshId) -> bool {
+        self.meshes.get(&mesh_id).is_some_and(|m| m.flag_bits != 0)
     }
 
     /// `deform_flags` value to write into the `ObjectUniform` for `mesh_id`.
@@ -469,6 +515,8 @@ impl DeformationState {
             &new_buffer,
             &self.dummy_instance_buffer,
         );
+        self.counters.buffer_reallocations += 1;
+        self.counters.mesh_bind_groups_rebuilt += 1;
 
         // Rebuild instance bind groups since they bind this mesh's buffer.
         let instance_ids: Vec<u32> = self
@@ -479,6 +527,7 @@ impl DeformationState {
             .keys()
             .copied()
             .collect();
+        self.counters.instance_bind_groups_rebuilt += instance_ids.len() as u32;
         for id in instance_ids {
             let inst_buf_clone = {
                 let inst = self
@@ -573,6 +622,78 @@ impl DeformationState {
             self.external_source_count -= 1;
         }
         self.refresh(device, mesh_id);
+    }
+
+    /// Overwrite part of one slot's attached data, in place.
+    ///
+    /// The fast path for a deformer that updates its slot every frame.
+    /// [`attach_slot`](Self::attach_slot) is a structural change: it re-packs
+    /// every slot on the mesh, allocates a fresh buffer and rebuilds the mesh
+    /// bind group and every per-instance bind group on it, because a slot's
+    /// length may have changed and the neighbours move. None of that is needed
+    /// when the bytes are the same shape as the ones already there, which is
+    /// what a per-frame update always is.
+    ///
+    /// So this writes `data` at `first_element` within the slot and touches
+    /// nothing else: no re-pack, no allocation, no bind group. The retained
+    /// host copy is updated alongside the GPU buffer, so a later attach or
+    /// detach re-packs from current bytes rather than resurrecting stale ones.
+    ///
+    /// The slot must already hold CPU data of the right stride: this updates
+    /// what is there and cannot establish it. A slot fed by an external buffer
+    /// is rejected, because its bytes come from the per-frame copy pass.
+    pub fn write_slot_range(
+        &mut self,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        slot: usize,
+        first_element: u32,
+        data: &[u8],
+    ) -> crate::error::ViewportResult<()> {
+        assert!(slot < DEFORM_SLOT_COUNT);
+        let not_attached = || crate::error::ViewportError::DeformSlotNotAttached {
+            mesh_id: mesh_id.index(),
+            slot,
+        };
+        let entry = self.meshes.get_mut(&mesh_id).ok_or_else(not_attached)?;
+        if entry.slot_external[slot].is_some() {
+            return Err(not_attached());
+        }
+        let stride_bytes = entry.slot_stride[slot] as usize * 4;
+        let bytes = entry.slot_data[slot].as_mut().ok_or_else(not_attached)?;
+        if stride_bytes == 0 {
+            return Err(not_attached());
+        }
+        if data.is_empty() {
+            return Ok(());
+        }
+        if data.len() % stride_bytes != 0 {
+            return Err(crate::error::ViewportError::DeformSlotWriteOutOfRange {
+                slot,
+                first_element,
+                element_count: 0,
+                slot_elements: (bytes.len() / stride_bytes) as u32,
+            });
+        }
+
+        let element_count = (data.len() / stride_bytes) as u32;
+        let slot_elements = (bytes.len() / stride_bytes) as u32;
+        if first_element.saturating_add(element_count) > slot_elements {
+            return Err(crate::error::ViewportError::DeformSlotWriteOutOfRange {
+                slot,
+                first_element,
+                element_count,
+                slot_elements,
+            });
+        }
+
+        let local = first_element as usize * stride_bytes;
+        bytes[local..local + data.len()].copy_from_slice(data);
+        // The slot's bytes start after the packed header, at the offset `pack`
+        // recorded for it.
+        let offset = entry.slot_offset_words[slot] as u64 * 4 + local as u64;
+        queue.write_buffer(&entry.buffer, offset, data);
+        Ok(())
     }
 
     /// Detach a per-mesh slot. Returns `true` if any data was removed.
@@ -733,6 +854,8 @@ impl DeformationState {
             inst.buffer = new_buffer;
             inst.buffer_capacity = packed_bytes_len;
             inst.bind_group = bg;
+            self.counters.buffer_reallocations += 1;
+            self.counters.instance_bind_groups_rebuilt += 1;
         } else {
             let inst = self
                 .meshes
@@ -816,6 +939,8 @@ impl DeformationState {
                 inst.buffer = new_buffer;
                 inst.buffer_capacity = packed_bytes_len;
                 inst.bind_group = bg;
+                self.counters.buffer_reallocations += 1;
+                self.counters.instance_bind_groups_rebuilt += 1;
             } else {
                 queue.write_buffer(&inst.buffer, 0, bytemuck::cast_slice(&packed_words));
             }
@@ -1005,6 +1130,8 @@ impl DeformationState {
             inst.buffer = new_buffer;
             inst.buffer_capacity = packed_bytes_len;
             inst.bind_group = bg;
+            self.counters.buffer_reallocations += 1;
+            self.counters.instance_bind_groups_rebuilt += 1;
         } else {
             let inst = self
                 .meshes
@@ -1211,6 +1338,63 @@ impl DeviceResources {
         );
         self.deform
             .attach_slot(device, mesh_id, slot, stride_bytes / 4, data);
+    }
+
+    /// Overwrite part of a mesh's deform-slot data without re-packing it.
+    ///
+    /// The call a deformer that updates every frame should be making.
+    /// [`attach_deform_slot`](Self::attach_deform_slot) is structural: it
+    /// re-packs every slot on the mesh, allocates a new buffer, and rebuilds
+    /// the mesh bind group plus every per-instance bind group on it, because a
+    /// slot's length may have changed and its neighbours move with it. A
+    /// per-frame update never changes the shape, so it needs none of that.
+    ///
+    /// `first_element` is in slot elements, not bytes: element `n` starts at
+    /// `n * stride_bytes` within the slot, using the stride the attach
+    /// established. Pass `0` and the whole slot's worth of bytes to replace it
+    /// entirely, which is still far cheaper than re-attaching, or a window to
+    /// write only the region that moved.
+    ///
+    /// Attach the slot once to establish its length and stride, then write:
+    ///
+    /// ```no_run
+    /// # use viewport_lib::resources::DeviceResources;
+    /// # fn f(resources: &mut DeviceResources, device: &viewport_lib::gpu::Device,
+    /// #      queue: &viewport_lib::gpu::Queue, mesh: viewport_lib::MeshId,
+    /// #      offsets: &[[f32; 3]]) -> viewport_lib::error::ViewportResult<()> {
+    /// resources.attach_deform_slot(device, mesh, 0, 12, bytemuck::cast_slice(offsets));
+    /// // Each frame after that, for the vertices that moved:
+    /// resources.write_deform_slot_range(queue, mesh, 0, 0, bytemuck::cast_slice(offsets))?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Errors with `DeformSlotNotAttached` when the slot holds no CPU data (a
+    /// slot fed by [`set_deform_slot_source_buffer`](Self::set_deform_slot_source_buffer)
+    /// is filled by the per-frame copy pass and is not writable this way), and
+    /// with `DeformSlotWriteOutOfRange` when the window does not fit what is
+    /// attached or `data` is not a whole number of elements.
+    pub fn write_deform_slot_range(
+        &mut self,
+        queue: &crate::gpu::Queue,
+        mesh_id: MeshId,
+        slot: usize,
+        first_element: u32,
+        data: &[u8],
+    ) -> crate::error::ViewportResult<()> {
+        self.deform
+            .write_slot_range(queue, mesh_id, slot, first_element, data)
+    }
+
+    /// The bytes currently retained for one per-mesh slot, or `None` when the
+    /// slot holds no CPU data. Crate-internal: this is the host mirror of what
+    /// the GPU buffer holds, and exists so a test can check the two agree after
+    /// a ranged write.
+    #[cfg(test)]
+    pub(crate) fn deform_slot_bytes(&self, mesh_id: MeshId, slot: usize) -> Option<Vec<u8>> {
+        self.deform
+            .meshes
+            .get(&mesh_id)
+            .and_then(|m| m.slot_data[slot].clone())
     }
 
     /// Detach a per-mesh slot's data. Returns `true` if any data was removed.

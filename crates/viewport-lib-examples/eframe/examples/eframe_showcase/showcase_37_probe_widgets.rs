@@ -16,10 +16,11 @@
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::PointCloudItem;
 use vpl::{
     BoxWidget, CameraFrame, CylinderWidget, DiskWidget, FrameData, LightingSettings,
-    LineProbeWidget, PlaneWidget, PointCloudItem, PolylineWidget, SceneRenderItem, SphereWidget,
-    ViewportRenderer, WidgetContext, WidgetResult, scene::Scene,
+    LineProbeWidget, PlaneWidget, PolylineWidget, SceneRenderItem, SphereWidget, ViewportRenderer,
+    WidgetContext, WidgetResult, scene::Scene,
 };
 
 const CLOUD_N: usize = 20000;
@@ -55,6 +56,9 @@ pub(crate) struct ProbeWidgetState {
     pub line_threshold: f32,
     pub polyline_threshold: f32,
     pub disk_half_thickness: f32,
+    /// Unit sphere the widget handles are drawn with. The widgets hand back
+    /// positions and radii; picking the shape is the app's job.
+    pub handle_mesh: vpl::MeshId,
 }
 
 impl ProbeWidgetState {
@@ -122,6 +126,7 @@ impl ProbeWidgetState {
             selected,
             line_threshold: 0.4,
             polyline_threshold: 0.5,
+            handle_mesh: vpl::MeshId::INVALID,
             disk_half_thickness: 0.5,
         }
     }
@@ -286,8 +291,13 @@ fn generate_cloud(n: usize) -> Vec<[f32; 3]> {
 }
 
 impl App {
-    pub(crate) fn build_probe_widgets_scene(&mut self, _renderer: &mut ViewportRenderer) {
+    pub(crate) fn build_probe_widgets_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.pw_state = ProbeWidgetState::new();
+        let sphere = vpl::primitives::icosphere(1.0, 2);
+        self.pw_state.handle_mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &sphere)
+            .expect("handle sphere upload");
         self.pw_state.built = true;
     }
 
@@ -313,7 +323,6 @@ impl App {
             PwSubMode::Polyline => state.polyline.is_active(),
         };
     }
-
 }
 
 fn selection_buttons(ui: &mut egui::Ui, state: &mut ProbeWidgetState, mode: PwSubMode) {
@@ -390,48 +399,85 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
     let state = &app.pw_state;
     match state.sub_mode {
         PwSubMode::LineProbe => {
-            fd.scene.polylines.push(state.probe.polyline_item(0));
             fd.scene
-                .glyphs
-                .push(state.probe.handle_glyphs(100, &widget_ctx));
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.probe.polyline_item(0));
+            fd.scene.mesh_instances.push(
+                state
+                    .probe
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Sphere => {
             fd.effects.clip.objects.push(state.sphere.clip_object());
-            fd.scene.polylines.push(state.sphere.wireframe_item(0));
             fd.scene
-                .glyphs
-                .push(state.sphere.handle_glyphs(100, &widget_ctx));
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.sphere.wireframe_item(0));
+            fd.scene.mesh_instances.push(
+                state
+                    .sphere
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Box => {
-            fd.scene.polylines.push(state.bw.wireframe_item(0));
-            fd.scene.polylines.push(state.bw.rotation_arcs_item(1));
             fd.scene
-                .glyphs
-                .push(state.bw.handle_glyphs(100, &widget_ctx));
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.bw.wireframe_item(0));
+            fd.scene
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.bw.rotation_arcs_item(1));
+            fd.scene.mesh_instances.push(
+                state
+                    .bw
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Plane => {
-            fd.scene.polylines.push(state.plane.plane_item(0));
             fd.scene
-                .glyphs
-                .push(state.plane.handle_glyphs(100, &widget_ctx));
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.plane.plane_item(0));
+            fd.scene.mesh_instances.push(
+                state
+                    .plane
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Disk => {
-            fd.scene.polylines.push(state.disk.wireframe_item(0));
             fd.scene
-                .glyphs
-                .push(state.disk.handle_glyphs(100, &widget_ctx));
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.disk.wireframe_item(0));
+            fd.scene.mesh_instances.push(
+                state
+                    .disk
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Cylinder => {
-            fd.scene.polylines.push(state.cylinder.wireframe_item(0));
             fd.scene
-                .glyphs
-                .push(state.cylinder.handle_glyphs(100, &widget_ctx));
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.cylinder.wireframe_item(0));
+            fd.scene.mesh_instances.push(
+                state
+                    .cylinder
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
         PwSubMode::Polyline => {
-            fd.scene.polylines.push(state.polyline.polyline_item(0));
             fd.scene
-                .glyphs
-                .push(state.polyline.handle_glyphs(100, &widget_ctx));
+                .items_mut::<viewport_lib::PolylineItem>()
+                .push(state.polyline.polyline_item(0));
+            fd.scene.mesh_instances.push(
+                state
+                    .polyline
+                    .handle_markers(100, &widget_ctx)
+                    .to_mesh_instances(state.handle_mesh),
+            );
         }
     }
 
@@ -453,18 +499,18 @@ pub(crate) fn submit_pw_items(app: &App, fd: &mut FrameData, w: f32, h: f32) {
     if !unsel.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = unsel;
-        pc.default_colour = [0.5, 0.7, 1.0, 1.0].into();
+        pc.colour = vpl::ColourSource::Solid([0.5, 0.7, 1.0, 1.0].into());
         pc.gaussian = true;
-        pc.point_size = 8.0;
-        fd.scene.point_clouds.push(pc);
+        pc.size = vpl::SizeSource::Uniform(8.0);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
     if !sel.is_empty() {
         let mut pc = PointCloudItem::default();
         pc.positions = sel;
-        pc.default_colour = [1.0, 0.55, 0.1, 1.0].into();
+        pc.colour = vpl::ColourSource::Solid([1.0, 0.55, 0.1, 1.0].into());
         pc.gaussian = true;
-        pc.point_size = 14.0;
-        fd.scene.point_clouds.push(pc);
+        pc.size = vpl::SizeSource::Uniform(14.0);
+        fd.scene.items_mut::<PointCloudItem>().push(pc);
     }
 }
 
@@ -484,8 +530,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 8.0,
-        orientation: glam::Quat::from_rotation_z(0.4)
-            * glam::Quat::from_rotation_x(1.0),
+        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(1.0),
         ..vpl::Camera::default()
     };
 }
@@ -502,8 +547,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            pw_collect_scene_items(app);
+        let (items, lighting, sg, ss) = pw_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -522,11 +566,7 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    ctx: &crate::FrameCtx,
-) {
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
     // Probe widget render items (Showcase 37) : submitted every frame.
     submit_pw_items(app, &mut *fd, ctx.w, ctx.h);
 }
@@ -538,10 +578,8 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Controls panel for this showcase.
 pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
@@ -629,9 +667,7 @@ pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
             ui.label(format!("Radius: {:.3}", state.disk.radius));
             ui.horizontal(|ui| {
                 ui.label("Half-thickness:");
-                ui.add(
-                    egui::Slider::new(&mut state.disk_half_thickness, 0.05..=2.0).step_by(0.05),
-                );
+                ui.add(egui::Slider::new(&mut state.disk_half_thickness, 0.05..=2.0).step_by(0.05));
             });
             ui.separator();
             selection_buttons(ui, state, PwSubMode::Disk);
@@ -653,9 +689,7 @@ pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
             }
             ui.horizontal(|ui| {
                 ui.label("Near-path radius:");
-                ui.add(
-                    egui::Slider::new(&mut state.polyline_threshold, 0.05..=3.0).step_by(0.05),
-                );
+                ui.add(egui::Slider::new(&mut state.polyline_threshold, 0.05..=3.0).step_by(0.05));
             });
             ui.separator();
             ui.label("Double-click a handle to remove it.");
@@ -669,18 +703,15 @@ pub(crate) fn controls_probe_widgets(app: &mut crate::App, ui: &mut egui::Ui) {
     if state.suppress_orbit {
         ui.label("(Orbit suppressed: widget active)");
     }
-    }
+}
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
 
-
 /// Advance this showcase's own camera animation or object motion for the frame.
-
 
 /// Update this showcase's interactive widgets for the frame.
 pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -704,9 +735,7 @@ pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -747,7 +776,12 @@ impl crate::Showcase for ScProbeWidgets {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
@@ -756,7 +790,12 @@ impl crate::Showcase for ScProbeWidgets {
     fn widgets(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         widgets(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -765,7 +804,12 @@ impl crate::Showcase for ScProbeWidgets {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_probe_widgets(app, ui)
     }
 }

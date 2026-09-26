@@ -1,6 +1,6 @@
 //! Showcase 25: On-Surface Vector Quantities
 //!
-//! Demonstrates the three surface-vector APIs from `viewport_lib::quantities`:
+//! Demonstrates the three surface-vector APIs in `viewport_lib::geometry`:
 //!
 //! - **Vertex intrinsic vectors** : a tangential vortex field on a sphere, where
 //!   each vertex carries a 2D `(u, v)` vector in its tangent frame.
@@ -9,16 +9,17 @@
 //! - **Edge one-forms** : a diverging source field on a plane, reconstructed from
 //!   per-edge scalar values via Whitney form interpolation.
 //!
-//! All three modes produce a [`GlyphItem`] (arrows) submitted to
-//! `SceneFrame::glyphs` each frame. No new GPU pipeline is needed.
+//! All three return positions paired with world-space vectors, which this
+//! showcase turns into a `VectorFieldItem` submitted each frame.
 
 use crate::App;
 use crate::eframe::egui;
 use viewport_lib as vpl;
+use viewport_lib_item_types::VectorFieldItem;
 use vpl::{
-    BackfacePolicy, BuiltinColourmap, ColourmapId, FrameData, GlyphItem, LightingSettings,
-    MeshData, MeshId, SceneRenderItem,
-    quantities::{edge_one_form_to_glyphs, face_intrinsic_to_glyphs, vertex_intrinsic_to_glyphs},
+    BackfacePolicy, BuiltinColourmap, ColourSource, ColourmapId, FrameData, LightingSettings,
+    MeshData, MeshId, SceneRenderItem, edge_one_form_vectors, face_intrinsic_vectors,
+    vertex_intrinsic_vectors,
 };
 
 // ---------------------------------------------------------------------------
@@ -64,6 +65,8 @@ pub(crate) struct SvState {
     pub edge_vals: Vec<f32>,
     /// Rainbow colourmap ID fetched at build time.
     pub rainbow_id: Option<ColourmapId>,
+    /// Arrow the field instances, uploaded with the render meshes.
+    pub arrow_shape_id: vpl::MeshId,
 }
 
 impl Default for SvState {
@@ -83,6 +86,7 @@ impl Default for SvState {
             face_vecs: Vec::new(),
             edge_vals: Vec::new(),
             rainbow_id: None,
+            arrow_shape_id: vpl::MeshId::INVALID,
         }
     }
 }
@@ -128,7 +132,12 @@ impl App {
 
         self.sv_state.built = true;
 
-        // Generate glyph data at the current density.
+        self.sv_state.arrow_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+            .expect("sv arrow shape mesh");
+
+        // Generate the field data at the current density.
         self.rebuild_sv_glyph_data();
     }
 
@@ -215,31 +224,35 @@ impl App {
         (total as f32 * self.sv_state.density).ceil().max(1.0) as usize
     }
 
-    /// Build the [`GlyphItem`] for the active sub-mode.
-    pub(crate) fn sv_glyph_item(&self) -> GlyphItem {
-        let mut item = match self.sv_state.mode {
-            SvMode::VertexIntrinsic => vertex_intrinsic_to_glyphs(
+    /// Build the [`VectorFieldItem`] for the active sub-mode.
+    pub(crate) fn sv_field_item(&self) -> VectorFieldItem {
+        let samples = match self.sv_state.mode {
+            SvMode::VertexIntrinsic => vertex_intrinsic_vectors(
                 &self.sv_state.positions[0],
                 &self.sv_state.normals[0],
                 self.sv_state.tangents[0].as_deref(),
                 &self.sv_state.vertex_vecs,
-                self.sv_state.scale,
             ),
-            SvMode::FaceIntrinsic => face_intrinsic_to_glyphs(
+            SvMode::FaceIntrinsic => face_intrinsic_vectors(
                 &self.sv_state.positions[1],
                 &self.sv_state.normals[1],
                 &self.sv_state.indices[1],
                 &self.sv_state.face_vecs,
-                self.sv_state.scale,
             ),
-            SvMode::EdgeOneForm => edge_one_form_to_glyphs(
+            SvMode::EdgeOneForm => edge_one_form_vectors(
                 &self.sv_state.positions[2],
                 &self.sv_state.indices[2],
                 &self.sv_state.edge_vals,
-                self.sv_state.scale,
             ),
         };
-        item.colourmap_id = self.sv_state.rainbow_id;
+        let mut item = VectorFieldItem::new(self.sv_state.arrow_shape_id);
+        item.positions = samples.positions;
+        item.vectors = samples.vectors;
+        item.scale = self.sv_state.scale;
+        item.colour = ColourSource::Natural {
+            range: None,
+            colourmap: self.sv_state.rainbow_id,
+        };
         item.settings.unlit = true;
         item
     }
@@ -313,11 +326,11 @@ pub(crate) fn controls_surface_vectors(app: &mut App, ui: &mut egui::Ui) {
 /// Compute per-vertex intrinsic vectors for a vortex field rotating around Z.
 ///
 /// The desired 3D world vector at each vertex is `n x Z` (azimuthal direction).
-/// We project it into the Gram-Schmidt tangent frame that the quantities API
-/// will use internally (when `tangents` is `None`), so the encoded `(u, v)`
-/// round-trips correctly through `vertex_intrinsic_to_glyphs`.
+/// We project it into the Gram-Schmidt tangent frame that the conversion uses
+/// internally (when `tangents` is `None`), so the encoded `(u, v)` round-trips
+/// correctly through `vertex_intrinsic_vectors`.
 fn make_sphere_vortex_intrinsic(_positions: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 2]> {
-    use vpl::quantities::tangent_frames::gram_schmidt_tangent;
+    use vpl::geometry::tangent_frames::gram_schmidt_tangent;
 
     let up = glam::Vec3::Z;
     normals
@@ -397,7 +410,7 @@ fn make_torus(major_r: f32, minor_r: f32, major_segs: usize, minor_segs: usize) 
 /// (tube-circle) direction at each triangle's centroid.
 fn make_torus_face_vectors(torus: &MeshData, major_r: f32) -> Vec<[f32; 2]> {
     use glam::Vec3;
-    use vpl::quantities::compute_face_tangent_frames;
+    use vpl::compute_face_tangent_frames;
 
     let num_tris = torus.indices.len() / 3;
     let frames = compute_face_tangent_frames(&torus.positions, &torus.indices);
@@ -538,7 +551,9 @@ pub(crate) fn submit_sv_items(app: &mut App, fd: &mut FrameData) {
     if !app.sv_state.built {
         return;
     }
-    fd.scene.glyphs.push(app.sv_glyph_item());
+    fd.scene
+        .items_mut::<VectorFieldItem>()
+        .push(app.sv_field_item());
 }
 
 // ---------------------------------------------------------------------------
@@ -557,8 +572,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 6.0,
-        orientation: glam::Quat::from_rotation_z(0.6)
-            * glam::Quat::from_rotation_x(1.1),
+        orientation: glam::Quat::from_rotation_z(0.6) * glam::Quat::from_rotation_x(1.1),
         ..vpl::Camera::default()
     };
 }
@@ -575,8 +589,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            sv_collect_scene_items(app);
+        let (items, lighting, sg, ss) = sv_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -595,12 +608,8 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
-    // Surface vector glyphs (Showcase 25) : submitted every frame.
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
+    // Surface vector fields (Showcase 25) : submitted every frame.
     submit_sv_items(app, &mut *fd);
 }
 
@@ -611,30 +620,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -675,13 +676,23 @@ impl crate::Showcase for ScSurfaceVectors {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -690,7 +701,12 @@ impl crate::Showcase for ScSurfaceVectors {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_surface_vectors(app, ui)
     }
 }

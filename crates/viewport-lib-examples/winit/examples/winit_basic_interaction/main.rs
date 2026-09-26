@@ -26,7 +26,8 @@ use viewport_lib as vpl;
 
 use vpl::{
     AppConfig, BindingPreset, LabelAnchor, LabelItem, Material, OrbitCameraController, OverlayFill,
-    OverlayShape, OverlayShapeItem, PickMask, ViewportApp, ViewportContext, ViewportEvent, primitives,
+    OverlayShape, OverlayShapeItem, PickMask, ViewportApp, ViewportContext, ViewportEvent,
+    ViewportInput, primitives,
 };
 
 // Quit button rectangle in logical pixels (top-left corner of the window).
@@ -76,15 +77,19 @@ fn main() {
     // Drive navigation ourselves so we can suppress it under the UI. The runner
     // stops auto-feeding events and driving orbit; this handler owns the input.
     .with_input({
-        let mut orbit = OrbitCameraController::new(BindingPreset::Default);
+        let mut orbit = OrbitCameraController::new_stateless();
+        // The resolver owns the bindings; the controller keeps its sensitivities.
+        let mut input = ViewportInput::from_preset(BindingPreset::Default);
         let mut cursor = glam::Vec2::ZERO;
         move |ictx| {
             let size = ictx.viewport_size();
-            orbit.begin_frame(ViewportContext {
+            input.begin_frame(ViewportContext {
                 hovered: true,
                 focused: true,
                 viewport_size: size,
             });
+            // Pan reads the viewport height off the controller.
+            orbit.set_viewport_size(size);
             // Cloned so we can forward (which borrows the instance) while reading.
             for ev in ictx.events().to_vec() {
                 if let ViewportEvent::PointerMoved { position } = ev {
@@ -96,10 +101,11 @@ fn main() {
                 // Navigate only when the pointer is not over the quit button, so
                 // the wheel and drags do not move the camera under the UI.
                 if !quit_button_hit(cursor) {
-                    orbit.push_event(ev);
+                    input.push_event(ev);
                 }
             }
-            orbit.apply_to_camera(ictx.camera_mut());
+            let action_frame = input.resolve();
+            orbit.apply(ictx.camera_mut(), &action_frame);
         }
     })
     .run(move |ctx| {

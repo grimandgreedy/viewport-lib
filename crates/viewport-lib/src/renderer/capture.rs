@@ -1210,7 +1210,7 @@ mod tests {
         assert!(renderer.frame_fully_resident(&fd));
 
         // Remove the mesh: both queries flip.
-        assert!(renderer.resources_mut().remove_mesh(mesh));
+        assert!(renderer.resources_mut().free_mesh(mesh));
         assert!(
             !renderer.mesh_resident(mesh),
             "removed mesh is not resident"
@@ -1442,7 +1442,7 @@ mod tests {
             _device: &crate::gpu::Device,
             _queue: &crate::gpu::Queue,
             _ctx: &crate::plugin_api::ItemFrameContext<'_>,
-            _items: &dyn crate::plugin_api::PluginItemCollection,
+            _items: &crate::plugin_api::ItemCollections<'_>,
         ) -> Vec<crate::gpu::CommandBuffer> {
             self.calls
                 .prepare
@@ -1453,7 +1453,7 @@ mod tests {
             &mut self,
             _frustum: &crate::camera::frustum::Frustum,
             _ctx: &crate::plugin_api::ItemFrameContext<'_>,
-            _items: &dyn crate::plugin_api::PluginItemCollection,
+            _items: &crate::plugin_api::ItemCollections<'_>,
         ) {
             self.calls
                 .cull
@@ -1463,7 +1463,7 @@ mod tests {
             &self,
             _pass: &mut crate::gpu::RenderPass<'_>,
             _ctx: &crate::plugin_api::PaintContext<'_>,
-            _items: &dyn crate::plugin_api::PluginItemCollection,
+            _items: &crate::plugin_api::ItemCollections<'_>,
         ) {
             self.calls
                 .paint
@@ -1483,6 +1483,10 @@ mod tests {
             &self.settings
         }
         fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
             self
         }
     }

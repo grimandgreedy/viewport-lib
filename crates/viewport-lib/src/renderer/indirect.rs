@@ -569,7 +569,7 @@ impl CullResources {
             });
             pass.set_bind_group(0, &bind_group, &[]);
 
-            let mut phase = |pass: &mut crate::gpu::ComputePass<'_>, slot: u32, begin: bool| {
+            let phase = |pass: &mut crate::gpu::ComputePass<'_>, slot: u32, begin: bool| {
                 if let Some((qs, mask)) = phase_ts {
                     if begin {
                         mask.fetch_or(1 << slot, std::sync::atomic::Ordering::Relaxed);

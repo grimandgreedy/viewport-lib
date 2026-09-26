@@ -13,13 +13,13 @@
 //! is large near the equator and per-point transparency follows a sinusoidal longitude
 //! pattern, producing transparent stripes.
 
-use crate::{App, MeshId};
 use crate::eframe::egui;
+use crate::{App, MeshId};
 use viewport_lib as vpl;
+use viewport_lib_item_types::{PointCloudItem, VectorFieldItem};
 use vpl::{
-    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, CELL_SENTINEL, ColourmapId,
-    FrameData, GlyphItem, LightingSettings, PointCloudItem, SceneRenderItem, ViewportRenderer,
-    VolumeMeshData, volume_mesh_cell_vectors_to_glyphs, volume_mesh_vertex_vectors_to_glyphs,
+    AttributeData, AttributeKind, AttributeRef, BuiltinColourmap, ColourSource, ColourmapId,
+    FrameData, LightingSettings, SceneRenderItem, SizeSource, ViewportRenderer, VolumeMeshData,
 };
 
 // ---------------------------------------------------------------------------
@@ -118,23 +118,14 @@ fn vertex_radial_vectors(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
         .collect()
 }
 
-fn cell_radial_vectors(data: &VolumeMeshData) -> Vec<[f32; 3]> {
-    data.cells
+fn cell_radial_vectors(centroids: &[[f32; 3]]) -> Vec<[f32; 3]> {
+    centroids
         .iter()
-        .map(|cell| {
-            let valid: Vec<usize> = cell
-                .iter()
-                .filter(|&&i| i != CELL_SENTINEL && (i as usize) < data.positions.len())
-                .map(|&i| i as usize)
-                .collect();
-            if valid.is_empty() {
+        .map(|&[cx, cy, cz]| {
+            let len = (cx * cx + cy * cy + cz * cz).sqrt();
+            if len < 1e-9 {
                 return [0.0, 1.0, 0.0];
             }
-            let inv = 1.0 / valid.len() as f32;
-            let cx: f32 = valid.iter().map(|&i| data.positions[i][0]).sum::<f32>() * inv;
-            let cy: f32 = valid.iter().map(|&i| data.positions[i][1]).sum::<f32>() * inv;
-            let cz: f32 = valid.iter().map(|&i| data.positions[i][2]).sum::<f32>() * inv;
-            let len = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-9);
             [cx / len, cy / len, cz / len]
         })
         .collect()
@@ -169,6 +160,7 @@ pub(crate) struct EqState {
     pub sub_mode: EqSubMode,
     pub edge_mesh_ids: [MeshId; 3],
     pub vm_mesh_id: MeshId,
+    pub arrow_shape_id: MeshId,
     pub vm_data: vpl::VolumeMeshData,
     pub pc_positions: Vec<[f32; 3]>,
     pub pc_scalars: Vec<f32>,
@@ -185,6 +177,7 @@ impl Default for EqState {
             sub_mode: EqSubMode::EdgeCornerScalars,
             edge_mesh_ids: [MeshId::INVALID; 3],
             vm_mesh_id: MeshId::INVALID,
+            arrow_shape_id: MeshId::INVALID,
             vm_data: vpl::VolumeMeshData::default(),
             pc_positions: Vec::new(),
             pc_scalars: Vec::new(),
@@ -236,6 +229,10 @@ impl App {
             .upload_volume_mesh(&self.device, &vm_data)
             .expect("vm mesh");
         self.eq_state.vm_mesh_id = vm_item.boundary_mesh_id;
+        self.eq_state.arrow_shape_id = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &vpl::primitives::arrow(0.06, 0.15, 0.35, 12))
+            .expect("eq arrow shape mesh");
         self.eq_state.vm_data = vm_data;
 
         let (p, s, r, t) = make_pc_data(5_000);
@@ -308,9 +305,13 @@ pub(crate) fn controls_eq(app: &mut App, ui: &mut egui::Ui) {
 impl App {
     pub(crate) fn eq_scene_items(
         &self,
-    ) -> (Vec<SceneRenderItem>, Vec<GlyphItem>, Vec<PointCloudItem>) {
+    ) -> (
+        Vec<SceneRenderItem>,
+        Vec<VectorFieldItem>,
+        Vec<PointCloudItem>,
+    ) {
         let mut scene_items: Vec<SceneRenderItem> = Vec::new();
-        let mut glyph_items: Vec<GlyphItem> = Vec::new();
+        let mut field_items: Vec<VectorFieldItem> = Vec::new();
         let mut pc_items: Vec<PointCloudItem> = Vec::new();
 
         match self.eq_state.sub_mode {
@@ -341,24 +342,29 @@ impl App {
                 item.mesh_id = self.eq_state.vm_mesh_id;
                 scene_items.push(item);
                 // Vertex vectors: blue (Viridis at 0.15).
-                let vv = vertex_radial_vectors(&self.eq_state.vm_data.positions);
-                let mut vg = volume_mesh_vertex_vectors_to_glyphs(
-                    &self.eq_state.vm_data.positions,
-                    &vv,
-                    0.4,
-                );
-                vg.scalars = vec![0.15; vg.positions.len()];
-                vg.scalar_range = Some((0.0, 1.0));
-                vg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Viridis as usize));
-                glyph_items.push(vg);
+                let mut vg = VectorFieldItem::new(self.eq_state.arrow_shape_id);
+                vg.positions = self.eq_state.vm_data.positions.clone();
+                vg.vectors = vertex_radial_vectors(&self.eq_state.vm_data.positions);
+                vg.scale = 0.4;
+                vg.colour = ColourSource::Scalar {
+                    values: vec![0.15; vg.positions.len()],
+                    range: Some((0.0, 1.0)),
+                    colourmap: Some(ColourmapId(BuiltinColourmap::Viridis as usize)),
+                };
+                field_items.push(vg);
                 // Cell vectors: orange (Plasma at 0.65).  Use Plasma to guarantee a
                 // warm hue clearly distinct from the blue vertex arrows.
-                let cv = cell_radial_vectors(&self.eq_state.vm_data);
-                let mut cg = volume_mesh_cell_vectors_to_glyphs(&self.eq_state.vm_data, &cv, 1.5);
-                cg.scalars = vec![0.65; cg.positions.len()];
-                cg.scalar_range = Some((0.0, 1.0));
-                cg.colourmap_id = Some(ColourmapId(BuiltinColourmap::Plasma as usize));
-                glyph_items.push(cg);
+                let centroids = self.eq_state.vm_data.cell_centroids();
+                let mut cg = VectorFieldItem::new(self.eq_state.arrow_shape_id);
+                cg.vectors = cell_radial_vectors(&centroids);
+                cg.positions = centroids;
+                cg.scale = 1.5;
+                cg.colour = ColourSource::Scalar {
+                    values: vec![0.65; cg.positions.len()],
+                    range: Some((0.0, 1.0)),
+                    colourmap: Some(ColourmapId(BuiltinColourmap::Plasma as usize)),
+                };
+                field_items.push(cg);
             }
             EqSubMode::PointCloudRadiusTransparency => {
                 // Opaque sphere behind the point cloud to occlude back-facing points.
@@ -368,14 +374,18 @@ impl App {
 
                 let mut pc = PointCloudItem::default();
                 pc.positions = self.eq_state.pc_positions.clone();
-                pc.scalars = self.eq_state.pc_scalars.clone();
-                pc.radii = self.eq_state.pc_radii.clone();
+                pc.colour = ColourSource::Scalar {
+                    values: self.eq_state.pc_scalars.clone(),
+                    range: None,
+                    colourmap: None,
+                };
+                pc.size = SizeSource::PerSample(self.eq_state.pc_radii.clone());
                 pc.transparencies = self.eq_state.pc_transp.clone();
                 pc_items.push(pc);
             }
         }
 
-        (scene_items, glyph_items, pc_items)
+        (scene_items, field_items, pc_items)
     }
 }
 
@@ -386,7 +396,7 @@ impl App {
 pub(crate) fn eq_collect_scene_items(
     app: &mut App,
 ) -> (Vec<SceneRenderItem>, LightingSettings, u64, u64) {
-    let (items, _glyphs, _pcs) = app.eq_scene_items();
+    let (items, _fields, _pcs) = app.eq_scene_items();
     (items, LightingSettings::default(), 0, 0)
 }
 
@@ -394,9 +404,9 @@ pub(crate) fn submit_eq_items(app: &mut App, fd: &mut FrameData) {
     if !app.eq_state.built {
         return;
     }
-    let (_items, glyphs, pcs) = app.eq_scene_items();
-    fd.scene.glyphs.extend(glyphs);
-    fd.scene.point_clouds.extend(pcs);
+    let (_items, fields, pcs) = app.eq_scene_items();
+    fd.scene.items_mut::<VectorFieldItem>().extend(fields);
+    fd.scene.items_mut::<PointCloudItem>().extend(pcs);
 }
 
 // ---------------------------------------------------------------------------
@@ -415,8 +425,7 @@ pub(crate) fn build(app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) 
     app.camera = vpl::Camera {
         center: glam::Vec3::ZERO,
         distance: 18.0,
-        orientation: glam::Quat::from_rotation_z(0.4)
-            * glam::Quat::from_rotation_x(0.8),
+        orientation: glam::Quat::from_rotation_z(0.4) * glam::Quat::from_rotation_x(0.8),
         ..vpl::Camera::default()
     };
 }
@@ -433,8 +442,7 @@ pub(crate) fn scene(
     _out: &mut crate::SceneOverrides,
 ) -> crate::SceneContents {
     let (items, bg_colour, lighting, scene_gen, sel_gen) = {
-        let (items, lighting, sg, ss) =
-            eq_collect_scene_items(app);
+        let (items, lighting, sg, ss) = eq_collect_scene_items(app);
         (items, None, lighting, sg, ss)
     };
     crate::SceneContents {
@@ -453,12 +461,8 @@ pub(crate) fn scene(
 /// Fold this showcase's own contributions into the assembled frame: extra
 /// render items, overlays, and effect settings that are re-submitted every
 /// frame rather than baked into the scene.
-pub(crate) fn frame(
-    app: &mut crate::App,
-    fd: &mut vpl::FrameData,
-    _ctx: &crate::FrameCtx,
-) {
-    // Extended quantity glyphs and point clouds (Showcase 32) : submitted every frame.
+pub(crate) fn frame(app: &mut crate::App, fd: &mut vpl::FrameData, _ctx: &crate::FrameCtx) {
+    // Extended quantity fields and point clouds (Showcase 32) : submitted every frame.
     submit_eq_items(app, &mut *fd);
 }
 
@@ -469,30 +473,22 @@ pub(crate) fn frame(
 /// Draw this showcase's own egui overlay on top of the rendered viewport:
 /// selection rectangles, mode readouts, and in-scene labels.
 
-
 /// Advance this showcase's animation and ask for another frame. Runs after the
 /// viewport has been drawn, so it only affects the next frame.
-
 
 /// Route a viewport click for this showcase. The host calls this for a plain
 /// click that no gizmo or widget has already consumed; `pos` is in viewport
 /// pixels.
 
-
 /// Handle drag gestures this showcase owns, before the camera controller runs.
-
 
 /// Advance this showcase's own camera animation or object motion for the frame.
 
-
 /// Update this showcase's interactive widgets for the frame.
-
 
 /// Flush any per-frame GPU writes this showcase has queued.
 
-
 /// Cache gizmo placement for next frame's hit-testing.
-
 
 /// Take over the whole viewport for this frame. Returning false leaves the
 /// host's normal single-viewport path in charge.
@@ -533,13 +529,23 @@ impl crate::Showcase for ScExtendedQuantities {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -548,7 +554,12 @@ impl crate::Showcase for ScExtendedQuantities {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_eq(app, ui)
     }
 }

@@ -590,6 +590,9 @@ impl ViewportRenderer {
         // interleave correctly (e.g. a polyline underline at i32::MAX sits with
         // console text at i32::MAX but above HUD labels at 0).
         self.label_gpu_data = None;
+        // Counted before any of the paths below can skip a group, so the
+        // submitted/drawn pair carries the skips.
+        self.overlay_retained_counters.submitted = frame.overlays.retained.len() as u32;
         let (_, gizmo_polylines) = self.gizmo_overlay_items(frame);
         let has_vector_shape = frame.overlays.shapes.iter().any(|s| {
             matches!(
@@ -748,7 +751,7 @@ impl ViewportRenderer {
                     // filled path, over the stroke when the stroke is all the
                     // item covers.
                     let filled = poly.closed && poly.style.fill.is_set();
-                    let mut inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
+                    let inner = |batch: &mut Vec<crate::resources::OverlayTextVertex>| {
                         for layer in poly
                             .style
                             .inner_shadows
@@ -1284,7 +1287,9 @@ impl ViewportRenderer {
                 for r in &frame.overlays.retained {
                     // Re-emit the group first if its baked glyph UVs went stale
                     // (atlas grew or pixels_per_point changed); cheap no-op otherwise.
-                    self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp);
+                    if self.reemit_overlay_geometry_if_stale(device, queue, r.id, ppp) {
+                        self.overlay_retained_counters.reemitted += 1;
+                    }
                     // Resolve the group's tracks. Every channel they drive rides
                     // the instance, so an animated group never re-compiles; a
                     // static group skips the clone.
@@ -1395,6 +1400,9 @@ impl ViewportRenderer {
                         // because it is compared against @builtin(position).
                         pivot: r.transform.pivot,
                     });
+                    // Past every skip: the group has an instance slot and at
+                    // least one of the two streams below records a draw.
+                    self.overlay_retained_counters.drawn += 1;
                     if let Some((vbuf, vcount)) = text {
                         let draw_index = self.overlay_retained_draws.len() as u32;
                         self.overlay_retained_draws.push(

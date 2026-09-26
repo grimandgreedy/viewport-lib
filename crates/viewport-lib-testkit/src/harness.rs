@@ -26,6 +26,7 @@ pub struct Harness {
     /// Scenes built so far; stamps each built scene's `generation` so the
     /// renderer's scene-content caches see consecutive catalogue scenes as
     /// different content.
+    #[cfg(feature = "scenes")]
     scenes_built: u64,
 }
 
@@ -81,12 +82,17 @@ impl Harness {
         queue: wgpu::Queue,
         target_format: wgpu::TextureFormat,
     ) -> Self {
-        let renderer = ViewportRenderer::new(&device, target_format);
+        let mut renderer = ViewportRenderer::new(&device, target_format);
+        // The item types viewport-lib ships with live in their own crate and
+        // register like any other plugin, so a harness that renders them has
+        // to install them the way a consumer does.
+        viewport_lib_item_types::install(&mut renderer, &device);
         Self {
             device,
             queue,
             renderer,
             adapter_info: None,
+            #[cfg(feature = "scenes")]
             scenes_built: 0,
         }
     }

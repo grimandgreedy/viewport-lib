@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use viewport_lib::plugin_api::{ItemTypePlugin, PluginItemCollection};
+use viewport_lib::plugin_api::{ItemCollections, ItemTypePlugin};
 use viewport_lib::resources::{DeviceResources, JobId, Jobs, TextureId, UploadStatus};
 use viewport_lib::wgpu;
 
@@ -139,7 +139,7 @@ impl ItemTypePlugin for StoringItemTypePlugin {
         _device: &wgpu::Device,
         _queue: &wgpu::Queue,
         _ctx: &viewport_lib::plugin_api::ItemFrameContext<'_>,
-        _items: &dyn PluginItemCollection,
+        _items: &ItemCollections<'_>,
     ) -> Vec<wgpu::CommandBuffer> {
         Vec::new()
     }

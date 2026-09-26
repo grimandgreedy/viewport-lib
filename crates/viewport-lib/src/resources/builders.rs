@@ -17,7 +17,7 @@ use crate::gpu::ShaderStages;
 ///
 /// `source` accepts a baked `&'static str` (via [`wgsl_source!`]) or an owned
 /// `String` (a shader composed at runtime, e.g. by the deform registry).
-pub(crate) fn wgsl_module<'a>(
+pub fn wgsl_module<'a>(
     device: &crate::gpu::Device,
     label: &str,
     source: impl Into<std::borrow::Cow<'a, str>>,
@@ -33,7 +33,7 @@ pub(crate) fn wgsl_module<'a>(
 /// declaration, naga 27 rejects the directive. Only for sources compiled on a
 /// device with [`PRIMITIVE_INDEX_FEATURE`](crate::gpu::PRIMITIVE_INDEX_FEATURE)
 /// (the directive itself fails validation without the feature).
-pub(crate) fn with_primitive_index_enable(src: &str) -> String {
+pub fn with_primitive_index_enable(src: &str) -> String {
     format!(
         "{}{}",
         crate::plugin_api::shared_wgsl::PICK_PRIM_ENABLE_WGSL,
@@ -237,10 +237,7 @@ macro_rules! wgsl_source {
 pub(crate) use wgsl_source;
 
 /// A uniform-buffer bind group layout entry (non-dynamic, no min size).
-pub(crate) fn uniform_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn uniform_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -254,10 +251,7 @@ pub(crate) fn uniform_entry(
 }
 
 /// A filterable float 2D texture bind group layout entry.
-pub(crate) fn texture_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn texture_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -271,10 +265,7 @@ pub(crate) fn texture_entry(
 }
 
 /// A filtering sampler bind group layout entry.
-pub(crate) fn sampler_entry(
-    binding: u32,
-    visibility: ShaderStages,
-) -> crate::gpu::BindGroupLayoutEntry {
+pub fn sampler_entry(binding: u32, visibility: ShaderStages) -> crate::gpu::BindGroupLayoutEntry {
     crate::gpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -284,7 +275,7 @@ pub(crate) fn sampler_entry(
 }
 
 /// Bind group layout with a single uniform buffer at binding 0.
-pub(crate) fn uniform_bgl(
+pub fn uniform_bgl(
     device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
@@ -298,7 +289,7 @@ pub(crate) fn uniform_bgl(
 /// Bind group layout: filterable texture at binding 0 + filtering sampler at
 /// binding 1, both visible to `visibility`. The common shape for a
 /// full-screen composite / blit pass.
-pub(crate) fn texture_sampler_bgl(
+pub fn texture_sampler_bgl(
     device: &crate::gpu::Device,
     label: &str,
     visibility: ShaderStages,
@@ -313,7 +304,7 @@ pub(crate) fn texture_sampler_bgl(
 /// a filterable texture at binding 1, and a filtering sampler at binding 2
 /// (both visible to `tex_vis`). The standard scivis per-item layout: an item
 /// uniform plus an optional colour-LUT texture and sampler.
-pub(crate) fn uniform_texture_sampler_bgl(
+pub fn uniform_texture_sampler_bgl(
     device: &crate::gpu::Device,
     label: &str,
     uniform_vis: ShaderStages,
@@ -331,10 +322,7 @@ pub(crate) fn uniform_texture_sampler_bgl(
 
 /// Linear-filtered sampler clamped to edge on all axes. The default sampler for
 /// texture lookups that must not wrap (LUTs, composite targets, most content).
-pub(crate) fn clamp_linear_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_linear_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -348,10 +336,7 @@ pub(crate) fn clamp_linear_sampler(
 
 /// Nearest-filtered sampler clamped to edge on all axes. Used where
 /// interpolation would blur discrete data (index buffers, nearest blits).
-pub(crate) fn clamp_nearest_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_nearest_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -366,7 +351,7 @@ pub(crate) fn clamp_nearest_sampler(
 /// Linear-filtered sampler that repeats on all axes. Used for tiling textures
 /// (decals, patterned materials). `mipmap_filter` varies: most callers want
 /// `Nearest`, uploaded user textures pick it from the mip chain at runtime.
-pub(crate) fn repeat_linear_sampler(
+pub fn repeat_linear_sampler(
     device: &crate::gpu::Device,
     label: &str,
     mipmap_filter: crate::gpu::FilterMode,
@@ -461,7 +446,7 @@ pub(crate) fn env_sampler(device: &crate::gpu::Device, label: &str) -> crate::gp
 
 /// Additive blend: `dst.rgb + src.rgb`, alpha unchanged. Used by the sprite and
 /// particle draw paths for glowing / emissive accumulation.
-pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+pub const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
     color: crate::gpu::BlendComponent {
         src_factor: crate::gpu::BlendFactor::One,
         dst_factor: crate::gpu::BlendFactor::One,
@@ -477,7 +462,7 @@ pub(crate) const ADDITIVE_BLEND: crate::gpu::BlendState = crate::gpu::BlendState
 /// Premultiplied-alpha blend: `src.rgb + dst.rgb * (1 - src.a)`. Used by the
 /// sprite and particle draw paths when the source colour already carries its
 /// alpha premultiplied.
-pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
+pub const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
     color: crate::gpu::BlendComponent {
         src_factor: crate::gpu::BlendFactor::One,
         dst_factor: crate::gpu::BlendFactor::OneMinusSrcAlpha,
@@ -495,18 +480,30 @@ pub(crate) const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::Blend
 /// bias, `ColorWrites::ALL`, default front face, no multiview or cache) is held
 /// constant by [`build_dual_pipeline`]. The vertex and fragment stages share
 /// one shader module, which is the shape every scivis feature uses.
-pub(crate) struct DualPipelineDesc<'a> {
+pub struct DualPipelineDesc<'a> {
+    /// Debug label; the LDR and HDR variants are suffixed from it.
     pub label: &'a str,
+    /// Pipeline layout, listing the shared group 0 first.
     pub layout: &'a crate::gpu::PipelineLayout,
+    /// Shader module holding both entry points.
     pub shader: &'a crate::gpu::ShaderModule,
+    /// Vertex entry point name.
     pub vertex_entry: &'a str,
+    /// Fragment entry point name.
     pub fragment_entry: &'a str,
+    /// Vertex buffer layouts, in bind-slot order.
     pub vertex_buffers: &'a [crate::gpu::VertexBufferLayout<'a>],
+    /// Colour blend state. `None` writes opaque.
     pub blend: Option<crate::gpu::BlendState>,
+    /// Primitive topology.
     pub topology: crate::gpu::PrimitiveTopology,
+    /// Face to cull. `None` draws both sides.
     pub cull_mode: Option<crate::gpu::Face>,
+    /// Whether the pipeline writes depth.
     pub depth_write: bool,
+    /// Depth comparison function.
     pub depth_compare: crate::gpu::CompareFunction,
+    /// MSAA sample count; must match the target the pipeline draws into.
     pub sample_count: u32,
     /// LDR swapchain format; the HDR variant is always `Rgba16Float`.
     pub ldr_format: crate::gpu::TextureFormat,
@@ -517,7 +514,7 @@ pub(crate) struct DualPipelineDesc<'a> {
 /// state constant. The two variants differ only in colour target format
 /// (`desc.ldr_format` vs `Rgba16Float`), which is the invariant `DualPipeline`
 /// encodes.
-pub(crate) fn build_dual_pipeline(
+pub fn build_dual_pipeline(
     device: &crate::gpu::Device,
     desc: &DualPipelineDesc,
 ) -> crate::resources::types::DualPipeline {
@@ -567,7 +564,7 @@ pub(crate) fn build_dual_pipeline(
 /// composite passes (tone map, bloom, SSAO, FXAA, OIT composite, upscales, the
 /// scatter composites) all share this shape and differ only in target format
 /// and blend.
-pub(crate) fn build_fullscreen_pipeline(
+pub fn build_fullscreen_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,
@@ -616,7 +613,7 @@ pub(crate) fn build_fullscreen_pipeline(
 /// exactly the pixels that survived the depth test in the colour pass. `cull` is
 /// `Back` for closed solids and `None` otherwise; `depth_write` is off for
 /// billboards and screen-space items that do not own scene depth.
-pub(crate) fn build_outline_mask_pipeline(
+pub fn build_outline_mask_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,
@@ -661,7 +658,7 @@ pub(crate) fn build_outline_mask_pipeline(
 /// shape: a shader, its layout, and an entry point, with default compilation
 /// options and no cache. This is the one place the crate calls
 /// `create_compute_pipeline`, so a wgpu upgrade only has to be audited here.
-pub(crate) fn compute_pipeline(
+pub fn compute_pipeline(
     device: &crate::gpu::Device,
     label: &str,
     layout: &crate::gpu::PipelineLayout,
@@ -711,7 +708,7 @@ pub fn pipeline_layout<'a>(
 
 /// Pipeline layout with the standard scene binding convention:
 /// group 0 = camera, group 1 = the feature's per-item bind group layout.
-pub(crate) fn standard_scene_layout(
+pub fn standard_scene_layout(
     device: &crate::gpu::Device,
     label: &str,
     camera_bgl: &crate::gpu::BindGroupLayout,
@@ -911,10 +908,7 @@ pub(crate) fn comparison_sampler(
 /// Linear-filtered sampler clamped to edge on all axes, with linear mip
 /// filtering. Like [`clamp_linear_sampler`] but samples across the mip chain
 /// (used by the volume LUT lookups).
-pub(crate) fn clamp_linear_mip_sampler(
-    device: &crate::gpu::Device,
-    label: &str,
-) -> crate::gpu::Sampler {
+pub fn clamp_linear_mip_sampler(device: &crate::gpu::Device, label: &str) -> crate::gpu::Sampler {
     device.create_sampler(&crate::gpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: crate::gpu::AddressMode::ClampToEdge,
@@ -1058,4 +1052,15 @@ mod strip_debug_vis_tests {
             "real discard statement survived: {stripped}"
         );
     }
+}
+
+/// Vertex buffer layout of the meshes in the shared arena.
+///
+/// A plugin that draws a [`MeshId`](crate::resources::MeshId) through
+/// [`MeshGeometry`](crate::resources::MeshGeometry) binds those buffers
+/// directly, so its pipeline has to declare the layout they were uploaded
+/// with. Locations 0 to 4 are position, normal, colour, uv and tangent.
+pub fn mesh_vertex_layout() -> crate::gpu::VertexBufferLayout<'static> {
+    use crate::resources::types::VertexBufferLayoutExt as _;
+    crate::resources::types::Vertex::buffer_layout()
 }

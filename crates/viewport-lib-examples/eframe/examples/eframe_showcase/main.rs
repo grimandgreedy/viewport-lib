@@ -5,9 +5,9 @@ use viewport_lib as vpl;
 pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BindingPreset, ButtonState, Camera, CameraAnimator, CameraFrame, ClipObject, FrameData,
-    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId, OffscreenViewportTarget,
-    OrbitCameraController, PickBackend, PickMask, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportRenderer,
+    GizmoAxis, GizmoMode, GroundPlane, GroundPlaneMode, LightingSettings, MeshData, MeshId,
+    OffscreenViewportTarget, OrbitCameraController, PickBackend, PickMask, SceneFrame,
+    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
 };
 
 mod geometry;
@@ -51,7 +51,7 @@ mod showcase_35_overlay;
 mod showcase_36_playback_runtime;
 mod showcase_37_probe_widgets;
 mod showcase_38_surface_lic;
-mod showcase_39_tensor_glyphs;
+mod showcase_39_tensor_fields;
 mod showcase_40_vertex_warp;
 mod showcase_41_sprites;
 mod showcase_42_gaussian_splats;
@@ -131,6 +131,7 @@ fn main() -> eframe::Result {
             // targets hand egui non-sRGB views so the encode survives the sample.
             let mut renderer =
                 ViewportRenderer::new(&device, OffscreenViewportTarget::render_format(format));
+            viewport_lib_item_types::install(&mut renderer, &device);
             // Compile the custom-shading plugin pipelines now, at startup,
             // rather than on the frame that showcase opens: the ~45 pipeline
             // builds would otherwise stall that frame. See
@@ -157,7 +158,8 @@ fn main() -> eframe::Result {
                         * glam::Quat::from_rotation_x(1.1),
                     ..Camera::default()
                 },
-                controller: OrbitCameraController::new(BindingPreset::Default),
+                controller: OrbitCameraController::new_stateless(),
+                input: ViewportInput::from_preset(BindingPreset::Default),
                 mode: ShowcaseMode::Basic,
                 mode_gen: 0,
                 show_keybinds: false,
@@ -220,7 +222,7 @@ fn main() -> eframe::Result {
 
                 lic_state: showcase_38_surface_lic::LicState::default(),
 
-                tg_state: showcase_39_tensor_glyphs::TensorGlyphState::default(),
+                tg_state: showcase_39_tensor_fields::TensorFieldState::default(),
 
                 warp_state: showcase_40_vertex_warp::VertexWarpState::default(),
                 sprite_state: showcase_41_sprites::SpriteState::default(),
@@ -293,7 +295,7 @@ enum ShowcaseMode {
     PlaybackRuntime,
     ProbeWidgets,
     SurfaceLIC,
-    TensorGlyphs,
+    TensorFields,
     VertexWarp,
     Sprites,
     GaussianSplats,
@@ -342,6 +344,9 @@ pub(crate) struct App {
 
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     /// Smooth camera animator used by CameraTools and Auxiliary showcases.
     cam_animator: CameraAnimator,
     mode: ShowcaseMode,
@@ -476,7 +481,7 @@ pub(crate) struct App {
     pub(crate) lic_state: showcase_38_surface_lic::LicState,
 
     // --- Showcase 39 ---
-    pub(crate) tg_state: showcase_39_tensor_glyphs::TensorGlyphState,
+    pub(crate) tg_state: showcase_39_tensor_fields::TensorFieldState,
 
     // --- Showcase 40 ---
     pub(crate) warp_state: showcase_40_vertex_warp::VertexWarpState,
@@ -736,11 +741,14 @@ impl eframe::App for App {
 
                 // ----- Camera controller -----
                 let vp_hovered = response.hovered();
-                self.controller.begin_frame(ViewportContext {
+                self.input.begin_frame(ViewportContext {
                     hovered: vp_hovered,
                     focused: vp_hovered,
                     viewport_size: [rect.width(), rect.height()],
                 });
+                // Pan reads the viewport height off the controller.
+                self.controller
+                    .set_viewport_size([rect.width(), rect.height()]);
 
                 // Translate egui events -> ViewportEvents.
                 let manip_active_for_text = self.interact_state.manip.is_active();
@@ -750,13 +758,12 @@ impl eframe::App for App {
                         shift: i.modifiers.shift,
                         ctrl: i.modifiers.command,
                     };
-                    self.controller
-                        .push_event(ViewportEvent::ModifiersChanged(mods));
+                    self.input.push_event(ViewportEvent::ModifiersChanged(mods));
 
                     if let Some(pos) = i.pointer.interact_pos() {
                         let local = glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top());
                         self.cursor_viewport = local;
-                        self.controller
+                        self.input
                             .push_event(ViewportEvent::PointerMoved { position: local });
                     }
 
@@ -769,7 +776,7 @@ impl eframe::App for App {
                                 ..
                             } if self.mode == ShowcaseMode::Interaction => {
                                 if let Some(kc) = shared::egui_key_to_keycode(*key) {
-                                    self.controller.push_event(ViewportEvent::Key {
+                                    self.input.push_event(ViewportEvent::Key {
                                         key: kc,
                                         state: if *pressed {
                                             ButtonState::Pressed
@@ -783,7 +790,7 @@ impl eframe::App for App {
 
                             egui::Event::Text(text) if manip_active_for_text => {
                                 for c in text.chars() {
-                                    self.controller.push_event(ViewportEvent::Character(c));
+                                    self.input.push_event(ViewportEvent::Character(c));
                                 }
                             }
 
@@ -870,7 +877,7 @@ impl eframe::App for App {
                                 } else {
                                     ButtonState::Released
                                 };
-                                self.controller.push_event(ViewportEvent::MouseButton {
+                                self.input.push_event(ViewportEvent::MouseButton {
                                     button: vp_button,
                                     state,
                                 });
@@ -888,7 +895,7 @@ impl eframe::App for App {
                                         egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                                         egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                                     };
-                                    self.controller.push_event(ViewportEvent::Wheel {
+                                    self.input.push_event(ViewportEvent::Wheel {
                                         delta: glam::Vec2::new(delta.x, delta.y),
                                         units,
                                     });
@@ -909,12 +916,11 @@ impl eframe::App for App {
                 // manipulation) drives the controller itself; otherwise the
                 // host applies it, or resolves it without moving the camera
                 // when the showcase is using the drag for something else.
-                if !self.showcase_drive_camera(&viewport_cx) {
-                    if self.showcase_suppress_orbit(&viewport_cx) {
-                        self.controller.resolve();
-                    } else {
-                        self.controller.apply_to_camera(&mut self.camera);
-                    }
+                if !self.showcase_drive_camera(&viewport_cx)
+                    && !self.showcase_suppress_orbit(&viewport_cx)
+                {
+                    let action_frame = self.input.resolve();
+                    self.controller.apply(&mut self.camera, &action_frame);
                 }
 
                 self.camera.set_aspect_ratio(rect.width(), rect.height());
@@ -1559,8 +1565,8 @@ impl App {
             return;
         };
         let mask = match self.mode {
-            // Tensor glyph instances and beam-mesh cells are both point-like.
-            ShowcaseMode::TensorGlyphs => PickMask::POINT_LIKE,
+            // Tensor field samples and beam-mesh cells are both point-like.
+            ShowcaseMode::TensorFields => PickMask::POINT_LIKE,
             _ => PickMask::OBJECT,
         };
         let hit = renderer.pick_object(
@@ -1603,8 +1609,8 @@ impl App {
                 }
                 None => self.scalar_state.selection.clear(),
             },
-            ShowcaseMode::TensorGlyphs => {
-                showcase_39_tensor_glyphs::tg_apply_pick(self, hit);
+            ShowcaseMode::TensorFields => {
+                showcase_39_tensor_fields::tg_apply_pick(self, hit);
             }
             ShowcaseMode::Decals => {
                 // Decal placement uses the hit's surface position and normal.

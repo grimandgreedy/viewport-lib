@@ -32,6 +32,7 @@ pub struct ShowcaseCtx<'a> {
     /// Physical pixels per logical point. Overlay coordinates are in physical
     /// render-target pixels, while pick cursors are in logical points, so scale
     /// by this to draw an overlay that lines up with the cursor.
+    #[allow(dead_code)] // part of the context every showcase is handed; not all read it
     pub pixels_per_point: f32,
     /// Seconds since the previous frame.
     pub dt: f32,

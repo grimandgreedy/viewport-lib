@@ -113,7 +113,7 @@ fn emit_base(
         // An inset layer goes over what it erodes and under the edge of it:
         // over the fill and under the stroke for a filled path, over the stroke
         // when the stroke is all the item covers.
-        let mut inner = |verts: &mut Vec<crate::resources::OverlayTextVertex>| {
+        let inner = |verts: &mut Vec<crate::resources::OverlayTextVertex>| {
             for layer in poly
                 .style
                 .inner_shadows
@@ -330,7 +330,7 @@ fn emit_label(
     atlas: &mut crate::resources::overlay::font::GlyphAtlas,
     device: &crate::gpu::Device,
     label: &crate::renderer::types::LabelItem,
-    emit_leader: bool,
+    _emit_leader: bool,
     ppp: f32,
 ) {
     if label.text.is_empty()
@@ -1022,7 +1022,7 @@ impl ViewportRenderer {
             crate::resources::CompiledOverlay {
                 vertex_buf,
                 vertex_count: verts.len() as u32,
-                bytes: total_bytes,
+                shape_bytes,
                 shape_vertex_buf,
                 shape_vertex_count: shape_verts.len() as u32,
                 shadow_buf,
@@ -1107,7 +1107,7 @@ impl ViewportRenderer {
             crate::resources::CompiledOverlay {
                 vertex_buf,
                 vertex_count: verts.len() as u32,
-                bytes,
+                shape_bytes: 0,
                 shape_vertex_buf: None,
                 shape_vertex_count: 0,
                 shadow_buf: None,
@@ -1129,13 +1129,16 @@ impl ViewportRenderer {
     /// Re-emit a retained group's geometry if its baked glyph UVs are stale (the
     /// atlas grew or `pixels_per_point` changed since it was compiled). Cheap when
     /// the group has no glyphs or nothing changed: a version/ppp compare and return.
+    ///
+    /// Returns `true` when the group was rebuilt, which is what
+    /// `FrameStats::overlay_retained_reemitted` counts.
     pub(super) fn reemit_overlay_geometry_if_stale(
         &mut self,
         device: &crate::gpu::Device,
         queue: &crate::gpu::Queue,
         id: crate::renderer::OverlayGeometryId,
         ppp: f32,
-    ) {
+    ) -> bool {
         let current_version = self.resources.content.glyph_atlas.version();
         let stale = match self.resources.content.overlay_geometry.get(id) {
             Some(c) => match &c.source {
@@ -1145,7 +1148,7 @@ impl ViewportRenderer {
             None => false,
         };
         if !stale {
-            return;
+            return false;
         }
         // Clone the source so the atlas and store borrows do not overlap. A group
         // that resolves an anchor per frame (a single self-anchoring label) keeps
@@ -1181,18 +1184,26 @@ impl ViewportRenderer {
         }
 
         let bounds = group_bounds(&verts, &[]);
-        if let Some(c) = self.resources.content.overlay_geometry.get_mut(id) {
-            c.vertex_buf = vertex_buf;
-            c.vertex_count = verts.len() as u32;
-            c.bytes = bytes;
-            // A re-emit re-lays out the glyphs, so the extent can move.
-            if c.shape_vertex_count == 0 {
-                c.bounds = bounds;
-            }
-            if let Some(s) = &mut c.source {
-                s.baked_atlas_version = baked_version;
-                s.baked_ppp = ppp;
-            }
+        let Some(c) = self.resources.content.overlay_geometry.get_mut(id) else {
+            return false;
+        };
+        c.vertex_buf = vertex_buf;
+        c.vertex_count = verts.len() as u32;
+        // A re-emit re-lays out the glyphs, so the extent can move.
+        if c.shape_vertex_count == 0 {
+            c.bounds = bounds;
         }
+        if let Some(s) = &mut c.source {
+            s.baked_atlas_version = baked_version;
+            s.baked_ppp = ppp;
+        }
+        // The new text buffer replaces the old one, so the slot's charge has to
+        // move with it. The shape half is untouched by a re-emit and carries over.
+        let total_bytes = bytes + c.shape_bytes;
+        self.resources
+            .content
+            .overlay_geometry
+            .set_bytes(id, total_bytes);
+        true
     }
 }

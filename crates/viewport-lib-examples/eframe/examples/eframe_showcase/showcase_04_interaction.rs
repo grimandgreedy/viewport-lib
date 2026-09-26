@@ -26,6 +26,8 @@ pub(crate) struct InteractState {
     pub gizmo_center: Option<glam::Vec3>,
     pub gizmo_scale: f32,
     pub spline: vpl::SplineWidget,
+    /// Unit sphere the spline's control-point handles are drawn with.
+    pub handle_mesh: vpl::MeshId,
 }
 
 impl Default for InteractState {
@@ -35,6 +37,7 @@ impl Default for InteractState {
             selection: Selection::new(),
             animator: CameraAnimator::with_default_damping(),
             gizmo: Gizmo::new(),
+            handle_mesh: vpl::MeshId::INVALID,
             manip: ManipulationController::new(),
             transforms_snapshot: HashMap::new(),
             left_held: false,
@@ -59,6 +62,12 @@ impl App {
     pub(crate) fn build_interact_scene(&mut self, renderer: &mut ViewportRenderer) {
         self.interact_state.scene = Scene::new();
         self.interact_state.selection.clear();
+
+        let handle_sphere = vpl::primitives::icosphere(1.0, 2);
+        self.interact_state.handle_mesh = renderer
+            .resources_mut()
+            .upload_mesh_data(&self.device, &handle_sphere)
+            .expect("spline handle sphere upload");
 
         let positions = [
             [0.0, 0.0, 0.0],
@@ -368,7 +377,7 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
         return;
     }
     fd.scene
-        .polylines
+        .items_mut::<viewport_lib::PolylineItem>()
         .push(app.interact_state.spline.polyline_item(9900));
     let render_cam = CameraFrame::from_camera(&app.camera, [w, h]).render_camera;
     let spline_ctx = vpl::WidgetContext {
@@ -380,9 +389,12 @@ pub(crate) fn submit_interact_items(app: &App, fd: &mut FrameData, w: f32, h: f3
         released: false,
         double_clicked: false,
     };
-    fd.scene
-        .glyphs
-        .push(app.interact_state.spline.handle_glyphs(9901, &spline_ctx));
+    fd.scene.mesh_instances.push(
+        app.interact_state
+            .spline
+            .handle_markers(9901, &spline_ctx)
+            .to_mesh_instances(app.interact_state.handle_mesh),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -529,7 +541,6 @@ pub(crate) fn on_click(app: &mut crate::App, cx: &crate::ClickCtx) {
 
 /// Handle drag gestures this showcase owns, before the camera controller runs.
 
-
 /// Advance this showcase's own camera animation or object motion for the frame.
 pub(crate) fn advance(app: &mut crate::App, cx: &crate::ViewportCtx) {
     // ----- Advance camera animator (Showcases 4 and 10) -----
@@ -558,7 +569,6 @@ pub(crate) fn widgets(app: &mut crate::App, cx: &crate::ViewportCtx) {
 }
 
 /// Flush any per-frame GPU writes this showcase has queued.
-
 
 /// Cache gizmo placement for next frame's hit-testing.
 pub(crate) fn cache_gizmo(app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -660,12 +670,12 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
             clicked: cx.response.clicked(),
         };
 
-        // Orbit: resolve (no camera movement) while manipulation is active.
-        let action_frame = if app.interact_state.manip.is_active() {
-            app.controller.resolve()
-        } else {
-            app.controller.apply_to_camera(&mut app.camera)
-        };
+        // One resolve per frame; the camera holds still while a manipulation
+        // session owns the pointer.
+        let action_frame = app.input.resolve();
+        if !app.interact_state.manip.is_active() {
+            app.controller.apply(&mut app.camera, &action_frame);
+        }
 
         // Tab cycles gizmo mode when no session is active.
         if !app.interact_state.manip.is_active()
@@ -711,7 +721,8 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
             app.handle_click_select(&click_cx);
         }
     } else {
-        app.controller.apply_to_camera(&mut app.camera);
+        let action_frame = app.input.resolve();
+        app.controller.apply(&mut app.camera, &action_frame);
     }
     true
 }
@@ -739,13 +750,23 @@ impl crate::Showcase for ScInteraction {
     fn build(&self, app: &mut crate::App, renderer: &mut vpl::ViewportRenderer) {
         build(app, renderer)
     }
-    fn scene(&self, app: &mut crate::App, frame: &crate::eframe::Frame, out: &mut crate::SceneOverrides) -> crate::SceneContents {
+    fn scene(
+        &self,
+        app: &mut crate::App,
+        frame: &crate::eframe::Frame,
+        out: &mut crate::SceneOverrides,
+    ) -> crate::SceneContents {
         scene(app, frame, out)
     }
     fn frame(&self, app: &mut crate::App, fd: &mut vpl::FrameData, ctx: &crate::FrameCtx) {
         frame(app, fd, ctx)
     }
-    fn overlay(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) {
+    fn overlay(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) {
         overlay(app, ui, cx)
     }
     fn tick(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
@@ -763,7 +784,12 @@ impl crate::Showcase for ScInteraction {
     fn cache_gizmo(&self, app: &mut crate::App, cx: &crate::ViewportCtx) {
         cache_gizmo(app, cx)
     }
-    fn viewport_override(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, cx: &crate::ViewportCtx) -> bool {
+    fn viewport_override(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        cx: &crate::ViewportCtx,
+    ) -> bool {
         viewport_override(app, ui, cx)
     }
     fn drive_camera(&self, app: &mut crate::App, cx: &crate::ViewportCtx) -> bool {
@@ -772,7 +798,12 @@ impl crate::Showcase for ScInteraction {
     fn suppress_orbit(&self, app: &crate::App, cx: &crate::ViewportCtx) -> bool {
         suppress_orbit(app, cx)
     }
-    fn controls(&self, app: &mut crate::App, ui: &mut crate::eframe::egui::Ui, _frame: &crate::eframe::Frame) {
+    fn controls(
+        &self,
+        app: &mut crate::App,
+        ui: &mut crate::eframe::egui::Ui,
+        _frame: &crate::eframe::Frame,
+    ) {
         controls_interaction(app, ui)
     }
 }

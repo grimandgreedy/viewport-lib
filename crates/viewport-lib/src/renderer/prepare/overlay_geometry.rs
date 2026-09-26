@@ -758,35 +758,6 @@ pub(super) fn pack_stops(
     n as f32
 }
 
-/// Emit a solid-colour quad (6 vertices) in screen pixel coordinates.
-pub(super) fn emit_solid_quad(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    let tl = overlay_local_px(x0, y0, vp_w, vp_h);
-    let tr = overlay_local_px(x1, y0, vp_w, vp_h);
-    let bl = overlay_local_px(x0, y1, vp_w, vp_h);
-    let br = overlay_local_px(x1, y1, vp_w, vp_h);
-    let uv = [0.0, 0.0];
-    let tex = 0.0;
-    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos,
-        uv,
-        colour,
-        use_texture: tex,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-        group_tint: 0.0,
-    };
-    verts.extend_from_slice(&[v(tl), v(bl), v(tr), v(tr), v(bl), v(br)]);
-}
-
 /// Emit a textured quad (6 vertices) for a glyph in screen pixel coordinates.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_textured_quad(
@@ -894,46 +865,6 @@ pub(super) fn emit_glyph_quads_colored(
             vp_h,
         );
     }
-}
-
-/// Emit a thin screen-space line as a quad (6 vertices).
-pub(super) fn emit_line_quad(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    thickness: f32,
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    let dx = x1 - x0;
-    let dy = y1 - y0;
-    let len = (dx * dx + dy * dy).sqrt();
-    if len < 0.001 {
-        return;
-    }
-    let half = thickness * 0.5;
-    let nx = -dy / len * half;
-    let ny = dx / len * half;
-
-    let p0 = overlay_local_px(x0 + nx, y0 + ny, vp_w, vp_h);
-    let p1 = overlay_local_px(x0 - nx, y0 - ny, vp_w, vp_h);
-    let p2 = overlay_local_px(x1 + nx, y1 + ny, vp_w, vp_h);
-    let p3 = overlay_local_px(x1 - nx, y1 - ny, vp_w, vp_h);
-    let uv = [0.0, 0.0];
-    let tex = 0.0;
-    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos,
-        uv,
-        colour,
-        use_texture: tex,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-        group_tint: 0.0,
-    };
-    verts.extend_from_slice(&[v(p0), v(p1), v(p2), v(p2), v(p1), v(p3)]);
 }
 
 /// Apply an opacity multiplier to a colour's alpha channel.
@@ -1067,83 +998,6 @@ mod stroke_tests {
         let solid_stroke = solid_item.stroke.clone().unwrap();
         emit_polyline_stroke(&mut solid, &solid_item, &solid_stroke, WHITE, 100.0, 100.0);
         assert_eq!(dashed.len(), solid.len());
-    }
-}
-
-/// Emit a rounded rectangle as solid quads: one center rect + four edge rects +
-/// four corner fans.  This is a CPU tessellation approach that avoids shader
-/// changes.
-pub(super) fn emit_rounded_quad(
-    verts: &mut Vec<crate::resources::OverlayTextVertex>,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    radius: f32,
-    colour: [f32; 4],
-    vp_w: f32,
-    vp_h: f32,
-) {
-    let w = x1 - x0;
-    let h = y1 - y0;
-    let r = radius.min(w * 0.5).min(h * 0.5).max(0.0);
-
-    if r < 0.5 {
-        emit_solid_quad(verts, x0, y0, x1, y1, colour, vp_w, vp_h);
-        return;
-    }
-
-    // Center cross (two rects that cover everything except the corners).
-    // Horizontal bar (full width, inset top/bottom by r).
-    emit_solid_quad(verts, x0, y0 + r, x1, y1 - r, colour, vp_w, vp_h);
-    // Top bar (inset left/right by r, top edge).
-    emit_solid_quad(verts, x0 + r, y0, x1 - r, y0 + r, colour, vp_w, vp_h);
-    // Bottom bar.
-    emit_solid_quad(verts, x0 + r, y1 - r, x1 - r, y1, colour, vp_w, vp_h);
-
-    // Four corner fans.
-    let corners = [
-        (
-            x0 + r,
-            y0 + r,
-            std::f32::consts::PI,
-            std::f32::consts::FRAC_PI_2 * 3.0,
-        ), // top-left
-        (
-            x1 - r,
-            y0 + r,
-            std::f32::consts::FRAC_PI_2 * 3.0,
-            std::f32::consts::TAU,
-        ), // top-right
-        (x1 - r, y1 - r, 0.0, std::f32::consts::FRAC_PI_2), // bottom-right
-        (
-            x0 + r,
-            y1 - r,
-            std::f32::consts::FRAC_PI_2,
-            std::f32::consts::PI,
-        ), // bottom-left
-    ];
-    let segments = 6;
-    let uv = [0.0, 0.0];
-    let tex = 0.0;
-    let v = |pos: [f32; 2]| crate::resources::OverlayTextVertex {
-        position: pos,
-        uv,
-        colour,
-        use_texture: tex,
-        clip_index: -1.0,
-        clip_rect: [0.0; 4],
-        group_tint: 0.0,
-    };
-    for (cx, cy, start, end) in corners {
-        let center = overlay_local_px(cx, cy, vp_w, vp_h);
-        for i in 0..segments {
-            let a0 = start + (end - start) * i as f32 / segments as f32;
-            let a1 = start + (end - start) * (i + 1) as f32 / segments as f32;
-            let p0 = overlay_local_px(cx + a0.cos() * r, cy + a0.sin() * r, vp_w, vp_h);
-            let p1 = overlay_local_px(cx + a1.cos() * r, cy + a1.sin() * r, vp_w, vp_h);
-            verts.extend_from_slice(&[v(center), v(p0), v(p1)]);
-        }
     }
 }
 
@@ -1699,20 +1553,6 @@ pub(super) fn rotate_vertices_from(
         return;
     };
     for v in &mut verts[from..] {
-        v.position = r.apply(v.position);
-    }
-}
-
-/// Apply an item transform to the positions of `verts[range]` in place.
-pub(super) fn rotate_vertices_range(
-    verts: &mut [crate::resources::OverlayTextVertex],
-    range: std::ops::Range<usize>,
-    rot: Option<OverlayRotation>,
-) {
-    let Some(r) = rot else {
-        return;
-    };
-    for v in &mut verts[range] {
         v.position = r.apply(v.position);
     }
 }

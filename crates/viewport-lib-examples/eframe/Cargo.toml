@@ -13,6 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 viewport-lib = { path = "../../viewport-lib", default-features = false }
+viewport-lib-item-types = { path = "../../viewport-lib-item-types", default-features = false }
 glam = { workspace = true }
 # eframe embeds wgpu, so its version pairs with viewport-lib's leg: 0.33 with
 # wgpu 27, 0.35 with 29, 0.36 with 30. All three are aliased and optional,
@@ -44,9 +45,9 @@ viewport-lib-lightbake = { version = "0.1.0" }
 # builds in a plain `cargo build --all-targets` instead of being silently
 # skipped.
 default = ["wgpu27", "showcase"]
-wgpu27 = ["viewport-lib/wgpu27", "viewport-lib/egui-adapter", "dep:eframe033"]
-wgpu29 = ["viewport-lib/wgpu29", "viewport-lib/egui-adapter-035", "dep:eframe035"]
-wgpu30 = ["viewport-lib/wgpu30", "viewport-lib/egui-adapter-036", "dep:eframe036"]
+wgpu27 = ["viewport-lib/wgpu27", "viewport-lib-item-types/wgpu27", "viewport-lib/egui-adapter", "dep:eframe033"]
+wgpu29 = ["viewport-lib/wgpu29", "viewport-lib-item-types/wgpu29", "viewport-lib/egui-adapter-035", "dep:eframe035"]
+wgpu30 = ["viewport-lib/wgpu30", "viewport-lib-item-types/wgpu30", "viewport-lib/egui-adapter-036", "dep:eframe036"]
 # The full showcase drives the path tracer and the lightmap baker.
 showcase = ["viewport-lib/raytrace", "viewport-lib/bake"]
 

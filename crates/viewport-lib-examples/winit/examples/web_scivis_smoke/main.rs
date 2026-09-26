@@ -29,12 +29,12 @@ use std::sync::Arc;
 
 use web_time::Instant;
 
-use viewport_lib::vplg::marching_cubes::{VolumeData, extract_isosurface};
 use viewport_lib::picking::screen_to_ray;
+use viewport_lib::vplg::marching_cubes::{VolumeData, extract_isosurface};
 use viewport_lib::{
-    Aabb, ButtonState, Camera, CameraFrame, FrameData, Material, MouseButton, OrbitCameraController,
-    PickAccelerator, Scene, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportRenderer, wgpu,
+    Aabb, BindingPreset, ButtonState, Camera, CameraFrame, FrameData, Material, MouseButton,
+    OrbitCameraController, PickAccelerator, Scene, SceneFrame, SceneRenderItem, ScrollUnits,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, wgpu,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
@@ -139,6 +139,9 @@ struct State {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     scene_items: Vec<SceneRenderItem>,
     /// Kept so a click can re-run a pick against the same geometry.
     accelerator: PickAccelerator,
@@ -197,12 +200,14 @@ impl ApplicationHandler<State> for App {
             WindowEvent::Resized(size) => {
                 state.surface_config.width = size.width.max(1);
                 state.surface_config.height = size.height.max(1);
-                state.surface.configure(&state.device, &state.surface_config);
+                state
+                    .surface
+                    .configure(&state.device, &state.surface_config);
                 state.window.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 state.cursor = glam::Vec2::new(position.x as f32, position.y as f32);
-                state.controller.push_event(ViewportEvent::PointerMoved {
+                state.input.push_event(ViewportEvent::PointerMoved {
                     position: state.cursor,
                 });
                 state.window.request_redraw();
@@ -212,7 +217,7 @@ impl ApplicationHandler<State> for App {
                 state: element_state,
                 ..
             } => {
-                state.controller.push_event(ViewportEvent::MouseButton {
+                state.input.push_event(ViewportEvent::MouseButton {
                     button: MouseButton::Left,
                     state: match element_state {
                         ElementState::Pressed => ButtonState::Pressed,
@@ -238,7 +243,7 @@ impl ApplicationHandler<State> for App {
                     ),
                 };
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
@@ -264,7 +269,9 @@ impl State {
                 "click pick hit at ({:.2}, {:.2}, {:.2})",
                 hit.world_pos[0], hit.world_pos[1], hit.world_pos[2]
             )),
-            None => self.results.pass("click pick: no hit (pointing past the surface)"),
+            None => self
+                .results
+                .pass("click pick: no hit (pointing past the surface)"),
         }
         // Keep the report to the setup lines plus the most recent click.
         if self.results.lines.len() > SETUP_LINES + 1 {
@@ -291,7 +298,8 @@ impl State {
         let w = self.surface_config.width as f32;
         let h = self.surface_config.height as f32;
 
-        self.controller.apply_to_camera(&mut self.camera);
+        let action_frame = self.input.resolve();
+        self.controller.apply(&mut self.camera, &action_frame);
         self.camera.set_aspect_ratio(w, h);
 
         let frame_data = FrameData::new(
@@ -305,11 +313,13 @@ impl State {
         self.queue.submit(std::iter::once(cmd));
         frame.present();
 
-        self.controller.begin_frame(ViewportContext {
+        self.input.begin_frame(ViewportContext {
             hovered: true,
             focused: true,
             viewport_size: [w, h],
         });
+        // Pan reads the viewport height off the controller.
+        self.controller.set_viewport_size([w, h]);
     }
 }
 
@@ -427,8 +437,9 @@ async fn build_state(window: Arc<Window>) -> State {
         distance: 4.0,
         ..Camera::default()
     };
-    let mut controller = OrbitCameraController::viewport_primitives();
-    controller.begin_frame(ViewportContext {
+    let controller = OrbitCameraController::new_stateless();
+    let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
+    input.begin_frame(ViewportContext {
         hovered: true,
         focused: true,
         viewport_size: [surface_config.width as f32, surface_config.height as f32],
@@ -443,6 +454,7 @@ async fn build_state(window: Arc<Window>) -> State {
         renderer,
         camera,
         controller,
+        input,
         scene_items,
         accelerator,
         mesh_lookup,

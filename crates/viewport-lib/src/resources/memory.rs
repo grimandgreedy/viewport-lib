@@ -18,10 +18,11 @@ pub struct TextureMemoryStats {
 ///
 /// These are the classes a streaming or eviction policy frees and re-uploads:
 /// meshes (`upload_mesh_data` and friends), user textures (`upload_texture` and
-/// friends), Gaussian splats, marching-cubes volumes, the pre-uploaded scivis
-/// curves, and whatever registered item-type plugins report holding. Direct-volume 3D textures (`upload_volume`) are counted too,
-/// though the direct-volume store cannot be freed yet. The query is cheap
-/// enough to poll each frame.
+/// friends), and whatever registered item-type plugins report holding, which
+/// covers Gaussian splats, marching-cubes volumes and the pre-uploaded scivis
+/// curves. Direct-volume 3D textures (`upload_volume`) are counted too, though
+/// the direct-volume store cannot be freed yet. The query is cheap enough to
+/// poll each frame.
 ///
 /// Built-in resources are not counted: colourmap and matcap LUTs, IBL maps, the
 /// shadow atlas, and post-process render targets. They are created once (or
@@ -39,14 +40,6 @@ pub struct ResidentBytes {
     pub mesh_bytes: u64,
     /// GPU bytes across every resident user-uploaded texture.
     pub texture_bytes: u64,
-    /// Always zero: the Gaussian splat sets now live with the item type that
-    /// draws them, so their bytes are reported through
-    /// [`plugin_bytes`](Self::plugin_bytes).
-    pub gaussian_splat_bytes: u64,
-    /// Always zero: the marching-cubes volumes now live with the item type that
-    /// triangulates them, so their bytes are reported through
-    /// [`plugin_bytes`](Self::plugin_bytes).
-    pub mc_volume_bytes: u64,
     /// GPU bytes across every resident direct-volume 3D texture
     /// (`upload_volume`, the `R32Float` fields a `VolumeItem` ray-marches).
     ///
@@ -59,10 +52,6 @@ pub struct ResidentBytes {
     /// transparent volume meshes a `VolumeMeshItem` renders through
     /// `projected_tet_id`. Dropped on `free_projected_tet`.
     pub projected_tet_bytes: u64,
-    /// Always zero: the pre-uploaded curves, clouds, glyph sets and sprite
-    /// batches now live with the item types that draw them, so their bytes are
-    /// reported through [`plugin_bytes`](Self::plugin_bytes).
-    pub scivis_bytes: u64,
     /// GPU bytes reported by registered item-type plugins that hold content in
     /// stores of their own, summed from
     /// [`ItemTypePlugin::resident_bytes`](crate::plugin_api::ItemTypePlugin::resident_bytes).
@@ -96,9 +85,6 @@ impl ResidentBytes {
     pub fn total(&self) -> u64 {
         self.mesh_bytes
             + self.texture_bytes
-            + self.gaussian_splat_bytes
-            + self.mc_volume_bytes
-            + self.scivis_bytes
             + self.volume_bytes
             + self.projected_tet_bytes
             + self.plugin_bytes
@@ -140,23 +126,24 @@ pub struct VramBudget {
 }
 
 impl crate::resources::DeviceResources {
-    /// Resident GPU bytes for the user-uploaded working set: meshes, user
-    /// textures, Gaussian splats, marching-cubes volumes, pre-uploaded scivis
-    /// curves, and direct-volume 3D textures.
+    /// Resident GPU bytes for the content this type owns: meshes, user
+    /// textures, direct-volume 3D textures, and projected-tet meshes.
     ///
-    /// Cheap enough to poll per frame: mesh, texture, and splat totals are
-    /// running counters, and the MC-volume / curve / direct-volume totals sum
-    /// a handful of live entries. A streaming or eviction policy compares [`ResidentBytes::total`]
-    /// against its own byte budget and calls the matching `free_*` to stay under
-    /// it. Built-in LUTs, IBL maps, and render targets are not counted; see
-    /// [`ResidentBytes`].
+    /// [`ResidentBytes::plugin_bytes`] is left zero here, because the item-type
+    /// plugins that hold the rest (splats, marching-cubes volumes, the
+    /// pre-uploaded scivis content) are registered with the renderer. Use
+    /// [`ViewportRenderer::resident_bytes`](crate::renderer::ViewportRenderer::resident_bytes)
+    /// for the whole working set.
+    ///
+    /// Cheap enough to poll per frame: the mesh and texture totals are running
+    /// counters, and the rest sum a handful of live entries. A streaming or
+    /// eviction policy compares [`ResidentBytes::total`] against its own byte
+    /// budget and calls the matching `free_*` to stay under it. Built-in LUTs,
+    /// IBL maps, and render targets are not counted; see [`ResidentBytes`].
     pub fn resident_bytes(&self) -> crate::resources::types::ResidentBytes {
         crate::resources::types::ResidentBytes {
             mesh_bytes: self.mesh_store.allocated_bytes(),
             texture_bytes: self.content.textures.allocated_bytes(),
-            gaussian_splat_bytes: 0,
-            mc_volume_bytes: 0,
-            scivis_bytes: 0,
             volume_bytes: self.volume_resident_bytes(),
             projected_tet_bytes: self.content.projected_tet_store.allocated_bytes(),
             // Plugins are registered with the renderer, not here; filled in by
