@@ -88,7 +88,11 @@ pub use volume_surface_slice::{VolumeSurfaceSliceItem, VolumeSurfaceSlicePlugin}
 /// marker to the [`Writes`](viewport_lib::plugin_api::Writes) calls to say which
 /// array is meant.
 pub mod channels {
+    pub use crate::gaussian_splat::channels as gaussian_splat;
     pub use crate::point_cloud::channels as point_cloud;
+    pub use crate::sprite::channels as sprite;
+    pub use crate::tensor_field::channels as tensor_field;
+    pub use crate::vector_field::channels as vector_field;
 }
 
 /// A handle the renderer's own id crate owns, re-exported so a consumer of this
@@ -381,6 +385,264 @@ impl viewport_lib::plugin_api::Handles<GaussianSplatId> for ViewportRenderer {
         plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME).free(id)
     }
 }
+
+/// Ranged writes into a stored splat set, one implementation per channel.
+///
+/// Three of the five pad the caller's element on the way in, and two of those
+/// also carry the caller's own values through to the CPU mirror the pick paths
+/// read.
+macro_rules! splat_writes {
+    ($marker:ty, $variant:ident, encode = $encode:expr, mirror = $mirror:expr) => {
+        impl viewport_lib::plugin_api::Writes<$marker> for ViewportRenderer {
+            fn write_range(
+                &mut self,
+                _channel: $marker,
+                queue: &gpu::Queue,
+                id: GaussianSplatId,
+                first_element: u32,
+                data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
+            ) -> viewport_lib::error::ViewportResult<()> {
+                let bytes: std::borrow::Cow<'_, [u8]> = $encode(data);
+                let mirror: Option<&[[f32; 3]]> = $mirror(data);
+                plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME).write_channel(
+                    queue,
+                    id,
+                    gaussian_splat::SplatChannel::$variant,
+                    <$marker as viewport_lib::plugin_api::Channel>::NAME,
+                    first_element,
+                    &bytes,
+                    mirror,
+                )
+            }
+
+            fn reserve(
+                &mut self,
+                _channel: $marker,
+                device: &gpu::Device,
+                queue: &gpu::Queue,
+                id: GaussianSplatId,
+                capacity: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME)
+                    .reserve_stored(device, queue, id, capacity)
+            }
+
+            fn set_len(
+                &mut self,
+                _channel: $marker,
+                id: GaussianSplatId,
+                len: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<GaussianSplatPlugin>(self, GAUSSIAN_SPLAT_TYPE_NAME)
+                    .set_stored_len(id, len)
+            }
+
+            fn extent(
+                &self,
+                _channel: $marker,
+                id: GaussianSplatId,
+            ) -> Option<viewport_lib::plugin_api::Extent> {
+                self.item_type_plugin::<GaussianSplatPlugin>(GAUSSIAN_SPLAT_TYPE_NAME)?
+                    .stored_extent(id, gaussian_splat::SplatChannel::$variant)
+            }
+        }
+    };
+}
+
+/// Pad a `[f32; 3]` channel to the `vec4` the GPU holds, with a fixed `w`.
+fn pad_vec3(data: &[[f32; 3]], w: f32) -> std::borrow::Cow<'static, [u8]> {
+    let padded: Vec<[f32; 4]> = data.iter().map(|v| [v[0], v[1], v[2], w]).collect();
+    std::borrow::Cow::Owned(bytemuck::cast_slice(&padded).to_vec())
+}
+
+fn pad_positions(data: &[[f32; 3]]) -> std::borrow::Cow<'static, [u8]> {
+    pad_vec3(data, 1.0)
+}
+
+fn pad_scales(data: &[[f32; 3]]) -> std::borrow::Cow<'static, [u8]> {
+    pad_vec3(data, 0.0)
+}
+
+/// Channels that keep a CPU copy hand the caller's own elements through to it.
+fn mirrored(data: &[[f32; 3]]) -> Option<&[[f32; 3]]> {
+    Some(data)
+}
+
+fn unmirrored<T>(_data: &[T]) -> Option<&'static [[f32; 3]]> {
+    None
+}
+
+splat_writes!(
+    channels::gaussian_splat::Positions,
+    Positions,
+    encode = pad_positions,
+    mirror = mirrored
+);
+splat_writes!(
+    channels::gaussian_splat::Scales,
+    Scales,
+    encode = pad_scales,
+    mirror = mirrored
+);
+splat_writes!(
+    channels::gaussian_splat::Rotations,
+    Rotations,
+    encode = cast_bytes,
+    mirror = unmirrored
+);
+splat_writes!(
+    channels::gaussian_splat::Opacities,
+    Opacities,
+    encode = cast_bytes,
+    mirror = unmirrored
+);
+splat_writes!(
+    channels::gaussian_splat::ShCoefficients,
+    ShCoefficients,
+    encode = cast_bytes,
+    mirror = unmirrored
+);
+
+/// Ranged writes into a stored field's interleaved sample buffer.
+///
+/// One channel per type rather than one per component: the record's fields are
+/// derived together, and the store keeps no CPU copy to read the untouched ones
+/// back from. So a write supplies whole samples.
+macro_rules! field_sample_writes {
+    ($marker:ty, $id:ty, $name:expr, $plugin:ty, encode = $encode:expr) => {
+        impl viewport_lib::plugin_api::Writes<$marker> for ViewportRenderer {
+            fn write_range(
+                &mut self,
+                _channel: $marker,
+                queue: &gpu::Queue,
+                id: $id,
+                first_element: u32,
+                data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
+            ) -> viewport_lib::error::ViewportResult<()> {
+                let bytes = $encode(data);
+                plugin_mut::<$plugin>(self, $name).write_samples(queue, id, first_element, &bytes)
+            }
+
+            fn reserve(
+                &mut self,
+                _channel: $marker,
+                device: &gpu::Device,
+                queue: &gpu::Queue,
+                id: $id,
+                capacity: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<$plugin>(self, $name).reserve_stored(device, queue, id, capacity)
+            }
+
+            fn set_len(
+                &mut self,
+                _channel: $marker,
+                id: $id,
+                len: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<$plugin>(self, $name).set_stored_len(id, len)
+            }
+
+            fn extent(
+                &self,
+                _channel: $marker,
+                id: $id,
+            ) -> Option<viewport_lib::plugin_api::Extent> {
+                self.item_type_plugin::<$plugin>($name)?.stored_extent(id)
+            }
+        }
+    };
+}
+
+/// A vector field's sample *is* its GPU record, so the bytes go across untouched.
+fn vector_samples(data: &[channels::vector_field::Sample]) -> std::borrow::Cow<'_, [u8]> {
+    std::borrow::Cow::Borrowed(bytemuck::cast_slice(data))
+}
+
+field_sample_writes!(
+    channels::vector_field::Samples,
+    VectorFieldId,
+    VECTOR_FIELD_TYPE_NAME,
+    VectorFieldPlugin,
+    encode = vector_samples
+);
+field_sample_writes!(
+    channels::tensor_field::Samples,
+    TensorFieldId,
+    TENSOR_FIELD_TYPE_NAME,
+    TensorFieldPlugin,
+    encode = tensor_field::encode_samples
+);
+
+/// Ranged writes into a stored sprite batch, one implementation per channel.
+///
+/// The positions are their own vertex stream and the rest of a sprite is one
+/// interleaved record, so a particle feed that only moves its sprites writes a
+/// quarter of the bytes a full update would.
+macro_rules! sprite_writes {
+    ($marker:ty, positions = $positions:expr, encode = $encode:expr) => {
+        impl viewport_lib::plugin_api::Writes<$marker> for ViewportRenderer {
+            fn write_range(
+                &mut self,
+                _channel: $marker,
+                queue: &gpu::Queue,
+                id: SpriteSetId,
+                first_element: u32,
+                data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
+            ) -> viewport_lib::error::ViewportResult<()> {
+                let bytes = $encode(data);
+                plugin_mut::<SpritePlugin>(self, SPRITE_TYPE_NAME).write_set_channel(
+                    queue,
+                    id,
+                    $positions,
+                    first_element,
+                    &bytes,
+                )
+            }
+
+            fn reserve(
+                &mut self,
+                _channel: $marker,
+                device: &gpu::Device,
+                queue: &gpu::Queue,
+                id: SpriteSetId,
+                capacity: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<SpritePlugin>(self, SPRITE_TYPE_NAME)
+                    .reserve_set(device, queue, id, capacity)
+            }
+
+            fn set_len(
+                &mut self,
+                _channel: $marker,
+                id: SpriteSetId,
+                len: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<SpritePlugin>(self, SPRITE_TYPE_NAME).set_set_len(id, len)
+            }
+
+            fn extent(
+                &self,
+                _channel: $marker,
+                id: SpriteSetId,
+            ) -> Option<viewport_lib::plugin_api::Extent> {
+                self.item_type_plugin::<SpritePlugin>(SPRITE_TYPE_NAME)?
+                    .set_extent(id, $positions)
+            }
+        }
+    };
+}
+
+sprite_writes!(
+    channels::sprite::Positions,
+    positions = true,
+    encode = cast_bytes
+);
+sprite_writes!(
+    channels::sprite::Sprites,
+    positions = false,
+    encode = sprite::encode_sprites
+);
 
 /// The external instance set surface, on the renderer.
 ///

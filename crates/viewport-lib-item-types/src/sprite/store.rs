@@ -11,7 +11,9 @@
 //! an upload builds its bind groups against them and an upload can arrive long
 //! before the first frame that draws one.
 
-use viewport_lib::resources::DeviceResources;
+use viewport_lib::error::ViewportResult;
+use viewport_lib::plugin_api::Extent;
+use viewport_lib::resources::{ContentBuffer, DeviceResources};
 
 pub(crate) use super::types::{SpriteInstanceSetId, SpriteSetId};
 
@@ -200,6 +202,43 @@ pub(super) struct SpriteUniformData {
     _pad_lit_c: u32,
 }
 
+/// The per-sprite record the shader reads, matching `SpriteInstance` in
+/// `sprite.wgsl`. 64 bytes each.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuSpriteInstance {
+    colour: [f32; 4],
+    size: f32,
+    rotation: f32,
+    soft_distance: f32,
+    _pad1: f32,
+    uv_rect: [f32; 4],
+    velocity: [f32; 3],
+    _pad2: f32,
+}
+
+/// Bytes per element of the two writable sprite channels.
+const POSITION_STRIDE: u32 = 12;
+const SPRITE_STRIDE: u32 = std::mem::size_of::<GpuSpriteInstance>() as u32;
+
+/// Encode a run of caller-supplied sprites into the bytes a ranged write sends.
+pub(crate) fn encode_sprites(sprites: &[super::channels::Sprite]) -> Vec<u8> {
+    let records: Vec<GpuSpriteInstance> = sprites
+        .iter()
+        .map(|s| GpuSpriteInstance {
+            colour: s.colour.to_linear_rgba(),
+            size: s.size,
+            rotation: s.rotation,
+            soft_distance: s.soft_distance.max(0.0),
+            _pad1: 0.0,
+            uv_rect: s.uv_rect,
+            velocity: s.velocity,
+            _pad2: 0.0,
+        })
+        .collect();
+    bytemuck::cast_slice(&records).to_vec()
+}
+
 /// Build the GPU data for one sprite batch: its buffers and its bind groups.
 ///
 /// Shared by the per-frame item path and the two stores, so a reference draw
@@ -209,35 +248,21 @@ pub(super) fn build_sprite(
     queue: &viewport_lib::gpu::Queue,
     binds: &SpriteBindings,
     item: &super::types::SpriteItem,
-) -> SpriteGpuData {
+    capacity: u32,
+) -> StoredSprite {
     {
         let count = item.positions.len() as u32;
+        let capacity = capacity.max(count);
 
         // Position vertex buffer (one vec3 per sprite, instance-stepped).
-        let pos_bytes: &[u8] = bytemuck::cast_slice(&item.positions);
-        let vertex_buffer = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
-            label: Some("sprite_vertex_buf"),
-            size: pos_bytes.len().max(12) as u64,
-            usage: viewport_lib::gpu::BufferUsages::VERTEX
-                | viewport_lib::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&vertex_buffer, 0, pos_bytes);
-
-        // Per-instance storage buffer: build by zipping item vecs with defaults.
-        // Layout matches `SpriteInstance` in `sprite.wgsl`. 64 bytes per instance.
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct GpuSpriteInstance {
-            colour: [f32; 4],
-            size: f32,
-            rotation: f32,
-            soft_distance: f32,
-            _pad1: f32,
-            uv_rect: [f32; 4],
-            velocity: [f32; 3],
-            _pad2: f32,
-        }
+        let mut positions = ContentBuffer::new(
+            device,
+            "sprite_vertex_buf",
+            viewport_lib::gpu::BufferUsages::VERTEX,
+            POSITION_STRIDE,
+            capacity,
+        );
+        let _ = positions.write_range(queue, 0, bytemuck::cast_slice(&item.positions));
 
         let instances: Vec<GpuSpriteInstance> = (0..item.positions.len())
             .map(|i| GpuSpriteInstance {
@@ -276,15 +301,14 @@ pub(super) fn build_sprite(
             })
             .collect();
 
-        let instance_bytes = bytemuck::cast_slice(&instances);
-        let instance_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
-            label: Some("sprite_instance_buf"),
-            size: instance_bytes.len().max(48) as u64,
-            usage: viewport_lib::gpu::BufferUsages::STORAGE
-                | viewport_lib::gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&instance_buf, 0, instance_bytes);
+        let mut sprites = ContentBuffer::new(
+            device,
+            "sprite_instance_buf",
+            viewport_lib::gpu::BufferUsages::STORAGE,
+            SPRITE_STRIDE,
+            capacity,
+        );
+        let _ = sprites.write_range(queue, 0, bytemuck::cast_slice(&instances));
 
         let (texture_view, has_texture) = (&binds.texture_view, binds.has_texture);
 
@@ -355,7 +379,7 @@ pub(super) fn build_sprite(
                 },
                 viewport_lib::gpu::BindGroupEntry {
                     binding: 3,
-                    resource: instance_buf.as_entire_binding(),
+                    resource: sprites.buffer().as_entire_binding(),
                 },
             ],
         });
@@ -391,8 +415,8 @@ pub(super) fn build_sprite(
             && item.soft_particle_distances.is_empty()
             && item.refraction_strength.is_none_or(|s| s <= 0.0);
 
-        SpriteGpuData {
-            vertex_buffer,
+        let draw = SpriteGpuData {
+            vertex_buffer: positions.buffer().clone(),
             sprite_count: count,
             pick_id: item.settings.pick_id,
             bind_group,
@@ -407,9 +431,127 @@ pub(super) fn build_sprite(
             lit_normal_bg,
             oit_eligible,
             _uniform_buf: uniform_buf,
-            _instance_buf: instance_buf,
+        };
+        StoredSprite {
+            positions,
+            sprites,
+            binds: binds.clone(),
+            draw,
         }
     }
+}
+
+/// One sprite batch as a store holds it: the growable channels, the bindings a
+/// grow needs to rebuild the bind group, and the draw data the frame path clones.
+///
+/// The two are separate because the draw data is cloned per drawn item per frame
+/// and a growable buffer must have one owner: two owners would each have their
+/// own idea of how much is allocated. The draw's buffer handles are wgpu's own
+/// reference-counted ones, so a clone keeps the allocation alive without owning
+/// the capacity.
+pub(crate) struct StoredSprite {
+    positions: ContentBuffer,
+    sprites: ContentBuffer,
+    binds: SpriteBindings,
+    pub(crate) draw: SpriteGpuData,
+}
+
+impl StoredSprite {
+    /// Write positions or records at a sprite offset, keeping the draw count in
+    /// step with the positions.
+    pub(crate) fn write_channel(
+        &mut self,
+        queue: &viewport_lib::gpu::Queue,
+        positions: bool,
+        first_element: u32,
+        data: &[u8],
+    ) -> ViewportResult<()> {
+        if positions {
+            self.positions.write_range(queue, first_element, data)?;
+            self.draw.sprite_count = self.positions.len();
+        } else {
+            self.sprites.write_range(queue, first_element, data)?;
+        }
+        Ok(())
+    }
+
+    /// Grow both channels to at least `capacity` sprites, rebuilding the bind
+    /// group and refreshing the draw data if either allocation moved. `true` when
+    /// one did.
+    pub(crate) fn reserve(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        capacity: u32,
+    ) -> bool {
+        let mut moved = self.positions.reserve(device, queue, capacity);
+        moved |= self.sprites.reserve(device, queue, capacity);
+        if moved {
+            self.draw.vertex_buffer = self.positions.buffer().clone();
+            self.draw.bind_group = build_bind_group(
+                device,
+                &self.binds,
+                &self.draw._uniform_buf,
+                self.sprites.buffer(),
+            );
+        }
+        moved
+    }
+
+    /// Set how many sprites draw.
+    pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
+        self.positions.set_len(len)?;
+        self.sprites.set_len(len)?;
+        self.draw.sprite_count = len;
+        Ok(())
+    }
+
+    /// What one channel holds and how much of it draws.
+    pub(crate) fn extent(&self, positions: bool) -> Extent {
+        let cb = if positions {
+            &self.positions
+        } else {
+            &self.sprites
+        };
+        Extent {
+            capacity: cb.capacity(),
+            len: cb.len(),
+        }
+    }
+}
+
+/// Build a batch's group-1 bind group over its uniform, texture and records.
+///
+/// Shared by the upload, the texture rebind and the grow, so the three cannot
+/// disagree about the layout.
+fn build_bind_group(
+    device: &viewport_lib::gpu::Device,
+    binds: &SpriteBindings,
+    uniform_buf: &viewport_lib::gpu::Buffer,
+    sprites: &viewport_lib::gpu::Buffer,
+) -> viewport_lib::gpu::BindGroup {
+    device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
+        label: Some("sprite_bind_group"),
+        layout: &binds.bgl,
+        entries: &[
+            viewport_lib::gpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            },
+            viewport_lib::gpu::BindGroupEntry {
+                binding: 1,
+                resource: viewport_lib::gpu::BindingResource::TextureView(&binds.texture_view),
+            },
+            viewport_lib::gpu::BindGroupEntry {
+                binding: 2,
+                resource: viewport_lib::gpu::BindingResource::Sampler(&binds.sampler),
+            },
+            viewport_lib::gpu::BindGroupEntry {
+                binding: 3,
+                resource: sprites.as_entire_binding(),
+            },
+        ],
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -419,16 +561,19 @@ pub(super) fn build_sprite(
 /// Slotted store of pre-uploaded sprite batches: static billboards such as
 /// foliage, signage and light flares.
 pub(super) type SpriteSetStore =
-    viewport_lib::resources::handle::SlotStore<SpriteGpuData, SpriteSetId>;
+    viewport_lib::resources::handle::SlotStore<StoredSprite, SpriteSetId>;
 
 /// Slotted store of pre-uploaded sprite instance sets: entity sprites such as
 /// NPCs, item drops and damage numbers. Same payload, separate handle space.
 pub(super) type SpriteInstanceSetStore =
-    viewport_lib::resources::handle::SlotStore<SpriteGpuData, SpriteInstanceSetId>;
+    viewport_lib::resources::handle::SlotStore<StoredSprite, SpriteInstanceSetId>;
 
-impl viewport_lib::resources::handle::GpuByteSize for SpriteGpuData {
+impl viewport_lib::resources::handle::GpuByteSize for StoredSprite {
+    /// Reserved capacity included: headroom holds VRAM whether or not it draws.
     fn gpu_bytes(&self) -> u64 {
-        self.vertex_buffer.size() + self._uniform_buf.size() + self._instance_buf.size()
+        self.positions.allocated_bytes()
+            + self.sprites.allocated_bytes()
+            + self.draw._uniform_buf.size()
     }
 }
 
@@ -484,16 +629,16 @@ pub(crate) struct SpriteGpuData {
     pub(crate) oit_eligible: bool,
     // Keep buffers alive for the lifetime of this struct.
     pub(crate) _uniform_buf: viewport_lib::gpu::Buffer,
-    pub(crate) _instance_buf: viewport_lib::gpu::Buffer,
 }
 
 /// Whether every texture one stored batch's bind groups name is still
 /// uploaded. The renderer's resource epoch says when to ask; this says what a
 /// batch bound.
 pub(super) fn textures_resident(
-    data: &SpriteGpuData,
+    stored: &StoredSprite,
     resources: &viewport_lib::resources::DeviceResources,
 ) -> bool {
+    let data = &stored.draw;
     [data.texture_id, data.normal_texture_id]
         .into_iter()
         .flatten()
@@ -512,34 +657,17 @@ pub(super) fn rebind_sprite(
     device: &viewport_lib::gpu::Device,
     queue: &viewport_lib::gpu::Queue,
     binds: &SpriteBindings,
-    data: &mut SpriteGpuData,
+    stored: &mut StoredSprite,
 ) {
+    let data = &mut stored.draw;
     data.uniform.has_texture = binds.has_texture;
     data.uniform.has_normal_map = binds.has_normal_map;
     queue.write_buffer(&data._uniform_buf, 0, bytemuck::bytes_of(&data.uniform));
 
-    data.bind_group = device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
-        label: Some("sprite_bind_group"),
-        layout: &binds.bgl,
-        entries: &[
-            viewport_lib::gpu::BindGroupEntry {
-                binding: 0,
-                resource: data._uniform_buf.as_entire_binding(),
-            },
-            viewport_lib::gpu::BindGroupEntry {
-                binding: 1,
-                resource: viewport_lib::gpu::BindingResource::TextureView(&binds.texture_view),
-            },
-            viewport_lib::gpu::BindGroupEntry {
-                binding: 2,
-                resource: viewport_lib::gpu::BindingResource::Sampler(&binds.sampler),
-            },
-            viewport_lib::gpu::BindGroupEntry {
-                binding: 3,
-                resource: data._instance_buf.as_entire_binding(),
-            },
-        ],
-    });
+    data.bind_group = build_bind_group(device, binds, &data._uniform_buf, stored.sprites.buffer());
+    // The batch keeps the views it just rebound, so a later grow rebuilds the
+    // group against the same ones rather than the ones it was uploaded with.
+    stored.binds = binds.clone();
 
     // Only a lit batch has the group-3 binding; an unlit one never built it
     // and the normal map it named, if any, is bound nowhere.

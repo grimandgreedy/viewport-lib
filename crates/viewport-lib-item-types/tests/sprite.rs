@@ -9,10 +9,11 @@ mod common;
 use common::*;
 use viewport_lib::plugin_api::Handles;
 
-use viewport_lib::plugin_api::Uploads;
+use viewport_lib::plugin_api::{Uploads, Writes};
 use viewport_lib::resources::UploadStatus;
 use viewport_lib_item_types::SpriteInstanceUploads;
-use viewport_lib_item_types::SpriteItem;
+use viewport_lib_item_types::channels::sprite as sp;
+use viewport_lib_item_types::{SpriteItem, SpriteSetId, SpriteSetRefItem};
 
 fn sample_sprites() -> SpriteItem {
     let mut item = SpriteItem::default();
@@ -150,5 +151,87 @@ fn a_selected_batch_outlines_every_billboard() {
         eight >= one * 6,
         "eight selected sprites outlined {eight} pixels against {one} for one; \
          every sprite in the batch must be outlined, not every fourth"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Ranged writes
+// ---------------------------------------------------------------------------
+
+/// Splitting positions from the rest of the record is the point for sprites: a
+/// particle feed that only moves its sprites writes a quarter of the bytes.
+#[test]
+fn a_reserved_sprite_batch_takes_ranged_writes_per_channel() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut batch = SpriteItem::default();
+    batch.positions = vec![[0.0, 0.0, 0.0]; 100];
+    let id: SpriteSetId = renderer.upload(&device, &queue, &batch).expect("upload");
+
+    renderer
+        .reserve(sp::Positions, &device, &queue, id, 10_000)
+        .expect("reserve");
+    // Both channels grow together: they share a sprite index, so growing one
+    // alone would leave a record write addressing a buffer that cannot hold it.
+    assert!(renderer.extent(sp::Positions, id).unwrap().capacity >= 10_000);
+    assert!(renderer.extent(sp::Sprites, id).unwrap().capacity >= 10_000);
+    assert_eq!(renderer.extent(sp::Positions, id).unwrap().len, 100);
+
+    let moved: Vec<[f32; 3]> = (0..100).map(|i| [i as f32, 1.0, 2.0]).collect();
+    renderer
+        .write_range(sp::Positions, &queue, id, 100, &moved)
+        .expect("position write into the reserve");
+    assert_eq!(
+        renderer.extent(sp::Positions, id).unwrap().len,
+        200,
+        "a write past the live count raises it, so the batch draws what arrived"
+    );
+
+    let recoloured = vec![
+        sp::Sprite {
+            colour: viewport_lib::Colour::linear_rgb(1.0, 0.0, 0.0),
+            size: 2.0,
+            ..Default::default()
+        };
+        100
+    ];
+    renderer
+        .write_range(sp::Sprites, &queue, id, 100, &recoloured)
+        .expect("record write into the reserve");
+
+    let mut frame = sub_object_pick_frame();
+    frame
+        .scene
+        .items_mut::<SpriteSetRefItem>()
+        .push(SpriteSetRefItem::new(id));
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    assert!(renderer.release(id));
+}
+
+/// Lowering the live count hides sprites on both channels without freeing the
+/// allocation.
+#[test]
+fn set_len_moves_the_sprite_draw_count() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut batch = SpriteItem::default();
+    batch.positions = vec![[0.0, 0.0, 0.0]; 50];
+    let id: SpriteSetId = renderer.upload(&device, &queue, &batch).expect("upload");
+
+    renderer.set_len(sp::Positions, id, 10).expect("set_len");
+    assert_eq!(renderer.extent(sp::Positions, id).unwrap().len, 10);
+    assert_eq!(renderer.extent(sp::Sprites, id).unwrap().len, 10);
+    assert_eq!(renderer.extent(sp::Positions, id).unwrap().capacity, 50);
+    assert!(
+        renderer.set_len(sp::Positions, id, 51).is_err(),
+        "past the capacity is an error rather than a grow"
     );
 }

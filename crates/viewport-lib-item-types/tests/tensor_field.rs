@@ -9,7 +9,8 @@ use common::*;
 use viewport_lib::plugin_api::Handles;
 
 use viewport_lib::MeshId;
-use viewport_lib::plugin_api::Uploads;
+use viewport_lib::plugin_api::{Uploads, Writes};
+use viewport_lib_item_types::channels::tensor_field as tf;
 use viewport_lib_item_types::{
     TENSOR_FIELD_TYPE_NAME, TensorFieldItem, TensorFieldPlugin, TensorFieldRefItem, TensorSource,
 };
@@ -366,4 +367,63 @@ fn hidden_items_produce_no_draw_data() {
         1,
         "hidden item must not produce gpu data"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Ranged writes
+// ---------------------------------------------------------------------------
+
+/// The tensor field is the case where the encode earns its place: the caller
+/// supplies an eigendecomposition and the store bakes the matrices.
+#[test]
+fn a_reserved_tensor_field_takes_ranged_sample_writes() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let shape = sphere_mesh(&mut renderer, &device);
+
+    let mut field = TensorFieldItem::new(shape);
+    field.positions = vec![[0.0, 0.0, 0.0]; 16];
+    field.tensors = TensorSource::Components(vec![[1.0, 1.0, 1.0, 0.0, 0.0, 0.0]; 16]);
+    let id = renderer.upload(&device, &queue, &field).expect("upload");
+
+    renderer
+        .reserve(tf::Samples, &device, &queue, id, 128)
+        .expect("reserve");
+    assert!(renderer.extent(tf::Samples, id).unwrap().capacity >= 128);
+
+    let batch: Vec<tf::Sample> = (0..16)
+        .map(|i| tf::Sample {
+            position: [i as f32, 0.0, 0.0],
+            axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            extents: [1.0, 0.5, 0.25],
+            scalar: 0.5,
+            colour: viewport_lib::Colour::WHITE,
+        })
+        .collect();
+    renderer
+        .write_range(tf::Samples, &queue, id, 16, &batch)
+        .expect("a window inside the reserve");
+    assert_eq!(renderer.extent(tf::Samples, id).unwrap().len, 32);
+
+    // A zero extent would make the normal matrix a division by zero, so the
+    // encode clamps it the way the upload path does rather than sending an
+    // infinity to the GPU.
+    let degenerate = [tf::Sample {
+        extents: [0.0, 0.0, 0.0],
+        ..batch[0]
+    }];
+    renderer
+        .write_range(tf::Samples, &queue, id, 0, &degenerate)
+        .expect("a collapsed sample is clamped, not refused");
+
+    let mut frame = sub_object_pick_frame();
+    frame
+        .scene
+        .items_mut::<TensorFieldRefItem>()
+        .push(TensorFieldRefItem::new(id));
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    assert!(renderer.release(id));
 }

@@ -5,7 +5,7 @@
 //! `store`, beside the upload that builds bind groups against them; this module
 //! borrows them to build pipelines over.
 
-use super::store::VectorFieldGpuData;
+use super::store::VectorFieldDraw;
 use viewport_lib::plugin_api::builders::{DualPipeline, DualPipelineDesc};
 use viewport_lib::resources::DeviceResources;
 
@@ -19,7 +19,7 @@ pub(super) struct VectorFieldGpu {
 
 /// One field's draw state for this frame.
 pub(super) struct VectorFieldFrame {
-    pub(super) gpu: VectorFieldGpuData,
+    pub(super) draw: VectorFieldDraw,
     /// Group-1 object-id bind group; `None` when the field is not pickable.
     pub(super) pick_bind_group: Option<viewport_lib::gpu::BindGroup>,
     /// Outline coverage: `None` for an unselected field, `Some(None)` for the

@@ -13,7 +13,12 @@
 
 use crate::sources::{colour_plan, requested_colourmap};
 use viewport_lib::MeshId;
-use viewport_lib::resources::DeviceResources;
+use viewport_lib::error::ViewportResult;
+use viewport_lib::plugin_api::Extent;
+use viewport_lib::resources::{ContentBuffer, DeviceResources};
+
+/// Bytes per baked sample record.
+const INSTANCE_STRIDE: u32 = std::mem::size_of::<TensorFieldInstance>() as u32;
 
 pub(crate) use super::types::TensorFieldId;
 
@@ -228,17 +233,19 @@ pub(super) fn build_tensor_field(
     queue: &viewport_lib::gpu::Queue,
     binds: &TensorFieldBindings,
     item: &super::types::TensorFieldItem,
+    capacity: u32,
 ) -> TensorFieldGpuData {
     let count = item.positions.len();
     let (instances, uniform_data) = build_instances_and_uniform(item);
 
-    let instance_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
-        label: Some("tensor_field_instance_buf"),
-        size: (std::mem::size_of::<TensorFieldInstance>() * instances.len()).max(144) as u64,
-        usage: viewport_lib::gpu::BufferUsages::STORAGE | viewport_lib::gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&instance_buf, 0, bytemuck::cast_slice(&instances));
+    let mut samples = ContentBuffer::new(
+        device,
+        "tensor_field_instance_buf",
+        viewport_lib::gpu::BufferUsages::STORAGE,
+        INSTANCE_STRIDE,
+        capacity.max(count as u32),
+    );
+    let _ = samples.write_range(queue, 0, bytemuck::cast_slice(&instances));
 
     let uniform_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
         label: Some("tensor_field_uniform_buf"),
@@ -272,20 +279,63 @@ pub(super) fn build_tensor_field(
         layout: &binds.instance_bgl,
         entries: &[viewport_lib::gpu::BindGroupEntry {
             binding: 0,
-            resource: instance_buf.as_entire_binding(),
+            resource: samples.buffer().as_entire_binding(),
         }],
     });
 
     TensorFieldGpuData {
         shape: item.shape,
-        instance_count: count as u32,
         pick_id: item.settings.pick_id,
         uniform_bind_group,
         instance_bind_group,
         colourmap: crate::sources::requested_colourmap(&item.colour),
-        _uniform_buf: uniform_buf,
-        _instance_buf: instance_buf,
+        binds: binds.clone(),
+        uniform_buf,
+        samples,
     }
+}
+
+/// Encode one caller-supplied sample into the record the shader reads.
+///
+/// The rotation-scale block is `R * diag(extents)` and the normal block its
+/// inverse transpose, which for an orthonormal `R` is `R * diag(1 / extents)`.
+/// Extents are clamped the way the upload path clamps them, so a zero extent
+/// leaves a hair of width rather than an infinity in the buffer.
+fn encode_sample(sample: &super::channels::Sample) -> TensorFieldInstance {
+    let pos = glam::Vec3::from(sample.position);
+    let col0 = glam::Vec3::from(sample.axes[0]);
+    let col1 = glam::Vec3::from(sample.axes[1]);
+    let col2 = glam::Vec3::from(sample.axes[2]);
+    let s0 = sample.extents[0].abs().max(1e-6);
+    let s1 = sample.extents[1].abs().max(1e-6);
+    let s2 = sample.extents[2].abs().max(1e-6);
+
+    let rs = glam::Mat3::from_cols(col0 * s0, col1 * s1, col2 * s2);
+    let mut world_model = glam::Mat4::from_mat3(rs);
+    world_model.w_axis = glam::Vec4::new(pos.x, pos.y, pos.z, 1.0);
+    let nm = glam::Mat3::from_cols(col0 / s0, col1 / s1, col2 / s2);
+    let mc = world_model.to_cols_array_2d();
+
+    TensorFieldInstance {
+        model_col0: mc[0],
+        model_col1: mc[1],
+        model_col2: mc[2],
+        model_col3: mc[3],
+        normal_col0: [nm.x_axis.x, nm.x_axis.y, nm.x_axis.z, 0.0],
+        normal_col1: [nm.y_axis.x, nm.y_axis.y, nm.y_axis.z, 0.0],
+        normal_col2: [nm.z_axis.x, nm.z_axis.y, nm.z_axis.z, 0.0],
+        scalar: sample.scalar,
+        _pad0: 0.0,
+        _pad1: 0.0,
+        _pad2: 0.0,
+        colour: sample.colour.to_linear_rgba(),
+    }
+}
+
+/// Encode a run of caller-supplied samples into the bytes a ranged write sends.
+pub(crate) fn encode_samples(samples: &[super::channels::Sample]) -> Vec<u8> {
+    let records: Vec<TensorFieldInstance> = samples.iter().map(encode_sample).collect();
+    bytemuck::cast_slice(&records).to_vec()
 }
 
 /// Rewrite a stored field's instance buffer and uniform in place, keeping both
@@ -301,7 +351,8 @@ pub(super) fn try_replace_in_place(
     gpu: &mut TensorFieldGpuData,
     item: &super::types::TensorFieldItem,
 ) -> bool {
-    if item.positions.len() as u32 != gpu.instance_count {
+    let count = item.positions.len() as u32;
+    if count > gpu.samples.capacity() {
         return false;
     }
     if crate::sources::requested_colourmap(&item.colour) != gpu.colourmap {
@@ -309,8 +360,15 @@ pub(super) fn try_replace_in_place(
     }
 
     let (instances, uniform_data) = build_instances_and_uniform(item);
-    queue.write_buffer(&gpu._instance_buf, 0, bytemuck::cast_slice(&instances));
-    queue.write_buffer(&gpu._uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+    if gpu.samples.set_len(count).is_err()
+        || gpu
+            .samples
+            .write_range(queue, 0, bytemuck::cast_slice(&instances))
+            .is_err()
+    {
+        return false;
+    }
+    queue.write_buffer(&gpu.uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
     gpu.shape = item.shape;
     gpu.pick_id = item.settings.pick_id;
@@ -327,21 +385,18 @@ pub(super) type TensorFieldStore =
 
 impl viewport_lib::resources::handle::GpuByteSize for TensorFieldGpuData {
     fn gpu_bytes(&self) -> u64 {
-        self._uniform_buf.size() + self._instance_buf.size()
+        self.uniform_buf.size() + self.samples.allocated_bytes()
     }
 }
 
-/// GPU data for one tensor field draw: the inline items build it each frame,
-/// the store holds it across frames.
+/// GPU data for one tensor field: its sample buffer, its uniform block and its
+/// two bind groups.
 ///
-/// The shape's vertex and index buffers are not here: they belong to the mesh
-/// the consumer uploaded, and the draw hooks bind them by id.
-#[derive(Clone)]
+/// Not `Clone`: the sample buffer grows, and two owners would each have their own
+/// idea of how much is allocated. The frame path takes a [`TensorFieldDraw`].
 pub(crate) struct TensorFieldGpuData {
     /// The mesh drawn once per sample.
     pub(crate) shape: MeshId,
-    /// Number of samples.
-    pub(crate) instance_count: u32,
     /// Object-level pick id shared by every sample in the field (from the
     /// item's `settings.pick_id`); `PickId::NONE` when it is not pickable.
     pub(crate) pick_id: viewport_lib::PickId,
@@ -352,7 +407,89 @@ pub(crate) struct TensorFieldGpuData {
     /// The colourmap the uniform bind group's LUT view came from, or `None`
     /// for the default. A replace naming a different one has to rebuild it.
     pub(crate) colourmap: Option<viewport_lib::resources::ColourmapId>,
-    // Keep buffers alive.
-    pub(crate) _uniform_buf: viewport_lib::gpu::Buffer,
-    pub(crate) _instance_buf: viewport_lib::gpu::Buffer,
+    /// The LUT view, sampler and layouts, kept so a grow can rebuild the
+    /// instance bind group without a `DeviceResources` borrow.
+    pub(crate) binds: TensorFieldBindings,
+    pub(crate) uniform_buf: viewport_lib::gpu::Buffer,
+    /// One baked record per sample: a rotation-scale matrix, its inverse
+    /// transpose, a scalar and a colour. The whole record is the channel, and a
+    /// write supplies the decomposition it is built from.
+    pub(crate) samples: ContentBuffer,
+}
+
+/// What a draw needs out of a tensor field, cheap to clone into a frame list.
+#[derive(Clone)]
+pub(crate) struct TensorFieldDraw {
+    pub(crate) shape: MeshId,
+    pub(crate) instance_count: u32,
+    pub(crate) pick_id: viewport_lib::PickId,
+    pub(crate) uniform_bind_group: viewport_lib::gpu::BindGroup,
+    pub(crate) instance_bind_group: viewport_lib::gpu::BindGroup,
+}
+
+impl TensorFieldGpuData {
+    /// This field's draw data. The bind groups keep the uniform and sample
+    /// buffers alive.
+    pub(crate) fn draw(&self) -> TensorFieldDraw {
+        TensorFieldDraw {
+            shape: self.shape,
+            instance_count: self.samples.len(),
+            pick_id: self.pick_id,
+            uniform_bind_group: self.uniform_bind_group.clone(),
+            instance_bind_group: self.instance_bind_group.clone(),
+        }
+    }
+
+    /// The uniform buffer, for the per-frame model matrix write a reference item
+    /// makes.
+    pub(crate) fn uniform_buf(&self) -> &viewport_lib::gpu::Buffer {
+        &self.uniform_buf
+    }
+
+    /// Overwrite the records for `data.len() / stride` samples starting at
+    /// `first_element`.
+    pub(crate) fn write_samples(
+        &mut self,
+        queue: &viewport_lib::gpu::Queue,
+        first_element: u32,
+        data: &[u8],
+    ) -> ViewportResult<()> {
+        self.samples.write_range(queue, first_element, data)
+    }
+
+    /// Grow to hold at least `capacity` samples, rebuilding the instance bind
+    /// group if the allocation moved. `true` when it did.
+    pub(crate) fn reserve(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        capacity: u32,
+    ) -> bool {
+        let moved = self.samples.reserve(device, queue, capacity);
+        if moved {
+            self.instance_bind_group =
+                device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
+                    label: Some("tensor_field_instance_bg"),
+                    layout: &self.binds.instance_bgl,
+                    entries: &[viewport_lib::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.samples.buffer().as_entire_binding(),
+                    }],
+                });
+        }
+        moved
+    }
+
+    /// Set how many samples draw.
+    pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
+        self.samples.set_len(len)
+    }
+
+    /// What the sample buffer holds and how much of it draws.
+    pub(crate) fn extent(&self) -> Extent {
+        Extent {
+            capacity: self.samples.capacity(),
+            len: self.samples.len(),
+        }
+    }
 }

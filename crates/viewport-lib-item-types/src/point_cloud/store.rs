@@ -707,12 +707,14 @@ impl PointCloudGpuData {
     /// All channels together because they share an element index: growing the
     /// positions alone would leave a write to the colours addressing a buffer
     /// that cannot hold it.
+    /// `true` when an allocation was replaced, which is when anything built over
+    /// the old buffers is stale.
     pub(crate) fn reserve(
         &mut self,
         device: &gpu::Device,
         queue: &gpu::Queue,
         capacity: u32,
-    ) -> ViewportResult<()> {
+    ) -> bool {
         let mut moved = self.positions.reserve(device, queue, capacity);
         for which in [
             PointChannel::Scalars,
@@ -735,7 +737,7 @@ impl PointCloudGpuData {
                 &self.transparencies,
             );
         }
-        Ok(())
+        moved
     }
 
     /// Set how many points draw, across every channel this cloud holds.
@@ -1069,7 +1071,10 @@ mod in_place_tests {
         item.transparencies = vec![0.5; 8];
         let mut gpu = built(&device, &queue, &resources, &item);
 
-        gpu.reserve(&device, &queue, 100).expect("reserve");
+        assert!(
+            gpu.reserve(&device, &queue, 100),
+            "the grow must report that it moved"
+        );
         for which in [
             PointChannel::Positions,
             PointChannel::Scalars,
@@ -1100,7 +1105,7 @@ mod in_place_tests {
         let mut gpu = built(&device, &queue, &resources, &item);
 
         let before = gpu.draw();
-        gpu.reserve(&device, &queue, 64).expect("reserve");
+        assert!(gpu.reserve(&device, &queue, 64));
         let after = gpu.draw();
         assert!(
             after.vertex_buffer.size() > before.vertex_buffer.size(),
@@ -1114,7 +1119,10 @@ mod in_place_tests {
         // Reserving inside what is already held changes nothing, so the draw
         // data is untouched and no bind group was rebuilt.
         let before = gpu.draw();
-        gpu.reserve(&device, &queue, 8).expect("reserve");
+        assert!(
+            !gpu.reserve(&device, &queue, 8),
+            "a reserve inside what is held must report that nothing moved"
+        );
         assert_eq!(before.vertex_buffer.size(), gpu.draw().vertex_buffer.size());
     }
 

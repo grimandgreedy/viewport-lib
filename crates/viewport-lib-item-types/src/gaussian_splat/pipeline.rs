@@ -388,7 +388,7 @@ impl SplatGpu {
         device: &gpu::Device,
         set: &GaussianSplatGpuSet,
     ) -> SortState {
-        let buf_size = (set.count as usize * 4).max(4) as u64;
+        let buf_size = (set.count() as usize * 4).max(4) as u64;
         let depth_buf = device.create_buffer(&gpu::BufferDescriptor {
             label: Some("splat_depth_buf"),
             size: buf_size,
@@ -440,23 +440,23 @@ impl SplatGpu {
                 },
                 gpu::BindGroupEntry {
                     binding: 2,
-                    resource: set.position_buf.as_entire_binding(),
+                    resource: set.positions.buffer().as_entire_binding(),
                 },
                 gpu::BindGroupEntry {
                     binding: 3,
-                    resource: set.scale_buf.as_entire_binding(),
+                    resource: set.scales.buffer().as_entire_binding(),
                 },
                 gpu::BindGroupEntry {
                     binding: 4,
-                    resource: set.rotation_buf.as_entire_binding(),
+                    resource: set.rotations.buffer().as_entire_binding(),
                 },
                 gpu::BindGroupEntry {
                     binding: 5,
-                    resource: set.opacity_buf.as_entire_binding(),
+                    resource: set.opacities.buffer().as_entire_binding(),
                 },
                 gpu::BindGroupEntry {
                     binding: 6,
-                    resource: set.sh_buf.as_entire_binding(),
+                    resource: set.sh.buffer().as_entire_binding(),
                 },
             ],
         });
@@ -487,7 +487,7 @@ impl SplatGpu {
         vp_w: f32,
         vp_h: f32,
     ) {
-        let count = set.count;
+        let count = set.count();
         if count == 0 {
             return;
         }
@@ -524,7 +524,7 @@ impl SplatGpu {
                 },
                 gpu::BindGroupEntry {
                     binding: 1,
-                    resource: set.position_buf.as_entire_binding(),
+                    resource: set.positions.buffer().as_entire_binding(),
                 },
                 gpu::BindGroupEntry {
                     binding: 2,

@@ -10,11 +10,10 @@
 //! rasterisation and the polyline overlay produced in the renderer's prepare
 //! draws instead.
 
+pub mod channels;
 mod pipeline;
 mod store;
 mod types;
-
-use std::sync::Arc;
 
 use crate::helpers::point_disc_mask::PointDiscMaskUniform;
 use store::{GaussianSplatStore, build_gaussian_splat_set, validate_gaussian_splat_data};
@@ -29,6 +28,10 @@ use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjec
 use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 pub(crate) use store::GaussianSplatGpuSet;
+
+/// Which channel a write names, as the store sees it. The public face is the
+/// marker types in [`channels`].
+pub(crate) use store::SplatChannel;
 
 pub const TYPE_NAME: &str = "vpl.gaussian_splat";
 
@@ -76,13 +79,17 @@ struct FrameDraw {
     pick: Option<(gpu::Buffer, gpu::BindGroup)>,
 }
 
-/// Snapshot of one item for the out-of-band CPU pick paths. The CPU-side
-/// splat data is shared with the store, not copied.
+/// One item the out-of-band CPU pick paths should consider: which set it drew
+/// and under what transform and pick id.
+///
+/// It names the set rather than carrying its centres. The mirror is written in
+/// place by a ranged write, so a snapshot taken at prepare would answer picks
+/// against the values the frame started with, and copying it per frame is the
+/// cost the mirror exists to avoid in the first place.
 struct PickSplatItem {
     pick_id: PickId,
     model: [[f32; 4]; 4],
-    positions: Arc<Vec<[f32; 3]>>,
-    scales: Arc<Vec<[f32; 3]>>,
+    source: GaussianSplatId,
 }
 
 #[derive(Default)]
@@ -135,11 +142,11 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             let Some(set) = store.get(item.source) else {
                 continue;
             };
+            let _ = set;
             self.pick_items.push(PickSplatItem {
                 pick_id: item.settings.pick_id,
                 model: item.model,
-                positions: set.cpu_positions.clone(),
-                scales: set.cpu_scales.clone(),
+                source: item.source,
             });
         }
         if items.is_empty() {
@@ -211,7 +218,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             self.frame.push(FrameDraw {
                 source: item.source,
                 viewport_index: vp_idx,
-                count: set.count,
+                count: set.count(),
                 wireframe: ctx.wireframe_mode || item.settings.wireframe,
                 pick,
             });
@@ -283,20 +290,22 @@ impl ItemTypePlugin for GaussianSplatPlugin {
         }
         let mut best: Option<(f32, PickHit)> = None;
         for item in &self.pick_items {
-            if item.pick_id == PickId::NONE || item.positions.is_empty() {
+            let Some(set) = self.sets.get(item.source) else {
+                continue;
+            };
+            let live = set.count() as usize;
+            let positions = &set.cpu_positions[..live.min(set.cpu_positions.len())];
+            let scales = &set.cpu_scales[..live.min(set.cpu_scales.len())];
+            if item.pick_id == PickId::NONE || positions.is_empty() {
                 continue;
             }
             let model = glam::Mat4::from_cols_array_2d(&item.model);
             // Derive pick radius from the mean per-splat scale so that a
             // click anywhere inside the visible disc registers as a hit.
-            let mean_max_scale: f32 = if item.scales.is_empty() {
+            let mean_max_scale: f32 = if scales.is_empty() {
                 0.05
             } else {
-                item.scales
-                    .iter()
-                    .map(|s| s[0].max(s[1]).max(s[2]))
-                    .sum::<f32>()
-                    / item.scales.len() as f32
+                scales.iter().map(|s| s[0].max(s[1]).max(s[2])).sum::<f32>() / scales.len() as f32
             };
             let world_radius = mean_max_scale * 3.0;
             let center_w = model.transform_point3(glam::Vec3::ZERO);
@@ -313,7 +322,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             if let Some(mut hit) = viewport_lib::picking::pick_gaussian_splat_cpu(
                 ctx.click_pos,
                 item.pick_id.0,
-                &item.positions,
+                positions,
                 model,
                 ctx.view_proj,
                 ctx.viewport_size,
@@ -351,12 +360,17 @@ impl ItemTypePlugin for GaussianSplatPlugin {
                 && p.y <= ctx.rect_max.y
         };
         for item in &self.pick_items {
-            if item.pick_id == PickId::NONE || item.positions.is_empty() {
+            let Some(set) = self.sets.get(item.source) else {
+                continue;
+            };
+            let live = set.count() as usize;
+            let positions = &set.cpu_positions[..live.min(set.cpu_positions.len())];
+            if item.pick_id == PickId::NONE || positions.is_empty() {
                 continue;
             }
             let model = glam::Mat4::from_cols_array_2d(&item.model);
             let mut item_hit = false;
-            for (i, pos) in item.positions.iter().enumerate() {
+            for (i, pos) in positions.iter().enumerate() {
                 let world = model.transform_point3(glam::Vec3::from(*pos));
                 if let Some(p) = project_to_screen(world, ctx.view_proj, ctx.viewport_size) {
                     if in_rect(p) {
@@ -431,7 +445,7 @@ impl ItemTypePlugin for GaussianSplatPlugin {
             .filter(|item| !item.settings.hidden && (ctx.wireframe_mode || item.settings.wireframe))
             .filter_map(|item| {
                 let set = store.get(item.source)?;
-                let count = (set.count as usize).min(set.cpu_positions.len());
+                let count = (set.count() as usize).min(set.cpu_positions.len());
                 if count == 0 || count > MAX_RINGED_SPLATS {
                     return None;
                 }
@@ -467,9 +481,93 @@ impl GaussianSplatPlugin {
         queue: &gpu::Queue,
         data: &GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
+        self.upload_with_capacity(device, queue, data, 0)
+    }
+
+    /// Upload a splat set with room for `capacity` splats.
+    ///
+    /// The set draws the splats it was given and holds the rest as headroom, so a
+    /// feed reserves once and then only writes. Capacity below the splat count is
+    /// raised to it, and the reserved bytes count against `resident_bytes`.
+    pub fn upload_with_capacity(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        data: &GaussianSplatData,
+        capacity: u32,
+    ) -> viewport_lib::error::ViewportResult<GaussianSplatId> {
         validate_gaussian_splat_data(data)?;
-        let gpu_set = build_gaussian_splat_set(device, queue, data);
+        let gpu_set = build_gaussian_splat_set(device, queue, data, capacity);
         Ok(self.sets.insert_sized(gpu_set))
+    }
+
+    /// Write part of one channel of a stored set.
+    ///
+    /// `mirror` carries the caller's own elements for the two channels that keep
+    /// a CPU copy, so the copy the pick paths read follows the GPU.
+    pub(crate) fn write_channel(
+        &mut self,
+        queue: &gpu::Queue,
+        id: GaussianSplatId,
+        which: store::SplatChannel,
+        name: &'static str,
+        first_element: u32,
+        data: &[u8],
+        mirror: Option<&[[f32; 3]]>,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(set) = self.sets.get_mut(id) else {
+            return Err(self.sets.stale(id));
+        };
+        set.write_channel(queue, which, name, first_element, data, mirror)
+    }
+
+    /// Grow a stored set to hold at least `capacity` splats.
+    pub(crate) fn reserve_stored(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: GaussianSplatId,
+        capacity: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(set) = self.sets.get_mut(id) else {
+            return Err(self.sets.stale(id));
+        };
+        if set.reserve(device, queue, capacity) {
+            // The buffers moved, so the per-viewport sort scratch bound over the
+            // old ones is stale and the slot's charge is wrong.
+            self.sets.bump_revision(id);
+            self.sets.recharge(id);
+        }
+        Ok(())
+    }
+
+    /// Set how many of a stored set's splats draw.
+    pub(crate) fn set_stored_len(
+        &mut self,
+        id: GaussianSplatId,
+        len: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(set) = self.sets.get_mut(id) else {
+            return Err(self.sets.stale(id));
+        };
+        set.set_live_len(len)
+    }
+
+    /// What one channel of a stored set holds, and how much of it draws.
+    pub(crate) fn stored_extent(
+        &self,
+        id: GaussianSplatId,
+        which: store::SplatChannel,
+    ) -> Option<viewport_lib::plugin_api::Extent> {
+        self.sets.get(id).map(|set| set.extent(which))
+    }
+
+    /// Coefficients one splat occupies in a stored set's SH channel.
+    ///
+    /// A ranged SH write is addressed in splats, so a caller assembling one needs
+    /// this to size its slice. `None` for a handle that does not resolve.
+    pub fn sh_coefficients_per_splat(&self, id: GaussianSplatId) -> Option<u32> {
+        self.sets.get(id).map(|set| set.sh_coefficients_per_splat())
     }
 
     /// Replace the buffers behind a live handle. The new set is stamped with a
@@ -483,7 +581,7 @@ impl GaussianSplatPlugin {
         data: &GaussianSplatData,
     ) -> viewport_lib::error::ViewportResult<()> {
         validate_gaussian_splat_data(data)?;
-        let gpu_set = build_gaussian_splat_set(device, queue, data);
+        let gpu_set = build_gaussian_splat_set(device, queue, data, 0);
         if self.sets.replace_sized(id, gpu_set).is_some() {
             Ok(())
         } else {
@@ -514,7 +612,7 @@ impl GaussianSplatPlugin {
         let queue = queue.clone();
         Ok(jobs.try_submit_cpu(move |progress| {
             progress.set(0.1);
-            let gpu_set = build_gaussian_splat_set(&device, &queue, &data);
+            let gpu_set = build_gaussian_splat_set(&device, &queue, &data, 0);
             progress.set(0.95);
             Ok(gpu_set)
         }))

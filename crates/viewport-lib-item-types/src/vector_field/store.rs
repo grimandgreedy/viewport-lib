@@ -12,6 +12,12 @@
 //! upload can arrive long before the first frame that draws one.
 
 use crate::sources::{colour_plan, requested_colourmap};
+use viewport_lib::error::ViewportResult;
+use viewport_lib::plugin_api::Extent;
+use viewport_lib::resources::ContentBuffer;
+
+/// Bytes per interleaved sample record.
+const INSTANCE_STRIDE: u32 = std::mem::size_of::<VectorFieldInstance>() as u32;
 use viewport_lib::MeshId;
 use viewport_lib::resources::DeviceResources;
 
@@ -109,15 +115,12 @@ pub(super) fn sample_sizes(item: &super::types::VectorFieldItem, mags: &[f32]) -
     crate::sources::sample_sizes(&item.size, item.positions.len(), mags)
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct VectorFieldInstance {
-    position: [f32; 3],
-    size: f32,
-    direction: [f32; 3],
-    scalar: f32,
-    colour: [f32; 4],
-}
+/// The per-sample record the shader reads.
+///
+/// This *is* the public [`Sample`](super::channels::Sample) rather than a
+/// parallel copy of it, so the layout a consumer writes through the sample
+/// channel cannot drift from the layout the shader indexes.
+type VectorFieldInstance = super::channels::Sample;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -143,6 +146,7 @@ pub(super) fn build_vector_field(
     queue: &viewport_lib::gpu::Queue,
     binds: &VectorFieldBindings,
     item: &super::types::VectorFieldItem,
+    capacity: u32,
 ) -> VectorFieldGpuData {
     let count = item.positions.len();
     let mags = magnitudes(item);
@@ -153,19 +157,20 @@ pub(super) fn build_vector_field(
         .map(|i| VectorFieldInstance {
             position: item.positions[i],
             size: sizes[i],
-            direction: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
+            vector: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
             scalar: colours.scalars[i],
             colour: colours.colours[i],
         })
         .collect();
 
-    let instance_buf = device.create_buffer(&viewport_lib::gpu::BufferDescriptor {
-        label: Some("vector_field_instance_buf"),
-        size: (std::mem::size_of::<VectorFieldInstance>() * instances.len()).max(48) as u64,
-        usage: viewport_lib::gpu::BufferUsages::STORAGE | viewport_lib::gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&instance_buf, 0, bytemuck::cast_slice(&instances));
+    let mut samples = ContentBuffer::new(
+        device,
+        "vector_field_instance_buf",
+        viewport_lib::gpu::BufferUsages::STORAGE,
+        INSTANCE_STRIDE,
+        capacity.max(count as u32),
+    );
+    let _ = samples.write_range(queue, 0, bytemuck::cast_slice(&instances));
 
     let (scalar_min, scalar_max) = colours.lut_range.unwrap_or((0.0, 1.0));
     let uniform_data = VectorFieldUniform {
@@ -211,19 +216,19 @@ pub(super) fn build_vector_field(
         layout: &binds.instance_bgl,
         entries: &[viewport_lib::gpu::BindGroupEntry {
             binding: 0,
-            resource: instance_buf.as_entire_binding(),
+            resource: samples.buffer().as_entire_binding(),
         }],
     });
 
     VectorFieldGpuData {
         shape: item.shape,
-        instance_count: count as u32,
         pick_id: item.settings.pick_id,
         uniform_bind_group,
         instance_bind_group,
         colourmap: crate::sources::requested_colourmap(&item.colour),
-        _uniform_buf: uniform_buf,
-        _instance_buf: instance_buf,
+        binds: binds.clone(),
+        uniform_buf,
+        samples,
     }
 }
 
@@ -240,13 +245,14 @@ pub(super) fn try_replace_in_place(
     gpu: &mut VectorFieldGpuData,
     item: &super::types::VectorFieldItem,
 ) -> bool {
-    let count = item.positions.len();
-    if count as u32 != gpu.instance_count {
+    let count = item.positions.len() as u32;
+    if count > gpu.samples.capacity() {
         return false;
     }
     if crate::sources::requested_colourmap(&item.colour) != gpu.colourmap {
         return false;
     }
+    let count = count as usize;
 
     let mags = magnitudes(item);
     let sizes = sample_sizes(item, &mags);
@@ -256,12 +262,19 @@ pub(super) fn try_replace_in_place(
         .map(|i| VectorFieldInstance {
             position: item.positions[i],
             size: sizes[i],
-            direction: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
+            vector: item.vectors.get(i).copied().unwrap_or([0.0, 0.0, 0.0]),
             scalar: colours.scalars[i],
             colour: colours.colours[i],
         })
         .collect();
-    queue.write_buffer(&gpu._instance_buf, 0, bytemuck::cast_slice(&instances));
+    if gpu.samples.set_len(count as u32).is_err()
+        || gpu
+            .samples
+            .write_range(queue, 0, bytemuck::cast_slice(&instances))
+            .is_err()
+    {
+        return false;
+    }
 
     let (scalar_min, scalar_max) = colours.lut_range.unwrap_or((0.0, 1.0));
     let uniform_data = VectorFieldUniform {
@@ -275,7 +288,7 @@ pub(super) fn try_replace_in_place(
         _pad0: 0.0,
         _pad1: 0.0,
     };
-    queue.write_buffer(&gpu._uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
+    queue.write_buffer(&gpu.uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
 
     gpu.shape = item.shape;
     gpu.pick_id = item.settings.pick_id;
@@ -292,21 +305,21 @@ pub(super) type VectorFieldStore =
 
 impl viewport_lib::resources::handle::GpuByteSize for VectorFieldGpuData {
     fn gpu_bytes(&self) -> u64 {
-        self._uniform_buf.size() + self._instance_buf.size()
+        self.uniform_buf.size() + self.samples.allocated_bytes()
     }
 }
 
-/// GPU data for one vector field draw: the inline items build it each frame,
-/// the store holds it across frames.
+/// GPU data for one vector field: its sample buffer, its uniform block and its
+/// two bind groups.
 ///
 /// The shape's vertex and index buffers are not here: they belong to the mesh
 /// the consumer uploaded, and the draw hooks bind them by id.
-#[derive(Clone)]
+///
+/// Not `Clone`: the sample buffer grows, and two owners would each have their own
+/// idea of how much is allocated. The frame path takes a [`VectorFieldDraw`].
 pub(crate) struct VectorFieldGpuData {
     /// The mesh drawn once per sample.
     pub(crate) shape: MeshId,
-    /// Number of samples.
-    pub(crate) instance_count: u32,
     /// Object-level pick id shared by every sample in the field (from the
     /// item's `settings.pick_id`); `PickId::NONE` when it is not pickable.
     pub(crate) pick_id: viewport_lib::PickId,
@@ -317,7 +330,88 @@ pub(crate) struct VectorFieldGpuData {
     /// The colourmap the uniform bind group's LUT view came from, or `None`
     /// for the default. A replace naming a different one has to rebuild it.
     pub(crate) colourmap: Option<viewport_lib::resources::ColourmapId>,
-    // Keep buffers alive.
-    pub(crate) _uniform_buf: viewport_lib::gpu::Buffer,
-    pub(crate) _instance_buf: viewport_lib::gpu::Buffer,
+    /// The LUT view, sampler and layouts, kept so a grow can rebuild the
+    /// instance bind group without a `DeviceResources` borrow.
+    pub(crate) binds: VectorFieldBindings,
+    pub(crate) uniform_buf: viewport_lib::gpu::Buffer,
+    /// One interleaved record per sample. The whole record is the channel: its
+    /// fields are derived together from the item's colour and size sources, and
+    /// rewriting one of them would mean reading the others back off the GPU.
+    pub(crate) samples: ContentBuffer,
+}
+
+/// What a draw needs out of a vector field, cheap to clone into a frame list.
+#[derive(Clone)]
+pub(crate) struct VectorFieldDraw {
+    pub(crate) shape: MeshId,
+    pub(crate) instance_count: u32,
+    pub(crate) pick_id: viewport_lib::PickId,
+    pub(crate) uniform_bind_group: viewport_lib::gpu::BindGroup,
+    pub(crate) instance_bind_group: viewport_lib::gpu::BindGroup,
+}
+
+impl VectorFieldGpuData {
+    /// This field's draw data. The bind groups keep the uniform and sample
+    /// buffers alive.
+    pub(crate) fn draw(&self) -> VectorFieldDraw {
+        VectorFieldDraw {
+            shape: self.shape,
+            instance_count: self.samples.len(),
+            pick_id: self.pick_id,
+            uniform_bind_group: self.uniform_bind_group.clone(),
+            instance_bind_group: self.instance_bind_group.clone(),
+        }
+    }
+
+    /// The uniform buffer, for the per-frame model matrix write a reference item
+    /// makes.
+    pub(crate) fn uniform_buf(&self) -> &viewport_lib::gpu::Buffer {
+        &self.uniform_buf
+    }
+
+    /// Overwrite `data.len() / stride` samples starting at `first_element`.
+    pub(crate) fn write_samples(
+        &mut self,
+        queue: &viewport_lib::gpu::Queue,
+        first_element: u32,
+        data: &[u8],
+    ) -> ViewportResult<()> {
+        self.samples.write_range(queue, first_element, data)
+    }
+
+    /// Grow to hold at least `capacity` samples, rebuilding the instance bind
+    /// group if the allocation moved. `true` when it did.
+    pub(crate) fn reserve(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        capacity: u32,
+    ) -> bool {
+        let moved = self.samples.reserve(device, queue, capacity);
+        if moved {
+            self.instance_bind_group =
+                device.create_bind_group(&viewport_lib::gpu::BindGroupDescriptor {
+                    label: Some("vector_field_instance_bg"),
+                    layout: &self.binds.instance_bgl,
+                    entries: &[viewport_lib::gpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.samples.buffer().as_entire_binding(),
+                    }],
+                });
+        }
+        moved
+    }
+
+    /// Set how many samples draw.
+    pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
+        self.samples.set_len(len)
+    }
+
+    /// What the sample buffer holds and how much of it draws.
+    pub(crate) fn extent(&self) -> Extent {
+        Extent {
+            capacity: self.samples.capacity(),
+            len: self.samples.len(),
+        }
+    }
 }

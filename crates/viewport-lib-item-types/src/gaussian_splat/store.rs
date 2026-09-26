@@ -9,7 +9,10 @@
 use super::types::GaussianSplatId;
 
 pub use super::types::{GaussianSplatData, ShDegree};
+use viewport_lib::error::{ViewportError, ViewportResult};
 use viewport_lib::gpu;
+use viewport_lib::plugin_api::Extent;
+use viewport_lib::resources::ContentBuffer;
 
 /// Check that a splat set is non-empty and its per-attribute vectors agree in
 /// length. Shared by the sync, async, and replace upload paths.
@@ -34,16 +37,42 @@ pub(super) fn validate_gaussian_splat_data(
     Ok(())
 }
 
+/// Bytes per element of each splat channel. Positions, scales and rotations are
+/// padded to `vec4` on the GPU whatever the caller hands over; the SH stride is
+/// a runtime property of the set's degree and so is not here.
+const VEC4_STRIDE: u32 = 16;
+const OPACITY_STRIDE: u32 = 4;
+
+/// Which channel of a splat set a call means.
+///
+/// Every channel is indexed by splat, the SH one included: its stride is one
+/// splat's worth of coefficients, so a write covers whole splats even though the
+/// caller supplies loose `f32`s.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum SplatChannel {
+    Positions,
+    Scales,
+    Rotations,
+    Opacities,
+    ShCoefficients,
+}
+
 /// Build the persistent GPU buffers for a splat set and assemble the
 /// `GaussianSplatGpuSet`. Assumes `data` already passed
 /// [`validate_gaussian_splat_data`]. Shared by the sync upload, the async
 /// worker, and the replace path so all three produce identical resources.
+///
+/// `capacity` is the number of splats to allocate room for, which the plain
+/// upload leaves at the splat count.
 pub(super) fn build_gaussian_splat_set(
     device: &gpu::Device,
     queue: &gpu::Queue,
     data: &GaussianSplatData,
+    capacity: u32,
 ) -> GaussianSplatGpuSet {
     let count = data.positions.len() as u32;
+    let capacity = capacity.max(count);
+    let sh_stride = (data.sh_degree.coeff_count() * 4) as u32;
 
     // Pad positions/scales/rotations to vec4 (w=1 / w=0 / raw).
     let pos_data: Vec<[f32; 4]> = data
@@ -56,107 +85,221 @@ pub(super) fn build_gaussian_splat_set(
         .iter()
         .map(|s| [s[0], s[1], s[2], 0.0])
         .collect();
-    let rotation_data: Vec<[f32; 4]> = data
-        .rotations
-        .iter()
-        .map(|r| [r[0], r[1], r[2], r[3]])
-        .collect();
 
-    let buf_size_pos = (pos_data.len() * std::mem::size_of::<[f32; 4]>()).max(16) as u64;
-    let buf_size_scale = (scale_data.len() * std::mem::size_of::<[f32; 4]>()).max(16) as u64;
-    let buf_size_rot = (rotation_data.len() * std::mem::size_of::<[f32; 4]>()).max(16) as u64;
-    let buf_size_opa = (data.opacities.len() * 4).max(4) as u64;
-    let buf_size_sh = (data.sh_coefficients.len() * 4).max(4) as u64;
+    let usage = gpu::BufferUsages::STORAGE;
+    let mut positions =
+        ContentBuffer::new(device, "splat_position_buf", usage, VEC4_STRIDE, capacity);
+    let mut scales = ContentBuffer::new(device, "splat_scale_buf", usage, VEC4_STRIDE, capacity);
+    let mut rotations =
+        ContentBuffer::new(device, "splat_rotation_buf", usage, VEC4_STRIDE, capacity);
+    let mut opacities =
+        ContentBuffer::new(device, "splat_opacity_buf", usage, OPACITY_STRIDE, capacity);
+    // A set with no coefficients still needs something bindable, so the buffer
+    // exists at one splat's worth and nothing is live in it.
+    let mut sh = ContentBuffer::new(
+        device,
+        "splat_sh_buf",
+        usage,
+        sh_stride.max(4),
+        if data.sh_coefficients.is_empty() {
+            0
+        } else {
+            capacity
+        },
+    );
 
-    let position_buf = device.create_buffer(&gpu::BufferDescriptor {
-        label: Some("splat_position_buf"),
-        size: buf_size_pos,
-        usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&position_buf, 0, bytemuck::cast_slice(&pos_data));
-
-    let scale_buf = device.create_buffer(&gpu::BufferDescriptor {
-        label: Some("splat_scale_buf"),
-        size: buf_size_scale,
-        usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&scale_buf, 0, bytemuck::cast_slice(&scale_data));
-
-    let rotation_buf = device.create_buffer(&gpu::BufferDescriptor {
-        label: Some("splat_rotation_buf"),
-        size: buf_size_rot,
-        usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&rotation_buf, 0, bytemuck::cast_slice(&rotation_data));
-
-    let opacity_buf = device.create_buffer(&gpu::BufferDescriptor {
-        label: Some("splat_opacity_buf"),
-        size: buf_size_opa,
-        usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&opacity_buf, 0, bytemuck::cast_slice(&data.opacities));
-
-    let sh_buf = device.create_buffer(&gpu::BufferDescriptor {
-        label: Some("splat_sh_buf"),
-        size: buf_size_sh,
-        usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let _ = positions.write_range(queue, 0, bytemuck::cast_slice(&pos_data));
+    let _ = scales.write_range(queue, 0, bytemuck::cast_slice(&scale_data));
+    let _ = rotations.write_range(queue, 0, bytemuck::cast_slice(&data.rotations));
+    let _ = opacities.write_range(queue, 0, bytemuck::cast_slice(&data.opacities));
     if !data.sh_coefficients.is_empty() {
-        queue.write_buffer(&sh_buf, 0, bytemuck::cast_slice(&data.sh_coefficients));
+        let _ = sh.write_range(queue, 0, bytemuck::cast_slice(&data.sh_coefficients));
     }
 
     GaussianSplatGpuSet {
-        position_buf,
-        scale_buf,
-        rotation_buf,
-        opacity_buf,
-        sh_buf,
+        positions,
+        scales,
+        rotations,
+        opacities,
+        sh,
         sh_degree: data.sh_degree,
-        count,
-        cpu_positions: std::sync::Arc::new(data.positions.clone()),
-        cpu_scales: std::sync::Arc::new(data.scales.clone()),
+        cpu_positions: data.positions.clone(),
+        cpu_scales: data.scales.clone(),
     }
 }
 
 /// Persistent GPU state for one uploaded Gaussian splat set.
+///
+/// Every channel is a [`ContentBuffer`], so a consumer can rewrite part of a set
+/// rather than replacing it. The buffers are addressed in splats, the SH channel
+/// included: its stride is one splat's worth of coefficients.
 pub(crate) struct GaussianSplatGpuSet {
-    /// Positions as vec4<f32> (w=1), one per splat.
-    pub position_buf: gpu::Buffer,
+    /// Centres as vec4<f32> (w=1), one per splat. Its live count is the draw
+    /// count for the whole set.
+    pub positions: ContentBuffer,
     /// Scales as vec4<f32> (w=0), one per splat.
-    pub scale_buf: gpu::Buffer,
+    pub scales: ContentBuffer,
     /// Rotations as vec4<f32> [x,y,z,w], one per splat.
-    pub rotation_buf: gpu::Buffer,
-    /// Opacities as f32, one per splat.
-    pub opacity_buf: gpu::Buffer,
-    /// SH coefficients as f32, count = splat_count * sh_degree.coeff_count().
-    pub sh_buf: gpu::Buffer,
-    /// SH degree for this set.
+    pub rotations: ContentBuffer,
+    /// Opacity per splat.
+    pub opacities: ContentBuffer,
+    /// SH coefficients, one splat's worth per element.
+    pub sh: ContentBuffer,
+    /// SH degree for this set, which fixes the SH stride.
     pub sh_degree: ShDegree,
-    /// Number of splats.
-    pub count: u32,
-    /// CPU positions kept for picking and the wireframe overlay
-    /// (object-space). Shared so per-frame consumers snapshot without
-    /// copying the set.
-    pub cpu_positions: std::sync::Arc<Vec<[f32; 3]>>,
+    /// CPU centres kept for the proximity pick and the wireframe rings. A plain
+    /// `Vec` rather than an `Arc`: a ranged write updates part of it, and behind
+    /// an `Arc` shared with a frame snapshot that would mean cloning the whole
+    /// thing on every write.
+    pub cpu_positions: Vec<[f32; 3]>,
     /// CPU scales kept for picking and the wireframe overlay.
-    pub cpu_scales: std::sync::Arc<Vec<[f32; 3]>>,
+    pub cpu_scales: Vec<[f32; 3]>,
 }
 
 impl viewport_lib::resources::handle::GpuByteSize for GaussianSplatGpuSet {
-    /// Resident GPU bytes for the persistent source buffers (position, scale,
-    /// rotation, opacity, SH). Per-viewport sort scratch is derived and grows
-    /// lazily, so it is not counted here.
+    /// Resident GPU bytes for the persistent source buffers, reserved capacity
+    /// included. Per-viewport sort scratch is derived and grows lazily, so it is
+    /// not counted here.
     fn gpu_bytes(&self) -> u64 {
-        self.position_buf.size()
-            + self.scale_buf.size()
-            + self.rotation_buf.size()
-            + self.opacity_buf.size()
-            + self.sh_buf.size()
+        self.positions.allocated_bytes()
+            + self.scales.allocated_bytes()
+            + self.rotations.allocated_bytes()
+            + self.opacities.allocated_bytes()
+            + self.sh.allocated_bytes()
+    }
+}
+
+impl GaussianSplatGpuSet {
+    /// Splats a draw reads.
+    pub(crate) fn count(&self) -> u32 {
+        self.positions.len()
+    }
+
+    /// Coefficients one splat occupies in the SH channel, which is what makes a
+    /// ranged SH write addressable in splats.
+    pub(crate) fn sh_coefficients_per_splat(&self) -> u32 {
+        self.sh_degree.coeff_count() as u32
+    }
+
+    fn channel(&self, which: SplatChannel) -> &ContentBuffer {
+        match which {
+            SplatChannel::Positions => &self.positions,
+            SplatChannel::Scales => &self.scales,
+            SplatChannel::Rotations => &self.rotations,
+            SplatChannel::Opacities => &self.opacities,
+            SplatChannel::ShCoefficients => &self.sh,
+        }
+    }
+
+    fn channel_mut(&mut self, which: SplatChannel) -> &mut ContentBuffer {
+        match which {
+            SplatChannel::Positions => &mut self.positions,
+            SplatChannel::Scales => &mut self.scales,
+            SplatChannel::Rotations => &mut self.rotations,
+            SplatChannel::Opacities => &mut self.opacities,
+            SplatChannel::ShCoefficients => &mut self.sh,
+        }
+    }
+
+    /// Only the SH channel can be absent: a set uploaded with no coefficients
+    /// holds a one-splat placeholder that the shader never indexes.
+    fn has_channel(&self, which: SplatChannel) -> bool {
+        match which {
+            SplatChannel::ShCoefficients => !self.sh.is_empty(),
+            _ => true,
+        }
+    }
+
+    /// Write bytes into one channel at a splat offset.
+    ///
+    /// The CPU mirror follows for the two channels that have one, so picking and
+    /// the wireframe rings keep agreeing with what is drawn. A write that leaves
+    /// the mirror behind is a picture that picks in the wrong place, and it would
+    /// not show up until someone clicked.
+    pub(crate) fn write_channel(
+        &mut self,
+        queue: &gpu::Queue,
+        which: SplatChannel,
+        name: &'static str,
+        first_element: u32,
+        data: &[u8],
+        mirror: Option<&[[f32; 3]]>,
+    ) -> ViewportResult<()> {
+        if !self.has_channel(which) {
+            return Err(ViewportError::ChannelNotPresent {
+                type_name: super::TYPE_NAME,
+                channel: name,
+            });
+        }
+        self.channel_mut(which)
+            .write_range(queue, first_element, data)?;
+        if let Some(values) = mirror {
+            let target = match which {
+                SplatChannel::Positions => &mut self.cpu_positions,
+                SplatChannel::Scales => &mut self.cpu_scales,
+                _ => return Ok(()),
+            };
+            let first = first_element as usize;
+            if target.len() < first + values.len() {
+                target.resize(first + values.len(), [0.0; 3]);
+            }
+            target[first..first + values.len()].copy_from_slice(values);
+        }
+        Ok(())
+    }
+
+    /// Grow every channel the set holds to at least `capacity` splats.
+    ///
+    /// `true` when an allocation was replaced, which is when the per-viewport
+    /// sort scratch built over these buffers has to be dropped.
+    pub(crate) fn reserve(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        capacity: u32,
+    ) -> bool {
+        let mut moved = false;
+        for which in [
+            SplatChannel::Positions,
+            SplatChannel::Scales,
+            SplatChannel::Rotations,
+            SplatChannel::Opacities,
+            SplatChannel::ShCoefficients,
+        ] {
+            if self.has_channel(which) {
+                moved |= self.channel_mut(which).reserve(device, queue, capacity);
+            }
+        }
+        if moved {
+            self.cpu_positions.resize(capacity as usize, [0.0; 3]);
+            self.cpu_scales.resize(capacity as usize, [0.0; 3]);
+        }
+        moved
+    }
+
+    /// Set how many splats draw, across every channel the set holds.
+    pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
+        for which in [
+            SplatChannel::Positions,
+            SplatChannel::Scales,
+            SplatChannel::Rotations,
+            SplatChannel::Opacities,
+            SplatChannel::ShCoefficients,
+        ] {
+            if self.has_channel(which) {
+                self.channel_mut(which).set_len(len)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What one channel holds and how much of it draws.
+    pub(crate) fn extent(&self, which: SplatChannel) -> Extent {
+        let cb = self.channel(which);
+        Extent {
+            capacity: cb.capacity(),
+            len: cb.len(),
+        }
     }
 }
 

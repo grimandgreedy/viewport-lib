@@ -17,13 +17,14 @@
 //!   `paint_depth_read`, which is the only one of the four that can sample
 //!   scene depth for the soft fade.
 
+pub mod channels;
 mod pipeline;
 mod store;
 mod types;
 
 use store::{
-    SpriteGpuData, SpriteInstanceSetStore, SpriteLayouts, SpriteSetStore, build_sprite,
-    resolve_bindings,
+    SpriteGpuData, SpriteInstanceSetStore, SpriteLayouts, SpriteSetStore, StoredSprite,
+    build_sprite, resolve_bindings,
 };
 use viewport_lib::plugin_api::{
     DepthReadContext, EncoderScope, EncoderScopeContext, ItemCollections, ItemFrameContext,
@@ -31,6 +32,8 @@ use viewport_lib::plugin_api::{
     PluginItem, RectPickContext,
 };
 use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjectRef};
+
+pub(crate) use store::encode_sprites;
 
 pub use types::{
     SpriteInstanceSetId, SpriteInstanceSetRefItem, SpriteItem, SpriteLitParams, SpriteNormalMode,
@@ -159,12 +162,13 @@ impl SpritePlugin {
         queue: &viewport_lib::gpu::Queue,
         resources: &viewport_lib::resources::DeviceResources,
         item: &SpriteItem,
-    ) -> SpriteGpuData {
+        capacity: u32,
+    ) -> StoredSprite {
         let layouts = self
             .layouts
             .get_or_insert_with(|| SpriteLayouts::new(device));
         let binds = resolve_bindings(resources, layouts, item);
-        build_sprite(device, queue, &binds, item)
+        build_sprite(device, queue, &binds, item, capacity)
     }
 
     /// Pre-upload a static sprite batch and return its handle.
@@ -175,8 +179,77 @@ impl SpritePlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: &SpriteItem,
     ) -> SpriteSetId {
-        let gpu = self.build(device, queue, resources, item);
+        self.upload_set_with_capacity(device, queue, resources, item, 0)
+    }
+
+    /// Pre-upload a static sprite batch with room for `capacity` sprites.
+    ///
+    /// The batch draws the sprites it was given and holds the rest as headroom,
+    /// so a feed reserves once and then only writes.
+    pub fn upload_set_with_capacity(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+        item: &SpriteItem,
+        capacity: u32,
+    ) -> SpriteSetId {
+        let gpu = self.build(device, queue, resources, item, capacity);
         self.sets.insert_sized(gpu)
+    }
+
+    /// Write part of one channel of a stored batch.
+    pub(crate) fn write_set_channel(
+        &mut self,
+        queue: &viewport_lib::gpu::Queue,
+        id: SpriteSetId,
+        positions: bool,
+        first_element: u32,
+        data: &[u8],
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(stored) = self.sets.get_mut(id) else {
+            return Err(self.sets.stale(id));
+        };
+        stored.write_channel(queue, positions, first_element, data)
+    }
+
+    /// Grow a stored batch to hold at least `capacity` sprites.
+    pub(crate) fn reserve_set(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        id: SpriteSetId,
+        capacity: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(stored) = self.sets.get_mut(id) else {
+            return Err(self.sets.stale(id));
+        };
+        if stored.reserve(device, queue, capacity) {
+            self.sets.bump_revision(id);
+            self.sets.recharge(id);
+        }
+        Ok(())
+    }
+
+    /// Set how many of a stored batch's sprites draw.
+    pub(crate) fn set_set_len(
+        &mut self,
+        id: SpriteSetId,
+        len: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(stored) = self.sets.get_mut(id) else {
+            return Err(self.sets.stale(id));
+        };
+        stored.set_live_len(len)
+    }
+
+    /// What one channel of a stored batch holds, and how much of it draws.
+    pub(crate) fn set_extent(
+        &self,
+        id: SpriteSetId,
+        positions: bool,
+    ) -> Option<viewport_lib::plugin_api::Extent> {
+        self.sets.get(id).map(|stored| stored.extent(positions))
     }
 
     /// Drop a stored batch. `false` when the handle does not resolve.
@@ -196,7 +269,7 @@ impl SpritePlugin {
         if !self.sets.contains(id) {
             return Err(self.sets.stale(id));
         }
-        let gpu = self.build(device, queue, resources, item);
+        let gpu = self.build(device, queue, resources, item, 0);
         self.sets.replace_sized(id, gpu);
         Ok(())
     }
@@ -209,7 +282,7 @@ impl SpritePlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: &SpriteItem,
     ) -> SpriteInstanceSetId {
-        let gpu = self.build(device, queue, resources, item);
+        let gpu = self.build(device, queue, resources, item, 0);
         self.instance_sets.insert_sized(gpu)
     }
 
@@ -230,7 +303,7 @@ impl SpritePlugin {
         if !self.instance_sets.contains(id) {
             return Err(self.instance_sets.stale(id));
         }
-        let gpu = self.build(device, queue, resources, item);
+        let gpu = self.build(device, queue, resources, item, 0);
         self.instance_sets.replace_sized(id, gpu);
         Ok(())
     }
@@ -255,7 +328,7 @@ impl SpritePlugin {
         let binds = resolve_bindings(resources, layouts, &item);
         let device = device.clone();
         let queue = queue.clone();
-        jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item))
+        jobs.submit_cpu(move || build_sprite(&device, &queue, &binds, &item, 0))
     }
 
     /// Rebind stored batches whose textures were freed or swapped since the
@@ -286,32 +359,37 @@ impl SpritePlugin {
         };
         let sets = self.sets.iter_mut().map(|(_, gpu)| gpu);
         let instance_sets = self.instance_sets.iter_mut().map(|(_, gpu)| gpu);
-        for gpu in sets.chain(instance_sets) {
-            if gpu.texture_id.is_none() && gpu.normal_texture_id.is_none() {
+        for stored in sets.chain(instance_sets) {
+            if stored.draw.texture_id.is_none() && stored.draw.normal_texture_id.is_none() {
                 continue;
             }
-            if action == Revalidate::CheckEach && store::textures_resident(gpu, resources) {
+            if action == Revalidate::CheckEach && store::textures_resident(stored, resources) {
                 continue;
             }
             let binds = store::resolve_bindings_for(
                 resources,
                 layouts,
-                gpu.texture_id,
-                gpu.normal_texture_id,
+                stored.draw.texture_id,
+                stored.draw.normal_texture_id,
                 false,
             );
-            store::rebind_sprite(device, queue, &binds, gpu);
+            store::rebind_sprite(device, queue, &binds, stored);
             // A freed id never comes back: ids are generational, so whatever
             // takes the slot next resolves through a different one. Forget it,
             // and the batch stops being re-checked on every later free.
-            if gpu.texture_id.is_some_and(|id| !resources.has_texture(id)) {
-                gpu.texture_id = None;
+            if stored
+                .draw
+                .texture_id
+                .is_some_and(|id| !resources.has_texture(id))
+            {
+                stored.draw.texture_id = None;
             }
-            if gpu
+            if stored
+                .draw
                 .normal_texture_id
                 .is_some_and(|id| !resources.has_texture(id))
             {
-                gpu.normal_texture_id = None;
+                stored.draw.normal_texture_id = None;
             }
         }
     }
@@ -379,13 +457,13 @@ impl SpritePlugin {
 fn take_job(
     jobs: &viewport_lib::resources::Jobs<'_>,
     id: viewport_lib::resources::JobId,
-) -> viewport_lib::error::ViewportResult<SpriteGpuData> {
+) -> viewport_lib::error::ViewportResult<StoredSprite> {
     match jobs.status(id) {
         viewport_lib::resources::UploadStatus::Pending { .. } => {
             Err(viewport_lib::error::ViewportError::JobNotReady)
         }
         viewport_lib::resources::UploadStatus::Failed(e) => Err(e),
-        _ => jobs.take::<SpriteGpuData>(id).ok_or(
+        _ => jobs.take::<StoredSprite>(id).ok_or(
             viewport_lib::error::ViewportError::JobResultMissing {
                 reason: "unknown id or wrong upload type",
             },
@@ -458,7 +536,7 @@ impl ItemTypePlugin for SpritePlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, layouts, item);
-            let mut gd = build_sprite(device, queue, &binds, item);
+            let mut gd = build_sprite(device, queue, &binds, item, 0).draw;
             gd.wireframe = ctx.wireframe_mode || item.settings.wireframe;
             let frame_index = self.frame.len();
             self.frame.push(gd);
@@ -499,7 +577,7 @@ impl ItemTypePlugin for SpritePlugin {
             let Some(entry) = sets.get(ref_item.source) else {
                 continue;
             };
-            let mut gd = entry.clone();
+            let mut gd = entry.draw.clone();
             gd.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             self.frame.push(gd);
         }
@@ -512,7 +590,7 @@ impl ItemTypePlugin for SpritePlugin {
             let Some(entry) = instance_sets.get(ref_item.source) else {
                 continue;
             };
-            let mut gd = entry.clone();
+            let mut gd = entry.draw.clone();
             gd.wireframe = ctx.wireframe_mode || ref_item.settings.wireframe;
             self.frame.push(gd);
         }

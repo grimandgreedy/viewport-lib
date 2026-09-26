@@ -6,8 +6,9 @@
 
 mod common;
 use common::*;
-use viewport_lib::plugin_api::{Handles, Uploads};
+use viewport_lib::plugin_api::{Handles, Span, Uploads, Writes};
 use viewport_lib::{ColourSource, MeshId, SizeSource};
+use viewport_lib_item_types::channels::vector_field as vf;
 use viewport_lib_item_types::{
     VECTOR_FIELD_TYPE_NAME, VectorFieldItem, VectorFieldPlugin, VectorFieldRefItem,
 };
@@ -468,4 +469,72 @@ fn a_selected_field_outlines_every_sample() {
         "eight selected samples outlined {eight} pixels against {one} for one; \
          every sample in the field must be outlined"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Ranged writes
+// ---------------------------------------------------------------------------
+
+/// A field's storage is one interleaved record per sample, so the sample is the
+/// channel and a write supplies whole samples.
+#[test]
+fn a_reserved_field_takes_ranged_sample_writes() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+    let shape = arrow_mesh(&mut renderer, &device);
+
+    let mut field = VectorFieldItem::new(shape);
+    field.positions = vec![[0.0, 0.0, 0.0]; 64];
+    field.vectors = vec![[0.0, 0.0, 1.0]; 64];
+    let id = renderer.upload(&device, &queue, &field).expect("upload");
+
+    renderer
+        .reserve(vf::Samples, &device, &queue, id, 1_024)
+        .expect("reserve");
+    let extent = renderer.extent(vf::Samples, id).expect("live handle");
+    assert!(extent.capacity >= 1_024);
+    assert_eq!(extent.len, 64, "the reserve adds headroom, not samples");
+
+    let batch: Vec<vf::Sample> = (0..64)
+        .map(|i| {
+            vf::Sample::new(
+                [i as f32, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                1.0,
+                viewport_lib::Colour::WHITE,
+            )
+        })
+        .collect();
+    renderer
+        .write_range(vf::Samples, &queue, id, 64, &batch)
+        .expect("a window inside the reserve");
+    assert_eq!(renderer.extent(vf::Samples, id).unwrap().len, 128);
+
+    // Two disjoint runs in one call, then one that does not fit.
+    renderer
+        .write_spans(
+            vf::Samples,
+            &queue,
+            id,
+            &[Span::new(0, &batch[..8]), Span::new(900, &batch[..8])],
+        )
+        .expect("two runs inside the reserve");
+    assert!(
+        renderer
+            .write_range(vf::Samples, &queue, id, 1_020, &batch)
+            .is_err(),
+        "a window past the reserve is refused rather than grown into"
+    );
+
+    // And it still draws.
+    let mut frame = sub_object_pick_frame();
+    frame
+        .scene
+        .items_mut::<VectorFieldRefItem>()
+        .push(VectorFieldRefItem::new(id));
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+    assert!(renderer.release(id));
 }

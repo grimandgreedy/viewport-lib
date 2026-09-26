@@ -187,10 +187,17 @@ impl<T, H: ContentHandle> SlotStore<T, H> {
     ///
     /// For a store that updates an entry in place through
     /// [`get_mut`](Self::get_mut) rather than through
-    /// [`replace`](Self::replace): the contents changed, so any cache keyed on
-    /// `(id, revision)` has to be invalidated the same way a replace would
-    /// invalidate it. An in-place update that skips this is the kind of bug
-    /// that only shows up once someone adds a cache.
+    /// [`replace`](Self::replace): what is stored is no longer what a cache was
+    /// built against, so the cache has to drop the same way a replace would drop
+    /// it. An in-place update that skips this is the kind of bug that only shows
+    /// up once someone adds a cache.
+    ///
+    /// **Not for a ranged write into part of an entry.** A revision says the
+    /// value is a different value, which is what a cache over the whole of it
+    /// needs to hear. A write that edits a window leaves the buffers and their
+    /// bindings alone, and bumping on one makes every caller holding a derived
+    /// resource rebuild it per write, which is the cost a ranged write exists to
+    /// remove. Bump when an allocation is replaced, not when bytes change.
     pub fn bump_revision(&mut self, id: H) -> bool {
         let Some(slot) = self.slots.get_mut(id.index()) else {
             return false;

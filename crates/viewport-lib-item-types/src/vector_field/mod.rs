@@ -6,6 +6,7 @@
 //! [`Uploads::upload`](viewport_lib::plugin_api::Uploads::upload). Both forms
 //! arrive at this plugin under the one type name.
 
+pub mod channels;
 mod pipeline;
 mod store;
 mod types;
@@ -137,16 +138,16 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, layouts, item);
-            let gpu_data = build_vector_field(device, queue, &binds, item);
-            let pick_bind_group = (gpu_data.pick_id != PickId::NONE).then(|| {
-                gpu.pick_bind_group(device, queue, gpu_data.pick_id, &gpu_data._uniform_buf)
-            });
+            let built = build_vector_field(device, queue, &binds, item, 0);
+            let draw = built.draw();
+            let pick_bind_group = (draw.pick_id != PickId::NONE)
+                .then(|| gpu.pick_bind_group(device, queue, draw.pick_id, built.uniform_buf()));
             let outline = ctx
                 .outline_selected
                 .then(|| outline_for(&item.settings, ctx.sub_selection))
                 .flatten();
             self.frame.push(pipeline::VectorFieldFrame {
-                gpu: gpu_data,
+                draw,
                 pick_bind_group,
                 outline,
             });
@@ -162,20 +163,15 @@ impl ItemTypePlugin for VectorFieldPlugin {
             let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
-            let mut gpu_data = entry.clone();
-            queue.write_buffer(
-                &gpu_data._uniform_buf,
-                0,
-                bytemuck::bytes_of(&ref_item.model),
-            );
+            queue.write_buffer(entry.uniform_buf(), 0, bytemuck::bytes_of(&ref_item.model));
+            let mut draw = entry.draw();
             // The pick id comes from the reference, not from the upload: the
             // same stored field can be drawn twice under two ids.
-            let pick_id = ref_item.settings.pick_id;
-            let pick_bind_group = (pick_id != PickId::NONE)
-                .then(|| gpu.pick_bind_group(device, queue, pick_id, &gpu_data._uniform_buf));
-            gpu_data.pick_id = pick_id;
+            draw.pick_id = ref_item.settings.pick_id;
+            let pick_bind_group = (draw.pick_id != PickId::NONE)
+                .then(|| gpu.pick_bind_group(device, queue, draw.pick_id, entry.uniform_buf()));
             self.frame.push(pipeline::VectorFieldFrame {
-                gpu: gpu_data,
+                draw,
                 pick_bind_group,
                 outline: None,
             });
@@ -193,17 +189,17 @@ impl ItemTypePlugin for VectorFieldPlugin {
         let is_hdr = ctx.target_format == HDR_COLOR_FORMAT;
         let mut bound = false;
         for entry in &self.frame {
-            if entry.gpu.instance_count == 0 {
+            if entry.draw.instance_count == 0 {
                 continue;
             }
             if !bound {
                 pass.set_pipeline(gpu.pipeline.for_format(is_hdr));
                 bound = true;
             }
-            pass.set_bind_group(1, &entry.gpu.uniform_bind_group, &[]);
-            pass.set_bind_group(2, &entry.gpu.instance_bind_group, &[]);
+            pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
+            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
             ctx.meshes
-                .draw_indexed_instanced(pass, entry.gpu.shape, entry.gpu.instance_count);
+                .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
         }
     }
 
@@ -227,20 +223,20 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 pass.set_pipeline(&gpu.mask_pipeline);
                 bound = true;
             }
-            pass.set_bind_group(1, &entry.gpu.uniform_bind_group, &[]);
-            pass.set_bind_group(2, &entry.gpu.instance_bind_group, &[]);
+            pass.set_bind_group(1, &entry.draw.uniform_bind_group, &[]);
+            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
             match instance_filter {
                 None => {
                     ctx.meshes.draw_indexed_instanced(
                         pass,
-                        entry.gpu.shape,
-                        entry.gpu.instance_count,
+                        entry.draw.shape,
+                        entry.draw.instance_count,
                     );
                 }
                 Some(indices) => {
                     for &i in indices {
                         ctx.meshes
-                            .draw_indexed_instance_range(pass, entry.gpu.shape, i..i + 1);
+                            .draw_indexed_instance_range(pass, entry.draw.shape, i..i + 1);
                     }
                 }
             }
@@ -366,7 +362,7 @@ impl ItemTypePlugin for VectorFieldPlugin {
             let Some(pick_bg) = &entry.pick_bind_group else {
                 continue;
             };
-            if entry.gpu.instance_count == 0 {
+            if entry.draw.instance_count == 0 {
                 continue;
             }
             if !bound {
@@ -374,9 +370,9 @@ impl ItemTypePlugin for VectorFieldPlugin {
                 bound = true;
             }
             pass.set_bind_group(1, pick_bg, &[]);
-            pass.set_bind_group(2, &entry.gpu.instance_bind_group, &[]);
+            pass.set_bind_group(2, &entry.draw.instance_bind_group, &[]);
             ctx.meshes
-                .draw_indexed_instanced(pass, entry.gpu.shape, entry.gpu.instance_count);
+                .draw_indexed_instanced(pass, entry.draw.shape, entry.draw.instance_count);
         }
     }
 
@@ -465,12 +461,13 @@ impl VectorFieldPlugin {
         queue: &viewport_lib::gpu::Queue,
         resources: &viewport_lib::resources::DeviceResources,
         item: &VectorFieldItem,
+        capacity: u32,
     ) -> VectorFieldGpuData {
         let layouts = self
             .layouts
             .get_or_insert_with(|| VectorFieldResources::new(device));
         let binds = resolve_bindings(resources, layouts, item);
-        build_vector_field(device, queue, &binds, item)
+        build_vector_field(device, queue, &binds, item, capacity)
     }
 
     /// Pre-upload a vector field and return its handle.
@@ -481,8 +478,75 @@ impl VectorFieldPlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: &VectorFieldItem,
     ) -> VectorFieldId {
-        let gpu = self.build(device, queue, resources, item);
+        self.upload_with_capacity(device, queue, resources, item, 0)
+    }
+
+    /// Pre-upload a vector field with room for `capacity` samples.
+    ///
+    /// The field draws the samples it was given and holds the rest as headroom,
+    /// so a feed reserves once and then only writes.
+    pub fn upload_with_capacity(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+        item: &VectorFieldItem,
+        capacity: u32,
+    ) -> VectorFieldId {
+        let gpu = self.build(device, queue, resources, item, capacity);
         self.stored.insert_sized(gpu)
+    }
+
+    /// Write part of a stored field's sample buffer.
+    pub(crate) fn write_samples(
+        &mut self,
+        queue: &viewport_lib::gpu::Queue,
+        id: VectorFieldId,
+        first_element: u32,
+        data: &[u8],
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(gpu) = self.stored.get_mut(id) else {
+            return Err(self.stored.stale(id));
+        };
+        gpu.write_samples(queue, first_element, data)
+    }
+
+    /// Grow a stored field to hold at least `capacity` samples.
+    pub(crate) fn reserve_stored(
+        &mut self,
+        device: &viewport_lib::gpu::Device,
+        queue: &viewport_lib::gpu::Queue,
+        id: VectorFieldId,
+        capacity: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(gpu) = self.stored.get_mut(id) else {
+            return Err(self.stored.stale(id));
+        };
+        if gpu.reserve(device, queue, capacity) {
+            self.stored.bump_revision(id);
+            self.stored.recharge(id);
+        }
+        Ok(())
+    }
+
+    /// Set how many of a stored field's samples draw.
+    pub(crate) fn set_stored_len(
+        &mut self,
+        id: VectorFieldId,
+        len: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(gpu) = self.stored.get_mut(id) else {
+            return Err(self.stored.stale(id));
+        };
+        gpu.set_live_len(len)
+    }
+
+    /// What a stored field's sample buffer holds, and how much of it draws.
+    pub(crate) fn stored_extent(
+        &self,
+        id: VectorFieldId,
+    ) -> Option<viewport_lib::plugin_api::Extent> {
+        self.stored.get(id).map(|gpu| gpu.extent())
     }
 
     /// Drop a stored field. `false` when the handle does not resolve.
@@ -510,7 +574,7 @@ impl VectorFieldPlugin {
             self.stored.bump_revision(id);
             return Ok(());
         }
-        let gpu = self.build(device, queue, resources, item);
+        let gpu = self.build(device, queue, resources, item, 0);
         self.stored.replace_sized(id, gpu);
         Ok(())
     }
@@ -535,7 +599,7 @@ impl VectorFieldPlugin {
         let binds = resolve_bindings(resources, layouts, &item);
         let device = device.clone();
         let queue = queue.clone();
-        jobs.submit_cpu(move || build_vector_field(&device, &queue, &binds, &item))
+        jobs.submit_cpu(move || build_vector_field(&device, &queue, &binds, &item, 0))
     }
 
     /// Store the field a finished job built and hand back its handle.

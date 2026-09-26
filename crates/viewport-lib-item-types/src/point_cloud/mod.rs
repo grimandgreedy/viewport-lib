@@ -412,11 +412,7 @@ impl PointCloudPlugin {
         let Some(gpu) = self.stored.get_mut(id) else {
             return Err(self.stored.stale(id));
         };
-        gpu.write_channel(queue, which, name, first_element, data)?;
-        // The bytes are unchanged but the contents are not: stamp a new revision
-        // so a cache keyed on one cannot serve the old cloud.
-        self.stored.bump_revision(id);
-        Ok(())
+        gpu.write_channel(queue, which, name, first_element, data)
     }
 
     /// Grow a stored cloud to hold at least `capacity` points.
@@ -430,9 +426,12 @@ impl PointCloudPlugin {
         let Some(gpu) = self.stored.get_mut(id) else {
             return Err(self.stored.stale(id));
         };
-        gpu.reserve(device, queue, capacity)?;
-        // A grow changes what the cloud occupies, so the store's charge is stale.
-        self.stored.recharge(id);
+        if gpu.reserve(device, queue, capacity) {
+            // The allocations moved, so anything built over them is stale and the
+            // store's charge is wrong.
+            self.stored.bump_revision(id);
+            self.stored.recharge(id);
+        }
         Ok(())
     }
 
@@ -445,9 +444,7 @@ impl PointCloudPlugin {
         let Some(gpu) = self.stored.get_mut(id) else {
             return Err(self.stored.stale(id));
         };
-        gpu.set_live_len(len)?;
-        self.stored.bump_revision(id);
-        Ok(())
+        gpu.set_live_len(len)
     }
 
     /// What one channel of a stored cloud holds, and how much of it draws.
