@@ -9,8 +9,9 @@ use viewport_lib::plugin_api::Uploads;
 
 mod common;
 use common::*;
-use viewport_lib::SizeSource;
-use viewport_lib::plugin_api::Handles;
+use viewport_lib::plugin_api::{Handles, Span, Writes};
+use viewport_lib::{ColourSource, SizeSource};
+use viewport_lib_item_types::channels::point_cloud as pc;
 use viewport_lib_item_types::*;
 
 #[test]
@@ -378,5 +379,174 @@ fn hidden_items_produce_no_draw_data() {
         plugin.drawn_count(),
         1,
         "hidden item must not produce gpu data"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Ranged writes
+// ---------------------------------------------------------------------------
+
+/// The streaming shape the write surface exists for: upload once with headroom,
+/// then write sectors into it and let the draw count follow, with no
+/// reallocation and no replace.
+#[test]
+fn a_reserved_cloud_takes_ranged_writes_without_reallocating() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 1_000];
+    cloud.colour = ColourSource::Scalar {
+        values: vec![0.0; 1_000],
+        range: Some((0.0, 1.0)),
+        colourmap: None,
+    };
+
+    let id = renderer
+        .upload(&device, &queue, &cloud)
+        .expect("upload a cloud");
+    renderer
+        .reserve(pc::Positions, &device, &queue, id, 10_000)
+        .expect("reserve room for the feed");
+
+    let extent = renderer
+        .extent(pc::Positions, id)
+        .expect("a live handle has an extent");
+    assert!(extent.capacity >= 10_000);
+    assert_eq!(extent.len, 1_000, "the reserve adds headroom, not points");
+
+    // Fill the headroom one sector at a time. Each write raises the live count.
+    let sector: Vec<[f32; 3]> = (0..1_000).map(|i| [i as f32, 1.0, 2.0]).collect();
+    let scalars: Vec<f32> = (0..1_000).map(|i| i as f32 / 1_000.0).collect();
+    for s in 1..10 {
+        let first = s * 1_000;
+        renderer
+            .write_range(pc::Positions, &queue, id, first, &sector)
+            .expect("the window fits the reserve");
+        renderer
+            .write_range(pc::Scalars, &queue, id, first, &scalars)
+            .expect("the scalar channel was uploaded populated");
+    }
+    assert_eq!(renderer.extent(pc::Positions, id).unwrap().len, 10_000);
+
+    // And the cloud still draws: one reference item, prepared.
+    let mut frame = sub_object_pick_frame();
+    frame
+        .scene
+        .items_mut::<PointCloudRefItem>()
+        .push(PointCloudRefItem::new(id));
+    let _ = renderer.pass().prepare(&device, &queue, &frame);
+
+    assert!(
+        renderer.release(id),
+        "the handle survived every write and still releases"
+    );
+}
+
+/// Several disjoint sectors in one call, which is the shape a feed with more
+/// than one dirty region has.
+#[test]
+fn write_spans_covers_disjoint_sectors() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 64];
+    let id = renderer
+        .upload(&device, &queue, &cloud)
+        .expect("upload a cloud");
+
+    let a = [[1.0f32, 1.0, 1.0]; 4];
+    let b = [[2.0f32, 2.0, 2.0]; 8];
+    renderer
+        .write_spans(
+            pc::Positions,
+            &queue,
+            id,
+            &[Span::new(0, &a), Span::new(40, &b)],
+        )
+        .expect("two runs inside the allocation");
+
+    // A run past the end fails, and the trait makes no promise about the runs
+    // before it: what it promises is that the call reports the failure.
+    let err = renderer
+        .write_spans(
+            pc::Positions,
+            &queue,
+            id,
+            &[Span::new(0, &a), Span::new(60, &b)],
+        )
+        .expect_err("[60..68) does not fit 64 points");
+    assert!(
+        matches!(
+            err,
+            viewport_lib::error::ViewportError::ContentBufferWriteOutOfRange { .. }
+        ),
+        "{err}"
+    );
+}
+
+/// A released handle stops taking writes, the same way `replace` refuses one.
+#[test]
+fn a_stale_handle_is_refused_by_every_write_call() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 8];
+    let id = renderer
+        .upload(&device, &queue, &cloud)
+        .expect("upload a cloud");
+    assert!(renderer.release(id));
+
+    assert!(renderer.extent(pc::Positions, id).is_none());
+    assert!(
+        renderer
+            .write_range(pc::Positions, &queue, id, 0, &[[1.0, 2.0, 3.0]])
+            .is_err()
+    );
+    assert!(
+        renderer
+            .reserve(pc::Positions, &device, &queue, id, 64)
+            .is_err()
+    );
+    assert!(renderer.set_len(pc::Positions, id, 4).is_err());
+}
+
+/// Lowering the live count hides points without giving the allocation back,
+/// which is what lets a shrinking feed grow again for free.
+#[test]
+fn set_len_hides_points_without_freeing_them() {
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("skipping: no GPU adapter available");
+        return;
+    };
+    let mut renderer = renderer_with_item_types(&device);
+
+    let mut cloud = PointCloudItem::default();
+    cloud.positions = vec![[0.0, 0.0, 0.0]; 100];
+    let id = renderer
+        .upload(&device, &queue, &cloud)
+        .expect("upload a cloud");
+
+    renderer
+        .set_len(pc::Positions, id, 10)
+        .expect("lowering the live count");
+    let extent = renderer.extent(pc::Positions, id).unwrap();
+    assert_eq!(extent.len, 10);
+    assert_eq!(extent.capacity, 100, "nothing was freed");
+
+    assert!(
+        renderer.set_len(pc::Positions, id, 101).is_err(),
+        "past the capacity is an error rather than a grow"
     );
 }

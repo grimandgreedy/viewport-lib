@@ -275,6 +275,19 @@ impl<T: GpuByteSize, H: ContentHandle> SlotStore<T, H> {
         let bytes = value.gpu_bytes();
         self.replace(id, value, bytes)
     }
+
+    /// Re-measure an entry that grew in place, without swapping it.
+    ///
+    /// A value holding growable buffers can change footprint while staying the
+    /// same value, which leaves the slot's charge stale and
+    /// [`allocated_bytes`](Self::allocated_bytes) wrong. `false` when the handle
+    /// does not resolve.
+    pub fn recharge(&mut self, id: H) -> bool {
+        let Some(bytes) = self.get(id).map(GpuByteSize::gpu_bytes) else {
+            return false;
+        };
+        self.set_bytes(id, bytes)
+    }
 }
 
 impl<T, H: ContentHandle> Default for SlotStore<T, H> {

@@ -11,9 +11,22 @@
 //! long before the first frame that draws one.
 
 use super::types::{PointCloudId, PointCloudItem, PointRenderMode};
+use viewport_lib::error::{ViewportError, ViewportResult};
 use viewport_lib::gpu;
-use viewport_lib::resources::DeviceResources;
+use viewport_lib::plugin_api::Extent;
+use viewport_lib::resources::{ContentBuffer, DeviceResources};
 use viewport_lib::{Colour, ColourSource, SizeSource};
+
+/// Bytes per element of each channel, in the order the bind group takes them.
+///
+/// Positions are the vertex stream, tightly packed `[f32; 3]` at stride 12 to
+/// match the `Float32x3` layout the pipeline declares. The rest are storage
+/// buffers the shader indexes by `vertex_index`.
+const POSITION_STRIDE: u32 = 12;
+const SCALAR_STRIDE: u32 = 4;
+const COLOUR_STRIDE: u32 = 16;
+const RADIUS_STRIDE: u32 = 4;
+const TRANSPARENCY_STRIDE: u32 = 4;
 
 /// Build the point cloud group-1 bind group layout.
 pub(super) fn build_bgl(device: &gpu::Device) -> gpu::BindGroupLayout {
@@ -234,210 +247,216 @@ pub(crate) struct PointCloudUniform {
     _pad: [u32; 3],
 }
 
-/// Build the GPU data for one point cloud: its buffers and its group-1 bind
-/// group.
+/// Build the GPU data for one point cloud: its channel buffers and its group-1
+/// bind group.
 ///
 /// Shared by the per-frame item path and the store, so a reference draw and an
-/// inline draw are bit-for-bit the same work.
+/// inline draw are bit-for-bit the same work. `capacity` is the number of points
+/// to allocate room for, which the inline path leaves at the point count and an
+/// upload feeding a growing stream sets higher.
 pub(super) fn build_point_cloud(
     device: &gpu::Device,
     queue: &gpu::Queue,
     binds: &PointCloudBindings,
     item: &PointCloudItem,
+    capacity: u32,
 ) -> PointCloudGpuData {
-    {
-        let point_count = item.positions.len() as u32;
+    let count = item.positions.len() as u32;
+    let capacity = capacity.max(count);
 
-        let pos_bytes: &[u8] = bytemuck::cast_slice(&item.positions);
-        let vertex_buffer = device.create_buffer(&gpu::BufferDescriptor {
-            label: Some("pc_vertex_buf"),
-            size: pos_bytes.len().max(12) as u64,
-            usage: gpu::BufferUsages::VERTEX | gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&vertex_buffer, 0, pos_bytes);
+    let colour = resolve_colour(item);
+    let (scalar_min, scalar_max) = colour.scalar_range;
+    let (per_point_radii, uniform_radius) = resolve_sizes(item);
 
-        let colour = resolve_colour(item);
-        let (scalar_min, scalar_max) = colour.scalar_range;
+    let has_scalars = !colour.scalars.is_empty();
+    let has_colours = !colour.colours.is_empty();
+    let has_radius = per_point_radii.is_some();
+    let has_transparency = !item.transparencies.is_empty();
 
-        let (scalar_buf, has_scalars) = if !colour.scalars.is_empty() {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_scalar_buf"),
-                size: (std::mem::size_of::<f32>() * colour.scalars.len()).max(4) as u64,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&colour.scalars));
-            (buf, 1u32)
-        } else {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_scalar_buf_fallback"),
-                size: 4,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            (buf, 0u32)
-        };
+    // An absent channel still needs something in its binding, so it gets a
+    // minimum allocation with nothing live in it. `has_*` in the uniform is what
+    // the shader reads to know not to index it.
+    let mut positions = ContentBuffer::new(
+        device,
+        "pc_positions",
+        gpu::BufferUsages::VERTEX,
+        POSITION_STRIDE,
+        capacity,
+    );
+    let mut scalars = ContentBuffer::new(
+        device,
+        "pc_scalars",
+        gpu::BufferUsages::STORAGE,
+        SCALAR_STRIDE,
+        if has_scalars { capacity } else { 0 },
+    );
+    let mut colours = ContentBuffer::new(
+        device,
+        "pc_colours",
+        gpu::BufferUsages::STORAGE,
+        COLOUR_STRIDE,
+        if has_colours { capacity } else { 0 },
+    );
+    let mut radii = ContentBuffer::new(
+        device,
+        "pc_radii",
+        gpu::BufferUsages::STORAGE,
+        RADIUS_STRIDE,
+        if has_radius { capacity } else { 0 },
+    );
+    let mut transparencies = ContentBuffer::new(
+        device,
+        "pc_transparencies",
+        gpu::BufferUsages::STORAGE,
+        TRANSPARENCY_STRIDE,
+        if has_transparency { capacity } else { 0 },
+    );
 
-        let (colour_buf, has_colours) = if !colour.colours.is_empty() {
-            let bytes: &[u8] = bytemuck::cast_slice(&colour.colours);
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_colour_buf"),
-                size: bytes.len().max(16) as u64,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&buf, 0, bytes);
-            (buf, 1u32)
-        } else {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_colour_buf_fallback"),
-                size: 16,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            (buf, 0u32)
-        };
+    // Each write is at element 0 and sets the live count, so a cloud reserved
+    // larger than its contents draws its contents and no more.
+    let _ = positions.write_range(queue, 0, bytemuck::cast_slice(&item.positions));
+    if has_scalars {
+        let _ = scalars.write_range(queue, 0, bytemuck::cast_slice(&colour.scalars));
+    }
+    if has_colours {
+        let _ = colours.write_range(queue, 0, bytemuck::cast_slice(&colour.colours));
+    }
+    if let Some(ref list) = per_point_radii {
+        let _ = radii.write_range(queue, 0, bytemuck::cast_slice(list));
+    }
+    if has_transparency {
+        let _ = transparencies.write_range(queue, 0, bytemuck::cast_slice(&item.transparencies));
+    }
 
-        let (per_point_radii, uniform_radius) = resolve_sizes(item);
-        let (radius_buf, has_radius) = if let Some(radii) = per_point_radii {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_radius_buf"),
-                size: (std::mem::size_of::<f32>() * radii.len()).max(4) as u64,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&radii));
-            (buf, 1u32)
-        } else {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_radius_buf_fallback"),
-                size: 4,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            (buf, 0u32)
-        };
+    let uniform = PointCloudUniform {
+        model: item.model,
+        default_colour: colour.flat,
+        point_size: uniform_radius,
+        has_scalars: has_scalars as u32,
+        scalar_min,
+        scalar_max,
+        has_colours: has_colours as u32,
+        has_radius: has_radius as u32,
+        has_transparency: has_transparency as u32,
+        gaussian: if item.gaussian { 1 } else { 0 },
+        render_mode: match item.render_mode {
+            PointRenderMode::ScreenSpaceCircle => 0,
+            PointRenderMode::Sphere => 1,
+        },
+        _pad: [0; 3],
+    };
+    let uniform_buf = device.create_buffer(&gpu::BufferDescriptor {
+        label: Some("pc_uniform_buf"),
+        size: std::mem::size_of::<PointCloudUniform>() as u64,
+        usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform));
 
-        let (transparency_buf, has_transparency) = if !item.transparencies.is_empty() {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_transparency_buf"),
-                size: (std::mem::size_of::<f32>() * item.transparencies.len()).max(4) as u64,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&buf, 0, bytemuck::cast_slice(&item.transparencies));
-            (buf, 1u32)
-        } else {
-            let buf = device.create_buffer(&gpu::BufferDescriptor {
-                label: Some("pc_transparency_buf_fallback"),
-                size: 4,
-                usage: gpu::BufferUsages::STORAGE | gpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            (buf, 0u32)
-        };
+    let bind_group = build_bind_group(
+        device,
+        binds,
+        &uniform_buf,
+        &scalars,
+        &colours,
+        &radii,
+        &transparencies,
+    );
 
-        let uniform_data = PointCloudUniform {
-            model: item.model,
-            default_colour: colour.flat,
-            point_size: uniform_radius,
-            has_scalars,
-            scalar_min,
-            scalar_max,
-            has_colours,
-            has_radius,
-            has_transparency,
-            gaussian: if item.gaussian { 1 } else { 0 },
-            render_mode: match item.render_mode {
-                PointRenderMode::ScreenSpaceCircle => 0,
-                PointRenderMode::Sphere => 1,
-            },
-            _pad: [0; 3],
-        };
-        let uniform_buf = device.create_buffer(&gpu::BufferDescriptor {
-            label: Some("pc_uniform_buf"),
-            size: std::mem::size_of::<PointCloudUniform>() as u64,
-            usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&uniform_data));
-
-        let lut_view = &binds.lut_view;
-        let lut_sampler = &binds.lut_sampler;
-
-        let bind_group = device.create_bind_group(&gpu::BindGroupDescriptor {
-            label: Some("pc_bind_group"),
-            layout: &binds.bgl,
-            entries: &[
-                gpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 1,
-                    resource: gpu::BindingResource::TextureView(lut_view),
-                },
-                gpu::BindGroupEntry {
-                    binding: 2,
-                    resource: gpu::BindingResource::Sampler(lut_sampler),
-                },
-                gpu::BindGroupEntry {
-                    binding: 3,
-                    resource: scalar_buf.as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 4,
-                    resource: colour_buf.as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 5,
-                    resource: radius_buf.as_entire_binding(),
-                },
-                gpu::BindGroupEntry {
-                    binding: 6,
-                    resource: transparency_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        PointCloudGpuData {
-            vertex_buffer,
-            point_count,
-            pick_id: item.settings.pick_id,
-            bind_group,
-            uniform: uniform_data,
-            colourmap: crate::sources::requested_colourmap(&item.colour),
-            _uniform_buf: uniform_buf,
-            _scalar_buf: scalar_buf,
-            _colour_buf: colour_buf,
-            _radius_buf: radius_buf,
-            _transparency_buf: transparency_buf,
-        }
+    PointCloudGpuData {
+        positions,
+        scalars,
+        colours,
+        radii,
+        transparencies,
+        uniform_buf,
+        uniform,
+        colourmap: crate::sources::requested_colourmap(&item.colour),
+        scalar_domain_fixed: scalar_domain_is_fixed(&item.colour),
+        binds: binds.clone(),
+        bind_group,
+        pick_id: item.settings.pick_id,
     }
 }
 
-/// Rewrite a stored cloud's buffers in place, keeping its bind group.
+/// Whether the colourmap domain came from the item rather than from its values.
+///
+/// A derived domain spans the whole array, so a write that sees part of it
+/// cannot maintain it. This is recorded at build time because the item is gone
+/// by the time a write arrives.
+fn scalar_domain_is_fixed(colour: &ColourSource) -> bool {
+    match colour {
+        ColourSource::Scalar { range, .. } => range.is_some(),
+        // No colourmap domain to maintain, so nothing to refuse.
+        _ => true,
+    }
+}
+
+fn build_bind_group(
+    device: &gpu::Device,
+    binds: &PointCloudBindings,
+    uniform_buf: &gpu::Buffer,
+    scalars: &ContentBuffer,
+    colours: &ContentBuffer,
+    radii: &ContentBuffer,
+    transparencies: &ContentBuffer,
+) -> gpu::BindGroup {
+    device.create_bind_group(&gpu::BindGroupDescriptor {
+        label: Some("pc_bind_group"),
+        layout: &binds.bgl,
+        entries: &[
+            gpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 1,
+                resource: gpu::BindingResource::TextureView(&binds.lut_view),
+            },
+            gpu::BindGroupEntry {
+                binding: 2,
+                resource: gpu::BindingResource::Sampler(&binds.lut_sampler),
+            },
+            gpu::BindGroupEntry {
+                binding: 3,
+                resource: scalars.buffer().as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 4,
+                resource: colours.buffer().as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 5,
+                resource: radii.buffer().as_entire_binding(),
+            },
+            gpu::BindGroupEntry {
+                binding: 6,
+                resource: transparencies.buffer().as_entire_binding(),
+            },
+        ],
+    })
+}
+
+/// Rewrite a stored cloud's channels in place, keeping its bind group.
 ///
 /// Returns `false` when the new item does not fit what is already allocated, in
-/// which case the caller rebuilds from scratch. The shape has to match exactly:
-/// the same point count, the same colourmap behind the LUT binding, and the
-/// same set of present channels. All three matter. A different point count
-/// means every buffer is the wrong size; a different colourmap means the bind
-/// group holds the wrong texture view; and a channel appearing or disappearing
-/// swaps a real buffer for a four-byte fallback, which is a different binding
-/// even when the counts agree.
+/// which case the caller rebuilds from scratch. Two conditions, both about the
+/// bindings rather than the contents: the new points must fit the reserved
+/// capacity, and the bind group must still be correct, which means the same
+/// colourmap behind the LUT view and the same set of present channels. A channel
+/// appearing or disappearing swaps a real buffer for a minimum-size one, which
+/// is a different binding however the counts compare.
 ///
-/// This is what makes a streaming feed cheap: a replace that keeps its shape,
-/// which is the normal case when only the values changed, costs six
-/// `write_buffer` calls instead of six buffer allocations plus a bind group.
+/// The point count itself may change, up to the reserved capacity: the live
+/// count moves with it and the draw follows. That is what makes a cloud uploaded
+/// with headroom absorb a growing feed without reallocating.
 pub(super) fn try_replace_in_place(
     queue: &gpu::Queue,
     gpu: &mut PointCloudGpuData,
     item: &PointCloudItem,
 ) -> bool {
     let count = item.positions.len() as u32;
-    if count != gpu.point_count {
+    if count > gpu.positions.capacity() {
         return false;
     }
     if crate::sources::requested_colourmap(&item.colour) != gpu.colourmap {
@@ -460,22 +479,39 @@ pub(super) fn try_replace_in_place(
         return false;
     }
 
-    queue.write_buffer(&gpu.vertex_buffer, 0, bytemuck::cast_slice(&item.positions));
-    if has_scalars == 1 {
-        queue.write_buffer(&gpu._scalar_buf, 0, bytemuck::cast_slice(&colour.scalars));
+    // Lower the live counts first so a shorter cloud does not keep drawing the
+    // tail of the longer one it replaces; the writes below raise them again.
+    if gpu.set_live_len(count).is_err() {
+        return false;
     }
-    if has_colours == 1 {
-        queue.write_buffer(&gpu._colour_buf, 0, bytemuck::cast_slice(&colour.colours));
-    }
-    if let Some(radii) = per_point_radii {
-        queue.write_buffer(&gpu._radius_buf, 0, bytemuck::cast_slice(&radii));
-    }
-    if has_transparency == 1 {
-        queue.write_buffer(
-            &gpu._transparency_buf,
-            0,
-            bytemuck::cast_slice(&item.transparencies),
-        );
+    let ok = gpu
+        .positions
+        .write_range(queue, 0, bytemuck::cast_slice(&item.positions))
+        .is_ok()
+        && (has_scalars == 0
+            || gpu
+                .scalars
+                .write_range(queue, 0, bytemuck::cast_slice(&colour.scalars))
+                .is_ok())
+        && (has_colours == 0
+            || gpu
+                .colours
+                .write_range(queue, 0, bytemuck::cast_slice(&colour.colours))
+                .is_ok())
+        && match per_point_radii {
+            Some(ref list) => gpu
+                .radii
+                .write_range(queue, 0, bytemuck::cast_slice(list))
+                .is_ok(),
+            None => true,
+        }
+        && (has_transparency == 0
+            || gpu
+                .transparencies
+                .write_range(queue, 0, bytemuck::cast_slice(&item.transparencies))
+                .is_ok());
+    if !ok {
+        return false;
     }
 
     gpu.uniform = PointCloudUniform {
@@ -495,7 +531,8 @@ pub(super) fn try_replace_in_place(
         },
         _pad: [0; 3],
     };
-    queue.write_buffer(&gpu._uniform_buf, 0, bytemuck::bytes_of(&gpu.uniform));
+    gpu.scalar_domain_fixed = scalar_domain_is_fixed(&item.colour);
+    queue.write_buffer(&gpu.uniform_buf, 0, bytemuck::bytes_of(&gpu.uniform));
     gpu.pick_id = item.settings.pick_id;
     true
 }
@@ -513,42 +550,218 @@ pub(super) type PointCloudStore =
     viewport_lib::resources::handle::SlotStore<PointCloudGpuData, PointCloudId>;
 
 impl viewport_lib::resources::handle::GpuByteSize for PointCloudGpuData {
+    /// What the cloud occupies, reserved capacity included: headroom holds VRAM
+    /// whether or not anything draws from it.
     fn gpu_bytes(&self) -> u64 {
-        self.vertex_buffer.size()
-            + self._uniform_buf.size()
-            + self._scalar_buf.size()
-            + self._colour_buf.size()
-            + self._radius_buf.size()
-            + self._transparency_buf.size()
+        self.uniform_buf.size()
+            + self.positions.allocated_bytes()
+            + self.scalars.allocated_bytes()
+            + self.colours.allocated_bytes()
+            + self.radii.allocated_bytes()
+            + self.transparencies.allocated_bytes()
     }
 }
 
-/// GPU data for one point cloud draw: the inline items build it each frame,
-/// the store holds it across frames.
-#[derive(Clone)]
+/// Which of a point cloud's channels a call means.
+///
+/// Every channel is indexed by point, so they are reserved and sized together
+/// and only the writes differ.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum PointChannel {
+    Positions,
+    Scalars,
+    Colours,
+    Sizes,
+    Transparencies,
+}
+
+/// GPU data for one point cloud: the channel buffers, the uniform block and the
+/// group-1 bind group.
+///
+/// The inline items build one each frame and keep only the draw; the store holds
+/// one across frames and writes into it.
 pub(crate) struct PointCloudGpuData {
-    /// Vertex buffer: one tightly packed `[f32; 3]` per point, 12 bytes, matching
-    /// the `Float32x3` vertex layout the pipeline declares. The shader reads
-    /// colour and scalar from storage buffers indexed by `vertex_index`.
-    pub(crate) vertex_buffer: gpu::Buffer,
-    /// Number of points (= draw count).
-    pub(crate) point_count: u32,
-    /// The item's pick id (from `settings.pick_id`); `PickId::NONE` when not pickable.
-    pub(crate) pick_id: viewport_lib::PickId,
-    /// Bind group (group 1): uniform + LUT + sampler + scalar + colour + radius + transparency.
-    pub(crate) bind_group: gpu::BindGroup,
-    /// The uniform block as written. Kept so an in-place replace can compare
-    /// this cloud's channel presence against a new item's.
-    pub(crate) uniform: PointCloudUniform,
+    positions: ContentBuffer,
+    scalars: ContentBuffer,
+    colours: ContentBuffer,
+    radii: ContentBuffer,
+    transparencies: ContentBuffer,
+    uniform_buf: gpu::Buffer,
+    /// The uniform block as written. Kept so a replace can compare this cloud's
+    /// channel presence against a new item's, and so a write can rewrite one
+    /// field without rebuilding the block.
+    uniform: PointCloudUniform,
     /// The colourmap the bind group's LUT view came from, or `None` for the
     /// default. A replace naming a different one has to rebuild the group.
-    pub(crate) colourmap: Option<viewport_lib::resources::ColourmapId>,
-    // Keep the buffers alive for the lifetime of this struct.
-    pub(crate) _uniform_buf: gpu::Buffer,
-    pub(crate) _scalar_buf: gpu::Buffer,
-    pub(crate) _colour_buf: gpu::Buffer,
-    pub(crate) _radius_buf: gpu::Buffer,
-    pub(crate) _transparency_buf: gpu::Buffer,
+    colourmap: Option<viewport_lib::resources::ColourmapId>,
+    /// Whether the colourmap domain was supplied rather than derived from the
+    /// values. A ranged scalar write is refused when it was derived.
+    scalar_domain_fixed: bool,
+    /// The LUT view, sampler and layout, kept so a grow can rebuild the bind
+    /// group without a `DeviceResources` borrow.
+    binds: PointCloudBindings,
+    bind_group: gpu::BindGroup,
+    pick_id: viewport_lib::PickId,
+}
+
+/// What a draw needs out of a point cloud, cheap to clone into a frame list.
+///
+/// Cloning the whole cloud would mean two owners of one growable buffer, each
+/// with its own idea of how much is allocated. The buffers here are wgpu's own
+/// reference-counted handles, so this keeps them alive without owning them.
+#[derive(Clone)]
+pub(crate) struct PointCloudDraw {
+    pub(crate) vertex_buffer: gpu::Buffer,
+    pub(crate) point_count: u32,
+    pub(crate) pick_id: viewport_lib::PickId,
+    pub(crate) bind_group: gpu::BindGroup,
+}
+
+impl PointCloudGpuData {
+    /// This cloud's draw data. The bind group keeps every storage channel alive,
+    /// and the cloned vertex buffer keeps the positions.
+    pub(crate) fn draw(&self) -> PointCloudDraw {
+        PointCloudDraw {
+            vertex_buffer: self.positions.buffer().clone(),
+            point_count: self.positions.len(),
+            pick_id: self.pick_id,
+            bind_group: self.bind_group.clone(),
+        }
+    }
+
+    /// Overwrite the model matrix at offset 0 of the uniform block.
+    ///
+    /// A reference item re-places a stored cloud without touching its points, so
+    /// this is the one field a draw rewrites per frame.
+    pub(crate) fn write_model(&self, queue: &gpu::Queue, model: &[[f32; 4]; 4]) {
+        queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(model));
+    }
+
+    fn channel(&self, which: PointChannel) -> &ContentBuffer {
+        match which {
+            PointChannel::Positions => &self.positions,
+            PointChannel::Scalars => &self.scalars,
+            PointChannel::Colours => &self.colours,
+            PointChannel::Sizes => &self.radii,
+            PointChannel::Transparencies => &self.transparencies,
+        }
+    }
+
+    fn channel_mut(&mut self, which: PointChannel) -> &mut ContentBuffer {
+        match which {
+            PointChannel::Positions => &mut self.positions,
+            PointChannel::Scalars => &mut self.scalars,
+            PointChannel::Colours => &mut self.colours,
+            PointChannel::Sizes => &mut self.radii,
+            PointChannel::Transparencies => &mut self.transparencies,
+        }
+    }
+
+    /// Whether the channel has a real buffer behind it. Positions always do; the
+    /// rest are there only when the uploaded item populated them.
+    fn has_channel(&self, which: PointChannel) -> bool {
+        match which {
+            PointChannel::Positions => true,
+            PointChannel::Scalars => self.uniform.has_scalars == 1,
+            PointChannel::Colours => self.uniform.has_colours == 1,
+            PointChannel::Sizes => self.uniform.has_radius == 1,
+            PointChannel::Transparencies => self.uniform.has_transparency == 1,
+        }
+    }
+
+    /// Refuse a write this cloud cannot serve: an absent channel, or a scalar
+    /// channel whose colourmap domain is derived from the values.
+    fn check_writable(&self, which: PointChannel, name: &'static str) -> ViewportResult<()> {
+        if !self.has_channel(which) {
+            return Err(ViewportError::ChannelNotPresent {
+                type_name: super::TYPE_NAME,
+                channel: name,
+            });
+        }
+        if which == PointChannel::Scalars && !self.scalar_domain_fixed {
+            return Err(ViewportError::ChannelDomainNotFixed {
+                type_name: super::TYPE_NAME,
+                channel: name,
+            });
+        }
+        Ok(())
+    }
+
+    /// Write bytes into one channel at an element offset.
+    pub(crate) fn write_channel(
+        &mut self,
+        queue: &gpu::Queue,
+        which: PointChannel,
+        name: &'static str,
+        first_element: u32,
+        data: &[u8],
+    ) -> ViewportResult<()> {
+        self.check_writable(which, name)?;
+        self.channel_mut(which)
+            .write_range(queue, first_element, data)
+    }
+
+    /// Grow every channel this cloud holds to at least `capacity` points, and
+    /// rebuild the bind group if any allocation moved.
+    ///
+    /// All channels together because they share an element index: growing the
+    /// positions alone would leave a write to the colours addressing a buffer
+    /// that cannot hold it.
+    pub(crate) fn reserve(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        capacity: u32,
+    ) -> ViewportResult<()> {
+        let mut moved = self.positions.reserve(device, queue, capacity);
+        for which in [
+            PointChannel::Scalars,
+            PointChannel::Colours,
+            PointChannel::Sizes,
+            PointChannel::Transparencies,
+        ] {
+            if self.has_channel(which) {
+                moved |= self.channel_mut(which).reserve(device, queue, capacity);
+            }
+        }
+        if moved {
+            self.bind_group = build_bind_group(
+                device,
+                &self.binds,
+                &self.uniform_buf,
+                &self.scalars,
+                &self.colours,
+                &self.radii,
+                &self.transparencies,
+            );
+        }
+        Ok(())
+    }
+
+    /// Set how many points draw, across every channel this cloud holds.
+    pub(crate) fn set_live_len(&mut self, len: u32) -> ViewportResult<()> {
+        self.positions.set_len(len)?;
+        for which in [
+            PointChannel::Scalars,
+            PointChannel::Colours,
+            PointChannel::Sizes,
+            PointChannel::Transparencies,
+        ] {
+            if self.has_channel(which) {
+                self.channel_mut(which).set_len(len)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What one channel holds and how much of it draws.
+    pub(crate) fn extent(&self, which: PointChannel) -> Extent {
+        let cb = self.channel(which);
+        Extent {
+            capacity: cb.capacity(),
+            len: cb.len(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -578,7 +791,7 @@ mod in_place_tests {
     ) -> PointCloudGpuData {
         let bgl = build_bgl(device);
         let binds = resolve_bindings(resources, &bgl, item);
-        build_point_cloud(device, queue, &binds, item)
+        build_point_cloud(device, queue, &binds, item, 0)
     }
 
     /// The case the streaming feed hits every update: same shape, new values.
@@ -655,6 +868,275 @@ mod in_place_tests {
         recoloured.colour = ColourSource::Solid(Colour::linear_rgb(1.0, 0.0, 0.0));
         assert!(try_replace_in_place(&queue, &mut gpu, &recoloured));
         assert_eq!(gpu.uniform.default_colour[0], 1.0);
+    }
+
+    /// A shorter cloud fits where it used to be refused, because the capacity is
+    /// what the bindings depend on and not the count. The live count follows the
+    /// new item, so the tail of the old cloud does not keep drawing.
+    #[test]
+    fn a_shorter_cloud_fits_and_the_draw_count_follows() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut gpu = built(&device, &queue, &resources, &cloud(8));
+        assert!(try_replace_in_place(&queue, &mut gpu, &cloud(5)));
+        assert_eq!(gpu.extent(PointChannel::Positions).len, 5);
+        assert_eq!(gpu.extent(PointChannel::Positions).capacity, 8);
+    }
+
+    /// The headroom case: uploaded with capacity, grown into without
+    /// reallocating.
+    #[test]
+    fn a_longer_cloud_fits_inside_reserved_capacity() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let bgl = build_bgl(&device);
+        let item = cloud(8);
+        let binds = resolve_bindings(&resources, &bgl, &item);
+        let mut gpu = build_point_cloud(&device, &queue, &binds, &item, 64);
+        assert_eq!(gpu.extent(PointChannel::Positions).capacity, 64);
+        assert_eq!(gpu.extent(PointChannel::Positions).len, 8);
+
+        assert!(try_replace_in_place(&queue, &mut gpu, &cloud(40)));
+        assert_eq!(gpu.extent(PointChannel::Positions).len, 40);
+
+        // Past the reserve it does not fit, rather than growing behind a call
+        // the caller believes is cheap.
+        assert!(!try_replace_in_place(&queue, &mut gpu, &cloud(65)));
+    }
+
+    /// A channel the upload did not populate has no buffer to write into, and
+    /// saying so is better than reallocating under a streaming loop.
+    #[test]
+    fn writing_an_absent_channel_is_refused() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut solid = cloud(8);
+        solid.colour = ColourSource::Solid(Colour::WHITE);
+        let mut gpu = built(&device, &queue, &resources, &solid);
+
+        let err = gpu
+            .write_channel(
+                &queue,
+                PointChannel::Colours,
+                "colours",
+                0,
+                bytemuck::cast_slice(&[[1.0f32, 0.0, 0.0, 1.0]]),
+            )
+            .expect_err("a cloud with one flat colour holds no colour channel");
+        assert!(
+            matches!(err, ViewportError::ChannelNotPresent { .. }),
+            "{err}"
+        );
+
+        // Positions are always there, so the same cloud takes a position write.
+        assert!(
+            gpu.write_channel(
+                &queue,
+                PointChannel::Positions,
+                "positions",
+                0,
+                bytemuck::cast_slice(&[[1.0f32, 2.0, 3.0]]),
+            )
+            .is_ok()
+        );
+    }
+
+    /// A derived colourmap domain cannot survive a write that sees part of the
+    /// values, so the write is refused rather than quietly mis-colouring.
+    #[test]
+    fn writing_scalars_under_a_derived_domain_is_refused() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+
+        let mut derived = cloud(8);
+        derived.colour = ColourSource::Scalar {
+            values: vec![0.5; 8],
+            range: None,
+            colourmap: None,
+        };
+        let mut gpu = built(&device, &queue, &resources, &derived);
+        let err = gpu
+            .write_channel(
+                &queue,
+                PointChannel::Scalars,
+                "scalars",
+                0,
+                bytemuck::cast_slice(&[0.25f32]),
+            )
+            .expect_err("a derived domain cannot be maintained by a ranged write");
+        assert!(
+            matches!(err, ViewportError::ChannelDomainNotFixed { .. }),
+            "{err}"
+        );
+
+        let mut fixed = cloud(8);
+        fixed.colour = ColourSource::Scalar {
+            values: vec![0.5; 8],
+            range: Some((0.0, 1.0)),
+            colourmap: None,
+        };
+        let mut gpu = built(&device, &queue, &resources, &fixed);
+        assert!(
+            gpu.write_channel(
+                &queue,
+                PointChannel::Scalars,
+                "scalars",
+                0,
+                bytemuck::cast_slice(&[0.25f32]),
+            )
+            .is_ok(),
+            "a supplied range is what makes a ranged scalar write well defined"
+        );
+    }
+
+    /// A window past the reserve is an error, not a grow.
+    #[test]
+    fn writing_past_the_capacity_is_refused() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut gpu = built(&device, &queue, &resources, &cloud(8));
+        let err = gpu
+            .write_channel(
+                &queue,
+                PointChannel::Positions,
+                "positions",
+                6,
+                bytemuck::cast_slice(&[[0.0f32; 3]; 4]),
+            )
+            .expect_err("[6..10) does not fit 8 points");
+        assert!(
+            matches!(err, ViewportError::ContentBufferWriteOutOfRange { .. }),
+            "{err}"
+        );
+    }
+
+    /// A write past the live count raises it, which is what makes an appending
+    /// feed reserve once and then only write.
+    #[test]
+    fn a_write_into_reserved_headroom_raises_the_draw_count() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let bgl = build_bgl(&device);
+        let item = cloud(4);
+        let binds = resolve_bindings(&resources, &bgl, &item);
+        let mut gpu = build_point_cloud(&device, &queue, &binds, &item, 16);
+        assert_eq!(gpu.extent(PointChannel::Positions).len, 4);
+
+        gpu.write_channel(
+            &queue,
+            PointChannel::Positions,
+            "positions",
+            4,
+            bytemuck::cast_slice(&[[9.0f32, 0.0, 0.0]; 3]),
+        )
+        .expect("the window fits the reserve");
+        assert_eq!(gpu.extent(PointChannel::Positions).len, 7);
+    }
+
+    /// Reserving grows every channel the cloud holds, not just the one named,
+    /// because they share an element index.
+    #[test]
+    fn reserving_grows_every_channel_the_cloud_holds() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut item = cloud(8);
+        item.colour = ColourSource::Scalar {
+            values: vec![0.5; 8],
+            range: Some((0.0, 1.0)),
+            colourmap: None,
+        };
+        item.transparencies = vec![0.5; 8];
+        let mut gpu = built(&device, &queue, &resources, &item);
+
+        gpu.reserve(&device, &queue, 100).expect("reserve");
+        for which in [
+            PointChannel::Positions,
+            PointChannel::Scalars,
+            PointChannel::Transparencies,
+        ] {
+            assert!(
+                gpu.extent(which).capacity >= 100,
+                "{which:?} did not grow with the rest"
+            );
+            assert_eq!(gpu.extent(which).len, 8, "{which:?} live count moved");
+        }
+        // Absent channels stay at their minimum: growing them would hold VRAM
+        // for a binding the shader never indexes.
+        assert_eq!(gpu.extent(PointChannel::Colours).capacity, 1);
+    }
+
+    /// The bind group has to follow a grow, or the draw reads the buffer the
+    /// reserve replaced.
+    #[test]
+    fn a_grow_rebuilds_the_bind_group() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        let mut item = cloud(8);
+        item.transparencies = vec![0.5; 8];
+        let mut gpu = built(&device, &queue, &resources, &item);
+
+        let before = gpu.draw();
+        gpu.reserve(&device, &queue, 64).expect("reserve");
+        let after = gpu.draw();
+        assert!(
+            after.vertex_buffer.size() > before.vertex_buffer.size(),
+            "a grow past the capacity must replace the positions allocation"
+        );
+        assert_eq!(
+            after.point_count, before.point_count,
+            "a grow adds headroom; it does not change what draws"
+        );
+
+        // Reserving inside what is already held changes nothing, so the draw
+        // data is untouched and no bind group was rebuilt.
+        let before = gpu.draw();
+        gpu.reserve(&device, &queue, 8).expect("reserve");
+        assert_eq!(before.vertex_buffer.size(), gpu.draw().vertex_buffer.size());
+    }
+
+    /// Reserved headroom holds VRAM whether or not it draws, so the store's
+    /// charge has to count it.
+    #[test]
+    fn reserved_capacity_is_charged_as_resident() {
+        let Some((device, queue)) = device() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let resources = DeviceResources::new(&device, gpu::TextureFormat::Rgba8UnormSrgb, 1);
+        use viewport_lib::resources::handle::GpuByteSize;
+        let bgl = build_bgl(&device);
+        let item = cloud(8);
+        let binds = resolve_bindings(&resources, &bgl, &item);
+        let tight = build_point_cloud(&device, &queue, &binds, &item, 0);
+        let roomy = build_point_cloud(&device, &queue, &binds, &item, 1024);
+        assert!(
+            roomy.gpu_bytes() > tight.gpu_bytes(),
+            "headroom must be visible to a consumer budgeting against a ceiling"
+        );
     }
 
     /// `Uniform` sizes live in the uniform; a per-sample list is a buffer. Going

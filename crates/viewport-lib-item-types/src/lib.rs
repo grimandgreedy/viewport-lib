@@ -82,6 +82,15 @@ pub use vector_field::{VectorFieldId, VectorFieldItem, VectorFieldPlugin, Vector
 pub use volume::{VolumeItem, VolumePlugin};
 pub use volume_surface_slice::{VolumeSurfaceSliceItem, VolumeSurfaceSlicePlugin};
 
+/// The writable channels of each item type that has any.
+///
+/// One module per type, one marker per array a consumer can write part of. Pass a
+/// marker to the [`Writes`](viewport_lib::plugin_api::Writes) calls to say which
+/// array is meant.
+pub mod channels {
+    pub use crate::point_cloud::channels as point_cloud;
+}
+
 /// A handle the renderer's own id crate owns, re-exported so a consumer of this
 /// crate does not have to name two crates to submit one item.
 pub use viewport_lib_types::ids::{ExternalInstanceSetId, GpuParticleSystemId};
@@ -232,6 +241,97 @@ impl viewport_lib::plugin_api::Handles<PointCloudId> for ViewportRenderer {
         plugin_mut::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME).drop_stored(id)
     }
 }
+
+/// Ranged writes into a stored point cloud, one implementation per channel.
+///
+/// The bodies differ only in which channel they name and how the caller's
+/// elements become bytes, which is the encoding step the channel exists to keep
+/// on this side of the API: `Colour` is a caller-facing type and the buffer holds
+/// linear RGBA.
+macro_rules! point_cloud_writes {
+    ($marker:ty, $variant:ident, encode = $encode:expr) => {
+        impl viewport_lib::plugin_api::Writes<$marker> for ViewportRenderer {
+            fn write_range(
+                &mut self,
+                _channel: $marker,
+                queue: &gpu::Queue,
+                id: PointCloudId,
+                first_element: u32,
+                data: &[<$marker as viewport_lib::plugin_api::Channel>::Input],
+            ) -> viewport_lib::error::ViewportResult<()> {
+                let bytes: std::borrow::Cow<'_, [u8]> = $encode(data);
+                plugin_mut::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME).write_channel(
+                    queue,
+                    id,
+                    point_cloud::PointChannel::$variant,
+                    <$marker as viewport_lib::plugin_api::Channel>::NAME,
+                    first_element,
+                    &bytes,
+                )
+            }
+
+            fn reserve(
+                &mut self,
+                _channel: $marker,
+                device: &gpu::Device,
+                queue: &gpu::Queue,
+                id: PointCloudId,
+                capacity: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME)
+                    .reserve_stored(device, queue, id, capacity)
+            }
+
+            fn set_len(
+                &mut self,
+                _channel: $marker,
+                id: PointCloudId,
+                len: u32,
+            ) -> viewport_lib::error::ViewportResult<()> {
+                plugin_mut::<PointCloudPlugin>(self, POINT_CLOUD_TYPE_NAME).set_stored_len(id, len)
+            }
+
+            fn extent(
+                &self,
+                _channel: $marker,
+                id: PointCloudId,
+            ) -> Option<viewport_lib::plugin_api::Extent> {
+                self.item_type_plugin::<PointCloudPlugin>(POINT_CLOUD_TYPE_NAME)?
+                    .stored_extent(id, point_cloud::PointChannel::$variant)
+            }
+        }
+    };
+}
+
+/// Elements that are already in the buffer's layout go across untouched.
+fn cast_bytes<T: bytemuck::Pod>(data: &[T]) -> std::borrow::Cow<'_, [u8]> {
+    std::borrow::Cow::Borrowed(bytemuck::cast_slice(data))
+}
+
+/// Colours are supplied as [`Colour`](viewport_lib::Colour) and stored as linear
+/// RGBA, so this channel is the one that has to build a buffer.
+fn encode_colours(data: &[viewport_lib::Colour]) -> std::borrow::Cow<'_, [u8]> {
+    let linear: Vec<[f32; 4]> = data.iter().map(|c| c.to_linear_rgba()).collect();
+    std::borrow::Cow::Owned(bytemuck::cast_slice(&linear).to_vec())
+}
+
+point_cloud_writes!(
+    channels::point_cloud::Positions,
+    Positions,
+    encode = cast_bytes
+);
+point_cloud_writes!(channels::point_cloud::Scalars, Scalars, encode = cast_bytes);
+point_cloud_writes!(
+    channels::point_cloud::Colours,
+    Colours,
+    encode = encode_colours
+);
+point_cloud_writes!(channels::point_cloud::Sizes, Sizes, encode = cast_bytes);
+point_cloud_writes!(
+    channels::point_cloud::Transparencies,
+    Transparencies,
+    encode = cast_bytes
+);
 
 impl viewport_lib::plugin_api::Uploads<GaussianSplatData> for ViewportRenderer {
     type Id = GaussianSplatId;

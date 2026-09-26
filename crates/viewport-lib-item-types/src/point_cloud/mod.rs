@@ -7,6 +7,7 @@
 //! [`PointCloudUploads::upload_point_cloud`](crate::PointCloudUploads::upload_point_cloud).
 //! Both forms arrive at this plugin under the one type name.
 
+pub mod channels;
 mod pipeline;
 mod store;
 mod types;
@@ -21,6 +22,10 @@ use viewport_lib::renderer::{PickHit, PickId, PickMask, PickRectResult, SubObjec
 use viewport_lib::resources::HDR_COLOR_FORMAT;
 
 pub use types::{PointCloudId, PointCloudItem, PointCloudRefItem, PointRenderMode};
+
+/// Which channel a write names, as the store sees it. The public face is the
+/// marker types in [`channels`].
+pub(crate) use store::PointChannel;
 
 /// Stable name this item type submits and registers under.
 pub const TYPE_NAME: &str = "vpl.point_cloud";
@@ -131,11 +136,11 @@ impl ItemTypePlugin for PointCloudPlugin {
                 continue;
             }
             let binds = resolve_bindings(ctx.resources, bgl, item);
-            let gpu_data = build_point_cloud(device, queue, &binds, item);
-            let pick_bind_group = (gpu_data.pick_id != PickId::NONE)
-                .then(|| gpu.pick_bind_group(device, queue, gpu_data.pick_id));
+            let draw = build_point_cloud(device, queue, &binds, item, 0).draw();
+            let pick_bind_group = (draw.pick_id != PickId::NONE)
+                .then(|| gpu.pick_bind_group(device, queue, draw.pick_id));
             self.frame.push(pipeline::PointCloudFrame {
-                gpu: gpu_data,
+                draw,
                 pick_bind_group,
             });
         }
@@ -150,15 +155,15 @@ impl ItemTypePlugin for PointCloudPlugin {
             let Some(entry) = stored.get(ref_item.source) else {
                 continue;
             };
-            let entry = entry.clone();
-            queue.write_buffer(&entry._uniform_buf, 0, bytemuck::bytes_of(&ref_item.model));
+            entry.write_model(queue, &ref_item.model);
+            let mut draw = entry.draw();
             // The pick id comes from the reference, not from the upload: the
             // same stored cloud can be drawn twice under two ids.
-            let pick_id = ref_item.settings.pick_id;
-            let pick_bind_group =
-                (pick_id != PickId::NONE).then(|| gpu.pick_bind_group(device, queue, pick_id));
+            draw.pick_id = ref_item.settings.pick_id;
+            let pick_bind_group = (draw.pick_id != PickId::NONE)
+                .then(|| gpu.pick_bind_group(device, queue, draw.pick_id));
             self.frame.push(pipeline::PointCloudFrame {
-                gpu: entry,
+                draw,
                 pick_bind_group,
             });
         }
@@ -184,10 +189,10 @@ impl ItemTypePlugin for PointCloudPlugin {
                 .for_format(ctx.target_format == HDR_COLOR_FORMAT),
         );
         for entry in &self.frame {
-            pass.set_bind_group(1, &entry.gpu.bind_group, &[]);
-            pass.set_vertex_buffer(0, entry.gpu.vertex_buffer.slice(..));
+            pass.set_bind_group(1, &entry.draw.bind_group, &[]);
+            pass.set_vertex_buffer(0, entry.draw.vertex_buffer.slice(..));
             // Six vertices per point (a billboard quad), one instance per point.
-            pass.draw(0..6, 0..entry.gpu.point_count);
+            pass.draw(0..6, 0..entry.draw.point_count);
         }
     }
 
@@ -312,17 +317,17 @@ impl ItemTypePlugin for PointCloudPlugin {
             let Some(pick_bg) = &entry.pick_bind_group else {
                 continue;
             };
-            if entry.gpu.point_count == 0 {
+            if entry.draw.point_count == 0 {
                 continue;
             }
             if !bound {
                 pass.set_pipeline(&gpu.pick_pipeline);
                 bound = true;
             }
-            pass.set_bind_group(1, &entry.gpu.bind_group, &[]);
+            pass.set_bind_group(1, &entry.draw.bind_group, &[]);
             pass.set_bind_group(2, pick_bg, &[]);
-            pass.set_vertex_buffer(0, entry.gpu.vertex_buffer.slice(..));
-            pass.draw(0..6, 0..entry.gpu.point_count);
+            pass.set_vertex_buffer(0, entry.draw.vertex_buffer.slice(..));
+            pass.draw(0..6, 0..entry.draw.point_count);
         }
     }
 
@@ -367,10 +372,91 @@ impl PointCloudPlugin {
         resources: &viewport_lib::resources::DeviceResources,
         item: &PointCloudItem,
     ) -> PointCloudId {
+        self.upload_with_capacity(device, queue, resources, item, 0)
+    }
+
+    /// Pre-upload a point cloud with room for `capacity` points.
+    ///
+    /// The cloud draws the points it was given and holds the rest as headroom, so
+    /// a feed that grows to a known size allocates once here and then only
+    /// writes. Capacity below the point count is raised to it, and the reserved
+    /// bytes count against `resident_bytes` whether or not anything draws them.
+    pub fn upload_with_capacity(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        resources: &viewport_lib::resources::DeviceResources,
+        item: &PointCloudItem,
+        capacity: u32,
+    ) -> PointCloudId {
         let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
         let binds = resolve_bindings(resources, bgl, item);
-        let gpu = build_point_cloud(device, queue, &binds, item);
+        let gpu = build_point_cloud(device, queue, &binds, item, capacity);
         self.stored.insert_sized(gpu)
+    }
+
+    /// Write part of one channel of a stored cloud.
+    ///
+    /// The bytes are already encoded for the channel: the caller-facing
+    /// conversion happens in the `Writes` implementation, which is the only place
+    /// that knows the input type.
+    pub(crate) fn write_channel(
+        &mut self,
+        queue: &gpu::Queue,
+        id: PointCloudId,
+        which: store::PointChannel,
+        name: &'static str,
+        first_element: u32,
+        data: &[u8],
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(gpu) = self.stored.get_mut(id) else {
+            return Err(self.stored.stale(id));
+        };
+        gpu.write_channel(queue, which, name, first_element, data)?;
+        // The bytes are unchanged but the contents are not: stamp a new revision
+        // so a cache keyed on one cannot serve the old cloud.
+        self.stored.bump_revision(id);
+        Ok(())
+    }
+
+    /// Grow a stored cloud to hold at least `capacity` points.
+    pub(crate) fn reserve_stored(
+        &mut self,
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        id: PointCloudId,
+        capacity: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(gpu) = self.stored.get_mut(id) else {
+            return Err(self.stored.stale(id));
+        };
+        gpu.reserve(device, queue, capacity)?;
+        // A grow changes what the cloud occupies, so the store's charge is stale.
+        self.stored.recharge(id);
+        Ok(())
+    }
+
+    /// Set how many of a stored cloud's points draw.
+    pub(crate) fn set_stored_len(
+        &mut self,
+        id: PointCloudId,
+        len: u32,
+    ) -> viewport_lib::error::ViewportResult<()> {
+        let Some(gpu) = self.stored.get_mut(id) else {
+            return Err(self.stored.stale(id));
+        };
+        gpu.set_live_len(len)?;
+        self.stored.bump_revision(id);
+        Ok(())
+    }
+
+    /// What one channel of a stored cloud holds, and how much of it draws.
+    pub(crate) fn stored_extent(
+        &self,
+        id: PointCloudId,
+        which: store::PointChannel,
+    ) -> Option<viewport_lib::plugin_api::Extent> {
+        self.stored.get(id).map(|gpu| gpu.extent(which))
     }
 
     /// Drop a pre-uploaded cloud. `false` when the handle does not resolve.
@@ -407,7 +493,7 @@ impl PointCloudPlugin {
         }
         let bgl = self.bgl.get_or_insert_with(|| store::build_bgl(device));
         let binds = resolve_bindings(resources, bgl, item);
-        let gpu = build_point_cloud(device, queue, &binds, item);
+        let gpu = build_point_cloud(device, queue, &binds, item, 0);
         self.stored.replace_sized(id, gpu);
         Ok(())
     }
@@ -431,7 +517,7 @@ impl PointCloudPlugin {
         let binds = resolve_bindings(resources, bgl, &item);
         let device = device.clone();
         let queue = queue.clone();
-        jobs.submit_cpu(move || build_point_cloud(&device, &queue, &binds, &item))
+        jobs.submit_cpu(move || build_point_cloud(&device, &queue, &binds, &item, 0))
     }
 
     /// Store the cloud a finished job built and hand back its handle.

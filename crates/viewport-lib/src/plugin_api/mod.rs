@@ -142,6 +142,7 @@ pub mod post_effect;
 pub mod shared_wgsl;
 pub mod target_desc;
 pub mod uploads;
+pub mod writes;
 
 pub use cull::{BatchMeta, CullSubmission, InstanceAabb, SingleMeshDraw};
 pub use install::{PluginInstallCtx, PluginInstaller, install_plugin};
@@ -160,6 +161,7 @@ pub use target_desc::{
     OitTargetDesc, OpaqueTargetDesc, PickTargetDesc, ShadowTargetDesc,
 };
 pub use uploads::{Handles, Uploads};
+pub use writes::{Channel, Extent, Span, Writes};
 
 /// Group-0 bind layout shared by every scene pipeline.
 ///

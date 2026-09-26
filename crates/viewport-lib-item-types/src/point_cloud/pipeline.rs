@@ -6,7 +6,7 @@
 //! its bind group against it long before the first frame; this module borrows
 //! the layout to build pipelines over it.
 
-use super::store::PointCloudGpuData;
+use super::store::PointCloudDraw;
 use crate::helpers::point_disc_mask::PointDiscMaskUniform;
 use crate::shader::{scene_shader, wgsl_source};
 use viewport_lib::gpu;
@@ -26,7 +26,7 @@ pub(super) struct PointCloudGpu {
 
 /// One item's draw state for this frame.
 pub(super) struct PointCloudFrame {
-    pub(super) gpu: PointCloudGpuData,
+    pub(super) draw: PointCloudDraw,
     /// Group-2 object-id bind group; `None` when the item is not pickable.
     pub(super) pick_bind_group: Option<gpu::BindGroup>,
 }

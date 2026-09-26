@@ -139,6 +139,39 @@ pub enum ViewportError {
         slot: usize,
     },
 
+    /// A ranged channel write named a channel the stored object does not hold.
+    ///
+    /// Which channels an object has is fixed when it is uploaded: a point cloud
+    /// uploaded with one flat colour has no per-point colour buffer, and a
+    /// binding cannot appear later without reallocating and rebuilding the bind
+    /// group, which is exactly the cost a ranged write exists to avoid. Upload
+    /// the channel populated, even with placeholder values, and then write it.
+    #[error("{type_name} has no {channel} channel to write into")]
+    ChannelNotPresent {
+        /// Item type name the write was addressed to.
+        type_name: &'static str,
+        /// Channel named by the write.
+        channel: &'static str,
+    },
+
+    /// A ranged write to a channel whose colourmap or size domain is derived
+    /// from the values rather than supplied.
+    ///
+    /// The domain spans the whole array, so a write that touches part of it
+    /// cannot know the new extremes without rescanning everything, which is the
+    /// cost being avoided. Supply the domain (`ColourSource::Scalar { range:
+    /// Some(..) }`, `SizeSource::Scalar { domain: Some(..) }`) and the write is
+    /// well defined; leave it derived and replace the object whole.
+    #[error(
+        "{type_name} channel {channel} has a derived domain, so a ranged write cannot maintain it"
+    )]
+    ChannelDomainNotFixed {
+        /// Item type name the write was addressed to.
+        type_name: &'static str,
+        /// Channel named by the write.
+        channel: &'static str,
+    },
+
     /// A sliced override binding does not fit inside the supplied buffer:
     /// `base_element + element_count` vec3 elements (12 bytes each) exceed
     /// the buffer's size.
