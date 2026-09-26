@@ -38,9 +38,9 @@ use std::sync::Arc;
 use viewport_lib as vpl;
 
 use vpl::{
-    ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, Material, MeshId,
+    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, Material, MeshId,
     OrbitCameraController, PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits,
-    ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -49,9 +49,9 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+use vpl::wgpu;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
-use vpl::wgpu;
 
 const CANVAS_W: u32 = 1280;
 const CANVAS_H: u32 = 720;
@@ -68,6 +68,9 @@ struct State {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     scene_items: Vec<SceneRenderItem>,
     /// Index of the item spun about the world up axis each frame.
     spin_item: usize,
@@ -179,7 +182,7 @@ impl ApplicationHandler<State> for App {
                 } else {
                     ButtonState::Released
                 };
-                state.controller.push_event(ViewportEvent::MouseButton {
+                state.input.push_event(ViewportEvent::MouseButton {
                     button: vp_button,
                     state: vp_state,
                 });
@@ -189,7 +192,7 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 let pos = glam::Vec2::new(position.x as f32, position.y as f32);
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::PointerMoved { position: pos });
                 state.window.request_redraw();
             }
@@ -205,7 +208,7 @@ impl ApplicationHandler<State> for App {
                     ),
                 };
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
@@ -231,7 +234,8 @@ impl ApplicationHandler<State> for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 state.camera.set_aspect_ratio(w, h);
 
                 // Z-up: spin one item about the world up axis.
@@ -263,11 +267,13 @@ impl ApplicationHandler<State> for App {
                 state.queue.submit(std::iter::once(cmd));
                 frame.present();
 
-                state.controller.begin_frame(ViewportContext {
+                state.input.begin_frame(ViewportContext {
                     hovered: true,
                     focused: true,
                     viewport_size: [w, h],
                 });
+                // Pan reads the viewport height off the controller.
+                state.controller.set_viewport_size([w, h]);
 
                 // Keep the loop spinning for the animation.
                 state.window.request_redraw();
@@ -360,8 +366,9 @@ async fn build_state(window: Arc<Window>) -> State {
         distance: 10.0,
         ..Camera::default()
     };
-    let mut controller = OrbitCameraController::viewport_primitives();
-    controller.begin_frame(ViewportContext {
+    let controller = OrbitCameraController::new_stateless();
+    let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
+    input.begin_frame(ViewportContext {
         hovered: true,
         focused: true,
         viewport_size: [surface_config.width as f32, surface_config.height as f32],
@@ -376,6 +383,7 @@ async fn build_state(window: Arc<Window>) -> State {
         renderer,
         camera,
         controller,
+        input,
         scene_items,
         spin_item: 1,
         start: Instant::now(),

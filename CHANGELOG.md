@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Every example drives the camera through a host-owned `ViewportInput`** - the examples used the deprecated `OrbitCameraController::push_event` / `apply_to_camera` pair, so the code a new consumer reads first taught the path that lets a session and a controller disagree about the control scheme. Each example now owns a `ViewportInput` (one per viewport where there are several), constructs the controller with `new_stateless()`, and applies the resolved frame with `apply(&mut camera, &frame)`. Nothing in the library changed: this is the examples, the testkit's catalogue viewer, and the doc examples on `ViewportApp::with_input` and `ManipulationController::is_active` catching up to the surface that replaced them.
+
 ### Fixed
 
 - **An instanced draw dropped its mesh's deform slot data and rendered undeformed** - the instanced draws bind an empty deform group and the instanced shader passes no slot flags, but `is_instanceable` only kept items with *per-instance* data off that path. An item whose mesh carried per-mesh slot data was admitted to a batch and drew with no deformation, no error and no warning, and because the instanced path engages on visible item count the failure appeared when a scene grew rather than when anything changed. Such items now draw per-object like warp and lightmap items, which means a deformed crowd does not batch: it costs a uniform write and a bind-group build per item, in exchange for drawing the shape that was asked for. `FrameStats::deform_slots_ignored` stays at zero and is the regression guard.

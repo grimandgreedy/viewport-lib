@@ -23,17 +23,17 @@
 use std::sync::Arc;
 use viewport_lib as vpl;
 
-use vpl::{ButtonState, Modifiers, MouseButton, PostProcessSettings, ScrollUnits};
+use vpl::wgpu;
 use vpl::{
-    Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController, Projection,
-    SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId, ViewportRenderer,
-    primitives,
+    BindingPreset, Camera, CameraFrame, FrameData, LightingSettings, MeshId, OrbitCameraController,
+    Projection, SceneFrame, SceneRenderItem, ViewportContext, ViewportEvent, ViewportId,
+    ViewportInput, ViewportRenderer, primitives,
 };
+use vpl::{ButtonState, Modifiers, MouseButton, PostProcessSettings, ScrollUnits};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton as WinitButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-use vpl::wgpu;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -108,6 +108,9 @@ struct AppState {
     /// One camera + controller per quadrant.
     cameras: [Camera; 4],
     controllers: [OrbitCameraController; 4],
+    /// One resolver per quadrant: each owns its bindings and resolves the events
+    /// routed to it. The controllers keep only their sensitivities.
+    inputs: [ViewportInput; 4],
 
     /// Viewport handles (one per quadrant, created in order).
     viewports: [ViewportId; 4],
@@ -270,34 +273,28 @@ impl ApplicationHandler for App {
             ..Camera::default()
         };
 
-        let make_controller = || OrbitCameraController::viewport_primitives();
+        let make_controller = || {
+            let mut c = OrbitCameraController::new_stateless();
+            // Pan reads the viewport height off the controller.
+            c.set_viewport_size([config.width as f32 / 2.0, config.height as f32 / 2.0]);
+            c
+        };
+        let make_input = |hovered: bool, size: [f32; 2]| {
+            let mut i = ViewportInput::from_preset(BindingPreset::Viewer);
+            i.begin_frame(ViewportContext {
+                hovered,
+                focused: hovered,
+                viewport_size: size,
+            });
+            i
+        };
 
         let hw = config.width as f32 / 2.0;
         let hh = config.height as f32 / 2.0;
-        let mut ctrl0 = make_controller();
-        ctrl0.begin_frame(ViewportContext {
-            hovered: true,
-            focused: true,
-            viewport_size: [hw, hh],
-        });
-        let mut ctrl1 = make_controller();
-        ctrl1.begin_frame(ViewportContext {
-            hovered: false,
-            focused: false,
-            viewport_size: [hw, hh],
-        });
-        let mut ctrl2 = make_controller();
-        ctrl2.begin_frame(ViewportContext {
-            hovered: false,
-            focused: false,
-            viewport_size: [hw, hh],
-        });
-        let mut ctrl3 = make_controller();
-        ctrl3.begin_frame(ViewportContext {
-            hovered: false,
-            focused: false,
-            viewport_size: [hw, hh],
-        });
+        let ctrl0 = make_controller();
+        let ctrl1 = make_controller();
+        let ctrl2 = make_controller();
+        let ctrl3 = make_controller();
 
         self.state = Some(AppState {
             window,
@@ -309,6 +306,12 @@ impl ApplicationHandler for App {
             mesh_id,
             cameras: [cam_persp, cam_top, cam_front, cam_right],
             controllers: [ctrl0, ctrl1, ctrl2, ctrl3],
+            inputs: [
+                make_input(true, [hw, hh]),
+                make_input(false, [hw, hh]),
+                make_input(false, [hw, hh]),
+                make_input(false, [hw, hh]),
+            ],
             viewports: [vp0, vp1, vp2, vp3],
             hovered_quad: Quad::TopLeft,
             cursor_pos: glam::Vec2::ZERO,
@@ -346,7 +349,7 @@ impl ApplicationHandler for App {
                     alt: mods.state().alt_key(),
                 };
                 // Send to active quadrant only.
-                state.controllers[state.hovered_quad as usize]
+                state.inputs[state.hovered_quad as usize]
                     .push_event(ViewportEvent::ModifiersChanged(m));
             }
 
@@ -366,12 +369,10 @@ impl ApplicationHandler for App {
                 } else {
                     ButtonState::Released
                 };
-                state.controllers[state.hovered_quad as usize].push_event(
-                    ViewportEvent::MouseButton {
-                        button: vp_btn,
-                        state: vp_state,
-                    },
-                );
+                state.inputs[state.hovered_quad as usize].push_event(ViewportEvent::MouseButton {
+                    button: vp_btn,
+                    state: vp_state,
+                });
                 state.window.request_redraw();
             }
 
@@ -384,7 +385,7 @@ impl ApplicationHandler for App {
                 let new_quad = quad_from_pos(x, y, w, h);
                 if new_quad != state.hovered_quad {
                     // Leave old quadrant.
-                    state.controllers[state.hovered_quad as usize]
+                    state.inputs[state.hovered_quad as usize]
                         .push_event(ViewportEvent::PointerLeft);
                     state.hovered_quad = new_quad;
                 }
@@ -399,7 +400,7 @@ impl ApplicationHandler for App {
                 let local_y = y - oy as f32;
                 state.cursor_pos = glam::Vec2::new(local_x, local_y);
 
-                state.controllers[new_quad as usize].push_event(ViewportEvent::PointerMoved {
+                state.inputs[new_quad as usize].push_event(ViewportEvent::PointerMoved {
                     position: state.cursor_pos,
                 });
                 let _ = (qw, qh);
@@ -407,13 +408,12 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorLeft { .. } => {
-                state.controllers[state.hovered_quad as usize]
-                    .push_event(ViewportEvent::PointerLeft);
+                state.inputs[state.hovered_quad as usize].push_event(ViewportEvent::PointerLeft);
             }
 
             WindowEvent::Focused(false) => {
-                for ctrl in &mut state.controllers {
-                    ctrl.push_event(ViewportEvent::FocusLost);
+                for input in &mut state.inputs {
+                    input.push_event(ViewportEvent::FocusLost);
                 }
             }
 
@@ -427,7 +427,7 @@ impl ApplicationHandler for App {
                         ScrollUnits::Pixels,
                     ),
                 };
-                state.controllers[state.hovered_quad as usize]
+                state.inputs[state.hovered_quad as usize]
                     .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
@@ -454,13 +454,15 @@ impl ApplicationHandler for App {
                 let h = state.surface_config.height;
 
                 // Apply accumulated events to each camera.
-                for (i, (cam, ctrl)) in state
+                for (i, ((cam, ctrl), input)) in state
                     .cameras
                     .iter_mut()
                     .zip(state.controllers.iter_mut())
+                    .zip(state.inputs.iter_mut())
                     .enumerate()
                 {
-                    ctrl.apply_to_camera(cam);
+                    let action_frame = input.resolve();
+                    ctrl.apply(cam, &action_frame);
                     let (_, _, qw, qh) = quad_rect(
                         [
                             Quad::TopLeft,
@@ -554,15 +556,18 @@ impl ApplicationHandler for App {
                 state.queue.submit(std::iter::once(encoder.finish()));
                 surf_frame.present();
 
-                // Begin next frame's event accumulation for each controller.
-                for (i, ctrl) in state.controllers.iter_mut().enumerate() {
+                // Begin next frame's event accumulation for each quadrant resolver.
+                let hovered_quad = state.hovered_quad;
+                for i in 0..4 {
                     let quad = quads[i];
                     let (_, _, qw, qh) = quad_rect(quad, w, h);
-                    ctrl.begin_frame(ViewportContext {
-                        hovered: quad == state.hovered_quad,
-                        focused: quad == state.hovered_quad,
+                    state.inputs[i].begin_frame(ViewportContext {
+                        hovered: quad == hovered_quad,
+                        focused: quad == hovered_quad,
                         viewport_size: [qw as f32, qh as f32],
                     });
+                    // Pan reads the viewport height off the controller.
+                    state.controllers[i].set_viewport_size([qw as f32, qh as f32]);
                 }
             }
 

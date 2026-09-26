@@ -9,7 +9,6 @@
 //! pick comes back, and that a freed or replaced texture is revalidated rather
 //! than pinned.
 
-use viewport_lib::plugin_api::Uploads;
 use viewport_lib::renderer::{PickBackend, PickMask};
 use viewport_lib::resources::{TextureData, TextureId, UploadStatus};
 use viewport_lib::{FrameData, ItemSettings, PickId, ViewportRenderer};

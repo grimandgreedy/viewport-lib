@@ -11,13 +11,14 @@
 //!   Right drag = pan
 //!   Scroll = zoom
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     BackfacePolicy, ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource,
     LightingSettings, Material, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame,
-    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
+    primitives,
 };
 
 // Solid unlit colours for the subsurface objects. Picked to be visually distinct
@@ -95,6 +96,9 @@ fn cascade_splits(near: f32, far: f32, count: u32) -> Vec<f32> {
 struct App {
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     ground_id: MeshId,
     box_id: MeshId,
     sphere_id: MeshId,
@@ -143,7 +147,8 @@ impl App {
                 zfar: 1000.0,
                 ..Camera::default()
             },
-            controller: OrbitCameraController::viewport_primitives(),
+            controller: OrbitCameraController::new_stateless(),
+            input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             ground_id,
             box_id,
             sphere_id,
@@ -330,18 +335,21 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.controller.begin_frame(ViewportContext {
+            self.input.begin_frame(ViewportContext {
                 hovered: response.hovered(),
                 focused: response.has_focus(),
                 viewport_size: [rect.width(), rect.height()],
             });
+            // Pan reads the viewport height off the controller.
+            self.controller
+                .set_viewport_size([rect.width(), rect.height()]);
 
             ui.input(|i| {
                 if i.key_pressed(egui::Key::P) {
                     self.log_next_frame = true;
                 }
 
-                self.controller
+                self.input
                     .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                         alt: i.modifiers.alt,
                         shift: i.modifiers.shift,
@@ -353,7 +361,7 @@ impl eframe::App for App {
                     .interact_pos()
                     .map(|p| glam::Vec2::new(p.x - rect.left(), p.y - rect.top()));
                 if let Some(pos) = local_pos {
-                    self.controller
+                    self.input
                         .push_event(ViewportEvent::PointerMoved { position: pos });
                 }
 
@@ -368,7 +376,7 @@ impl eframe::App for App {
                                 egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                 _ => continue,
                             };
-                            self.controller.push_event(ViewportEvent::MouseButton {
+                            self.input.push_event(ViewportEvent::MouseButton {
                                 button: vp_btn,
                                 state: if *pressed {
                                     ButtonState::Pressed
@@ -383,7 +391,7 @@ impl eframe::App for App {
                                 egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                                 egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                             };
-                            self.controller.push_event(ViewportEvent::Wheel {
+                            self.input.push_event(ViewportEvent::Wheel {
                                 delta: glam::Vec2::new(delta.x, delta.y),
                                 units,
                             });
@@ -395,7 +403,8 @@ impl eframe::App for App {
 
             let w = rect.width();
             let h = rect.height();
-            self.controller.apply_to_camera(&mut self.camera);
+            let action_frame = self.input.resolve();
+            self.controller.apply(&mut self.camera, &action_frame);
             self.camera.set_aspect_ratio(w, h);
 
             let mut lighting = self.lighting.clone();

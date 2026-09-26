@@ -59,7 +59,6 @@ impl SubPath {
         }
     }
 
-    /// Append a straight line to `to`.
     /// Build a subpath from parts. The builder methods below are nicer for
     /// authoring a path by hand; this is for converting one from another
     /// representation, where the segments already exist as a list.
@@ -71,6 +70,7 @@ impl SubPath {
         }
     }
 
+    /// Append a straight line to `to`.
     pub fn line_to(mut self, to: [f32; 2]) -> Self {
         self.segments.push(PathSegment::Line { to });
         self

@@ -275,7 +275,9 @@ pub struct GpuBreakdown {
     /// the main-camera cull is split; a frame with shadow cascades runs the same
     /// three dispatches per cascade and none of that is counted here.
     pub cull_plan_ms: f32,
+    /// Second cull dispatch: the per-chunk visible-instance count.
     pub cull_count_ms: f32,
+    /// Third cull dispatch: scattering the surviving instances into the list.
     pub cull_scatter_ms: f32,
     /// Point-light cubemap shadow faces, spanning the first to the last face
     /// pass rendered this frame (up to casters x 6 depth passes). This work

@@ -294,6 +294,7 @@ impl GpuParticlesPlugin {
     }
 
     /// Borrow a live system, or `None` when the handle does not resolve.
+    #[cfg(test)]
     pub(crate) fn system(&self, id: GpuParticleSystemId) -> Option<&ParticleSystem> {
         self.systems.get(id)
     }

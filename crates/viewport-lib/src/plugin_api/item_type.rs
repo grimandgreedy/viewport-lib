@@ -741,6 +741,26 @@ impl<T: Any> AsAnyItemTypePlugin for T {
     }
 }
 
+/// A scene item category owned by a plugin: its GPU data, its pipelines, and
+/// the draws that put it on screen.
+///
+/// Implement this to add an item type the library does not have. Register it
+/// with
+/// [`ViewportRenderer::with_item_type_plugin`](crate::renderer::ViewportRenderer::with_item_type_plugin),
+/// and submit its items each frame through
+/// [`SceneFrame::items_mut`](crate::renderer::SceneFrame::items_mut) or
+/// [`submit_plugin_items`](crate::renderer::SceneFrame::submit_plugin_items).
+///
+/// [`type_name`](Self::type_name) is the only required method. Every other hook
+/// is default-empty, so implement the ones the item type needs and leave the
+/// rest: a type that only draws opaque geometry implements `prepare` and
+/// `paint` and nothing else. The module documentation above lists what each
+/// hook is called from and in what order.
+///
+/// The plugin owns its buffers, textures, layouts and pipelines, built from the
+/// `&Device` its hooks are given. Content shared with other item types
+/// (meshes, textures, volumes, colourmaps) stays with the library and is read
+/// through [`ItemFrameContext::resources`].
 pub trait ItemTypePlugin: AsAnyItemTypePlugin + Send + Sync + 'static {
     /// Stable name used as the [`SceneFrame::plugin_items`](crate::renderer::SceneFrame::plugin_items)
     /// key. Each registered plugin must have a unique name; registering a

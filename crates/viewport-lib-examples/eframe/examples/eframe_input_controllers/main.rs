@@ -18,15 +18,15 @@
 //! Cmd+] cycle through all four modes. Switching modes calls `sync_from_camera`
 //! so the view continues instead of snapping.
 
-pub use viewport_lib_examples_eframe::eframe;
 use std::sync::{Arc, Mutex};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 
 use crate::eframe::{egui, wgpu};
 use vpl::{
     Action, BindingPreset, ButtonState, Camera, CameraFrame, FirstPersonCameraController,
-    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings, ManipResult,
-    ManipulationContext, ManipulationController, ManipulationKind, Material, MeshId,
+    FrameData, Gizmo, GizmoAxis, GizmoInfo, GizmoMode, InteractionFrame, KeyCode, LightingSettings,
+    ManipResult, ManipulationContext, ManipulationController, ManipulationKind, Material, MeshId,
     OffscreenViewportTarget, OrbitCameraController, PickId, PivotMode, SceneFrame, SceneRenderItem,
     ScrollUnits, Selection, ThirdPersonCameraController, ViewportContext, ViewportEvent,
     ViewportInput, ViewportRenderer, gizmo_center_for_pivot, primitives, viewport_default_bindings,
@@ -165,11 +165,13 @@ struct App {
     mode: Mode,
     camera: Camera,
 
-    // Mode 1
+    // Mode 1: the Viewer binding scheme.
     ctrl_primitives: OrbitCameraController,
+    input_primitives: ViewportInput,
 
-    // Mode 2
+    // Mode 2: the Default binding scheme.
     ctrl_all: OrbitCameraController,
+    input_all: ViewportInput,
 
     // Play modes: one shared resolver, two body-attached appliers.
     input_play: ViewportInput,
@@ -214,12 +216,7 @@ struct App {
 }
 
 impl App {
-    fn new(
-        renderer: ViewportRenderer,
-        m_box: MeshId,
-        m_sphere: MeshId,
-        m_capsule: MeshId,
-    ) -> Self {
+    fn new(renderer: ViewportRenderer, m_box: MeshId, m_sphere: MeshId, m_capsule: MeshId) -> Self {
         Self {
             renderer,
             target: None,
@@ -228,8 +225,10 @@ impl App {
                 distance: 12.0,
                 ..Camera::default()
             },
-            ctrl_primitives: OrbitCameraController::viewport_primitives(),
-            ctrl_all: OrbitCameraController::new(BindingPreset::Default),
+            ctrl_primitives: OrbitCameraController::new_stateless(),
+            input_primitives: ViewportInput::from_preset(BindingPreset::Viewer),
+            ctrl_all: OrbitCameraController::new_stateless(),
+            input_all: ViewportInput::from_preset(BindingPreset::Default),
             // Resolver for the play modes: viewport_all provides the WASD/Fly
             // movement actions. Look is driven from raw pointer motion in the
             // update loop, so it follows the mouse without holding a button.
@@ -501,10 +500,13 @@ impl eframe::App for App {
                     viewport_size: [rect.width(), rect.height()],
                 };
                 match self.mode {
-                    Mode::Primitives => self.ctrl_primitives.begin_frame(vp_ctx),
-                    Mode::All => self.ctrl_all.begin_frame(vp_ctx),
+                    Mode::Primitives => self.input_primitives.begin_frame(vp_ctx),
+                    Mode::All => self.input_all.begin_frame(vp_ctx),
                     Mode::FirstPerson | Mode::ThirdPerson => self.input_play.begin_frame(vp_ctx),
                 }
+                // Pan reads the viewport height off whichever orbit controller applies.
+                self.ctrl_primitives.set_viewport_size(vp_ctx.viewport_size);
+                self.ctrl_all.set_viewport_size(vp_ctx.viewport_size);
 
                 let mut vp_events: Vec<ViewportEvent> = Vec::new();
                 let manip_active = self.manip.is_active();
@@ -620,12 +622,12 @@ impl eframe::App for App {
                 match self.mode {
                     Mode::Primitives => {
                         for e in vp_events {
-                            self.ctrl_primitives.push_event(e);
+                            self.input_primitives.push_event(e);
                         }
                     }
                     Mode::All => {
                         for e in vp_events {
-                            self.ctrl_all.push_event(e);
+                            self.input_all.push_event(e);
                         }
                     }
                     Mode::FirstPerson | Mode::ThirdPerson => {
@@ -660,7 +662,8 @@ impl eframe::App for App {
                 // ---------------------------------------------------------------
                 let scene_items: Vec<SceneRenderItem> = match self.mode {
                     Mode::Primitives => {
-                        self.ctrl_primitives.apply_to_camera(&mut self.camera);
+                        let frame = self.input_primitives.resolve();
+                        self.ctrl_primitives.apply(&mut self.camera, &frame);
 
                         // Render the same objects as Mode 2 so the scene looks
                         // identical across modes (no confusing shape swaps).
@@ -744,13 +747,12 @@ impl eframe::App for App {
                         let camera_proj = self.camera.proj_matrix();
                         let view_proj = camera_proj * camera_view;
 
-                        // Single action frame for the whole frame : resolve() or
-                        // apply_to_camera() must only be called once per frame.
-                        let action_frame = if self.manip.is_active() {
-                            self.ctrl_all.resolve()
-                        } else {
-                            self.ctrl_all.apply_to_camera(&mut self.camera)
-                        };
+                        // One resolve for the whole frame; the camera holds still
+                        // while a manipulation session owns the pointer.
+                        let action_frame = self.input_all.resolve();
+                        if !self.manip.is_active() {
+                            self.ctrl_all.apply(&mut self.camera, &action_frame);
+                        }
 
                         // Tab cycles the gizmo mode when no manipulation is active.
                         if !self.manip.is_active() && action_frame.is_active(Action::CycleGizmoMode)
@@ -932,7 +934,11 @@ impl eframe::App for App {
                     (w * ppp).round().max(1.0) as u32,
                     (h * ppp).round().max(1.0) as u32,
                 ];
-                if self.target.as_ref().map_or(true, |t| t.inner.size() != size_px) {
+                if self
+                    .target
+                    .as_ref()
+                    .map_or(true, |t| t.inner.size() != size_px)
+                {
                     let inner = OffscreenViewportTarget::new(&rs.device, rs.target_format, size_px);
                     let id = rs.renderer.write().register_native_texture(
                         &rs.device,
@@ -952,9 +958,9 @@ impl eframe::App for App {
 
                 // GPU pick after prepare/render for this frame; drained next frame.
                 if let Some(cursor) = self.pick_cursor {
-                    let hit = self
-                        .renderer
-                        .pick_scene_gpu(&rs.device, &rs.queue, cursor, &frame_data);
+                    let hit =
+                        self.renderer
+                            .pick_scene_gpu(&rs.device, &rs.queue, cursor, &frame_data);
                     let id = hit.map(|h| h.object_id.0).unwrap_or(0);
                     if let Ok(mut slot) = self.pick_result.lock() {
                         *slot = Some(id);

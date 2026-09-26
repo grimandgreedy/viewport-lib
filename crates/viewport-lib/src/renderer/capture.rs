@@ -1210,7 +1210,7 @@ mod tests {
         assert!(renderer.frame_fully_resident(&fd));
 
         // Remove the mesh: both queries flip.
-        assert!(renderer.resources_mut().remove_mesh(mesh));
+        assert!(renderer.resources_mut().free_mesh(mesh));
         assert!(
             !renderer.mesh_resident(mesh),
             "removed mesh is not resident"

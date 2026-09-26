@@ -481,17 +481,29 @@ pub const PREMULTIPLIED_BLEND: crate::gpu::BlendState = crate::gpu::BlendState {
 /// constant by [`build_dual_pipeline`]. The vertex and fragment stages share
 /// one shader module, which is the shape every scivis feature uses.
 pub struct DualPipelineDesc<'a> {
+    /// Debug label; the LDR and HDR variants are suffixed from it.
     pub label: &'a str,
+    /// Pipeline layout, listing the shared group 0 first.
     pub layout: &'a crate::gpu::PipelineLayout,
+    /// Shader module holding both entry points.
     pub shader: &'a crate::gpu::ShaderModule,
+    /// Vertex entry point name.
     pub vertex_entry: &'a str,
+    /// Fragment entry point name.
     pub fragment_entry: &'a str,
+    /// Vertex buffer layouts, in bind-slot order.
     pub vertex_buffers: &'a [crate::gpu::VertexBufferLayout<'a>],
+    /// Colour blend state. `None` writes opaque.
     pub blend: Option<crate::gpu::BlendState>,
+    /// Primitive topology.
     pub topology: crate::gpu::PrimitiveTopology,
+    /// Face to cull. `None` draws both sides.
     pub cull_mode: Option<crate::gpu::Face>,
+    /// Whether the pipeline writes depth.
     pub depth_write: bool,
+    /// Depth comparison function.
     pub depth_compare: crate::gpu::CompareFunction,
+    /// MSAA sample count; must match the target the pipeline draws into.
     pub sample_count: u32,
     /// LDR swapchain format; the HDR variant is always `Rgba16Float`.
     pub ldr_format: crate::gpu::TextureFormat,

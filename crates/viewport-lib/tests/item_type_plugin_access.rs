@@ -7,7 +7,6 @@
 
 mod common;
 use common::*;
-use viewport_lib::plugin_api::Uploads;
 
 use viewport_lib::plugin_api::ItemTypePlugin;
 

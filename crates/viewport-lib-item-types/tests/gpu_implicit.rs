@@ -3,8 +3,6 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
-use bytemuck::Zeroable as _;
-use viewport_lib::gpu;
 use viewport_lib_item_types::*;
 
 mod common;

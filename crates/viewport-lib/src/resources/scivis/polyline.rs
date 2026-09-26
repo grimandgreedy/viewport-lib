@@ -653,14 +653,6 @@ mod tests {
         pollster::block_on(adapter.request_device(&crate::gpu::DeviceDescriptor::default())).ok()
     }
 
-    fn sample_polyline() -> PolylineItem {
-        PolylineItem {
-            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
-            strip_lengths: vec![3],
-            ..Default::default()
-        }
-    }
-
     /// Same completeness guarantee as the mesh-family `PipelineVariantSet`
     /// tests: once built, every key in `PolylineKey::all()` must resolve
     /// through `get()` without panicking. Covers the `skip_clip x wireframe`

@@ -11,7 +11,7 @@ pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     ButtonState, Camera, CameraFrame, FrameData, LightKind, LightSource, LightingSettings,
     Material, MeshId, OffscreenViewportTarget, OrbitCameraController, SceneFrame, SceneRenderItem,
-    ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer, primitives,
+    ScrollUnits, ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 fn main() -> eframe::Result {
@@ -128,6 +128,9 @@ struct App {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     scene_items: Vec<SceneRenderItem>,
     target: Option<Target>,
 }
@@ -151,7 +154,8 @@ impl App {
                 orientation: glam::Quat::from_rotation_z(0.5) * glam::Quat::from_rotation_x(1.0),
                 ..Camera::default()
             },
-            controller: OrbitCameraController::viewport_primitives(),
+            controller: OrbitCameraController::new_stateless(),
+            input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             scene_items,
         }
     }
@@ -185,14 +189,17 @@ impl App {
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-                self.controller.begin_frame(ViewportContext {
+                self.input.begin_frame(ViewportContext {
                     hovered: response.hovered(),
                     focused: response.has_focus(),
                     viewport_size: [rect.width(), rect.height()],
                 });
+                // Pan reads the viewport height off the controller.
+                self.controller
+                    .set_viewport_size([rect.width(), rect.height()]);
 
                 ui.input(|i| {
-                    self.controller
+                    self.input
                         .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                             alt: i.modifiers.alt,
                             shift: i.modifiers.shift,
@@ -200,7 +207,7 @@ impl App {
                         }));
 
                     if let Some(pos) = i.pointer.interact_pos() {
-                        self.controller.push_event(ViewportEvent::PointerMoved {
+                        self.input.push_event(ViewportEvent::PointerMoved {
                             position: glam::Vec2::new(pos.x - rect.left(), pos.y - rect.top()),
                         });
                     }
@@ -216,7 +223,7 @@ impl App {
                                     egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                     _ => continue,
                                 };
-                                self.controller.push_event(ViewportEvent::MouseButton {
+                                self.input.push_event(ViewportEvent::MouseButton {
                                     button: vp_button,
                                     state: if *pressed {
                                         ButtonState::Pressed
@@ -231,7 +238,7 @@ impl App {
                                     egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                                     egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                                 };
-                                self.controller.push_event(ViewportEvent::Wheel {
+                                self.input.push_event(ViewportEvent::Wheel {
                                     delta: glam::Vec2::new(delta.x, delta.y),
                                     units,
                                 });
@@ -245,7 +252,8 @@ impl App {
                 let h = rect.height();
                 let ppp = ui.ctx().pixels_per_point();
 
-                self.controller.apply_to_camera(&mut self.camera);
+                let action_frame = self.input.resolve();
+                self.controller.apply(&mut self.camera, &action_frame);
                 self.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(

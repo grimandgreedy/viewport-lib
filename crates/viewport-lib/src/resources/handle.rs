@@ -18,6 +18,7 @@ pub use viewport_lib_types::slot_handle;
 /// base meshes glyph batches borrow from a single cached copy) belongs to that
 /// cache rather than to each entry, and is not counted here.
 pub trait GpuByteSize {
+    /// Bytes of GPU memory this entry owns.
     fn gpu_bytes(&self) -> u64;
 }
 

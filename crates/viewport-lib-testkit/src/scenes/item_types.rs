@@ -10,8 +10,8 @@
 use glam::{Mat4, Vec3};
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib::{
-    Aabb, AnchorX, AnchorY, ColourmapId, DecalBlendMode, DecalItem, Material, MeshInstanceItem,
-    PickId, ScatterQuality, ScatterSettings, SpriteBlend, TextureData, VolumeData, primitives,
+    Aabb, ColourmapId, DecalBlendMode, DecalItem, Material, MeshInstanceItem, PickId,
+    ScatterQuality, ScatterSettings, SpriteBlend, TextureData, VolumeData, primitives,
 };
 use viewport_lib_item_types::GpuParticleSystems;
 use viewport_lib_item_types::VolumeItem;

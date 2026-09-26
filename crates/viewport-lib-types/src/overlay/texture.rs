@@ -192,6 +192,8 @@ impl TextureTransform {
         self
     }
 
+    /// True when the sample would pass the texture through unchanged: no
+    /// offset, unit scale, no rotation, stretched, and neither axis flipped.
     pub fn is_identity(&self) -> bool {
         self.offset == [0.0, 0.0]
             && self.scale == [1.0, 1.0]

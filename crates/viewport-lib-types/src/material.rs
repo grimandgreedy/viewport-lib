@@ -321,10 +321,15 @@ pub const MATERIAL_TEXTURE_SLOTS: usize = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TextureSlot {
+    /// Base colour map.
     Albedo = 0,
+    /// Tangent-space normal map.
     Normal = 1,
+    /// Ambient occlusion map.
     Ao = 2,
+    /// Packed metallic-roughness map.
     MetallicRoughness = 3,
+    /// Emissive map.
     Emissive = 4,
 }
 

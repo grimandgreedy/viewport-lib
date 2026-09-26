@@ -21,9 +21,9 @@ use viewport_lib as vpl;
 
 use slint::wgpu_29::{self, wgpu};
 use vpl::{
-    ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material, MouseButton,
-    OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
-    ViewportEvent, ViewportRenderer, primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, FrameData, LightingSettings, Material,
+    MouseButton, OrbitCameraController, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext,
+    ViewportEvent, ViewportInput, ViewportRenderer, primitives,
 };
 
 slint::slint! {
@@ -72,6 +72,9 @@ struct State {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
     scene_items: Vec<SceneRenderItem>,
     events: Vec<ViewportEvent>,
     /// Offscreen target the scene renders into; recreated on resize.
@@ -144,7 +147,8 @@ fn main() -> Result<(), slint::PlatformError> {
             distance: 10.0,
             ..Camera::default()
         },
-        controller: OrbitCameraController::viewport_primitives(),
+        controller: OrbitCameraController::new_stateless(),
+        input: ViewportInput::from_preset(BindingPreset::Viewer),
         scene_items: vec![
             make(m_sphere, [-2.5, 0.0, 0.0], [0.75, 0.28, 0.05]),
             make(m_cube, [0.0, 0.0, 0.0], [0.12, 0.3, 0.7]),
@@ -239,15 +243,18 @@ fn main() -> Result<(), slint::PlatformError> {
                     s.target = Some((texture, view, pw, ph));
                 }
 
-                s.controller.begin_frame(ViewportContext {
+                s.input.begin_frame(ViewportContext {
                     hovered: true,
                     focused: true,
                     viewport_size: [w, h],
                 });
+                // Pan reads the viewport height off the controller.
+                s.controller.set_viewport_size([w, h]);
                 for event in s.events.drain(..) {
-                    s.controller.push_event(event);
+                    s.input.push_event(event);
                 }
-                s.controller.apply_to_camera(&mut s.camera);
+                let action_frame = s.input.resolve();
+                s.controller.apply(&mut s.camera, &action_frame);
                 s.camera.set_aspect_ratio(w, h);
 
                 let mut frame = FrameData::new(

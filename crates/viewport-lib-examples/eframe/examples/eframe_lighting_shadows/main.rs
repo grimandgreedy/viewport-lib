@@ -24,9 +24,9 @@
 //!   Right drag                : pan
 //!   Scroll                    : zoom
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::input::adapters::from_egui;
 use vpl::{
     AtlasViewerCorner, AutoExposure, BackfacePolicy, BuiltinMatcap, Candela, DebugOutputMode,
@@ -386,7 +386,7 @@ impl App {
     ) -> Self {
         Self {
             session,
-            orbit: OrbitCameraController::viewport_primitives(),
+            orbit: OrbitCameraController::new_stateless(),
             target: None,
             vp_id,
             tab: Tab::Basic,

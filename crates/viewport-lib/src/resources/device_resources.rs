@@ -157,7 +157,9 @@ pub(crate) struct ViewportHdrState {
 /// whether post-processing is active.
 #[derive(Clone)]
 pub struct DualPipeline {
+    /// Variant compiled for the LDR swapchain format.
     pub ldr: crate::gpu::RenderPipeline,
+    /// Variant compiled for the HDR intermediate format (`Rgba16Float`).
     pub hdr: crate::gpu::RenderPipeline,
 }
 

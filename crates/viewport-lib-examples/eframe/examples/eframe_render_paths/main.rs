@@ -21,16 +21,16 @@
 //!   Right drag   : pan
 //!   Scroll       : zoom
 
-pub use viewport_lib_examples_eframe::eframe;
 use crate::eframe::{egui, wgpu};
 use viewport_lib as vpl;
+pub use viewport_lib_examples_eframe::eframe;
 use vpl::{
     AttributeData, AttributeKind, AttributeRef, BackfacePattern, BackfacePolicy, BuiltinColourmap,
     BuiltinMatcap, ButtonState, Camera, CameraFrame, ColourmapId, ComputeFilterItem,
     ComputeFilterKind, FrameData, LightKind, LightSource, LightingSettings, MatcapId, Material,
     MeshId, OffscreenViewportTarget, OrbitCameraController, ParamVis, ParamVisMode, PatternConfig,
     PickId, PickMask, SceneFrame, SceneRenderItem, ScrollUnits, ShadingModel, ShadowFilter,
-    ViewportContext, ViewportEvent, ViewportRenderer,
+    ViewportContext, ViewportEvent, ViewportInput, ViewportRenderer,
     material::AlphaMode,
     plugins::skinning::{SkinWeights, SkinningPlugin},
     primitives,
@@ -322,6 +322,9 @@ struct Meshes {
 struct App {
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
 
     meshes: Meshes,
     matcap: MatcapId,
@@ -386,7 +389,8 @@ impl App {
                 distance: 22.0,
                 ..Camera::default()
             },
-            controller: OrbitCameraController::viewport_primitives(),
+            controller: OrbitCameraController::new_stateless(),
+            input: ViewportInput::from_preset(vpl::BindingPreset::Viewer),
             meshes,
             matcap,
             colourmap,
@@ -639,14 +643,17 @@ impl eframe::App for App {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
 
-            self.controller.begin_frame(ViewportContext {
+            self.input.begin_frame(ViewportContext {
                 hovered: response.hovered(),
                 focused: response.has_focus(),
                 viewport_size: [rect.width(), rect.height()],
             });
+            // Pan reads the viewport height off the controller.
+            self.controller
+                .set_viewport_size([rect.width(), rect.height()]);
 
             ui.input(|i| {
-                self.controller
+                self.input
                     .push_event(ViewportEvent::ModifiersChanged(vpl::Modifiers {
                         alt: i.modifiers.alt,
                         shift: i.modifiers.shift,
@@ -655,7 +662,7 @@ impl eframe::App for App {
                 if let Some(p) = i.pointer.interact_pos() {
                     let local = glam::Vec2::new(p.x - rect.left(), p.y - rect.top());
                     self.last_cursor = local;
-                    self.controller
+                    self.input
                         .push_event(ViewportEvent::PointerMoved { position: local });
                 }
                 for event in &i.events {
@@ -679,7 +686,7 @@ impl eframe::App for App {
                                 egui::PointerButton::Middle => vpl::MouseButton::Middle,
                                 _ => continue,
                             };
-                            self.controller.push_event(ViewportEvent::MouseButton {
+                            self.input.push_event(ViewportEvent::MouseButton {
                                 button: vp_button,
                                 state: if *pressed {
                                     ButtonState::Pressed
@@ -694,7 +701,7 @@ impl eframe::App for App {
                                 egui::MouseWheelUnit::Point => ScrollUnits::Pixels,
                                 egui::MouseWheelUnit::Page => ScrollUnits::Pages,
                             };
-                            self.controller.push_event(ViewportEvent::Wheel {
+                            self.input.push_event(ViewportEvent::Wheel {
                                 delta: glam::Vec2::new(delta.x, delta.y),
                                 units,
                             });
@@ -706,7 +713,8 @@ impl eframe::App for App {
 
             let w = rect.width();
             let h = rect.height();
-            self.controller.apply_to_camera(&mut self.camera);
+            let action_frame = self.input.resolve();
+            self.controller.apply(&mut self.camera, &action_frame);
             self.camera.set_aspect_ratio(w, h);
 
             // Resolve selection against the renderer held in the egui render state
@@ -827,13 +835,19 @@ impl eframe::App for App {
                 } else {
                     renderer.disable_gpu_driven_culling();
                 }
-                self.skinning.attach_palette(
+                // False means the weights never landed for this mesh, which
+                // skins it against no palette and ruins the geometry.
+                let palette_attached = self.skinning.attach_palette(
                     renderer.resources_mut(),
                     &rs.device,
                     &rs.queue,
                     skinned_mesh,
                     0,
                     &skin_palette,
+                );
+                debug_assert!(
+                    palette_attached,
+                    "skin weights missing for the skinned mesh"
                 );
                 let cmd = renderer
                     .owned()

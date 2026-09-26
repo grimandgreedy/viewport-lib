@@ -68,6 +68,8 @@ mod lod_instance_tests;
 /// your own anyway, so a type shipped later cannot collide with yours.
 pub const RESERVED_TYPE_NAME_PREFIX: &str = "vpl.";
 
+// PathTrack is deprecated but still re-exported for compatibility.
+#[allow(deprecated)]
 pub use self::types::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BloomSettings, CameraFrame, Candela, ClipObject, ClipShape, ComputeFilterItem,

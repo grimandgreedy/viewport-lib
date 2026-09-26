@@ -10,7 +10,6 @@ use common::*;
 use viewport_lib::plugin_api::Handles;
 
 use viewport_lib::SubObjectRef;
-use viewport_lib::gpu;
 use viewport_lib::plugin_api::Uploads;
 use viewport_lib_item_types::{
     RIBBON_TYPE_NAME, RibbonItem, RibbonPlugin, RibbonRefItem, STREAMTUBE_TYPE_NAME,

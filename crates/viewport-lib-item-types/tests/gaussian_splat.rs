@@ -7,7 +7,6 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
-use viewport_lib::gpu;
 use viewport_lib::plugin_api::Handles;
 use viewport_lib::plugin_api::{Uploads, Writes};
 use viewport_lib_item_types::channels::gaussian_splat as gs;

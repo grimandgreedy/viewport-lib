@@ -670,12 +670,12 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
             clicked: cx.response.clicked(),
         };
 
-        // Orbit: resolve (no camera movement) while manipulation is active.
-        let action_frame = if app.interact_state.manip.is_active() {
-            app.controller.resolve()
-        } else {
-            app.controller.apply_to_camera(&mut app.camera)
-        };
+        // One resolve per frame; the camera holds still while a manipulation
+        // session owns the pointer.
+        let action_frame = app.input.resolve();
+        if !app.interact_state.manip.is_active() {
+            app.controller.apply(&mut app.camera, &action_frame);
+        }
 
         // Tab cycles gizmo mode when no session is active.
         if !app.interact_state.manip.is_active()
@@ -721,7 +721,8 @@ pub(crate) fn drive_camera(app: &mut crate::App, cx: &crate::ViewportCtx) -> boo
             app.handle_click_select(&click_cx);
         }
     } else {
-        app.controller.apply_to_camera(&mut app.camera);
+        let action_frame = app.input.resolve();
+        app.controller.apply(&mut app.camera, &action_frame);
     }
     true
 }

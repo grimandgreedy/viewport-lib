@@ -26,6 +26,7 @@ pub struct Harness {
     /// Scenes built so far; stamps each built scene's `generation` so the
     /// renderer's scene-content caches see consecutive catalogue scenes as
     /// different content.
+    #[cfg(feature = "scenes")]
     scenes_built: u64,
 }
 
@@ -91,6 +92,7 @@ impl Harness {
             queue,
             renderer,
             adapter_info: None,
+            #[cfg(feature = "scenes")]
             scenes_built: 0,
         }
     }

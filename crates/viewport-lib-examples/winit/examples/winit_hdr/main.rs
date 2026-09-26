@@ -17,10 +17,10 @@ use viewport_lib as vpl;
 
 use vpl::wgpu;
 use vpl::{
-    ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, LightingSettings, Material, MeshId,
-    OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem, PostProcessSettings,
-    SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent, ViewportRenderer,
-    primitives,
+    BindingPreset, ButtonState, Camera, CameraFrame, EffectsFrame, FrameData, LightingSettings,
+    Material, MeshId, OrbitCameraController, OverlayFill, OverlayShape, OverlayShapeItem,
+    PostProcessSettings, SceneFrame, SceneRenderItem, ScrollUnits, ViewportContext, ViewportEvent,
+    ViewportInput, ViewportRenderer, primitives,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -42,6 +42,9 @@ struct AppState {
     renderer: ViewportRenderer,
     camera: Camera,
     controller: OrbitCameraController,
+    /// Owns the bindings and resolves events into an `ActionFrame`. The
+    /// controller keeps only its sensitivities and applies the frame.
+    input: ViewportInput,
 
     scene_items: Vec<SceneRenderItem>,
 
@@ -147,8 +150,9 @@ impl ApplicationHandler for App {
             ..Camera::default()
         };
 
-        let mut controller = OrbitCameraController::viewport_primitives();
-        controller.begin_frame(ViewportContext {
+        let controller = OrbitCameraController::new_stateless();
+        let mut input = ViewportInput::from_preset(BindingPreset::Viewer);
+        input.begin_frame(ViewportContext {
             hovered: true,
             focused: true,
             viewport_size: [config.width as f32, config.height as f32],
@@ -163,6 +167,7 @@ impl ApplicationHandler for App {
             renderer,
             camera,
             controller,
+            input,
             scene_items,
             bloom: true,
             fxaa: false,
@@ -200,9 +205,7 @@ impl ApplicationHandler for App {
                 m.shift = mods.state().shift_key();
                 m.ctrl = mods.state().control_key();
                 m.alt = mods.state().alt_key();
-                state
-                    .controller
-                    .push_event(ViewportEvent::ModifiersChanged(m));
+                state.input.push_event(ViewportEvent::ModifiersChanged(m));
             }
 
             WindowEvent::MouseInput {
@@ -221,7 +224,7 @@ impl ApplicationHandler for App {
                 } else {
                     ButtonState::Released
                 };
-                state.controller.push_event(ViewportEvent::MouseButton {
+                state.input.push_event(ViewportEvent::MouseButton {
                     button: vp_button,
                     state: vp_state,
                 });
@@ -231,17 +234,17 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 let pos = glam::Vec2::new(position.x as f32, position.y as f32);
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::PointerMoved { position: pos });
                 state.window.request_redraw();
             }
 
             WindowEvent::CursorLeft { .. } => {
-                state.controller.push_event(ViewportEvent::PointerLeft);
+                state.input.push_event(ViewportEvent::PointerLeft);
             }
 
             WindowEvent::Focused(false) => {
-                state.controller.push_event(ViewportEvent::FocusLost);
+                state.input.push_event(ViewportEvent::FocusLost);
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
@@ -255,7 +258,7 @@ impl ApplicationHandler for App {
                     ),
                 };
                 state
-                    .controller
+                    .input
                     .push_event(ViewportEvent::Wheel { delta: d, units });
                 state.window.request_redraw();
             }
@@ -306,7 +309,8 @@ impl ApplicationHandler for App {
                 let w = state.surface_config.width as f32;
                 let h = state.surface_config.height as f32;
 
-                state.controller.apply_to_camera(&mut state.camera);
+                let action_frame = state.input.resolve();
+                state.controller.apply(&mut state.camera, &action_frame);
                 state.camera.set_aspect_ratio(w, h);
 
                 let mut frame_data = FrameData::new(
@@ -361,11 +365,13 @@ impl ApplicationHandler for App {
                     );
                 }
 
-                state.controller.begin_frame(ViewportContext {
+                state.input.begin_frame(ViewportContext {
                     hovered: true,
                     focused: true,
                     viewport_size: [w, h],
                 });
+                // Pan reads the viewport height off the controller.
+                state.controller.set_viewport_size([w, h]);
             }
 
             _ => {}

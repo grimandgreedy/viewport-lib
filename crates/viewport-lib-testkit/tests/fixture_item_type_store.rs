@@ -9,7 +9,6 @@
 //! depends on `viewport-lib` as an ordinary dependency, so the route the
 //! built-ins use is checked to be one an external item type also has.
 
-use viewport_lib::plugin_api::Uploads;
 use viewport_lib::resources::UploadStatus;
 use viewport_lib_testkit::Harness;
 use viewport_lib_testkit::fixtures::StoringItemTypePlugin;

@@ -293,6 +293,8 @@ pub use renderer::stats::{
     FrameStats, GpuBreakdown, PerformancePolicy, PrepareBreakdown, QualityPreset, RuntimeMode,
 };
 pub use renderer::tuning::{RenderDiagnostics, RenderTuning};
+// PathTrack is deprecated but still re-exported for compatibility.
+#[allow(deprecated)]
 pub use renderer::{
     Alignment, AnchorX, AnchorY, AnimTrack, AtlasViewerCorner, AutoExposure, BackdropEffects,
     BloomSettings, CameraFrame, Candela, CellSelectionInfo, ClipObject, ClipShape,

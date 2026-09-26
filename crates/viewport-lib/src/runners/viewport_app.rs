@@ -385,7 +385,8 @@ impl ViewportApp {
     /// the runner still owning the window, the wgpu bring-up, and the render loop.
     ///
     /// ```rust,ignore
-    /// let mut orbit = OrbitCameraController::new_stateless();
+    /// let orbit = OrbitCameraController::new_stateless();
+    /// let mut input = ViewportInput::from_preset(BindingPreset::Default);
     /// ViewportApp::new(config)
     ///     .with_input(move |ictx| {
     ///         for ev in ictx.events() {
@@ -393,10 +394,11 @@ impl ViewportApp {
     ///                 menu.borrow_mut().handle(ev); // consume: do not forward
     ///                 continue;
     ///             }
-    ///             orbit.push_event(ev.clone());     // navigation
+    ///             input.push_event(ev.clone());     // navigation
     ///             ictx.forward(ev.clone());         // viewport picking/selection
     ///         }
-    ///         orbit.apply_to_camera(ictx.camera_mut());
+    ///         let frame = input.resolve();
+    ///         orbit.apply(ictx.camera_mut(), &frame);
     ///     })
     ///     .run(move |ctx| { /* overlays */ });
     /// ```

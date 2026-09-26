@@ -1,6 +1,5 @@
 use super::types::{ClipShape, SceneEffects, ViewportEffects};
 use super::*;
-use crate::gpu::util::DeviceExt;
 
 mod instanced;
 mod lighting;
