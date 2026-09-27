@@ -12,7 +12,7 @@ use crate::resources::types::*;
 ///
 /// Shared infrastructure (pipelines, BGLs, samplers, placeholder textures,
 /// SSAO noise/kernel) lives on [`DeviceResources`] and is created once
-/// by `ensure_hdr_shared`.
+/// by `ensure_hdr_infra`.
 #[allow(dead_code)]
 pub(crate) struct ViewportHdrState {
     // --- HDR scene target ---

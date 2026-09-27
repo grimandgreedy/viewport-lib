@@ -441,7 +441,7 @@ impl ViewportRenderer {
                 .filter_map(|i| i.lic.as_ref().map(|l| (i, l)))
                 .collect();
             if !lic_scene_items.is_empty() {
-                // The LIC surface pipeline is created inside ensure_hdr_shared (already called
+                // The LIC surface pipeline is created inside ensure_hdr_pipelines (already called
                 // before prepare_scene_internal runs), so no separate ensure call is needed here.
                 for (item, lic) in &lic_scene_items {
                     if lic.vector_attribute.is_empty() {

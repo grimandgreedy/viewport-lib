@@ -63,12 +63,12 @@ mod tests {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
-        res.ensure_hdr_shared(&device, &queue, crate::gpu::TextureFormat::Rgba8UnormSrgb);
+        res.ensure_hdr_pipelines(&device, &queue, crate::gpu::TextureFormat::Rgba8UnormSrgb);
         let hdr_opaque = res
             .scene
             .hdr_opaque
             .as_ref()
-            .expect("ensure_hdr_shared must build hdr_opaque");
+            .expect("ensure_hdr_pipelines must build hdr_opaque");
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
             // Must not panic for any of the 8 keys, including the `cutout`
             // combinations this family ignores (see the field doc on

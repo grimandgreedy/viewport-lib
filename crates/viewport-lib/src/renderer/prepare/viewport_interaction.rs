@@ -565,6 +565,18 @@ impl ViewportRenderer {
             .selection_outlines
             .plugin_outline_present = plugin_outline;
 
+        // The composite that blits the outline onto the main target runs whenever
+        // there is outline coverage, in either the LDR or the HDR path, so build
+        // its pipelines on that same condition rather than at construction.
+        if !self.viewport_slots[vp_idx]
+            .selection_outlines
+            .outline_object_buffers
+            .is_empty()
+            || plugin_outline
+        {
+            self.resources.ensure_outline_composite_pipelines(device);
+        }
+
         // ------------------------------------------------------------------
         // Outline offscreen pass : screen-space edge detection.
         //

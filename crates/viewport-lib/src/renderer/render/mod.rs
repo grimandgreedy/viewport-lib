@@ -835,6 +835,11 @@ impl ViewportRenderer {
                 h,
             )
         } else {
+            // The HDR path is the only thing that binds the post chain, so its
+            // pipelines are compiled here rather than in `new()`.
+            let format = self.resources.target_format;
+            self.resources
+                .ensure_hdr_pipelines(device, queue, format);
             self.render_frame_hdr(
                 device,
                 queue,

@@ -3538,7 +3538,7 @@ impl ViewportRenderer {
 
     /// Ensure per-viewport HDR state exists for `viewport_index` at dimensions `w`x`h`.
     ///
-    /// Calls `ensure_hdr_shared` once to initialise shared pipelines/BGLs/samplers, then
+    /// Calls `ensure_hdr_infra` once to initialise the shared BGLs and samplers, then
     /// lazily creates or resizes the `ViewportHdrState` inside the slot. Idempotent: if the
     /// slot already has HDR state at the correct size nothing is recreated.
     pub(crate) fn ensure_viewport_hdr(
@@ -3552,8 +3552,10 @@ impl ViewportRenderer {
         render_scale: f32,
     ) {
         let format = self.resources.target_format;
-        // Ensure shared infrastructure (pipelines, BGLs, samplers) exists.
-        self.resources.ensure_hdr_shared(device, queue, format);
+        // Ensure shared infrastructure (BGLs, samplers, placeholders) exists. The
+        // post pipelines are not built here: only the HDR path needs them, so it
+        // calls `ensure_hdr_pipelines` itself.
+        self.resources.ensure_hdr_infra(device, queue);
         // When render_scale < 1.0, the HDR upscale path needs the dyn_res
         // pipeline and sampler for the final upscale-blit to output resolution.
         if render_scale < 1.0 - 0.001 {

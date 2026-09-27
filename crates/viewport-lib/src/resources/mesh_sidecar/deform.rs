@@ -1921,7 +1921,7 @@ impl DeviceResources {
             }
         }
 
-        // mesh_oit.wgsl: only present after ensure_hdr_shared has been
+        // mesh_oit.wgsl: only present after ensure_hdr_pipelines has been
         // called.
         if self.oit.pipeline.is_some() {
             if let Some(base) = lookup_source("mesh_oit.wgsl") {
