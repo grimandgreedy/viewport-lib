@@ -808,68 +808,116 @@ pub fn render_pipeline(
     pipeline
 }
 
-/// Optional record of what each pipeline and shader module cost to create.
+/// Optional record of what each pipeline, shader module, and render target cost
+/// to create.
 ///
-/// Off unless `VPL_BUILD_LOG` is set in the environment, in which case every
-/// [`render_pipeline`], [`compute_pipeline`], and [`wgsl_module`] call appends
-/// its label and wall-clock cost. Startup on a GPU backend is dominated by
-/// shader compilation, and this is what attributes it per pipeline rather than
-/// per phase. Read it with [`build_log::drain`].
+/// Off by default. Switch it on with [`enable`](build_log::enable), or by setting
+/// `VPL_BUILD_LOG` in the environment on a platform that has one. Every
+/// [`render_pipeline`], [`compute_pipeline`], and [`wgsl_module`] call then
+/// appends its label and wall-clock cost, and every per-viewport render target
+/// appends its label and size.
+///
+/// Startup on a GPU backend is dominated by shader compilation, and a phase
+/// breakdown cannot say which pipeline is expensive. This attributes it per
+/// object. Read it back with [`drain`](build_log::drain) and
+/// [`drain_textures`](build_log::drain_textures), which both return what was
+/// recorded since the last call.
 pub mod build_log {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Mutex, OnceLock};
 
-    static LOG: OnceLock<Option<Mutex<Vec<(String, f32)>>>> = OnceLock::new();
+    /// Seeded from the environment on first use, then settable at runtime.
+    ///
+    /// A web build has no environment: under `wasm32` `std::env::var` always
+    /// reports the variable missing, so `VPL_BUILD_LOG` can never be set there
+    /// and [`enable`] is the only way in. That is the platform where startup
+    /// attribution is most wanted, so the flag is not env-only.
+    static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
 
-    fn log() -> Option<&'static Mutex<Vec<(String, f32)>>> {
-        LOG.get_or_init(|| {
-            std::env::var("VPL_BUILD_LOG")
-                .is_ok()
-                .then(|| Mutex::new(Vec::new()))
-        })
-        .as_ref()
+    fn flag() -> &'static AtomicBool {
+        ENABLED.get_or_init(|| AtomicBool::new(std::env::var("VPL_BUILD_LOG").is_ok()))
+    }
+
+    /// Start recording. Call before building the renderer; anything created
+    /// earlier is not in the log.
+    pub fn enable() {
+        flag().store(true, Ordering::Relaxed);
+    }
+
+    /// Stop recording. What is already recorded stays until drained.
+    pub fn disable() {
+        flag().store(false, Ordering::Relaxed);
     }
 
     /// Whether recording is on.
     pub fn enabled() -> bool {
-        log().is_some()
+        flag().load(Ordering::Relaxed)
     }
+
+    static PIPELINES: OnceLock<Mutex<Vec<(String, f32)>>> = OnceLock::new();
+    static TEXTURES: OnceLock<Mutex<Vec<(String, u64)>>> = OnceLock::new();
 
     pub(super) fn record(label: &str, ms: f32) {
-        if let Some(l) = log() {
-            l.lock().unwrap().push((label.to_string(), ms));
+        if enabled() {
+            PIPELINES
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), ms));
         }
     }
 
-    /// Take everything recorded so far, in creation order.
-    pub fn drain() -> Vec<(String, f32)> {
-        match log() {
-            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
-            None => Vec::new(),
-        }
-    }
-
-    static TEXTURES: OnceLock<Option<Mutex<Vec<(String, u64)>>>> = OnceLock::new();
-
-    fn texture_log() -> Option<&'static Mutex<Vec<(String, u64)>>> {
-        TEXTURES
-            .get_or_init(|| enabled().then(|| Mutex::new(Vec::new())))
-            .as_ref()
-    }
-
-    /// Record a render target allocation and its size. Same gate as the
-    /// pipeline log: per-viewport target memory is the other half of what a
-    /// consumer pays before drawing anything.
+    /// Record a render target allocation and its size. The other half of what a
+    /// consumer pays before drawing anything: per-viewport target memory.
     pub(crate) fn record_texture(label: &str, bytes: u64) {
-        if let Some(l) = texture_log() {
-            l.lock().unwrap().push((label.to_string(), bytes));
+        if enabled() {
+            TEXTURES
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap()
+                .push((label.to_string(), bytes));
         }
     }
 
-    /// Take every render target recorded so far, in allocation order.
-    pub fn drain_textures() -> Vec<(String, u64)> {
-        match texture_log() {
+    /// Take every pipeline and shader module recorded since the last call, in
+    /// creation order, with each one's wall-clock cost in milliseconds.
+    pub fn drain() -> Vec<(String, f32)> {
+        match PIPELINES.get() {
             Some(l) => std::mem::take(&mut *l.lock().unwrap()),
             None => Vec::new(),
+        }
+    }
+
+    /// Take every render target recorded since the last call, in allocation
+    /// order, with each one's size in bytes.
+    pub fn drain_textures() -> Vec<(String, u64)> {
+        match TEXTURES.get() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        /// `enable` works with no environment variable set, which is the only
+        /// route a web build has. Records after enabling, nothing before.
+        #[test]
+        fn enable_switches_recording_on_at_runtime() {
+            // Not asserting the initial state: the env seeds it, and another
+            // test in this binary may have enabled it already.
+            super::disable();
+            let _ = super::drain();
+            super::record("before", 1.0);
+            assert!(super::drain().is_empty(), "a disabled log records nothing");
+
+            super::enable();
+            assert!(super::enabled());
+            super::record("after", 2.0);
+            let got = super::drain();
+            assert_eq!(got.len(), 1, "an enabled log records");
+            assert_eq!(got[0].0, "after");
+            assert!(super::drain().is_empty(), "drain takes what it returned");
+            super::disable();
         }
     }
 }

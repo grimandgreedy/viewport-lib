@@ -1914,11 +1914,14 @@ impl DeviceResources {
         let fallback_lut_view =
             fallback_lut_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
 
+        mark("material_fallback_textures");
+
         // The built-in LUTs are resident from here: textures, views, CPU copies
         // and ids. Only their texels wait for a queue, which construction has
         // not got.
         let (colourmap_textures, colourmap_views, colourmaps_cpu, builtin_colourmap_ids) =
             crate::resources::material::textures::create_builtin_colourmaps(device);
+        mark("builtin_colourmaps");
 
         let fallback_scalar_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("fallback_scalar_buf"),
@@ -2001,6 +2004,7 @@ impl DeviceResources {
         let (cube_verts, cube_indices) = build_unit_cube();
         // Shared geometry slab; the fallback cube is its first allocation. Its
         // write is recorded now and flushed at the first `process_uploads`.
+        mark("buffers_and_bind_groups");
         let mut geometry = crate::resources::mesh::geometry_slab::GeometrySlab::new(device);
         let cube_mesh = Self::create_mesh(
             device,
@@ -2026,6 +2030,7 @@ impl DeviceResources {
             &cube_verts,
             &cube_indices,
         );
+        mark("geometry_slab_and_builtin_cube");
 
         // ------------------------------------------------------------------
         // Outline & x-ray pipelines
@@ -2257,6 +2262,14 @@ impl DeviceResources {
 
         // `deform` is constructed earlier (before the mesh pipeline layout).
 
+        // Hoisted out of the struct literal below so each one is timed: both
+        // allocate GPU resources, and inside the literal they were invisible to
+        // the phase marks.
+        let glyph_atlas = crate::resources::overlay::font::GlyphAtlas::new(device);
+        mark("glyph_atlas");
+        let polyline = crate::resources::scivis::polyline::PolylineResources::new(device);
+        mark("polyline_resources");
+
         let resources = Self {
             target_format,
             sample_count,
@@ -2368,7 +2381,7 @@ impl DeviceResources {
                 textures: crate::resources::material::texture_store::TextureStore::new(),
                 volume_textures: crate::resources::handle::SlotStore::default(),
                 projected_tet_store: crate::resources::handle::SlotStore::default(),
-                glyph_atlas: crate::resources::overlay::font::GlyphAtlas::new(device),
+                glyph_atlas,
                 overlay_textures: crate::resources::handle::SlotStore::default(),
                 overlay_geometry: crate::resources::handle::SlotStore::default(),
                 matcap_textures: Vec::new(),
@@ -2417,7 +2430,7 @@ impl DeviceResources {
             instancing: crate::resources::mesh::instancing::InstancingResources::default(),
             cull: crate::resources::mesh::instancing::CullResources::default(),
             lic: crate::resources::postprocess::LicResources::default(),
-            polyline: crate::resources::scivis::polyline::PolylineResources::new(device),
+            polyline,
             compute_filter: crate::resources::gpu::compute_filter::ComputeFilterResources {
                 pipeline: None,
                 bgl: None,

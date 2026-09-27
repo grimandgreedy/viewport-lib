@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`build_log` can be switched on at runtime** - `resources::build_log::enable` and `disable` turn the pipeline, shader module and render target record on without `VPL_BUILD_LOG`, which a web build cannot set because `std::env::var` always reports a variable missing under `wasm32`. `drain` and `drain_textures` return what was recorded since the last call, and the phase marks on the `viewport_lib::init` tracing target now cover the whole of `ViewportRenderer::new` (internal item plugin registration, the fallback and colourmap textures, the geometry slab, the glyph atlas and the polyline resources) rather than the pipeline phases alone.
+
 ### Changed
 
 - **Every example drives the camera through a host-owned `ViewportInput`** - the examples used the deprecated `OrbitCameraController::push_event` / `apply_to_camera` pair, so the code a new consumer reads first taught the path that lets a session and a controller disagree about the control scheme. Each example now owns a `ViewportInput` (one per viewport where there are several), constructs the controller with `new_stateless()`, and applies the resolved frame with `apply(&mut camera, &frame)`. Nothing in the library changed: this is the examples, the testkit's catalogue viewer, and the doc examples on `ViewportApp::with_input` and `ManipulationController::is_active` catching up to the surface that replaced them.
