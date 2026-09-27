@@ -300,8 +300,7 @@ mod tests {
     /// families, there is no lazy first-use gate), so a fresh renderer already has it.
     #[test]
     fn shadow_pipeline_resolves_every_key_once_built() {
-        let Some((device, _queue, mut res)) =
-            crate::resources::test_support::try_make_resources()
+        let Some((device, _queue, mut res)) = crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no wgpu adapter available");
             return;

@@ -1292,10 +1292,7 @@ impl DeviceResources {
 
     /// The layout the outline mask and x-ray pipelines share: camera, the
     /// outline uniform, and the deform sidecar when it is enabled.
-    fn outline_pipeline_layout(
-        &self,
-        device: &crate::gpu::Device,
-    ) -> crate::gpu::PipelineLayout {
+    fn outline_pipeline_layout(&self, device: &crate::gpu::Device) -> crate::gpu::PipelineLayout {
         let mut bgls = vec![&self.binds.camera_bgl, &self.outline.bind_group_layout];
         if self.deform.enabled {
             bgls.push(&self.deform.bind_group_layout);

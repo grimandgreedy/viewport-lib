@@ -1970,8 +1970,8 @@ impl DeviceResources {
                     &self.deform.bind_group_layout,
                 ],
             );
-            self.shadow.pipeline = Some(
-                crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
+            self.shadow.pipeline = Some(crate::renderer::pipeline_key::PipelineVariantSet::build(
+                |key| {
                     let cull_mode = if key.two_sided {
                         None
                     } else {
@@ -1980,8 +1980,8 @@ impl DeviceResources {
                     crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
                         device, &layout, &shader, cull_mode, key.cutout, None,
                     )
-                }),
-            );
+                },
+            ));
         }
 
         // outline_mask.wgsl: mask-write pass for the selection silhouette.

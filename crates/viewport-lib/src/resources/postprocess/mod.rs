@@ -934,7 +934,6 @@ impl DeviceResources {
         }
     }
 
-
     /// The outline composite's bind group layout, shared by the three composite
     /// pipelines and by each viewport's composite bind group.
     fn ensure_outline_composite_bgl(&mut self, device: &crate::gpu::Device) {
@@ -957,11 +956,7 @@ impl DeviceResources {
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
         self.ensure_outline_composite_bgl(device);
-        let outline_composite_bgl = self
-            .outline
-            .composite_bgl
-            .clone()
-            .expect("just ensured");
+        let outline_composite_bgl = self.outline.composite_bgl.clone().expect("just ensured");
         let outline_comp_shader = crate::resources::builders::wgsl_module(
             device,
             "outline_composite_shader",
