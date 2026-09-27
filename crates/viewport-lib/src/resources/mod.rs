@@ -1,6 +1,9 @@
 /// Shared constructors for common wgpu bind-group-layout, sampler, and
 /// pipeline-layout descriptors, used by the per-feature `ensure_*` methods.
 pub(crate) mod builders;
+/// Opt-in record of what each pipeline and shader module cost to create, for
+/// attributing startup time. See [`builders::build_log`].
+pub use builders::build_log;
 /// A growable GPU buffer addressed in elements, with a ranged write.
 pub mod content_buffer;
 pub(crate) mod custom_data;

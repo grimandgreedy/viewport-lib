@@ -67,7 +67,16 @@ impl ViewportRenderer {
         // When skipping the shadow pass (budget pressure or empty scene), clear the
         // atlas to max depth so that stale values from a previous frame or a previous
         // showcase don't produce phantom shadows.
-        if lighting.shadows.enabled && (skip_shadows || scene_items.is_empty()) {
+        //
+        // Only once: the atlas holds a constant after the clear, so repeating it
+        // every frame is pure cost. An app that draws no casters at all (an
+        // overlay-only consumer, or one whose scene is empty this frame) pays
+        // for a 4096-square depth clear it never reads otherwise.
+        if lighting.shadows.enabled
+            && (skip_shadows || scene_items.is_empty())
+            && !shadow.atlas_cleared
+        {
+            shadow.atlas_cleared = true;
             let mut enc = device.create_command_encoder(&crate::gpu::CommandEncoderDescriptor {
                 label: Some("shadow_clear_encoder"),
             });
@@ -99,6 +108,14 @@ impl ViewportRenderer {
             && !skip_shadows
             && light.effective_cascade_count > 0
         {
+            // Cascades are about to be rasterised into the atlas, so this is
+            // where the real texture has to exist: until now it has been a 1x1
+            // placeholder. Promoting replaces the texture, so whatever the old
+            // one held is gone and the clear flag resets either way.
+            resources.ensure_shadow_atlas(device);
+            // Casters are about to be drawn into the atlas, so it no longer
+            // holds the cleared value and the next empty frame must clear again.
+            shadow.atlas_cleared = false;
             // ------------------------------------------------------------------
             // Shadow GPU cull dispatch
             //

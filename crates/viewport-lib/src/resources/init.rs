@@ -857,23 +857,13 @@ impl DeviceResources {
         // ------------------------------------------------------------------
         // Shadow map texture, sampler, and bind group
         // ------------------------------------------------------------------
-        let shadow_map_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("shadow_atlas"),
-            size: crate::gpu::Extent3d {
-                width: SHADOW_ATLAS_SIZE,
-                height: SHADOW_ATLAS_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth32Float,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_map_view =
-            shadow_map_texture.create_view(&crate::gpu::TextureViewDescriptor::default());
+        // A 1x1 placeholder, not the real atlas. At SHADOW_ATLAS_SIZE the atlas
+        // is 64 MB, and a viewport whose scene casts no cascade shadow never
+        // samples it, so the bind groups start on a placeholder the same way
+        // the IBL slots below do. `ensure_shadow_atlas` swaps in the full
+        // texture the first time a frame renders cascades.
+        let (shadow_map_texture, shadow_map_view) =
+            crate::resources::shadow::create_atlas_texture(device, 1);
 
         let shadow_sampler = crate::resources::builders::comparison_sampler(
             device,
@@ -889,61 +879,16 @@ impl DeviceResources {
         //  - Per-face 2D-array views (one per face) for shadow render passes.
         //  - A `CubeArray` view bound to the lit pass for sampling.
         // ------------------------------------------------------------------
-        let point_shadow_face_size = crate::renderer::POINT_SHADOW_FACE_SIZE;
-        let point_shadow_max_lights = crate::renderer::MAX_POINT_SHADOW_LIGHTS;
-        let point_shadow_layers = point_shadow_max_lights * 6;
-        let point_shadow_cube_texture = device.create_texture(&crate::gpu::TextureDescriptor {
-            label: Some("point_shadow_cube_array"),
-            size: crate::gpu::Extent3d {
-                width: point_shadow_face_size,
-                height: point_shadow_face_size,
-                depth_or_array_layers: point_shadow_layers,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: crate::gpu::TextureDimension::D2,
-            format: crate::gpu::TextureFormat::Depth32Float,
-            usage: crate::gpu::TextureUsages::RENDER_ATTACHMENT
-                | crate::gpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let point_shadow_cube_view =
-            point_shadow_cube_texture.create_view(&crate::gpu::TextureViewDescriptor {
-                label: Some("point_shadow_cube_view"),
-                // iOS Metal does not support CubeArray views. Use D2Array instead;
-                // the shader is patched at build time to match.
-                dimension: Some(if cfg!(target_os = "ios") {
-                    crate::gpu::TextureViewDimension::D2Array
-                } else {
-                    crate::gpu::TextureViewDimension::CubeArray
-                }),
-                aspect: crate::gpu::TextureAspect::DepthOnly,
-                base_array_layer: 0,
-                array_layer_count: Some(point_shadow_layers),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                format: Some(crate::gpu::TextureFormat::Depth32Float),
-                usage: None,
-            });
-        let point_shadow_face_views: Vec<crate::gpu::TextureView> = (0..point_shadow_layers)
-            .map(|layer| {
-                point_shadow_cube_texture.create_view(&crate::gpu::TextureViewDescriptor {
-                    label: Some("point_shadow_face_view"),
-                    dimension: Some(crate::gpu::TextureViewDimension::D2),
-                    aspect: crate::gpu::TextureAspect::DepthOnly,
-                    base_array_layer: layer,
-                    array_layer_count: Some(1),
-                    base_mip_level: 0,
-                    mip_level_count: Some(1),
-                    format: Some(crate::gpu::TextureFormat::Depth32Float),
-                    usage: None,
-                })
-            })
-            .collect();
+        // Also a placeholder: one 1x1 cube rather than the real
+        // MAX_POINT_SHADOW_LIGHTS array, which is 192 MB at
+        // POINT_SHADOW_FACE_SIZE. Most scenes have no shadow-casting point
+        // light at all. `ensure_point_shadow_cubes` swaps in the full array the
+        // first time a frame queues point-shadow faces.
+        let (point_shadow_cube_texture, point_shadow_cube_view, point_shadow_face_views) =
+            crate::resources::shadow::create_point_cube_array(device, 1, 1);
 
-        // Includes the 4096^2 directional atlas and the point-shadow cube array
-        // (POINT_SHADOW_FACE_SIZE^2 * MAX_POINT_SHADOW_LIGHTS * 6 layers), both
-        // allocated unconditionally here. Watch this number on mobile.
+        // The directional atlas and the point-shadow cube array are placeholders
+        // at this point; both are promoted on the first frame that needs them.
         mark("buffers_and_shadow_textures");
 
         // Non-comparison sampler (no compare field) for plain float depth reads.
@@ -1272,7 +1217,7 @@ impl DeviceResources {
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
         const SHADOW_POINT_FACE_STRIDE: u64 = 256;
-        let shadow_point_face_count = (point_shadow_max_lights * 6) as u64;
+        let shadow_point_face_count = (crate::renderer::MAX_POINT_SHADOW_LIGHTS * 6) as u64;
         let shadow_point_face_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("shadow_point_face_buf"),
             size: shadow_point_face_count * SHADOW_POINT_FACE_STRIDE,
@@ -2360,9 +2305,11 @@ impl DeviceResources {
             shadow: crate::resources::shadow::ShadowResources {
                 map_texture: shadow_map_texture,
                 map_view: shadow_map_view,
+                atlas_allocated: false,
                 sampler: shadow_sampler,
                 point_cube_texture: point_shadow_cube_texture,
                 point_cube_view: point_shadow_cube_view,
+                point_cubes_allocated: false,
                 point_face_views: point_shadow_face_views,
                 point_pipeline: shadow_point_pipeline,
                 point_face_bgl: shadow_point_face_bgl,
@@ -2377,6 +2324,7 @@ impl DeviceResources {
                 atlas_depth_sampler: shadow_atlas_depth_sampler,
                 atlas_viewer_pipeline: shadow_atlas_viewer_pipeline,
                 atlas_viewer_bg: shadow_atlas_viewer_bg,
+                atlas_viewer_bgl: atlas_blit_bgl,
                 atlas_viewer_buf: shadow_atlas_viewer_buf,
             },
             guides: crate::resources::overlay::guides::OverlayGuideResources {
@@ -2516,6 +2464,7 @@ impl DeviceResources {
             retain_mesh_cpu_geometry: true,
             occlusion_culling_enabled: false,
             force_po_discard: false,
+            camera_bind_groups_dirty: false,
         };
         // Pipelines built during construction are load-time cost, not a frame
         // hitch; keep them out of the first frame's stats.

@@ -877,6 +877,15 @@ impl ViewportRenderer {
         // Placed at the end of scene prepare because the plugin context borrows
         // `resources` shared while the upload above holds it mutably.
         self.dispatch_plugin_wireframes(device, queue, frame);
+
+        // A shadow texture was promoted out of its placeholder above, so the
+        // per-viewport camera bind groups still name the texture it replaced.
+        // Rebuilt here, before the viewport phase and before any render pass,
+        // so the promoting frame is already correct rather than one frame late.
+        if self.resources.camera_bind_groups_dirty {
+            self.resources.camera_bind_groups_dirty = false;
+            self.rebuild_camera_bind_groups(device);
+        }
     }
 
     /// Per-viewport prepare stage: camera, clip planes, clip volume, grid, overlays, cap geometry, axes.

@@ -1001,6 +1001,32 @@ impl ViewportRenderer {
         &self.resources
     }
 
+    /// Device memory held by the two shadow depth textures: the directional
+    /// cascade atlas and the point-light cube array.
+    ///
+    /// Separate from [`resident_bytes`](Self::resident_bytes), which covers the
+    /// content a consumer uploaded. This is fixed renderer overhead, but it is
+    /// not paid until a frame needs it: both textures start as placeholders a
+    /// few bytes wide, so this reads near zero for a viewport that has not cast
+    /// a shadow yet and steps up as each is allocated. At full size the atlas is
+    /// 64 MiB and the cube array 192 MiB, so a consumer budgeting device memory
+    /// wants to know which of the two it has actually taken.
+    ///
+    /// The cascade atlas is allocated by the first frame that rasterises
+    /// cascades (shadows enabled, a casting primary light, and something to
+    /// cast), and the cube array by the first frame that queues point-shadow
+    /// faces. Neither is released afterwards.
+    pub fn shadow_allocation_bytes(&self) -> u64 {
+        let shadow = &self.resources.shadow;
+        let texel = 4; // Depth32Float
+        let atlas = shadow.map_texture.width() as u64 * shadow.map_texture.height() as u64 * texel;
+        let cube = shadow.point_cube_texture.width() as u64
+            * shadow.point_cube_texture.height() as u64
+            * shadow.point_cube_texture.depth_or_array_layers() as u64
+            * texel;
+        atlas + cube
+    }
+
     /// Resident GPU bytes for the user-uploaded working set, including whatever
     /// registered item-type plugins report holding in stores of their own.
     ///

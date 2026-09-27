@@ -412,6 +412,15 @@ impl ViewportRenderer {
                 }
             }
 
+            // The cube array is a placeholder until a frame actually queues
+            // faces. This is that point: the slots are assigned and the depth
+            // passes for them run later in `prepare_shadow_pass`, so the real
+            // array has to exist before either the uniform upload below or any
+            // bind group that samples it.
+            if !point_shadow_faces.is_empty() {
+                resources.ensure_point_shadow_cubes(device);
+            }
+
             // Upload per-face uniforms (view_proj + light_pos + range,
             // padded to 256-byte dynamic-offset stride).
             #[repr(C)]

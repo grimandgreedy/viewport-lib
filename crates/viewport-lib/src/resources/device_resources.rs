@@ -641,6 +641,12 @@ pub struct DeviceResources {
     /// path in a single process. It does not change rendered output, only which
     /// pipeline draws eligible opaque items.
     pub(crate) force_po_discard: bool,
+
+    // --- Shadow texture promotion ---
+    /// Set when a shadow texture was promoted from its placeholder and the
+    /// camera bind groups had to be rebuilt. The renderer clears it after
+    /// rebuilding the per-viewport groups, which it owns and this cannot reach.
+    pub(crate) camera_bind_groups_dirty: bool,
 }
 
 /// Per-viewport GPU culling outputs.
@@ -1018,6 +1024,128 @@ impl DeviceResources {
             );
         }
         self.frame_upload_bytes += bytes;
+    }
+
+    /// Promote the cascade shadow atlas from its 1x1 placeholder to the full
+    /// `SHADOW_ATLAS_SIZE` depth texture and rebuild every bind group that
+    /// samples it. A no-op once promoted.
+    ///
+    /// Returns whether it allocated, so the renderer knows to rebuild the
+    /// per-viewport camera bind groups it owns (this can only reach the ones
+    /// hanging off `DeviceResources`).
+    pub(crate) fn ensure_shadow_atlas(&mut self, device: &crate::gpu::Device) -> bool {
+        if self.shadow.atlas_allocated {
+            return false;
+        }
+        let (texture, view) = crate::resources::shadow::create_atlas_texture(
+            device,
+            crate::resources::SHADOW_ATLAS_SIZE,
+        );
+        self.shadow.map_texture = texture;
+        self.shadow.map_view = view;
+        self.shadow.atlas_allocated = true;
+        self.rebuild_shadow_sampling_bind_groups(device);
+        tracing::debug!(
+            target: "viewport_lib::init",
+            size = crate::resources::SHADOW_ATLAS_SIZE,
+            "allocated the cascade shadow atlas"
+        );
+        true
+    }
+
+    /// Promote the point-light cube array from its single 1x1 cube to the full
+    /// `MAX_POINT_SHADOW_LIGHTS` array at `POINT_SHADOW_FACE_SIZE`, and rebuild
+    /// the bind groups that sample it. A no-op once promoted.
+    ///
+    /// Returns whether it allocated. See [`ensure_shadow_atlas`](Self::ensure_shadow_atlas)
+    /// for why the caller cares.
+    pub(crate) fn ensure_point_shadow_cubes(&mut self, device: &crate::gpu::Device) -> bool {
+        if self.shadow.point_cubes_allocated {
+            return false;
+        }
+        let (texture, cube_view, face_views) = crate::resources::shadow::create_point_cube_array(
+            device,
+            crate::renderer::POINT_SHADOW_FACE_SIZE,
+            crate::renderer::MAX_POINT_SHADOW_LIGHTS,
+        );
+        self.shadow.point_cube_texture = texture;
+        self.shadow.point_cube_view = cube_view;
+        self.shadow.point_face_views = face_views;
+        self.shadow.point_cubes_allocated = true;
+        self.rebuild_shadow_sampling_bind_groups(device);
+        tracing::debug!(
+            target: "viewport_lib::init",
+            lights = crate::renderer::MAX_POINT_SHADOW_LIGHTS,
+            face = crate::renderer::POINT_SHADOW_FACE_SIZE,
+            "allocated the point-light shadow cube array"
+        );
+        true
+    }
+
+    /// Rebuild the bind groups that sample the shadow textures, after one of
+    /// them was replaced. The primary camera group, the ground plane, and the
+    /// atlas debug viewer are the three that bind those views; the
+    /// per-viewport camera groups live on the renderer and are rebuilt there.
+    fn rebuild_shadow_sampling_bind_groups(&mut self, device: &crate::gpu::Device) {
+        let camera_bg = self.create_camera_bind_group(
+            device,
+            &self.binds.camera_uniform_buf,
+            &self.binds.clip_planes_buf,
+            &self.shadow.info_buf,
+            &self.binds.clip_volume_buf,
+            "camera_bind_group",
+        );
+        self.binds.camera_bg = camera_bg;
+
+        let ground_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("ground_plane_bind_group"),
+            layout: &self.ground.bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.ground.uniform_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::gpu::BindingResource::TextureView(&self.shadow.map_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: crate::gpu::BindingResource::Sampler(&self.shadow.sampler),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.shadow.info_buf.as_entire_binding(),
+                },
+            ],
+        });
+        self.ground.bind_group = ground_bg;
+
+        let viewer_bg = device.create_bind_group(&crate::gpu::BindGroupDescriptor {
+            label: Some("shadow_atlas_viewer_bg"),
+            layout: &self.shadow.atlas_viewer_bgl,
+            entries: &[
+                crate::gpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.shadow.atlas_viewer_buf.as_entire_binding(),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::gpu::BindingResource::TextureView(&self.shadow.map_view),
+                },
+                crate::gpu::BindGroupEntry {
+                    binding: 2,
+                    resource: crate::gpu::BindingResource::Sampler(
+                        &self.shadow.atlas_depth_sampler,
+                    ),
+                },
+            ],
+        });
+        self.shadow.atlas_viewer_bg = viewer_bg;
+
+        // The per-viewport camera groups bind the same views and live on the
+        // renderer; flag them for rebuild there.
+        self.camera_bind_groups_dirty = true;
     }
 
     pub(crate) fn create_camera_bind_group(

@@ -32,6 +32,10 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+# For the startup-cost examples: they read the library's own init-phase marks off
+# the `viewport_lib::init` tracing target.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # For the perf-bench / catalogue-viewer example UIs (moved here from
 # viewport-lib so the library's example builds do not pull the testkit).
 eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
@@ -82,3 +86,20 @@ required-features = ["wgpu27", "scenes"]
 name = "scene_dump"
 path = "examples/scene_dump/main.rs"
 required-features = ["scenes"]
+
+# Startup and per-viewport cost harnesses. Named with hyphens to match the other
+# example targets here; each needs only the leg, not the scene catalogue.
+[[example]]
+name = "overlay-only-cost"
+path = "examples/overlay_only_cost.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "viewport-registration-cost"
+path = "examples/viewport_registration_cost.rs"
+required-features = ["wgpu27"]
+
+[[example]]
+name = "viewport-size-sweep"
+path = "examples/viewport_size_sweep.rs"
+required-features = ["wgpu27"]

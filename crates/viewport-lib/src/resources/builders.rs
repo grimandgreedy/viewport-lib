@@ -22,10 +22,18 @@ pub fn wgsl_module<'a>(
     label: &str,
     source: impl Into<std::borrow::Cow<'a, str>>,
 ) -> crate::gpu::ShaderModule {
-    device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
+    let build_start = web_time::Instant::now();
+    let module = device.create_shader_module(crate::gpu::ShaderModuleDescriptor {
         label: Some(label),
         source: crate::gpu::ShaderSource::Wgsl(source.into()),
-    })
+    });
+    if build_log::enabled() {
+        build_log::record(
+            &format!("module {label}"),
+            build_start.elapsed().as_secs_f32() * 1000.0,
+        );
+    }
+    module
 }
 
 /// Prepend the module directive `@builtin(primitive_index)` needs on the
@@ -665,14 +673,22 @@ pub fn compute_pipeline(
     shader: &crate::gpu::ShaderModule,
     entry: &str,
 ) -> crate::gpu::ComputePipeline {
-    device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
+    let build_start = web_time::Instant::now();
+    let pipeline = device.create_compute_pipeline(&crate::gpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         module: shader,
         entry_point: Some(entry),
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
         cache: None,
-    })
+    });
+    if build_log::enabled() {
+        build_log::record(
+            &format!("compute {label}"),
+            build_start.elapsed().as_secs_f32() * 1000.0,
+        );
+    }
+    pipeline
 }
 
 /// Pipeline layout from a list of bind group layouts, with no push-constant
@@ -771,7 +787,9 @@ pub fn render_pipeline(
         buffers: &vbufs,
         compilation_options: crate::gpu::PipelineCompilationOptions::default(),
     };
-    device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
+    let build_start = web_time::Instant::now();
+    let build_label = desc.label;
+    let pipeline = device.create_render_pipeline(&crate::gpu::RenderPipelineDescriptor {
         label: Some(desc.label),
         layout: Some(desc.layout),
         vertex,
@@ -785,7 +803,75 @@ pub fn render_pipeline(
         #[cfg(any(wgpu29, wgpu30))]
         multiview_mask: None,
         cache: desc.cache,
-    })
+    });
+    build_log::record(build_label, build_start.elapsed().as_secs_f32() * 1000.0);
+    pipeline
+}
+
+/// Optional record of what each pipeline and shader module cost to create.
+///
+/// Off unless `VPL_BUILD_LOG` is set in the environment, in which case every
+/// [`render_pipeline`], [`compute_pipeline`], and [`wgsl_module`] call appends
+/// its label and wall-clock cost. Startup on a GPU backend is dominated by
+/// shader compilation, and this is what attributes it per pipeline rather than
+/// per phase. Read it with [`build_log::drain`].
+pub mod build_log {
+    use std::sync::{Mutex, OnceLock};
+
+    static LOG: OnceLock<Option<Mutex<Vec<(String, f32)>>>> = OnceLock::new();
+
+    fn log() -> Option<&'static Mutex<Vec<(String, f32)>>> {
+        LOG.get_or_init(|| {
+            std::env::var("VPL_BUILD_LOG")
+                .is_ok()
+                .then(|| Mutex::new(Vec::new()))
+        })
+        .as_ref()
+    }
+
+    /// Whether recording is on.
+    pub fn enabled() -> bool {
+        log().is_some()
+    }
+
+    pub(super) fn record(label: &str, ms: f32) {
+        if let Some(l) = log() {
+            l.lock().unwrap().push((label.to_string(), ms));
+        }
+    }
+
+    /// Take everything recorded so far, in creation order.
+    pub fn drain() -> Vec<(String, f32)> {
+        match log() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
+
+    static TEXTURES: OnceLock<Option<Mutex<Vec<(String, u64)>>>> = OnceLock::new();
+
+    fn texture_log() -> Option<&'static Mutex<Vec<(String, u64)>>> {
+        TEXTURES
+            .get_or_init(|| enabled().then(|| Mutex::new(Vec::new())))
+            .as_ref()
+    }
+
+    /// Record a render target allocation and its size. Same gate as the
+    /// pipeline log: per-viewport target memory is the other half of what a
+    /// consumer pays before drawing anything.
+    pub(crate) fn record_texture(label: &str, bytes: u64) {
+        if let Some(l) = texture_log() {
+            l.lock().unwrap().push((label.to_string(), bytes));
+        }
+    }
+
+    /// Take every render target recorded so far, in allocation order.
+    pub fn drain_textures() -> Vec<(String, u64)> {
+        match texture_log() {
+            Some(l) => std::mem::take(&mut *l.lock().unwrap()),
+            None => Vec::new(),
+        }
+    }
 }
 
 /// Wrap a depth-write flag for the current wgpu version's `DepthStencilState`.
