@@ -1524,7 +1524,7 @@ impl ViewportRenderer {
             // composites over the sky instead of being painted over by it.
             if show_skybox {
                 render_pass.set_bind_group(0, camera_bg, &[]);
-                render_pass.set_pipeline(&resources.ibl.skybox_pipeline);
+                render_pass.set_pipeline(resources.ibl.skybox_pipeline());
                 render_pass.draw(0..3, 0..1);
             }
 
@@ -3336,7 +3336,7 @@ impl ViewportRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            gp_pass.set_pipeline(&self.resources.ground.pipeline);
+            gp_pass.set_pipeline(self.resources.ground.pipeline());
             gp_pass.set_bind_group(0, &self.resources.ground.bind_group, &[]);
             gp_pass.draw(0..3, 0..1);
         }
@@ -3392,8 +3392,16 @@ impl ViewportRenderer {
                 }
 
                 if !slot.xray_object_buffers.is_empty() {
-                    overlay_pass.set_pipeline(&self.resources.outline.xray_pipeline);
+                    overlay_pass.set_pipeline(self.resources.outline.xray_pipeline());
                     overlay_pass.set_bind_group(0, camera_bg, &[]);
+                    // The x-ray pipeline shares the outline layout, so group 2 is
+                    // part of it whenever deformers are enabled. X-ray draws the
+                    // undeformed mesh, so the dummy group is what it wants.
+                    bind_deform_group!(
+                        overlay_pass,
+                        self.resources,
+                        &self.resources.deform.dummy_bind_group
+                    );
                     for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
                         let Some(mesh) = self.resources.mesh_store.get(*mesh_id) else {
                             continue;

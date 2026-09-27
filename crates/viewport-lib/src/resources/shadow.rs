@@ -42,7 +42,9 @@ pub(crate) struct ShadowResources {
     pub(crate) point_face_views: Vec<crate::gpu::TextureView>,
     /// Render pipeline for the point-shadow depth pass. Same vertex layout
     /// as the cascade shadow pipeline; writes linear distance-to-light.
-    pub(crate) point_pipeline: crate::gpu::RenderPipeline,
+    /// `None` until a frame has point-shadow faces to draw; see
+    /// [`DeviceResources::ensure_point_shadow_pipeline`](crate::resources::DeviceResources::ensure_point_shadow_pipeline).
+    pub(crate) point_pipeline: Option<crate::gpu::RenderPipeline>,
     /// Bind group layout for the point-shadow per-face uniform (group 0
     /// of the point shadow pass). Kept for pipeline rebuilds.
     #[allow(dead_code)]
@@ -67,7 +69,9 @@ pub(crate) struct ShadowResources {
     /// with a fragment stage that samples the caster's albedo alpha and
     /// discards below its cutoff, punching holes for an `AlphaMode::Mask`
     /// material instead of casting a solid silhouette.
-    pub(crate) pipeline: crate::renderer::pipeline_key::PipelineVariantSet,
+    /// `None` until a frame rasterises casters into the atlas; see
+    /// [`DeviceResources::ensure_cascade_shadow_pipelines`](crate::resources::DeviceResources::ensure_cascade_shadow_pipelines).
+    pub(crate) pipeline: Option<crate::renderer::pipeline_key::PipelineVariantSet>,
     /// Bind group layout for the shadow camera uniform (group 0 of the
     /// shadow pass). Kept so `register_deformer` can rebuild the shadow
     /// pipeline from a freshly composed shader module.
@@ -185,6 +189,25 @@ pub(crate) fn create_point_cube_array(
     (texture, cube_view, face_views)
 }
 
+impl ShadowResources {
+    /// The cascade depth pipelines. Built by
+    /// [`DeviceResources::ensure_cascade_shadow_pipelines`](crate::resources::DeviceResources::ensure_cascade_shadow_pipelines)
+    /// before anything draws into the atlas, so a caller inside the shadow pass
+    /// is past that point.
+    pub(crate) fn pipeline(&self) -> &crate::renderer::pipeline_key::PipelineVariantSet {
+        self.pipeline
+            .as_ref()
+            .expect("cascade shadow pipelines missing; the shadow prepare builds them")
+    }
+
+    /// The point-shadow depth pipeline, built alongside the cube array.
+    pub(crate) fn point_pipeline(&self) -> &crate::gpu::RenderPipeline {
+        self.point_pipeline
+            .as_ref()
+            .expect("point shadow pipeline missing; the lighting prepare builds it")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// A freshly constructed `DeviceResources` wires every shadow resource, and
@@ -277,13 +300,15 @@ mod tests {
     /// families, there is no lazy first-use gate), so a fresh renderer already has it.
     #[test]
     fn shadow_pipeline_resolves_every_key_once_built() {
-        let Some((_device, _queue, res)) = crate::resources::test_support::try_make_resources()
+        let Some((device, _queue, mut res)) =
+            crate::resources::test_support::try_make_resources()
         else {
             eprintln!("skipping: no wgpu adapter available");
             return;
         };
+        res.ensure_cascade_shadow_pipelines(&device);
         for key in crate::renderer::pipeline_key::PipelineKey::all() {
-            let _ = res.shadow.pipeline.get(key);
+            let _ = res.shadow.pipeline().get(key);
         }
     }
 }

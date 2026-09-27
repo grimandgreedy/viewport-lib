@@ -1970,7 +1970,7 @@ impl DeviceResources {
                     &self.deform.bind_group_layout,
                 ],
             );
-            self.shadow.pipeline =
+            self.shadow.pipeline = Some(
                 crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
                     let cull_mode = if key.two_sided {
                         None
@@ -1980,7 +1980,8 @@ impl DeviceResources {
                     crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
                         device, &layout, &shader, cull_mode, key.cutout, None,
                     )
-                });
+                }),
+            );
         }
 
         // outline_mask.wgsl: mask-write pass for the selection silhouette.
@@ -2007,8 +2008,8 @@ impl DeviceResources {
                 crate::gpu::TextureFormat::R8Unorm,
                 None,
             );
-            self.outline.mask_pipeline = masks.mask;
-            self.outline.mask_two_sided_pipeline = masks.mask_two_sided;
+            self.outline.mask_pipeline = Some(masks.mask);
+            self.outline.mask_two_sided_pipeline = Some(masks.mask_two_sided);
         }
 
         // Instanced families (LDR / HDR / OIT / cull) rebuild through the

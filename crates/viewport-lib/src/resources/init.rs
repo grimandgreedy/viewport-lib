@@ -1,6 +1,5 @@
 use super::*;
 use crate::gpu::util::DeviceExt;
-use crate::resources::VertexBufferLayoutExt;
 
 /// Count the storage buffers a set of bind group layout entries costs in the
 /// vertex stage. Used to check the layouts built here against the constants
@@ -675,7 +674,6 @@ impl DeviceResources {
         } else {
             crate::resources::mesh_sidecar::deform::DeformationState::new_disabled(device)
         };
-        let deform_bgl = deform.enabled.then_some(&deform.bind_group_layout);
 
         // wgpu counts max_storage_buffers_per_shader_stage per stage across
         // every group in a pipeline layout, so the mesh pipelines pay the sum of
@@ -1027,17 +1025,6 @@ impl DeviceResources {
             ],
         });
 
-        // ------------------------------------------------------------------
-        // Shadow pass pipeline (depth-only, renders from light's POV)
-        // ------------------------------------------------------------------
-        let shadow_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_noop.wgsl"))
-        };
-        let shadow_shader =
-            crate::resources::builders::wgsl_module(device, "shadow_shader", shadow_src);
-
         // Shadow pass uses a simple bind group layout: just the light uniform.
         let shadow_camera_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -1057,39 +1044,9 @@ impl DeviceResources {
                 }],
             });
 
-        let shadow_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-            vec![&shadow_camera_bgl, &object_bgl, d]
-        } else {
-            vec![&shadow_camera_bgl, &object_bgl]
-        };
-        let shadow_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_pipeline_layout",
-            &shadow_pl_bgls,
-        );
-
-        // Depth-only pass through the shared factory so register_deformer
-        // can rebuild it from composed source. Keyed by facedness (cull-front
-        // for closed solids so a solid's own front face is never compared
-        // against itself in the shadow map; cull-none for two-sided
-        // materials, `BackfacePolicy::Identical`, with a larger caster-side
-        // bias) and cutout (a fragment stage that discards below the
-        // caster's albedo alpha cutoff, for `AlphaMode::Mask` materials).
-        let shadow_pipeline = crate::renderer::pipeline_key::PipelineVariantSet::build(|key| {
-            let cull_mode = if key.two_sided {
-                None
-            } else {
-                Some(crate::gpu::Face::Front)
-            };
-            crate::resources::mesh::mesh_pipelines::build_shadow_pipeline(
-                device,
-                &shadow_pipeline_layout,
-                &shadow_shader,
-                cull_mode,
-                key.cutout,
-                pipeline_cache.as_ref(),
-            )
-        });
+        // The depth-only cascade pipelines are built by
+        // `ensure_cascade_shadow_pipelines` on the first frame that rasterises
+        // into the atlas, which is where the atlas itself is allocated.
 
         // Shadow pass uniform buffer : 4 cascade slots x 256 bytes (wgpu dynamic-offset alignment).
         // Each slot holds one 4x4 matrix (64 bytes); the remaining 192 bytes per slot are padding.
@@ -1126,16 +1083,8 @@ impl DeviceResources {
         // mirrors the cascade pipeline (same object + deform bind groups)
         // and carries a per-face uniform with view_proj + light_pos + range.
         // ------------------------------------------------------------------
-        let shadow_point_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/shadow_point_noop.wgsl"))
-        };
-        let shadow_point_shader = crate::resources::builders::wgsl_module(
-            device,
-            "shadow_point_shader",
-            shadow_point_src,
-        );
+        // The pipeline itself is built by `ensure_point_shadow_pipeline` on the
+        // first frame with point-shadow faces to draw.
         let shadow_point_face_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_point_face_bgl"),
@@ -1151,24 +1100,6 @@ impl DeviceResources {
                     count: None,
                 }],
             });
-        let shadow_point_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-            vec![&shadow_point_face_bgl, &object_bgl, d]
-        } else {
-            vec![&shadow_point_face_bgl, &object_bgl]
-        };
-        let shadow_point_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "shadow_point_pipeline_layout",
-            &shadow_point_pl_bgls,
-        );
-        let shadow_point_pipeline =
-            crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
-                device,
-                &shadow_point_pipeline_layout,
-                &shadow_point_shader,
-                pipeline_cache.as_ref(),
-            );
-
         // Per-face uniform buffer. Stride 256 satisfies wgpu's dynamic-offset
         // alignment requirement. Total slots = MAX_POINT_SHADOW_LIGHTS * 6.
         const SHADOW_POINT_FACE_STRIDE: u64 = 256;
@@ -1415,11 +1346,6 @@ impl DeviceResources {
         // Z height, then renders one of four modes: None (skipped), ShadowOnly,
         // Tile, SolidColour.  Uses @builtin(frag_depth) for depth occlusion.
         // ------------------------------------------------------------------
-        let ground_plane_shader = crate::resources::builders::wgsl_module(
-            device,
-            "ground_plane_shader",
-            crate::resources::builders::wgsl_source!("ground_plane"),
-        );
         let ground_plane_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("ground_plane_bgl"),
@@ -1469,46 +1395,8 @@ impl DeviceResources {
                     },
                 ],
             });
-        let ground_plane_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "ground_plane_pipeline_layout",
-            &[&ground_plane_bgl],
-        );
-        let ground_plane_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "ground_plane_pipeline",
-                layout: &ground_plane_pipeline_layout,
-                vertex_module: &ground_plane_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &ground_plane_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    true,
-                    crate::gpu::CompareFunction::LessEqual,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
+        // The ground-plane pipeline is built by `ensure_ground_plane_pipeline` on
+        // the first frame that asks for a ground plane.
         let ground_plane_uniform_buf = device.create_buffer(&crate::gpu::BufferDescriptor {
             label: Some("ground_plane_uniform_buf"),
             size: std::mem::size_of::<GroundPlaneUniform>() as u64,
@@ -2018,52 +1906,10 @@ impl DeviceResources {
             ],
         });
 
-        let xray_shader = crate::resources::builders::wgsl_module(
-            device,
-            "xray_shader",
-            crate::resources::builders::wgsl_source!("xray"),
-        );
-
-        let outline_pl_bgls: Vec<&crate::gpu::BindGroupLayout> = if let Some(d) = deform_bgl {
-            vec![&camera_bgl, &outline_bgl, d]
-        } else {
-            vec![&camera_bgl, &outline_bgl]
-        };
-        let outline_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "outline_pipeline_layout",
-            &outline_pl_bgls,
-        );
-
-        // Mask-write pipeline: renders selected objects as r=1.0 to an R8 mask
-        // texture with depth testing, replacing the old stencil-based approach.
-        let outline_mask_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/outline_mask_noop.wgsl"))
-        };
-        let outline_mask_shader = crate::resources::builders::wgsl_module(
-            device,
-            "outline_mask_shader",
-            outline_mask_src,
-        );
-        let outline_masks = crate::resources::mesh::mesh_pipelines::build_outline_mask_pipelines(
-            device,
-            &outline_pipeline_layout,
-            &outline_mask_shader,
-            crate::gpu::TextureFormat::R8Unorm,
-            pipeline_cache.as_ref(),
-        );
-        let outline_mask_pipeline = outline_masks.mask;
-        let outline_mask_two_sided_pipeline = outline_masks.mask_two_sided;
-
-        // Edge-detection pipeline: fullscreen pass that reads the R8 mask and
-        // outputs an anti-aliased outline ring to the outline colour texture.
-        let outline_edge_shader = crate::resources::builders::wgsl_module(
-            device,
-            "outline_edge_shader",
-            crate::resources::builders::wgsl_source!("outline_edge"),
-        );
+        // The mask-write and edge-detection pipelines are built by
+        // `ensure_outline_pipelines` on the first frame with a selection to
+        // outline. Their layouts are built here because the edge pass's bind
+        // group is too.
         let outline_edge_bgl =
             device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
                 label: Some("outline_edge_bgl"),
@@ -2098,120 +1944,10 @@ impl DeviceResources {
                     },
                 ],
             });
-        let outline_edge_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "outline_edge_layout",
-            &[&outline_edge_bgl],
-        );
-        let outline_edge_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "outline_edge_pipeline",
-                layout: &outline_edge_layout,
-                vertex_module: &outline_edge_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &outline_edge_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: crate::gpu::MultisampleState::default(),
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // X-ray pipeline: render selected objects through all geometry as a semi-transparent tint.
-        let xray_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "xray_pipeline",
-                layout: &outline_pipeline_layout,
-                vertex_module: &xray_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[Vertex::buffer_layout()],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &xray_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(crate::gpu::BlendState::ALPHA_BLENDING),
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Always,
-                )),
-                multisample: crate::gpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                cache: pipeline_cache.as_ref(),
-            },
-        );
-
-        // Skybox pipeline: fullscreen triangle that samples the equirect environment map.
-        let skybox_shader = crate::resources::builders::wgsl_module(
-            device,
-            "skybox_shader",
-            crate::resources::builders::wgsl_source!("skybox"),
-        );
-        let skybox_pipeline_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "skybox_pipeline_layout",
-            &[&camera_bgl],
-        );
-        let skybox_pipeline = crate::resources::builders::render_pipeline(
-            device,
-            crate::resources::builders::RenderPipelineDesc {
-                label: "skybox_pipeline",
-                layout: &skybox_pipeline_layout,
-                vertex_module: &skybox_shader,
-                vertex_entry: "vs_main",
-                vertex_buffers: &[],
-                fragment: Some(crate::gpu::FragmentState {
-                    module: &skybox_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(crate::gpu::ColorTargetState {
-                        format: crate::gpu::TextureFormat::Rgba16Float,
-                        blend: None,
-                        write_mask: crate::gpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: crate::gpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: crate::gpu::PrimitiveState {
-                    topology: crate::gpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                // Drawn after opaques: only sky pixels (depth == 1.0) pass.
-                depth_stencil: Some(crate::resources::builders::scene_depth_stencil(
-                    false,
-                    crate::gpu::CompareFunction::Equal,
-                )),
-                multisample: crate::gpu::MultisampleState::default(),
-                cache: pipeline_cache.as_ref(),
-            },
-        );
+        // `outline_edge_layout`, the edge pipeline, the x-ray pipeline and the
+        // skybox pipeline are all built on first use; see
+        // `ensure_outline_pipelines`, `ensure_xray_pipeline` and
+        // `ensure_skybox_pipeline`.
 
         mark("misc_pipelines");
 
@@ -2279,11 +2015,11 @@ impl DeviceResources {
                 point_cube_view: point_shadow_cube_view,
                 point_cubes_allocated: false,
                 point_face_views: point_shadow_face_views,
-                point_pipeline: shadow_point_pipeline,
+                point_pipeline: None,
                 point_face_bgl: shadow_point_face_bgl,
                 point_face_buf: shadow_point_face_buf,
                 point_face_bind_group: shadow_point_face_bind_group,
-                pipeline: shadow_pipeline,
+                pipeline: None,
                 camera_bgl: shadow_camera_bgl,
                 uniform_buf: shadow_uniform_buf,
                 bind_group: shadow_bind_group,
@@ -2306,7 +2042,7 @@ impl DeviceResources {
                 constraint_lines: Vec::new(),
             },
             ground: crate::resources::ground_plane::GroundPlaneResources {
-                pipeline: ground_plane_pipeline,
+                pipeline: None,
                 bgl: ground_plane_bgl,
                 uniform_buf: ground_plane_uniform_buf,
                 bind_group: ground_plane_bind_group,
@@ -2365,11 +2101,11 @@ impl DeviceResources {
             post: crate::resources::postprocess::PostProcessResources::default(),
             outline: crate::resources::types::OutlineResources {
                 bind_group_layout: outline_bgl,
-                mask_pipeline: outline_mask_pipeline,
-                mask_two_sided_pipeline: outline_mask_two_sided_pipeline,
-                edge_pipeline: outline_edge_pipeline,
+                mask_pipeline: None,
+                mask_two_sided_pipeline: None,
+                edge_pipeline: None,
                 edge_bgl: outline_edge_bgl,
-                xray_pipeline,
+                xray_pipeline: None,
                 colour_texture: None,
                 colour_view: None,
                 depth_texture: None,
@@ -2411,7 +2147,7 @@ impl DeviceResources {
                 env_zone_count: 0,
                 brdf_lut_texture: None,
                 skybox_texture: None,
-                skybox_pipeline,
+                skybox_pipeline: None,
             },
             pick: crate::resources::types::PickResources::default(),
 

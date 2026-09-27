@@ -419,6 +419,7 @@ impl ViewportRenderer {
             // bind group that samples it.
             if !point_shadow_faces.is_empty() {
                 resources.ensure_point_shadow_cubes(device);
+                resources.ensure_point_shadow_pipeline(device);
             }
 
             // Upload per-face uniforms (view_proj + light_pos + range,
@@ -861,6 +862,12 @@ impl ViewportRenderer {
             } else {
                 None
             };
+            // The clear is owed only once a build has written the grid, so a
+            // viewport whose light count never reaches the cluster threshold
+            // compiles neither compute pipeline.
+            if build_count > 0 || resources.clustered.grid_dirty() {
+                resources.clustered.ensure_pipelines(device);
+            }
             resources
                 .clustered
                 .dispatch_frame(&mut encoder, build_count, cluster_ts);

@@ -113,6 +113,7 @@ impl ViewportRenderer {
             // placeholder. Promoting replaces the texture, so whatever the old
             // one held is gone and the clear flag resets either way.
             resources.ensure_shadow_atlas(device);
+            resources.ensure_cascade_shadow_pipelines(device);
             // Casters are about to be drawn into the atlas, so it no longer
             // holds the cleared value and the next empty frame must clear again.
             shadow.atlas_cleared = false;
@@ -949,7 +950,7 @@ impl ViewportRenderer {
                                 ),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(resources.shadow.pipeline.get(key));
+                            shadow_pass.set_pipeline(resources.shadow.pipeline().get(key));
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
                                 shadow_pass,
@@ -1032,7 +1033,7 @@ impl ViewportRenderer {
                                 ),
                                 ..PipelineKey::default()
                             };
-                            shadow_pass.set_pipeline(resources.shadow.pipeline.get(key));
+                            shadow_pass.set_pipeline(resources.shadow.pipeline().get(key));
                             shadow_pass.set_bind_group(1, &mesh.object_bind_group, &[]);
                             bind_deform_group!(
                                 shadow_pass,
@@ -1291,7 +1292,7 @@ impl ViewportRenderer {
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
                     });
-                    pass.set_pipeline(&resources.shadow.point_pipeline);
+                    pass.set_pipeline(resources.shadow.point_pipeline());
                     let dyn_offset = layer * POINT_FACE_STRIDE as u32;
                     pass.set_bind_group(0, &resources.shadow.point_face_bind_group, &[dyn_offset]);
 

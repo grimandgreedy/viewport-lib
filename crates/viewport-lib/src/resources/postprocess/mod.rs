@@ -1058,6 +1058,8 @@ impl DeviceResources {
             return;
         }
         self.note_pipeline_built(concat!(file!(), ":", line!()));
+        // Auto-exposure meters the HDR target, so its compute set belongs here.
+        self.exposure.ensure_pipelines(device);
 
         // Layouts and samplers the pipelines below are built against; cloned so
         // the stores at the end of each group do not overlap the borrow.

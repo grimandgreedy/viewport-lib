@@ -203,12 +203,23 @@ pub struct ClusteredResources {
     stats_staging_buf: crate::gpu::Buffer,
     /// Bind group for the cluster-clear compute pass.
     clear_bind_group: crate::gpu::BindGroup,
-    /// Compute pipeline that zeroes both storage buffers each frame.
-    clear_pipeline: crate::gpu::ComputePipeline,
+    /// Layout the clear pipeline is built against.
+    clear_bgl: crate::gpu::BindGroupLayout,
+    /// Compute pipeline that zeroes both storage buffers. `None` until a frame
+    /// actually needs a dispatch; see `ensure_pipelines`.
+    clear_pipeline: Option<crate::gpu::ComputePipeline>,
     /// Bind group for the cluster-build compute pass.
     build_bind_group: crate::gpu::BindGroup,
+    /// Layout the build pipeline is built against.
+    build_bgl: crate::gpu::BindGroupLayout,
     /// Compute pipeline that intersects each cluster with the active lights.
-    build_pipeline: crate::gpu::ComputePipeline,
+    /// `None` until a frame has enough lights to cluster.
+    build_pipeline: Option<crate::gpu::ComputePipeline>,
+    /// Whether the cluster grid and index list are known to hold zero. wgpu
+    /// zero-initialises both buffers, so this starts true and only a build
+    /// dispatch makes it false: a viewport whose lights never reach the cluster
+    /// threshold never runs the clear at all.
+    grid_zeroed: bool,
     /// Uniform buffer for the clear pass parameters (constants for now).
     #[allow(dead_code)]
     clear_params_buf: crate::gpu::Buffer,
@@ -330,24 +341,6 @@ impl ClusteredResources {
             ],
         });
 
-        let clear_shader = crate::resources::builders::wgsl_module(
-            device,
-            "cluster_clear_shader",
-            crate::resources::builders::wgsl_source!("cluster_clear"),
-        );
-        let clear_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "cluster_clear_pipeline_layout",
-            &[&clear_bgl],
-        );
-        let clear_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "cluster_clear_pipeline",
-            &clear_layout,
-            &clear_shader,
-            "main",
-        );
-
         // Build pass : intersects each cluster's view-space AABB with the
         // active-light set and writes the per-cluster light index ranges.
         let build_bgl = device.create_bind_group_layout(&crate::gpu::BindGroupLayoutDescriptor {
@@ -386,24 +379,6 @@ impl ClusteredResources {
                 },
             ],
         });
-        let build_shader = crate::resources::builders::wgsl_module(
-            device,
-            "cluster_build_shader",
-            crate::resources::builders::wgsl_source!("cluster_build"),
-        );
-        let build_layout = crate::resources::builders::pipeline_layout(
-            device,
-            "cluster_build_pipeline_layout",
-            &[&build_bgl],
-        );
-        let build_pipeline = crate::resources::builders::compute_pipeline(
-            device,
-            "cluster_build_pipeline",
-            &build_layout,
-            &build_shader,
-            "main",
-        );
-
         Self {
             grid_uniform_buf,
             cluster_grid_buf,
@@ -412,11 +387,63 @@ impl ClusteredResources {
             global_offset_buf,
             stats_staging_buf,
             clear_bind_group,
-            clear_pipeline,
+            clear_bgl,
+            clear_pipeline: None,
             build_bind_group,
-            build_pipeline,
+            build_bgl,
+            build_pipeline: None,
+            grid_zeroed: true,
             clear_params_buf,
         }
+    }
+
+    /// Build the clear and build compute pipelines and their modules. Called by
+    /// the lighting prepare on the first frame that has a dispatch to encode. A
+    /// no-op after that.
+    pub fn ensure_pipelines(&mut self, device: &crate::gpu::Device) {
+        if self.clear_pipeline.is_some() {
+            return;
+        }
+        let clear_shader = crate::resources::builders::wgsl_module(
+            device,
+            "cluster_clear_shader",
+            crate::resources::builders::wgsl_source!("cluster_clear"),
+        );
+        let clear_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "cluster_clear_pipeline_layout",
+            &[&self.clear_bgl],
+        );
+        self.clear_pipeline = Some(crate::resources::builders::compute_pipeline(
+            device,
+            "cluster_clear_pipeline",
+            &clear_layout,
+            &clear_shader,
+            "main",
+        ));
+        let build_shader = crate::resources::builders::wgsl_module(
+            device,
+            "cluster_build_shader",
+            crate::resources::builders::wgsl_source!("cluster_build"),
+        );
+        let build_layout = crate::resources::builders::pipeline_layout(
+            device,
+            "cluster_build_pipeline_layout",
+            &[&self.build_bgl],
+        );
+        self.build_pipeline = Some(crate::resources::builders::compute_pipeline(
+            device,
+            "cluster_build_pipeline",
+            &build_layout,
+            &build_shader,
+            "main",
+        ));
+    }
+
+    /// Whether a clear dispatch is owed: something has written the cluster grid
+    /// since it was last known to hold zero.
+    pub fn grid_dirty(&self) -> bool {
+        !self.grid_zeroed
     }
 
     /// Copy `cluster_grid_buf` to host-readable memory, map it, and compute
@@ -472,28 +499,34 @@ impl ClusteredResources {
         );
     }
 
-    /// Encode the per-frame clear + build dispatches. Always runs the clear so
-    /// the cluster grid and global reservation counter return to a known zero
-    /// state; the build is skipped when no active lights survive the CPU cull.
+    /// Encode the per-frame clear + build dispatches. The clear returns the
+    /// cluster grid and the global reservation counter to zero, and runs only
+    /// when a previous build left them non-zero; the build is skipped when no
+    /// active lights survive the CPU cull. Both are skipped when
+    /// `ensure_pipelines` has not run, which is the case until a frame needs one.
     pub fn dispatch_frame(
-        &self,
+        &mut self,
         encoder: &mut crate::gpu::CommandEncoder,
         active_light_count: u32,
         ts_query_set: Option<&crate::gpu::QuerySet>,
     ) {
-        {
+        if let (false, Some(clear_pipeline)) = (self.grid_zeroed, self.clear_pipeline.as_ref()) {
             let clear_workgroups = MAX_LIGHT_INDICES.max(CLUSTER_COUNT).div_ceil(64);
             let mut pass = encoder.begin_compute_pass(&crate::gpu::ComputePassDescriptor {
                 label: Some("cluster_clear_pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.clear_pipeline);
+            pass.set_pipeline(clear_pipeline);
             pass.set_bind_group(0, &self.clear_bind_group, &[]);
             pass.dispatch_workgroups(clear_workgroups, 1, 1);
+            self.grid_zeroed = true;
         }
         if active_light_count == 0 {
             return;
         }
+        let Some(build_pipeline) = self.build_pipeline.as_ref() else {
+            return;
+        };
         {
             let slot = crate::renderer::GPU_TS_CLUSTER;
             let ts_writes = ts_query_set.map(|qs| crate::gpu::ComputePassTimestampWrites {
@@ -505,11 +538,12 @@ impl ClusteredResources {
                 label: Some("cluster_build_pass"),
                 timestamp_writes: ts_writes,
             });
-            pass.set_pipeline(&self.build_pipeline);
+            pass.set_pipeline(build_pipeline);
             pass.set_bind_group(0, &self.build_bind_group, &[]);
             // One workgroup per cluster cell.
             pass.dispatch_workgroups(CLUSTER_COUNT, 1, 1);
         }
+        self.grid_zeroed = false;
     }
 }
 

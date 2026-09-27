@@ -290,7 +290,7 @@ macro_rules! emit_draw_calls {
             frame.effects.ground_plane.mode,
             crate::renderer::types::GroundPlaneMode::None
         ) {
-            render_pass.set_pipeline(&resources.ground.pipeline);
+            render_pass.set_pipeline(resources.ground.pipeline());
             render_pass.set_bind_group(0, &resources.ground.bind_group, &[]);
             render_pass.draw(0..3, 0..1);
             render_pass.set_bind_group(0, camera_bg, &[]);
@@ -1036,8 +1036,12 @@ macro_rules! emit_draw_calls {
         // X-ray pass: render selected objects as semi-transparent overlay through geometry.
         if let Some(slot) = _vp_slot {
             if !slot.xray_object_buffers.is_empty() {
-                render_pass.set_pipeline(&resources.outline.xray_pipeline);
+                render_pass.set_pipeline(resources.outline.xray_pipeline());
                 render_pass.set_bind_group(0, camera_bg, &[]);
+                // The x-ray pipeline shares the outline layout, so group 2 is
+                // part of it whenever deformers are enabled. X-ray draws the
+                // undeformed mesh, so the dummy group is what it wants.
+                bind_deform_group!(render_pass, resources, &resources.deform.dummy_bind_group);
                 for (mesh_id, _buf, bg) in &slot.xray_object_buffers {
                     let Some(mesh) = resources.mesh_store.get(*mesh_id) else { continue };
                     render_pass.set_bind_group(1, bg, &[]);

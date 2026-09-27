@@ -176,6 +176,22 @@ impl ViewportRenderer {
         if has_mesh_content {
             self.resources.ensure_ldr_mesh_pipelines(device);
         }
+        // Same for the effects with their own pass: each is built by the first
+        // frame that asks for it.
+        if !matches!(
+            frame.effects.ground_plane.mode,
+            crate::renderer::types::GroundPlaneMode::None
+        ) {
+            self.resources.ensure_ground_plane_pipeline(device);
+        }
+        if frame
+            .effects
+            .environment
+            .as_ref()
+            .is_some_and(|e| e.show_skybox)
+        {
+            self.resources.ensure_skybox_pipeline(device);
+        }
 
         // Reset the per-material transform interner for this frame. The per-object
         // and instanced passes below intern each item's material into it; the
