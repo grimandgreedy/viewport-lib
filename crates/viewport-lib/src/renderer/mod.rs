@@ -3457,7 +3457,7 @@ impl ViewportRenderer {
                 render_pass.set_bind_group(0, camera_bg, &[]);
                 for mesh_id in &self.mesh_uniforms.tvm_wireframe_draws {
                     if let Some(mesh) = self.resources.mesh_store.get(*mesh_id) {
-                        render_pass.set_pipeline(&self.resources.scene.wireframe);
+                        render_pass.set_pipeline(self.resources.scene.wireframe());
                         bind_deform_group!(
                             render_pass,
                             self.resources,

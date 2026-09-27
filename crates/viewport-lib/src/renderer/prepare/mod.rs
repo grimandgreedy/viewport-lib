@@ -165,6 +165,18 @@ impl ViewportRenderer {
             .ts_written_mask
             .swap(0, std::sync::atomic::Ordering::Relaxed);
 
+        // The base LDR mesh pipelines draw plain `Material` surfaces and nothing
+        // else, so they are built on the first frame that carries any rather than
+        // at construction. An overlay-only frame never reaches this.
+        let has_mesh_content = match &frame.scene.surfaces {
+            crate::renderer::SurfaceSubmission::Flat(items) => !items.is_empty(),
+        } || !frame.scene.volume_meshes.is_empty()
+            || !frame.scene.mesh_instances.is_empty()
+            || !frame.scene.foreground_items.is_empty();
+        if has_mesh_content {
+            self.resources.ensure_ldr_mesh_pipelines(device);
+        }
+
         // Reset the per-material transform interner for this frame. The per-object
         // and instanced passes below intern each item's material into it; the
         // buffer is uploaded at the end of this function (and again after

@@ -105,25 +105,6 @@ impl DeviceResources {
             && device_limits.max_storage_buffers_per_shader_stage
                 >= crate::renderer::ViewportRenderer::DEFORM_STORAGE_BUFFERS_PER_STAGE;
 
-        let mesh_src = if deform_enabled {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh.wgsl"))
-        } else {
-            include_str!(concat!(env!("OUT_DIR"), "/mesh_noop.wgsl"))
-        };
-        // Lit modules compile without the pixel-inspector debug block
-        // (debug_vis_shaders starts false); DebugVis rebuilds them with it.
-        let shader = crate::resources::builders::wgsl_module(
-            device,
-            "mesh_shader",
-            crate::resources::builders::builtin_hook_env(
-                crate::resources::builders::strip_mesh_non_pbr(
-                    crate::resources::builders::strip_mesh_discards(
-                        crate::resources::builders::strip_debug_vis(mesh_src, false),
-                    ),
-                ),
-            ),
-        );
-
         // ------------------------------------------------------------------
         // Bind group layouts
         // ------------------------------------------------------------------
@@ -729,36 +710,10 @@ impl DeviceResources {
             );
         }
 
-        // ------------------------------------------------------------------
-        // Pipeline layout (shared between solid and transparent pipelines)
-        // Groups: 0=camera, 1=object+texture, and optionally 2=deform sidecar
-        // ------------------------------------------------------------------
-        let pipeline_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
-            device,
-            "mesh_pipeline_layout",
-            &camera_bgl,
-            &object_bgl,
-            deform_bgl,
-        );
-
-        // ------------------------------------------------------------------
-        // LDR mesh.wgsl pipelines: solid + two-sided + transparent + wireframe.
-        // Built through the shared factory so `register_deformer` can rebuild
-        // them with a freshly composed shader module.
-        // ------------------------------------------------------------------
-        let ldr = crate::resources::mesh::mesh_pipelines::build_ldr_mesh_pipelines(
-            device,
-            &pipeline_layout,
-            &shader,
-            target_format,
-            sample_count,
-            pipeline_cache.as_ref(),
-        );
-        let solid_pipeline = ldr.solid;
-        let solid_two_sided_pipeline = ldr.solid_two_sided;
-        let transparent_pipeline = ldr.transparent;
-        let wireframe_pipeline = ldr.wireframe;
-
+        // The LDR mesh.wgsl pipelines (solid, two-sided, transparent, wireframe)
+        // and the module they share are built by `ensure_ldr_mesh_pipelines` on
+        // the first frame that carries mesh-family content, not here: a viewport
+        // that only ever draws overlays never binds one.
         mark("mesh_pipelines");
 
         // ------------------------------------------------------------------
@@ -2278,10 +2233,10 @@ impl DeviceResources {
             mesh_pipelines_dirty: false,
             pipeline_cache,
             scene: crate::resources::scene_pipelines::SceneCorePipelines {
-                solid: solid_pipeline,
-                solid_two_sided: solid_two_sided_pipeline,
-                transparent: transparent_pipeline,
-                wireframe: wireframe_pipeline,
+                solid: None,
+                solid_two_sided: None,
+                transparent: None,
+                wireframe: None,
                 hdr_opaque: None,
                 hdr_transparent: None,
                 hdr_wireframe: None,

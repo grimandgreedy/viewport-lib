@@ -1207,7 +1207,7 @@ impl ViewportRenderer {
                 }),
             )
         } else {
-            (&resources.scene.solid, &resources.scene.solid_two_sided)
+            (resources.scene.solid(), resources.scene.solid_two_sided())
         };
         let mut enc = crate::resources::builders::render_bundle_encoder(
             device,

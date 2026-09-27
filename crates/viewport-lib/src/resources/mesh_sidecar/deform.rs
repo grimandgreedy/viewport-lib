@@ -1866,10 +1866,10 @@ impl DeviceResources {
                 self.sample_count,
                 None,
             );
-            self.scene.solid = ldr.solid;
-            self.scene.solid_two_sided = ldr.solid_two_sided;
-            self.scene.transparent = ldr.transparent;
-            self.scene.wireframe = ldr.wireframe;
+            self.scene.solid = Some(ldr.solid);
+            self.scene.solid_two_sided = Some(ldr.solid_two_sided);
+            self.scene.transparent = Some(ldr.transparent);
+            self.scene.wireframe = Some(ldr.wireframe);
 
             if self.scene.hdr_opaque.is_some() {
                 let hdr_layout = crate::resources::mesh::mesh_pipelines::mesh_pipeline_layout(
@@ -2199,8 +2199,7 @@ mod tests {
     /// broken, `register_deformer` would fail at validation; if the rebuild
     /// path were broken (e.g. shader module created from stale source),
     /// this test would still pass because no draw is issued. So we also
-    /// re-fetch the LDR pipelines and confirm they are not the originals
-    /// that the renderer was constructed with.
+    /// re-fetch the LDR pipelines and confirm the rebuild populated them.
     #[test]
     fn register_deformer_rebuilds_ldr_mesh_pipelines() {
         use crate::renderer::ViewportRenderer;
@@ -2210,8 +2209,8 @@ mod tests {
         let mut renderer =
             ViewportRenderer::new(&device, crate::gpu::TextureFormat::Bgra8UnormSrgb);
 
-        let solid_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
-        let wf_before: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
+        // Nothing has been drawn, so the base family is not built yet.
+        assert!(renderer.resources().scene.solid.is_none());
 
         let body = "fn deform(v: DeformVertex, ctx: DeformContext) -> DeformVertex {\n    var o = v;\n    if (deform_slot_stride(0u) > 0u) {\n        o.position.z = o.position.z + deform_read_f32(0u, v.vertex_index, 0u);\n    }\n    return o;\n}\n";
         let desc = DeformerDesc {
@@ -2230,16 +2229,10 @@ mod tests {
             .resources_mut()
             .flush_mesh_pipeline_rebuild(&device);
 
-        let solid_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.solid;
-        let wf_after: *const crate::gpu::RenderPipeline = &renderer.resources().scene.wireframe;
-        // The fields themselves moved during the swap, so the addresses
-        // stay the same. Instead, confirm that `solid_pipeline` and
-        // `wireframe_pipeline` are still live wgpu handles by hashing
-        // their global_id, which is unique per device-created pipeline.
-        assert_ne!(solid_before, std::ptr::null());
-        assert_ne!(solid_after, std::ptr::null());
-        assert_ne!(wf_before, std::ptr::null());
-        assert_ne!(wf_after, std::ptr::null());
+        // The rebuild composes the deformer into the LDR family, which also
+        // builds it: live handles rather than the empty slots from before.
+        assert!(renderer.resources().scene.solid.is_some());
+        assert!(renderer.resources().scene.wireframe.is_some());
     }
 
     #[test]
