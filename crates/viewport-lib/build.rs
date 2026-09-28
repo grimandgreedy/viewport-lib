@@ -91,6 +91,21 @@ fn main() {
         "shadow.wgsl",
         "shadow_point.wgsl",
     ];
+    // The same list the runtime composes deformer bodies into
+    // (`mesh_sidecar::registry::MESH_FAMILY_SHADERS`, which includes this file). One list, because
+    // the two questions have one answer: a shader that includes the deform contract needs both a
+    // noop variant for limited devices and its hooks composed on a full one. They were separate,
+    // and `shadow_point.wgsl` sat on this one and not the other, so point-light shadows rasterised
+    // the bind pose of every GPU-skinned character.
+    let mut names = String::from("&[\n");
+    for name in &deform_shaders {
+        writeln!(&mut names, "    \"{name}\",").unwrap();
+    }
+    names.push_str("]\n");
+    let names_path = PathBuf::from(&out_dir).join("deform_shaders.rs");
+    fs::write(&names_path, names)
+        .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", names_path.display(), e));
+
     for name in &deform_shaders {
         let src_path = shaders_dir.join(name);
         let raw = fs::read_to_string(&src_path)

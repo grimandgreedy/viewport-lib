@@ -53,6 +53,8 @@ pub mod tuning;
 pub use shadow_debug_stats::ShadowDebugStats;
 
 #[cfg(test)]
+mod deform_shadow_tests;
+#[cfg(test)]
 mod deform_stats_tests;
 #[cfg(test)]
 mod hidden_tests;

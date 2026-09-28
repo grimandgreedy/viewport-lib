@@ -1984,6 +1984,39 @@ impl DeviceResources {
             ));
         }
 
+        // shadow_point.wgsl: depth-only cube-face pass for point lights. Rebuilt here for the
+        // same reason as the cascade pass above: a caster skinned on the GPU keeps the bind pose
+        // in its vertex buffer, so a shadow pass that does not run the deformer rasterises the
+        // bind pose into the cube face and the character's shadow never moves a limb.
+        if let Some(base) = lookup_source("shadow_point.wgsl") {
+            let composed = compose_shader(base, &registrations);
+            let shader = crate::resources::builders::wgsl_module(
+                device,
+                "shadow_point_shader_composed",
+                composed,
+            );
+            let layout = crate::resources::builders::pipeline_layout(
+                device,
+                "shadow_point_pipeline_layout",
+                &[
+                    &self.shadow.point_face_bgl,
+                    &self.binds.object_bgl,
+                    &self.deform.bind_group_layout,
+                ],
+            );
+            // Unconditional, like the cascade assignment: `ensure_point_shadow_pipeline` returns
+            // early once the slot is filled, so overwriting here is what makes build order
+            // irrelevant between the two.
+            self.shadow.point_pipeline = Some(
+                crate::resources::mesh::mesh_pipelines::build_shadow_point_pipeline(
+                    device,
+                    &layout,
+                    &shader,
+                    self.pipeline_cache.as_ref(),
+                ),
+            );
+        }
+
         // outline_mask.wgsl: mask-write pass for the selection silhouette.
         if let Some(base) = lookup_source("outline_mask.wgsl") {
             let composed = compose_shader(base, &registrations);
