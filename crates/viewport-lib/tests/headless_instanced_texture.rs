@@ -7,7 +7,6 @@
 //! colour, renders again, and checks the framebuffer changed. A byte-identical
 //! pair of renders means the update was dropped somewhere in the path.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

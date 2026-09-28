@@ -7,7 +7,6 @@
 //! every family: an empty or transparent layer list changes nothing, and a
 //! contour actually puts shadow-coloured pixels around the item.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

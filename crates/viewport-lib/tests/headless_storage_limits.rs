@@ -20,6 +20,7 @@
 //! file on Metal is necessary, not sufficient.
 
 use viewport_lib::renderer::ViewportRenderer;
+use viewport_lib::wgpu;
 
 fn adapter() -> Option<wgpu::Adapter> {
     let instance = viewport_lib::wgpu::default_instance();
@@ -160,9 +161,9 @@ fn renderer_builds_one_below_the_deform_gate() {
         below_gate
     );
 
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    let error = pollster::block_on(device.pop_error_scope());
+    let error = pollster::block_on(scope.pop());
     assert!(
         error.is_none(),
         "building the renderer with {below_gate} storage buffers per stage must not produce a          validation error: {error:?}"
@@ -205,9 +206,9 @@ fn deformers_work_at_exactly_the_deform_gate() {
     let (device, _queue) = device_with_limits(&adapter, limits_with_storage_buffers(gate));
     assert_eq!(device.limits().max_storage_buffers_per_shader_stage, gate);
 
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = wgpu::push_error_scope(&device, wgpu::ErrorFilter::Validation);
     let mut renderer = ViewportRenderer::new(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
-    let error = pollster::block_on(device.pop_error_scope());
+    let error = pollster::block_on(scope.pop());
     assert!(
         error.is_none(),
         "the deform group is enabled at {gate} storage buffers per stage, so every pipeline          layout must validate there: {error:?}"

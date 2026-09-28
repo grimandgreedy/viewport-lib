@@ -219,7 +219,7 @@ impl Harness {
 
         let mut pixels = Vec::with_capacity((width * height) as usize);
         {
-            let mapped = staging.slice(..).get_mapped_range();
+            let mapped = viewport_lib::gpu::mapped_range(staging.slice(..));
             for row in 0..height as usize {
                 let start = row * padded_row as usize;
                 let bytes = &mapped[start..start + unpadded_row as usize];

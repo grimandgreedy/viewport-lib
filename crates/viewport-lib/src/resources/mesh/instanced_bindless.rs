@@ -391,7 +391,13 @@ impl DeviceResources {
 
 #[cfg(test)]
 mod tests {
+    // The naga matching this build's wgpu leg; on 27 the crate keeps its own
+    // name, so only the aliases need importing.
     use super::*;
+    #[cfg(wgpu29)]
+    use naga29 as naga;
+    #[cfg(wgpu30)]
+    use naga30 as naga;
 
     // The generated bindless colour and OIT shaders must be valid WGSL under the
     // texture-array capabilities. naga validation runs without a device, so this

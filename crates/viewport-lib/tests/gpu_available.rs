@@ -7,9 +7,6 @@
 //! no adapter can be created, instead of letting the silent skips hide it. With
 //! the variable unset the test is a no-op.
 
-#[cfg(feature = "wgpu29")]
-use viewport_lib::wgpu;
-
 mod common;
 use common::*;
 

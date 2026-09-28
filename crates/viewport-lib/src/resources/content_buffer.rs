@@ -315,7 +315,7 @@ mod tests {
             submission_index: None,
             timeout: Some(std::time::Duration::from_secs(10)),
         });
-        let view = slice.get_mapped_range().to_vec();
+        let view = gpu::mapped_range(slice).to_vec();
         staging.unmap();
         view
     }

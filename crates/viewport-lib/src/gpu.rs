@@ -37,6 +37,57 @@ pub use wgpu29::vertex_attr_array;
 #[cfg(wgpu30)]
 pub use wgpu30::vertex_attr_array;
 
+/// Push a validation error scope, returning a handle that pops it. wgpu 27
+/// pushes on the device and pops through the device again; 29 and 30 hand back
+/// a guard that owns the pop. Both drive as `push_error_scope(&device, filter)`
+/// followed by awaiting `scope.pop()`.
+#[cfg(wgpu27)]
+pub struct ErrorScope<'a> {
+    device: &'a Device,
+}
+#[cfg(wgpu27)]
+impl ErrorScope<'_> {
+    pub fn pop(self) -> impl std::future::Future<Output = Option<Error>> {
+        self.device.pop_error_scope()
+    }
+}
+#[cfg(wgpu27)]
+pub fn push_error_scope(device: &Device, filter: ErrorFilter) -> ErrorScope<'_> {
+    device.push_error_scope(filter);
+    ErrorScope { device }
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub struct ErrorScope {
+    guard: ErrorScopeGuard,
+}
+#[cfg(any(wgpu29, wgpu30))]
+impl ErrorScope {
+    pub fn pop(self) -> impl std::future::Future<Output = Option<Error>> {
+        self.guard.pop()
+    }
+}
+#[cfg(any(wgpu29, wgpu30))]
+pub fn push_error_scope(device: &Device, filter: ErrorFilter) -> ErrorScope {
+    ErrorScope {
+        guard: device.push_error_scope(filter),
+    }
+}
+
+/// The wgpu major version this build resolved to: 27, 29 or 30.
+///
+/// Cargo unifies the wgpu crate across the whole graph, but a sibling crate
+/// that spells its own version seams as `#[cfg(feature = "wgpu29")]` keys off
+/// its own features, which a dependency edge can leave unset or set to a
+/// different leg. Such a crate should assert its own leg against this constant
+/// so the disagreement is a compile error rather than the wrong arm of every
+/// seam compiling quietly.
+#[cfg(wgpu27)]
+pub const WGPU_LEG: u32 = 27;
+#[cfg(wgpu29)]
+pub const WGPU_LEG: u32 = 29;
+#[cfg(wgpu30)]
+pub const WGPU_LEG: u32 = 30;
+
 /// Construct a wgpu `Instance` with default options. This papers over the
 /// `InstanceDescriptor` construction that differs across wgpu versions: 27
 /// derives `Default`, while 29 and 30 gained a display-handle field and

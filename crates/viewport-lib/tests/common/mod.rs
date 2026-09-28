@@ -13,7 +13,6 @@
 // On the 27 leg the plain `wgpu` dependency is active and `wgpu::` resolves to
 // it directly. On the 29 leg that dependency is inactive, so name wgpu through
 // the library's re-export instead, which tracks whichever leg is built.
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 // Re-export the library types the headless files reach for, so a single

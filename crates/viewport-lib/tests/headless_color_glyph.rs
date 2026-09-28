@@ -5,7 +5,6 @@
 //! pixels carry real colour (not the monochrome coverage the tint path produces).
 //! Skips when no GPU adapter or emoji font is available.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

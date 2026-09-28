@@ -7,7 +7,6 @@
 //! renders a frame with a ground plane or an x-ray item, and the image goldens
 //! do not cover selection outlines, so these are the guard.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

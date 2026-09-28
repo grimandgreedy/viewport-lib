@@ -295,8 +295,9 @@ impl ItemTypePlugin for TriangleItemTypePlugin {
                     store: wgpu::StoreOp::Store,
                 }),
             }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
+            // The rest of the descriptor defaults: the tail fields differ
+            // between the wgpu legs (29 added multiview_mask).
+            ..Default::default()
         });
         pass.set_pipeline(&self.encode);
         pass.set_bind_group(0, ctx.camera_bind_group, &[]);

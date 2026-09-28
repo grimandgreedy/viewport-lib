@@ -209,8 +209,9 @@ impl PostEffectStage for PassthroughPostEffectStage {
                 depth_slice: None,
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
+            // The rest of the descriptor defaults: the tail fields differ
+            // between the wgpu legs (29 added multiview_mask).
+            ..Default::default()
         });
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, bind_group, &[]);

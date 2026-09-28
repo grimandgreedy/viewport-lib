@@ -2161,6 +2161,12 @@ fn frame_seed(done: u32, seed: u32) -> u32 {
 // broken splice or a stale `rayQuery` API without a Vulkan/DX12 GPU.
 #[cfg(all(test, feature = "raytrace-hardware"))]
 mod hw_tests {
+    // The naga matching this build's wgpu leg; on 27 the crate keeps its own
+    // name, so only the aliases need importing.
+    #[cfg(wgpu29)]
+    use naga29 as naga;
+    #[cfg(wgpu30)]
+    use naga30 as naga;
     #[test]
     fn hardware_kernel_validates() {
         let src = super::compose_hw_kernel(crate::resources::builders::wgsl_source!("raytrace"));

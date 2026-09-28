@@ -11,7 +11,6 @@
 //! Part of the headless integration suite; shared device helpers live in
 //! tests/common/mod.rs.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;

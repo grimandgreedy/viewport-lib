@@ -138,8 +138,9 @@ impl PostEffectProducer for LoggingPostEffectProducer {
                 depth_slice: None,
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
+            // The rest of the descriptor defaults: the tail fields differ
+            // between the wgpu legs (29 added multiview_mask).
+            ..Default::default()
         });
         Some(view)
     }

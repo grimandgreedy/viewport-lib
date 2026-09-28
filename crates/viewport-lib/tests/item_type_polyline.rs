@@ -4,7 +4,6 @@
 //!
 //! One file per item type, so a type's coverage travels with it.
 
-#[cfg(feature = "wgpu29")]
 use viewport_lib::wgpu;
 
 mod common;
