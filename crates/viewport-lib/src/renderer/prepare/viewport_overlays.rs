@@ -80,8 +80,8 @@ fn encode_overlay_shape(
             (10.0, [arm_width_frac.clamp(0.0, 1.0), 0.0, 0.0, 0.0])
         }
         // A vector shape has no analytic SDF; it is not drawn through this
-        // encoder. Callers skip Vector shapes before reaching here. Used as a
-        // clip mask it degrades to its bounding box.
+        // encoder, and `build_clip_shapes` rejects it as a mask, so callers skip
+        // Vector shapes before reaching here.
         OverlayShape::Vector { .. } => (0.0, [0.0; 4]),
         // OverlayShape is non_exhaustive; no special edge/radius for shapes not handled here.
         _ => (0.0, [0.0; 4]),
@@ -390,8 +390,17 @@ fn build_clip_shapes(
     // to no clipping, matching how an absent mask id behaves.
     let mut index_of: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
     let mut masks: Vec<(&crate::renderer::types::OverlayShapeItem, [f32; 2])> = Vec::new();
-    for s in shapes {
+    for (i, s) in shapes.iter().enumerate() {
         if let Some(id) = s.provides_mask {
+            // A vector shape is tessellated triangles with no distance field, so
+            // there is nothing for the shader to evaluate the mask against. It is
+            // rejected rather than encoded as its bounding box: a wrong clip is
+            // harder to find than no clip, and a documented box fallback is a
+            // behaviour a consumer could come to depend on.
+            if matches!(s.shape, crate::renderer::types::OverlayShape::Vector { .. }) {
+                super::overlay_style_check::warn_vector_mask(i, id);
+                continue;
+            }
             if let std::collections::hash_map::Entry::Vacant(e) = index_of.entry(id) {
                 if let Some(tl) = s.resolve_top_left(viewport, view, proj) {
                     e.insert(masks.len() as i32);
@@ -2604,5 +2613,37 @@ mod clip_registry_tests {
         assert!(gpu.is_empty());
         assert!(map.is_empty());
         assert!(bboxes.is_empty());
+    }
+
+    #[test]
+    fn a_vector_shape_registers_no_mask() {
+        // A vector path has no distance field, so it cannot be a mask. It must
+        // register nothing rather than encode as its bounding box, which would
+        // clip the wrong region silently. An analytic mask in the same frame is
+        // unaffected and keeps index 0.
+        use crate::renderer::types::{FillRule, SubPath};
+        let vector = OverlayShapeItem::new(
+            OverlayShape::Vector {
+                subpaths: vec![SubPath::default()],
+                fill_rule: FillRule::NonZero,
+            },
+            [0.0, 0.0],
+            [100.0, 100.0],
+        )
+        .provides_mask(7);
+        let analytic = OverlayShapeItem::new(OverlayShape::Circle, [10.0, 10.0], [40.0, 40.0])
+            .provides_mask(8);
+        let (gpu, map, bboxes) = build_clip_shapes(
+            &[vector, analytic],
+            1.0,
+            [1000.0, 1000.0],
+            &glam::Mat4::IDENTITY,
+            &glam::Mat4::IDENTITY,
+        );
+
+        assert_eq!(gpu.len(), 1, "the vector shape must not be encoded");
+        assert!(!map.contains_key(&7), "mask 7 must be absent, not wrong");
+        assert_eq!(map[&8], 0);
+        assert_eq!(bboxes.len(), 1);
     }
 }

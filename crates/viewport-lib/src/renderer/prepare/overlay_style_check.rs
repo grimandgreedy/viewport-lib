@@ -10,6 +10,9 @@
 //!
 //! `OverlayStyleSupport::inert_fields` is the same check as a plain function,
 //! for a consumer who wants it in a test.
+//!
+//! The same dedupe backs `warn_vector_mask`, for the one combination the
+//! renderer rejects outright rather than degrades.
 
 #[cfg(debug_assertions)]
 use std::sync::{Mutex, OnceLock};
@@ -57,6 +60,27 @@ pub(super) fn warn_inert_style(
     }
 }
 
+/// Report a `provides_mask` on a vector shape, once per mask id.
+///
+/// A vector shape is tessellated triangles with no distance field, so it cannot
+/// be evaluated as a mask. The caller registers no mask for it, which draws the
+/// referencing items unclipped rather than clipping them to the path's bounding
+/// box.
+#[cfg(debug_assertions)]
+pub(super) fn warn_vector_mask(index: usize, id: u32) {
+    static SEEN: OnceLock<Mutex<std::collections::HashSet<u32>>> = OnceLock::new();
+    let Ok(mut seen) = SEEN.get_or_init(Default::default).lock() else {
+        return;
+    };
+    if seen.insert(id) {
+        tracing::warn!(
+            "overlay: shape {index} provides mask {id} but is an `OverlayShape::Vector`, which \
+             has no distance field to evaluate a mask from. No mask is registered, so items \
+             clipped to {id} draw unclipped. Use an analytic shape as the mask."
+        );
+    }
+}
+
 #[cfg(all(test, debug_assertions))]
 mod tests {
     use super::*;
@@ -91,3 +115,7 @@ pub(super) fn warn_inert_style(
     _style: &crate::renderer::types::OverlayStyle,
 ) {
 }
+
+/// Release builds do no reporting; the mask is skipped either way.
+#[cfg(not(debug_assertions))]
+pub(super) fn warn_vector_mask(_index: usize, _id: u32) {}
